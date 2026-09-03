@@ -1,0 +1,162 @@
+{
+  "domains" : [
+    "agent_loop",
+    "apple_script",
+    "cache_proof",
+    "capability_claims",
+    "computer_use_loop",
+    "default_agent",
+    "http_api",
+    "memory",
+    "micro_perf",
+    "reasoning_channel",
+    "subagent"
+  ],
+  "generatedAt" : "2026-08-28T04:39:07.834Z",
+  "models" : [
+    {
+      "actionCompletionCoverage" : 0,
+      "chatModelPassed" : 53,
+      "chatModelScored" : 90,
+      "environment" : {
+        "caseCount" : 19,
+        "catalogHash" : "2e766b2b52f4cf37",
+        "chip" : "Apple M5 Max",
+        "commit" : "f4b6ffa",
+        "contributor" : "jax-0n-git",
+        "cpuCores" : 18,
+        "harness" : "osaurus",
+        "judge" : "self-judge",
+        "lowPowerMode" : false,
+        "osVersion" : "26.6.2",
+        "powerSource" : "AC",
+        "runModel" : "OsaurusAI/gemma-4-12B-it-MXFP8",
+        "thermalState" : "nominal",
+        "totalRamMb" : 131072
+      },
+      "flakyCases" : 0,
+      "harness" : "osaurus",
+      "loopFreeRate" : 0.0070921985815602835,
+      "meanAgentLoopWallTimeMs" : 3.300124026359396,
+      "meanCpuPercent" : 52.789600116396514,
+      "meanFirstStepContextTokens" : 3278.707142857143,
+      "meanFrictionCalls" : 0,
+      "meanPromptTokensPerTask" : 3179.265,
+      "meanTotalTokensPerTask" : 3179.265,
+      "medianModelSteps" : 1,
+      "modelId" : "OsaurusAI/gemma-4-12B-it-MXFP8",
+      "peakCpuPercent" : 174.67699635861354,
+      "peakPhysFootprintMb" : 57.70415496826172,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 140,
+          "passed" : 1,
+          "scored" : 1,
+          "skipReasons" : {
+            "other: no AppleScript model installed; applescript/mac_query delegation tools withheld — case skipped" : 3
+          },
+          "skipped" : 3
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 14,
+          "scored" : 16,
+          "skipReasons" : {
+            "other: No AppleScript model installed; skipping the live lane." : 15,
+            "other: No AppleScript model installed; skipping the liveProof lane." : 1,
+            "other: liveProof environment not ready — Automation permission is denied for this process (error -1743). Grant Osaurus access to the target app under System Settings → Privacy & Security → Automation, then re-run locally." : 3
+          },
+          "skipped" : 19
+        },
+        "cache_proof" : {
+          "errored" : 0,
+          "passed" : 0,
+          "scored" : 0,
+          "skipReasons" : {
+            "other: SKIP: no local MLX engine resolved for 'OsaurusAI/gemma-4-12B-it-MXFP8'; cache telemetry unavailable" : 11
+          },
+          "skipped" : 11
+        },
+        "capability_claims" : {
+          "errored" : 11,
+          "passed" : 0,
+          "scored" : 0,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 8,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 49,
+          "passed" : 0,
+          "scored" : 0,
+          "skipped" : 0
+        },
+        "http_api" : {
+          "errored" : 0,
+          "passed" : 5,
+          "scored" : 15,
+          "skipReasons" : {
+            "other: scenario: multimodal_image · port 56566" : 1,
+            "other: scenario: multimodal_video · port 56566" : 1
+          },
+          "skipped" : 2
+        },
+        "memory" : {
+          "errored" : 8,
+          "passed" : 0,
+          "scored" : 0,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 3,
+          "passed" : 0,
+          "scored" : 0,
+          "skipReasons" : {
+            "other: SKIP: run model 'OsaurusAI/gemma-4-12B-it-MXFP8' is not an installed local MLX model; nothing to load or cancel" : 2,
+            "other: SKIP: run model 'OsaurusAI/gemma-4-12B-it-MXFP8' is not an installed local MLX model; nothing to unload" : 1
+          },
+          "skipped" : 3
+        },
+        "reasoning_channel" : {
+          "errored" : 11,
+          "passed" : 0,
+          "scored" : 0,
+          "skipReasons" : {
+            "other: SKIP: case requires a reasoning channel but the resolved model has none (LocalReasoningCapability detection)" : 2
+          },
+          "skipped" : 2
+        },
+        "subagent" : {
+          "errored" : 1,
+          "passed" : 25,
+          "scored" : 35,
+          "skipReasons" : {
+            "missingDependency: live spawn_model_residency lane unavailable on this host: residency lane unavailable: orchestrator 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is not installed locally" : 8,
+            "other: live image lane unavailable on this host: Image edit is not enabled for this agent." : 1,
+            "other: live image lane unavailable on this host: Image generation is not enabled for this agent." : 1,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is neither installed locally nor routable via a connected provider" : 2,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'xai/grok-4.3' is neither installed locally nor routable via a connected provider" : 2
+          },
+          "skipped" : 14
+        }
+      },
+      "startedAt" : "2026-08-28T04:37:06Z",
+      "subsystemPassed" : 0,
+      "subsystemScored" : 0,
+      "topContextContributors" : [
+        "tool:redact_file=491",
+        "tool:search_and_extract=371",
+        "tool:detect_pii=353",
+        "tool:file_read=279",
+        "tool:render_chart=275",
+        "tool:share_artifact=266"
+      ],
+      "totalPassed" : 53,
+      "totalScored" : 90
+    }
+  ]
+}
