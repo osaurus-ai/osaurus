@@ -35,7 +35,7 @@ struct SpawnConfigurationUISourceTests {
         #expect(editor.contains(#"Text("Agent tools + read-only files""#))
         #expect(editor.contains("cancellation-audited subset of their enabled tools"))
         #expect(editor.contains("host read-only file tools"))
-        #expect(editor.contains("modelPickerCache.items.chatModelCandidates"))
+        #expect(editor.contains("modelPickerCache.chatModelCandidates"))
     }
 
     @Test("open custom-agent editor refreshes shared handoff and concurrency state")
