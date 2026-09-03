@@ -33,9 +33,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     /// prompt; consumed on the next foreground activation, which is the first
     /// moment there is a window to host the alert.
     private var telemetryConsentDeferredToActivation = false
-    /// After a silent (login-item/CLI) launch, reopen events are ignored until
-    /// this deadline so the CLI's redundant fallback `open` can't pop a window.
-    private var silentLaunchReopenGraceDeadline: Date?
     let updater = UpdaterViewModel()
 
     private var activityDot: NSView?
@@ -655,11 +652,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         let presentOnboarding = OnboardingService.shared.shouldShowOnboarding
         // Login-item and CLI launches stay hidden in the menu bar (#2609).
         let silentLaunch = isSilentLaunch
-        if silentLaunch {
-            // Covers the CLI's launch → health-poll → fallback-`open` sequence
-            // (worst case ~5s on a slow cold start).
-            silentLaunchReopenGraceDeadline = Date().addingTimeInterval(10)
-        }
         let userInitiatedLaunch = isUserInitiatedLaunch(notification) && !silentLaunch
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
@@ -1150,14 +1142,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     }
 
     public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        // The CLI's launch fallback can fire a second `open` (a reopen event)
-        // seconds after it silently launched us; without this grace window
-        // that reopen pops the chat window and defeats the silent launch.
-        // A real user click lands well after the grace expires.
-        if let deadline = silentLaunchReopenGraceDeadline, Date() < deadline {
-            log.info("Ignoring reopen during silent-launch grace window")
-            return true
-        }
         Task { @MainActor in
             // Show onboarding if not completed (mandatory step)
             if OnboardingService.shared.shouldShowOnboarding {
