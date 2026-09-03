@@ -489,9 +489,10 @@ public final class SwapPressureMonitor: @unchecked Sendable {
         return memo
     }
 
+    // nonisolated(unsafe): every read and write is inside emulationFlagLock.
     private static let emulationFlagLock = NSLock()
-    private static var emulationFlagMemo: Severity?
-    private static var emulationFlagRefreshInFlight = false
+    nonisolated(unsafe) private static var emulationFlagMemo: Severity?
+    nonisolated(unsafe) private static var emulationFlagRefreshInFlight = false
 
     static func parseEmulation(_ raw: String) -> Severity? {
         switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
