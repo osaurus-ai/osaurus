@@ -232,7 +232,9 @@ public struct ContextBudgetManager: Sendable {
                 }
             }
             for (_, result) in turn.toolResults {
-                t += max(1, result.count / TokenEstimator.charsPerToken)
+                // utf8.count: O(1) on native strings; tool results can be
+                // megabytes and this sum reruns per view-body evaluation.
+                t += max(1, result.utf8.count / TokenEstimator.charsPerToken)
             }
             if turn.hasThinking {
                 t += max(1, turn.thinkingLength / TokenEstimator.charsPerToken)
