@@ -692,7 +692,7 @@ enum ConfigApplier {
             // in results — only the ref display names do.
             var botToken: (value: String, display: String)?
             if let raw = section.botTokenRef {
-                let (secret, display) = resolveSecretRef(raw)
+                let (secret, display) = await resolveSecretRef(raw)
                 guard let secret else {
                     results.append(
                         ConfigApplyResult(
@@ -705,7 +705,7 @@ enum ConfigApplier {
             }
             var appToken: (value: String, display: String)?
             if let raw = section.appTokenRef {
-                let (secret, display) = resolveSecretRef(raw)
+                let (secret, display) = await resolveSecretRef(raw)
                 guard let secret else {
                     results.append(
                         ConfigApplyResult(
@@ -800,7 +800,7 @@ enum ConfigApplier {
     @MainActor
     private static func applyMCPServers(
         _ entries: [MCPServerEntry], prune: Bool
-    ) -> [ConfigApplyResult] {
+    ) async -> [ConfigApplyResult] {
         var results: [ConfigApplyResult] = []
         let manager = MCPProviderManager.shared
         var matched = Set<UUID>()
@@ -824,7 +824,7 @@ enum ConfigApplier {
                     // A token reference stores the bearer token directly —
                     // no Settings visit needed when it resolves and lands.
                     if let raw = entry.tokenRef {
-                        let (secret, display) = resolveSecretRef(raw)
+                        let (secret, display) = await resolveSecretRef(raw)
                         if let secret {
                             provider.authType = .bearerToken
                             if MCPProviderKeychain.saveToken(secret, for: provider.id) {
@@ -860,7 +860,7 @@ enum ConfigApplier {
                     }
                     if let refs = entry.secretEnvRefs {
                         for (envKey, raw) in refs.sorted(by: { $0.key < $1.key }) {
-                            let (secret, display) = resolveSecretRef(raw)
+                            let (secret, display) = await resolveSecretRef(raw)
                             guard let secret else {
                                 secretFailure = true
                                 secretMessages.append(
@@ -922,7 +922,7 @@ enum ConfigApplier {
                 var resolvedSecretEnv: [(key: String, value: String, display: String)] = []
                 var unresolved: [String] = []
                 for (envKey, raw) in (entry.secretEnvRefs ?? [:]).sorted(by: { $0.key < $1.key }) {
-                    let (secret, display) = resolveSecretRef(raw)
+                    let (secret, display) = await resolveSecretRef(raw)
                     if let secret {
                         resolvedSecretEnv.append((envKey, secret, display))
                     } else {
@@ -988,7 +988,7 @@ enum ConfigApplier {
                 var token: String? = nil
                 var tokenDisplay: String? = nil
                 if let raw = entry.tokenRef {
-                    let (secret, display) = resolveSecretRef(raw)
+                    let (secret, display) = await resolveSecretRef(raw)
                     guard let secret else {
                         results.append(
                             ConfigApplyResult(
@@ -1194,7 +1194,7 @@ enum ConfigApplier {
                 // sheet. Mirrors the interactive path: entering a key flips
                 // the provider to API-key auth.
                 if let raw = entry.apiKeyRef {
-                    let (secret, display) = resolveSecretRef(raw)
+                    let (secret, display) = await resolveSecretRef(raw)
                     guard let secret else {
                         results.append(
                             ConfigApplyResult(
@@ -1273,11 +1273,22 @@ enum ConfigApplier {
     /// Resolve a `*_ref` document value into (secret, safe display name).
     /// `nil` secret means malformed / missing / empty — callers report by
     /// display only; the value itself never reaches a result or a log.
-    static func resolveSecretRef(_ raw: String) -> (secret: String?, display: String) {
+    static func resolveSecretRef(_ raw: String) async -> (secret: String?, display: String) {
         switch ConfigSecretRef.parse(raw) {
         case .failure:
             return (nil, raw)
         case .success(let ref):
+            // Keychain refs reach securityd through a synchronous
+            // SecItemCopyMatching; resolved on the main actor, that IPC
+            // round-trip has stalled the app for seconds when securityd was
+            // slow. Hop off the cooperative executor for the read. Env refs
+            // are a dictionary lookup and stay inline.
+            if case .keychain = ref.source {
+                let secret = await Task.detached(priority: .userInitiated) {
+                    ref.resolve()
+                }.value
+                return (secret, ref.display)
+            }
             return (ref.resolve(), ref.display)
         }
     }
@@ -1378,7 +1389,7 @@ enum ConfigApplier {
         // is read from env/keychain and stored exactly like an entered one.
         // Validation refuses api_key_ref for the OAuth/pairing resolutions.
         if let raw = entry.apiKeyRef, case .preset = resolution {
-            let (secret, display) = resolveSecretRef(raw)
+            let (secret, display) = await resolveSecretRef(raw)
             guard let secret else {
                 return ProviderAddOutcome(
                     result: ConfigApplyResult(
