@@ -236304,7 +236304,11 @@
     },
     "Queueing video (quoted %@)…": {
       "comment": "A message that appears in the chat log while the system is generating a video. The argument is the price quoted for the video, in credits."
-    }
+    },
+    "Open With": {},
+    "Show in Finder": {},
+    "Document Not Found": {},
+    "This knowledge document no longer exists in its collection.": {}
   },
   "version": "1.1"
 }
