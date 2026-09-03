@@ -360,7 +360,15 @@ public final class RelayTunnelManager: ObservableObject {
         // Re-check after the suspension: another connect may have won the race
         guard webSocketTask == nil || !isConnected else { return }
 
-        let session = Self.makeWebSocketSession()
+        // Detached: building the session reads the disk-backed proxy/server
+        // configuration (a stat plus a possible file read + decode under the
+        // config cache lock), which has stalled the main actor on slow disks.
+        let session = await Task.detached(priority: .userInitiated) {
+            Self.makeWebSocketSession()
+        }.value
+        // The detached hop is another suspension a racing connect could have
+        // crossed; re-check before publishing the new task.
+        guard webSocketTask == nil || !isConnected else { return }
         let task = session.webSocketTask(with: Self.relayURL)
         self.urlSession = session
         self.webSocketTask = task
