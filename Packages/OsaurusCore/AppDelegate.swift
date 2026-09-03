@@ -29,6 +29,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     /// clicks inside our own windows, so this fills the gap for outside clicks.
     private var popoverDismissMonitor: Any?
     private var cancellables: Set<AnyCancellable> = []
+    /// Set when a silent (login-item/CLI) launch skipped the telemetry consent
+    /// prompt; consumed on the next foreground activation, which is the first
+    /// moment there is a window to host the alert.
+    private var telemetryConsentDeferredToActivation = false
     let updater = UpdaterViewModel()
 
     private var activityDot: NSView?
@@ -689,16 +693,27 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // for them. Ask once now (the toast overlay host is up) rather than
             // silently deciding for them. New users / re-onboarders made the
             // choice in onboarding, so this is gated to the no-onboarding path.
-            if !keychainDisabledTestMode && !presentOnboarding && !silentLaunch {
-                maybePromptForTelemetryConsent()
+            if !keychainDisabledTestMode && !presentOnboarding {
+                if silentLaunch {
+                    // No window to host the alert yet; ask on the first
+                    // foreground activation instead so upgraders whose only
+                    // launches are login-item/CLI still get the one-time ask.
+                    self.telemetryConsentDeferredToActivation = true
+                } else {
+                    maybePromptForTelemetryConsent()
+                }
 
                 // One-time Product Hunt launch dialog (July 2026). Delayed
                 // past the consent prompt's own 900ms settle so the two can
                 // never race for a scope; if consent is still pending the
-                // eligibility gate defers to the next activation.
-                Task { @MainActor [weak self] in
-                    try? await Task.sleep(for: .seconds(2))
-                    self?.presentProductHuntLaunchDialogIfEligible()
+                // eligibility gate defers to the next activation. Silent
+                // launches skip it here; `applicationDidBecomeActive`
+                // re-checks eligibility on the next foreground activation.
+                if !silentLaunch {
+                    Task { @MainActor [weak self] in
+                        try? await Task.sleep(for: .seconds(2))
+                        self?.presentProductHuntLaunchDialogIfEligible()
+                    }
                 }
             }
 
@@ -1146,10 +1161,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     /// gates make this a cheap no-op outside the campaign window and after
     /// it has been seen.
     public func applicationDidBecomeActive(_ notification: Notification) {
+        let promptForConsent = telemetryConsentDeferredToActivation
+        telemetryConsentDeferredToActivation = false
+
         // Give the activation (window ordering, focus restoration) a beat to
         // settle so the alert lands in the window the user actually sees.
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+            if promptForConsent {
+                self?.maybePromptForTelemetryConsent()
+            }
             self?.presentProductHuntLaunchDialogIfEligible()
         }
     }
@@ -1812,6 +1833,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
     // Expose a method to show the popover programmatically (e.g., for Cmd+,)
     public func showPopover() {
+        // Onboarding is a mandatory first step (matches the reopen path). A
+        // silently launched fresh install lands here via the status item or
+        // the CLI `ui` command with onboarding never presented; without this
+        // the user reaches chat with no model/agent configured.
+        if OnboardingService.shared.shouldShowOnboarding {
+            showOnboardingWindow()
+            return
+        }
         guard let statusButton = statusItem?.button else { return }
         if let popover, popover.isShown {
             // Already visible; bring app to front
