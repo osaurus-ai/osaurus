@@ -905,7 +905,7 @@ struct SelectableTextView: NSViewRepresentable {
 
     /// Read the markdown parser's inline presentation intent off a run's
     /// attributes. Bridged NSAttributedStrings carry it as an NSNumber.
-    static func inlineIntent(_ attributes: [NSAttributedString.Key: Any]) -> InlinePresentationIntent {
+    nonisolated static func inlineIntent(_ attributes: [NSAttributedString.Key: Any]) -> InlinePresentationIntent {
         if let intent = attributes[.inlinePresentationIntent] as? InlinePresentationIntent {
             return intent
         }
