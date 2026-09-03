@@ -1121,6 +1121,121 @@ final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
         }
     }
 
+    // MARK: Knowledge link context menu
+
+    /// Right-clicking a knowledge link gets a file-shaped menu (Open, Open
+    /// With, Show in Finder, Copy Path) instead of NSTextView's stock text
+    /// menu, whose built-in link items would act on the internal
+    /// `osaurus-knowledge://` URL and do nothing useful.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        let charIndex = characterIndexForInsertion(at: point)
+        guard charIndex < textStorage?.length ?? 0,
+            let link = textStorage?.attribute(.link, at: charIndex, effectiveRange: nil),
+            let url = (link as? URL) ?? (link as? String).flatMap(URL.init(string:)),
+            url.scheme == KnowledgeLinkResolver.scheme,
+            let fileURL = KnowledgeLinkResolver.fileURL(from: url)
+        else { return super.menu(for: event) }
+
+        let menu = NSMenu()
+        // Explicit enabling: with auto-enable, the submenu-only Open With
+        // item would not respect the empty-submenu disable below.
+        menu.autoenablesItems = false
+
+        let open = NSMenuItem(title: L("Open"), action: #selector(openKnowledgeDocument(_:)), keyEquivalent: "")
+        open.target = self
+        open.representedObject = fileURL
+        menu.addItem(open)
+
+        let openWith = NSMenuItem(title: L("Open With"), action: nil, keyEquivalent: "")
+        let submenu = openWithSubmenu(for: fileURL)
+        openWith.submenu = submenu
+        openWith.isEnabled = submenu.items.isEmpty == false
+        menu.addItem(openWith)
+
+        menu.addItem(.separator())
+
+        let reveal = NSMenuItem(
+            title: L("Show in Finder"),
+            action: #selector(showKnowledgeDocumentInFinder(_:)),
+            keyEquivalent: ""
+        )
+        reveal.target = self
+        reveal.representedObject = fileURL
+        menu.addItem(reveal)
+
+        let copyPath = NSMenuItem(
+            title: L("Copy Path"),
+            action: #selector(copyKnowledgeDocumentPath(_:)),
+            keyEquivalent: ""
+        )
+        copyPath.target = self
+        copyPath.representedObject = fileURL
+        menu.addItem(copyPath)
+
+        return menu
+    }
+
+    /// One item per app that can open the file, default handler first.
+    private func openWithSubmenu(for fileURL: URL) -> NSMenu {
+        let submenu = NSMenu()
+        let workspace = NSWorkspace.shared
+        let defaultApp = workspace.urlForApplication(toOpen: fileURL)
+
+        var appURLs = workspace.urlsForApplications(toOpen: fileURL)
+        // Dedupe (the same app can be reported at multiple paths) and put
+        // the default handler first, matching Finder's Open With menu.
+        var seen = Set<String>()
+        appURLs = appURLs.filter { seen.insert($0.standardizedFileURL.path).inserted }
+        appURLs.sort {
+            $0.deletingPathExtension().lastPathComponent
+                .localizedCaseInsensitiveCompare($1.deletingPathExtension().lastPathComponent)
+                == .orderedAscending
+        }
+        if let defaultApp, let i = appURLs.firstIndex(where: {
+            $0.standardizedFileURL.path == defaultApp.standardizedFileURL.path
+        }) {
+            appURLs.remove(at: i)
+            appURLs.insert(defaultApp, at: 0)
+        }
+
+        for appURL in appURLs {
+            let item = NSMenuItem(
+                title: FileManager.default.displayName(atPath: appURL.path),
+                action: #selector(openKnowledgeDocumentWith(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = [fileURL, appURL]
+            let icon = NSWorkspace.shared.icon(forFile: appURL.path)
+            icon.size = NSSize(width: 16, height: 16)
+            item.image = icon
+            submenu.addItem(item)
+        }
+        return submenu
+    }
+
+    @objc private func openKnowledgeDocument(_ sender: NSMenuItem) {
+        guard let fileURL = sender.representedObject as? URL else { return }
+        NSWorkspace.shared.open(fileURL)
+    }
+
+    @objc private func openKnowledgeDocumentWith(_ sender: NSMenuItem) {
+        guard let urls = sender.representedObject as? [URL], urls.count == 2 else { return }
+        NSWorkspace.shared.open([urls[0]], withApplicationAt: urls[1], configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    @objc private func showKnowledgeDocumentInFinder(_ sender: NSMenuItem) {
+        guard let fileURL = sender.representedObject as? URL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+    }
+
+    @objc private func copyKnowledgeDocumentPath(_ sender: NSMenuItem) {
+        guard let fileURL = sender.representedObject as? URL else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(fileURL.path, forType: .string)
+    }
+
     private func handleArtifactLink(_ url: URL) {
         let filename = url.host ?? url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard !filename.isEmpty else { return }
