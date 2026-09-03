@@ -375,7 +375,10 @@ final class WriteKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePre
         var text = "Wrote \(written.count) document(s) to [\(collection.name)]"
         if !parts.isEmpty { text += " (\(parts.joined(separator: ", ")))" }
         text += ":\n"
-        text += written.map { "- \($0.relPath)" }.joined(separator: "\n")
+        // Collection-qualified and backticked: the chat renderer links code
+        // spans that resolve to a real knowledge document, and models tend to
+        // echo this form when telling the user where the file landed.
+        text += written.map { "- `\(collection.name)/\($0.relPath)`" }.joined(separator: "\n")
 
         if !failures.isEmpty {
             text += "\n\nNot written (\(failures.count)):\n"
