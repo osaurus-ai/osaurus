@@ -293,6 +293,48 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         return true
     }
 
+    /// The chat window app-menu keyboard shortcuts act on: the key chat
+    /// window when one is focused, otherwise the last-focused window as long
+    /// as it is still visible. Hidden windows are excluded — unlike ⌘N these
+    /// shortcuts toggle in-window UI, and mutating a window the user cannot
+    /// see (without bringing it forward) would just be silent confusion.
+    private var shortcutTargetState: ChatWindowState? {
+        if let keyId = nsWindows.first(where: { $0.value.isKeyWindow })?.key {
+            return windowStates[keyId]
+        }
+        if let lastId = lastFocusedWindowId, let window = nsWindows[lastId], window.isVisible {
+            return windowStates[lastId]
+        }
+        return nil
+    }
+
+    /// ⌘B: hide/show the focused chat window's session sidebar, mirroring
+    /// the toolbar's sidebar button.
+    public func toggleSidebarInFocusedWindow() {
+        guard let state = shortcutTargetState else { return }
+        withAnimation(state.theme.animationQuick()) {
+            state.showSidebar.toggle()
+        }
+    }
+
+    /// ⇧⌘.: switch the focused chat window to the next agent, wrapping at the
+    /// end of the list. Mirrors picking the next entry in the toolbar's agent
+    /// pill, so it is a no-op on the project page (where the pill hides) and
+    /// while a remote/discovered agent is selected (cycling covers local
+    /// agents only, matching what `agentId` points at).
+    public func cycleAgentInFocusedWindow() {
+        guard let state = shortcutTargetState,
+            !state.isProjectPageVisible,
+            state.selectedDiscoveredAgent == nil,
+            state.selectedRelayAgent == nil
+        else { return }
+        let agents = state.agents
+        guard agents.count > 1,
+            let index = agents.firstIndex(where: { $0.id == state.agentId })
+        else { return }
+        state.switchAgent(to: agents[(index + 1) % agents.count].id)
+    }
+
     /// Open (or focus) a chat window and select the paired remote agent that
     /// owns `providerId`, so the conversation routes to that agent instead of
     /// whatever the window was last pointed at. Mirrors the toolbar's

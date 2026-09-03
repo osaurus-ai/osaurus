@@ -214333,6 +214333,24 @@
         }
       }
     },
+    "Toggle Sidebar": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Seitenleiste ein-/ausblenden" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "사이드바 표시/가리기" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Показать/скрыть боковую панель" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "切换侧边栏" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "切換側邊欄" } }
+      }
+    },
+    "Next Agent": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Nächster Agent" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "다음 에이전트" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Следующий агент" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "下一个智能体" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "下一個智能體" } }
+      }
+    },
     "Toggle Voice Detection": {
       "extractionState": "stale",
       "localizations": {
