@@ -596,6 +596,14 @@ final class NativeCodeBlockView: NSView {
     private var streamingHighlightWork: DispatchWorkItem?
     private static let streamingHighlightInterval: TimeInterval = 0.4
 
+    /// Mid-stream passes re-highlight the entire current code every interval,
+    /// synchronously on main, and JSC's tokenizer cost grows super-linearly —
+    /// past this size a single pass (or a GC pause inside it) can hit the
+    /// hang watchdog. Skip live coloring beyond it; the appended plain text
+    /// keeps streaming, and the finalize pass (under the shared 50k gate)
+    /// colorizes the finished block once.
+    private static let streamingHighlightMaxLength = 16_384
+
     // MARK: Init
 
     override init(frame: NSRect) {
@@ -721,6 +729,7 @@ final class NativeCodeBlockView: NSView {
             guard let self else { return }
             self.streamingHighlightWork = nil
             guard self.lastIsStreaming, let cv = self.codeView else { return }
+            guard self.lastCode.utf16.count <= Self.streamingHighlightMaxLength else { return }
             self.applyHighlighting(
                 to: cv,
                 code: self.lastCode,

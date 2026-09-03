@@ -743,6 +743,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     // Skip speculative warming in that state and let the first
                     // real open pay its own (unavoidable) cost instead.
                     guard !Self.isUnderResourcePressure else { return }
+                    // Highlightr's first touch evaluates highlight.js in a
+                    // JSContext; warm it on a background thread now so the
+                    // first code block a chat cell renders doesn't pay the
+                    // engine boot on main.
+                    prewarmHighlightrOffMain()
                     self?.prewarmManagementWindow()
                     // Warm ChatView's (deep, slow-to-realize) generic metadata too,
                     // spaced out so the two heavy SwiftUI realizations don't stack
