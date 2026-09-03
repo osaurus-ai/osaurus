@@ -14,6 +14,21 @@ struct SystemPermissionProbeTests {
         .init(location: .home, path: "Library/Messages/chat.db"),
     ]
 
+    /// The real sentinels are SQLite databases; the probe now requires this
+    /// exact header, so a genuine grant reads it while a TCC-blocked read
+    /// (throwing OR returning empty/garbage) does not.
+    static let sqliteHeader = Data("SQLite format 3\u{0}".utf8)
+
+    /// Write a valid SQLite-header sentinel at `relative` under `root`.
+    @discardableResult
+    static func writeSentinel(_ relative: String, under root: URL) throws -> URL {
+        let url = root.appendingPathComponent(relative)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try sqliteHeader.write(to: url)
+        return url
+    }
+
     /// The false-positive fix for #2601: the probe must anchor on the SYSTEM
     /// TCC database (absolute, unconditionally FDA-gated), never the per-user
     /// one that some macOS versions let the user read without FDA.
@@ -51,7 +66,7 @@ struct SystemPermissionProbeTests {
             at: tccDatabase.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try Data("test".utf8).write(to: tccDatabase)
+        try Self.sqliteHeader.write(to: tccDatabase)
 
         let granted = SystemPermissionProbe.fullDiskAccessGranted(homeDirectory: root, resources: Self.testResources)
 
@@ -95,7 +110,7 @@ struct SystemPermissionProbeTests {
             at: readable.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try Data("test".utf8).write(to: readable)
+        try Self.sqliteHeader.write(to: readable)
 
         let unreadable = root.appendingPathComponent("Library/Messages/chat.db")
         try FileManager.default.createDirectory(
@@ -118,12 +133,13 @@ struct SystemPermissionProbeTests {
         #expect(!SystemPermissionProbe.fullDiskAccessGranted(homeDirectory: root, resources: Self.testResources))
     }
 
-    /// The probe now READS a byte rather than only opening the handle, so a
-    /// TCC-blocked read no longer reports a false grant (#2601). A genuinely
-    /// empty-but-readable sentinel must still count as readable — reading it
-    /// returns no bytes without throwing, and that must not be mistaken for a
-    /// blocked read.
-    @Test func fullDiskAccessProbeGrantsWhenProtectedFileIsEmptyButReadable() throws {
+    /// Regression for GitHub #2613: on macOS 15.7.9 a TCC-blocked read can
+    /// return EOF/empty instead of throwing, so "opened and read without an
+    /// error" still reported a false grant even after the open→read fix. The
+    /// real sentinels (TCC.db / chat.db) are SQLite databases that always
+    /// begin with the SQLite header, so an empty read must count as NOT
+    /// granted — otherwise a blocked-as-empty read is mistaken for access.
+    @Test func fullDiskAccessProbeRejectsWhenProtectedFileIsEmpty() throws {
         let root = try makeTemporaryHome()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -135,6 +151,38 @@ struct SystemPermissionProbeTests {
             )
             try Data().write(to: url)
         }
+
+        #expect(!SystemPermissionProbe.fullDiskAccessGranted(homeDirectory: root, resources: Self.testResources))
+    }
+
+    /// A readable file whose bytes are NOT the SQLite header (a stale or
+    /// TCC-substituted file) must not flip the probe to granted. This closes
+    /// the same #2613 class where a non-throwing read of the wrong content was
+    /// treated as access.
+    @Test func fullDiskAccessProbeRejectsReadableNonSQLiteContent() throws {
+        let root = try makeTemporaryHome()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        for relative in ["Library/Application Support/com.apple.TCC/TCC.db", "Library/Messages/chat.db"] {
+            let url = root.appendingPathComponent(relative)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data("not a sqlite database at all".utf8).write(to: url)
+        }
+
+        #expect(!SystemPermissionProbe.fullDiskAccessGranted(homeDirectory: root, resources: Self.testResources))
+    }
+
+    /// A genuine grant reads the real SQLite header from every existing
+    /// sentinel and reports granted.
+    @Test func fullDiskAccessProbeGrantsWhenSentinelsHaveSQLiteHeader() throws {
+        let root = try makeTemporaryHome()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try Self.writeSentinel("Library/Application Support/com.apple.TCC/TCC.db", under: root)
+        try Self.writeSentinel("Library/Messages/chat.db", under: root)
 
         #expect(SystemPermissionProbe.fullDiskAccessGranted(homeDirectory: root, resources: Self.testResources))
     }

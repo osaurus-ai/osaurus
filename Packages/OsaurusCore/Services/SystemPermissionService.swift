@@ -77,22 +77,30 @@ enum SystemPermissionProbe {
             && !isDirectory.boolValue
     }
 
+    /// The SQLite file header, present at byte 0 of every TCC.db / chat.db
+    /// sentinel. A genuine Full Disk Access grant reads these exact bytes.
+    private static let sqliteHeader = Data("SQLite format 3\u{0}".utf8)  // 16 bytes
+
     private static func canReadProtectedFile(_ url: URL, fileManager: FileManager) -> Bool {
         guard isRegularFile(url, fileManager: fileManager) else { return false }
 
         do {
             let handle = try FileHandle(forReadingFrom: url)
             defer { try? handle.close() }
-            // Actually READ, don't just open. TCC can permit open() on a
-            // protected file while blocking the read, so an open-succeeds /
-            // close probe reports Full Disk Access as granted when it isn't
-            // (osaurus#2601). A blocked read throws; a real grant returns the
-            // bytes. An empty read that does not throw still counts as
-            // readable (a genuinely empty protected file must not false-fail),
-            // but the real sentinels — TCC.db / chat.db — are never empty, so
-            // a grant reads at least one byte.
-            _ = try handle.read(upToCount: 1)
-            return true
+            // Actually READ the real bytes, don't just open — and require the
+            // true SQLite header, not merely "a read that didn't throw". TCC
+            // can permit open() on a protected file while denying the read, and
+            // on some macOS versions that denial surfaces as an EOF/empty read
+            // rather than an error (osaurus#2601, still reproduced on 15.7.9 in
+            // #2613 despite the open→read fix). The sentinels — TCC.db /
+            // chat.db — are real SQLite databases that always begin with this
+            // header, so:
+            //   • a blocked read throws            -> not granted
+            //   • a blocked read returns empty/EOF -> not granted (the #2613 hole)
+            //   • a substituted/garbage read       -> not granted
+            //   • a real FDA grant                 -> header matches -> granted
+            let data = try handle.read(upToCount: Self.sqliteHeader.count)
+            return data == Self.sqliteHeader
         } catch {
             return false
         }
