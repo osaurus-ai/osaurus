@@ -192,12 +192,9 @@ struct SystemPermissionProbeTests {
         defer { try? FileManager.default.removeItem(at: root) }
 
         for relative in ["Library/Application Support/com.apple.TCC/TCC.db", "Library/Messages/chat.db"] {
-            let url = root.appendingPathComponent(relative)
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try Data("test".utf8).write(to: url)
+            // The probe requires the real SQLite header (#2613), so sentinels
+            // must carry it — arbitrary readable bytes no longer count.
+            try Self.writeSentinel(relative, under: root)
         }
 
         #expect(SystemPermissionProbe.fullDiskAccessGranted(homeDirectory: root, resources: Self.testResources))
