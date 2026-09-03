@@ -179,9 +179,19 @@ public enum AgentSecretsKeychain {
     /// Prompt construction only needs to tell the model which secret names are
     /// available. Fetching the values here is both unnecessary and can hit the
     /// slow Keychain data-decryption path during ordinary chat composition.
+    /// Secret *names* for `agentId`, for listing in the system prompt so the
+    /// model knows which env vars exist. Non-blocking: this is reached
+    /// synchronously from chat-preview composition on the main actor, and a
+    /// cold-cache enumeration takes the process-wide Keychain lock (the
+    /// SecItemCopyMatching that hung the UI). On a cold cache we kick the
+    /// background seed and return `[]`; the next compose (seed lands in ms,
+    /// and composes re-run on every budget/input change) lists the real
+    /// names. The value paths that must be exact — `getAllSecrets` for env
+    /// injection, `deleteAllSecrets` — still go through the blocking
+    /// `allAccounts()`.
     public static func secretIDs(agentId: UUID) -> [String] {
         let prefix = "\(agentId.uuidString)."
-        return allAccounts()
+        return cachedAccountsOrSeed()
             .filter { $0.hasPrefix(prefix) }
             .map { String($0.dropFirst(prefix.count)) }
             .sorted()
@@ -245,6 +255,26 @@ public enum AgentSecretsKeychain {
 
     private static let accountsCacheLock = NSLock()
     nonisolated(unsafe) private static var cachedAccounts: [String]?
+
+    /// Return the memoized account names without ever blocking on the
+    /// Keychain. Warm cache → the names. Cold cache → kick the background
+    /// seed and return `[]` (the caller re-reads on a later pass). The
+    /// in-memory test store and disabled-keychain postures resolve inline
+    /// since neither can block. Backs the display-only `secretIDs` reader.
+    private static func cachedAccountsOrSeed() -> [String] {
+        if let accounts = testingAllAccounts() {
+            return accounts
+        }
+        if KeychainQueryHelpers.disablesKeychainForProcess { return [] }
+        accountsCacheLock.lock()
+        let cached = cachedAccounts
+        accountsCacheLock.unlock()
+        if let cached {
+            return cached
+        }
+        prewarmAccounts()
+        return []
+    }
 
     /// Drop the account-name memo after a mutation so the next read re-queries.
     private static func invalidateAccountsCache() {
