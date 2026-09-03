@@ -1494,33 +1494,44 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         BrowserSessionManager.shared.shutdownAll()
         SharedConfigurationService.shared.remove()
         SharedConfigurationService.shared.flushPendingWork()
-        // Tool enable/policy changes persist via a background serial writer to
-        // keep the UI snappy; drain it here so a toggle made right before quit
-        // isn't lost when `_exit` skips the pending write.
-        ToolConfigurationStore.flushPendingWrites()
-
-        // Same for the Computer Use autonomy policy (its own coalescing writer).
-        ComputerUsePolicyStore.flushPendingWrites()
-
-        // Same for the sandbox and agent-delegation stores.
-        SandboxConfigurationStore.flushPendingWrites()
-        SubagentConfigurationStore.flushPendingWrites()
-
-        // Provider/tool configuration files (remote.json, mcp.json, …) persist
-        // through ConfigDiskWriter's background queue, and credentials persist
-        // through the Keychain serial write queue. Drain both, bounded, so a
-        // provider added or edited right before quit survives relaunch —
-        // otherwise `_exit` below drops the pending write and the provider
-        // comes back disabled or credential-less.
-        ConfigDiskWriter.flushPendingWrites()
-        Keychain.flushPendingWrites()
-
-        // Aptabase batches analytics in an in-memory queue and normally drains
-        // it from its own `willTerminate` observer — but that flush is async and
-        // the `_exit(0)` below skips it. Kick a final bounded, best-effort send
-        // so the last session's events have a chance to leave first. No-op unless
-        // telemetry is live and consented, so most quits pay nothing here.
-        TelemetryService.shared.flushForQuit()
+        // Drain the background writers so edits made right before quit aren't
+        // lost when `_exit` skips their pending writes: the coalescing config
+        // stores (tools / Computer Use policy / sandbox / delegation), the
+        // provider/tool files behind ConfigDiskWriter, and the Keychain serial
+        // write queue. Each drain is individually bounded, but they used to
+        // run back to back on the main thread — up to ~13s of serial waits on
+        // a slow disk, well past the app-hang watchdog. Fan them out and wait
+        // once: every flush blocks on its own queue's semaphore, so they
+        // drain concurrently and the quit pays only the slowest one, capped
+        // by the group deadline below.
+        //
+        // Aptabase rides along: it batches analytics in memory and its own
+        // `willTerminate` flush is async, which `_exit(0)` would skip.
+        // `flushForQuit`'s post-flush sleep gives the send air on its worker
+        // thread while the group waits. No-op unless telemetry is consented.
+        let flushGroup = DispatchGroup()
+        let flushWorkers = DispatchQueue.global(qos: .userInitiated)
+        var flushes: [@Sendable () -> Void] = [
+            { ToolConfigurationStore.flushPendingWrites() },
+            { ComputerUsePolicyStore.flushPendingWrites() },
+            { SandboxConfigurationStore.flushPendingWrites() },
+            { SubagentConfigurationStore.flushPendingWrites() },
+            { ConfigDiskWriter.flushPendingWrites() },
+            { Keychain.flushPendingWrites() },
+        ]
+        if let telemetryFlush = TelemetryService.shared.prepareQuitFlush() {
+            flushes.append(telemetryFlush)
+        }
+        for flush in flushes {
+            flushGroup.enter()
+            flushWorkers.async {
+                flush()
+                flushGroup.leave()
+            }
+        }
+        if flushGroup.wait(timeout: .now() + 3.0) == .timedOut {
+            NSLog("Osaurus quit flush timed out; exiting with writes possibly pending")
+        }
 
         // Hard-exit without running `atexit`/C++ static destructors.
         // AppKit's `terminate:` would otherwise call `exit()`, which runs

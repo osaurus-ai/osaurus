@@ -113,6 +113,19 @@ public final class TelemetryService {
         Thread.sleep(forTimeInterval: timeout)
     }
 
+    /// Quit-path variant for the concurrent flush fan-out: reads the
+    /// main-actor gates here (the caller is on main) and returns the blocking
+    /// send-and-wait as a closure the fan-out can run on a worker thread, so
+    /// the hold no longer parks the main thread. `nil` when telemetry never
+    /// started or lacks consent — those quits pay nothing.
+    public func prepareQuitFlush(timeout: TimeInterval = 0.6) -> (@Sendable () -> Void)? {
+        guard started, isEnabled else { return nil }
+        return {
+            Aptabase.shared.flush()
+            Thread.sleep(forTimeInterval: timeout)
+        }
+    }
+
     // MARK: - Consent
 
     /// The user's consent decision, derived from `consentKey`.
