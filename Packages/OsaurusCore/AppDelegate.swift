@@ -1614,13 +1614,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         serverController.$serverHealth
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.updateStatusItemAndMenu()
+                self?.scheduleStatusItemUpdate()
             }
             .store(in: &cancellables)
         serverController.$isRunning
             .receive(on: RunLoop.main)
             .sink { [weak self] isRunning in
-                self?.updateStatusItemAndMenu()
+                self?.scheduleStatusItemUpdate()
                 if isRunning {
                     self?.completeFirstSuccessfulServerStart()
                 }
@@ -1629,14 +1629,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         serverController.$configuration
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.updateStatusItemAndMenu()
+                self?.scheduleStatusItemUpdate()
             }
             .store(in: &cancellables)
 
         serverController.$activeRequestCount
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.updateStatusItemAndMenu()
+                self?.scheduleStatusItemUpdate()
             }
             .store(in: &cancellables)
 
@@ -1644,7 +1644,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         VADService.shared.$state
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.updateStatusItemAndMenu()
+                self?.scheduleStatusItemUpdate()
             }
             .store(in: &cancellables)
 
@@ -1686,6 +1686,25 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 await PluginManager.shared.ensurePromptCatalogReady()
             }
             PluginRepositoryService.shared.startBackgroundRefresh()
+        }
+    }
+
+    /// Coalesces the status-item refresh to one pass per runloop turn. Five
+    /// publishers funnel into it, and `$activeRequestCount` alone can fire
+    /// several times in a single turn under request churn — each pass detaches
+    /// the menu, re-sets the button image, and rebuilds the tooltip, which is
+    /// enough WindowServer traffic to stall main when the machine is already
+    /// slow. The flag resets before the update runs, so a publish that lands
+    /// during the update still schedules a fresh pass and no state is missed.
+    private var statusItemUpdateScheduled = false
+
+    private func scheduleStatusItemUpdate() {
+        guard !statusItemUpdateScheduled else { return }
+        statusItemUpdateScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.statusItemUpdateScheduled = false
+            self.updateStatusItemAndMenu()
         }
     }
 
