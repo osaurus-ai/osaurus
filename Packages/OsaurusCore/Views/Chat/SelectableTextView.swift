@@ -1106,7 +1106,16 @@ final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
     /// Open the knowledge document a link points at. Falls back to
     /// revealing it in Finder if no app claims the file type.
     private func handleKnowledgeLink(_ url: URL) {
-        guard let fileURL = KnowledgeLinkResolver.fileURL(from: url) else { return }
+        guard let fileURL = KnowledgeLinkResolver.fileURL(from: url) else {
+            // The link resolved at render time but the document is gone now
+            // (deleted, collection removed or disabled). A silent no-op on an
+            // underlined link reads as a broken app, so say what happened.
+            ToastManager.shared.warningLocalized(
+                "Document Not Found",
+                message: "This knowledge document no longer exists in its collection."
+            )
+            return
+        }
         if !NSWorkspace.shared.open(fileURL) {
             NSWorkspace.shared.activateFileViewerSelecting([fileURL])
         }
