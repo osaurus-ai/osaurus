@@ -149,9 +149,18 @@ struct FileDiff: Equatable {
         fallbackPath: String? = nil
     ) -> FileDiff? {
         guard diffProducingToolNames.contains(toolName) else { return nil }
+        // Live previews rescan the whole arg buffer on every streaming
+        // delta, so an uncapped buffer makes the stream's total scan cost
+        // quadratic — a multi-hundred-KB file write has hung the main
+        // thread this way. Past the cap the card freezes (badged as
+        // truncated) and the real diff replaces it when the call lands.
+        // One-shot previews (failed writes) scan the full payload: they
+        // run once, and that card is all the user ever gets.
+        let (scanArgs, cappedForScan) =
+            isStreaming ? cappedScanText(partialArgs) : (partialArgs, false)
         guard
-            let body = partialStringField("content", in: partialArgs)
-                ?? partialStringField("new_string", in: partialArgs),
+            let body = partialStringField("content", in: scanArgs)
+                ?? partialStringField("new_string", in: scanArgs),
             !body.isEmpty
         else { return nil }
 
@@ -164,7 +173,7 @@ struct FileDiff: Equatable {
         // any case/separator variant the raw-text scan here can't.
         let pathKeys =
             ["path"] + (SchemaValidator.keySynonyms["path"] ?? []) + ["filePath", "fileName"]
-        var path = pathKeys.lazy.compactMap { partialStringField($0, in: partialArgs) }
+        var path = pathKeys.lazy.compactMap { partialStringField($0, in: scanArgs) }
             .first(where: { !$0.isEmpty }) ?? ""
         if path.isEmpty, toolName == "file_edit", let fallback = fallbackPath, !fallback.isEmpty {
             path = fallback
@@ -177,10 +186,23 @@ struct FileDiff: Equatable {
             addedCount: lines.count,
             removedCount: 0,
             isPreview: !isStreaming,
-            truncated: false,
+            truncated: cappedForScan,
             rawDiff: body,
             isStreamingPreview: isStreaming
         )
+    }
+
+    /// Per-delta scan budget for live previews (UTF-8 bytes). ~256 KB is
+    /// thousands of preview lines — far past what the card can usefully
+    /// show — while keeping each delta's rescan cost bounded.
+    private static let streamingScanCapUTF8 = 1 << 18
+
+    /// The scan window for one live-preview pass: the full text while it is
+    /// small, a fixed-size prefix once it isn't. Bounding the window is what
+    /// turns per-delta cost from O(stream so far) into O(cap).
+    private static func cappedScanText(_ text: String) -> (String, Bool) {
+        guard text.utf8.count > streamingScanCapUTF8 else { return (text, false) }
+        return (String(text.prefix(streamingScanCapUTF8)), true)
     }
 
     /// Identifies which known file a still-streaming `file_edit` targets when
@@ -196,7 +218,12 @@ struct FileDiff: Equatable {
         partialArgs: String,
         knownFiles: [(path: String, content: String)]
     ) -> String? {
-        guard let excerpt = partialStringField("old_string", in: partialArgs),
+        // Same per-delta scan budget as the live preview: this runs on every
+        // streaming delta too, and both the arg scan and the `contains`
+        // probe below grow with the excerpt. An `old_string` that starts
+        // beyond the cap just leaves the card on its placeholder name.
+        let (scanArgs, _) = cappedScanText(partialArgs)
+        guard let excerpt = partialStringField("old_string", in: scanArgs),
             excerpt.count >= inferenceMinExcerptLength
         else { return nil }
         var match: String?
