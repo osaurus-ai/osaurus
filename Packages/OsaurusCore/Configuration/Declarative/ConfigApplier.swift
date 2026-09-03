@@ -806,6 +806,25 @@ enum ConfigApplier {
         var matched = Set<UUID>()
 
         for entry in entries {
+            // Resolve every secret reference up front. `resolveSecretRef`
+            // suspends (a detached Keychain read that can take seconds), and
+            // the existing-provider branch below copies the live provider,
+            // mutates the copy, and writes the whole struct back — a
+            // suspension inside that window would silently revert any edit
+            // Settings saved meanwhile. With the awaits hoisted here, the
+            // read-mutate-write below is synchronous on the main actor again.
+            var resolvedToken: (secret: String?, display: String)?
+            if let raw = entry.tokenRef {
+                resolvedToken = await resolveSecretRef(raw)
+            }
+            var resolvedEnvRefs: [(key: String, secret: String?, display: String)] = []
+            if let refs = entry.secretEnvRefs {
+                for (envKey, raw) in refs.sorted(by: { $0.key < $1.key }) {
+                    let (secret, display) = await resolveSecretRef(raw)
+                    resolvedEnvRefs.append((envKey, secret, display))
+                }
+            }
+
             let existing = ConfigExporter.manageableMCPProviders().first {
                 $0.name.lowercased() == entry.name.lowercased()
             }
@@ -823,8 +842,7 @@ enum ConfigApplier {
                     }
                     // A token reference stores the bearer token directly —
                     // no Settings visit needed when it resolves and lands.
-                    if let raw = entry.tokenRef {
-                        let (secret, display) = await resolveSecretRef(raw)
+                    if case let (secret, display)? = resolvedToken {
                         if let secret {
                             provider.authType = .bearerToken
                             if MCPProviderKeychain.saveToken(secret, for: provider.id) {
@@ -858,9 +876,8 @@ enum ConfigApplier {
                     {
                         provider.executionHost = host
                     }
-                    if let refs = entry.secretEnvRefs {
-                        for (envKey, raw) in refs.sorted(by: { $0.key < $1.key }) {
-                            let (secret, display) = await resolveSecretRef(raw)
+                    if !resolvedEnvRefs.isEmpty {
+                        for (envKey, secret, display) in resolvedEnvRefs {
                             guard let secret else {
                                 secretFailure = true
                                 secretMessages.append(
@@ -921,8 +938,7 @@ enum ConfigApplier {
                 // a bad reference never leaves a half-configured server.
                 var resolvedSecretEnv: [(key: String, value: String, display: String)] = []
                 var unresolved: [String] = []
-                for (envKey, raw) in (entry.secretEnvRefs ?? [:]).sorted(by: { $0.key < $1.key }) {
-                    let (secret, display) = await resolveSecretRef(raw)
+                for (envKey, secret, display) in resolvedEnvRefs {
                     if let secret {
                         resolvedSecretEnv.append((envKey, secret, display))
                     } else {
@@ -987,8 +1003,7 @@ enum ConfigApplier {
                 var auth = entry.auth.flatMap(ConfigMCPAuth.auth(forKey:)) ?? MCPProviderAuthType.none
                 var token: String? = nil
                 var tokenDisplay: String? = nil
-                if let raw = entry.tokenRef {
-                    let (secret, display) = await resolveSecretRef(raw)
+                if case let (secret, display)? = resolvedToken {
                     guard let secret else {
                         results.append(
                             ConfigApplyResult(
@@ -1203,12 +1218,19 @@ enum ConfigApplier {
                                     + "nothing was stored."))
                         continue
                     }
-                    var updated = frozen
-                    updated.authType = .apiKey
-                    let toSave = updated
+                    // Re-read the provider after the suspension: `frozen` is a
+                    // pre-await copy, and writing it back would revert any
+                    // Settings edit that landed while the Keychain read ran.
+                    // Only the auth flip is ours to write.
+                    let providerId = frozen.id
                     await MainActor.run {
+                        guard
+                            var current = RemoteProviderManager.shared.configuration.providers
+                                .first(where: { $0.id == providerId })
+                        else { return }
+                        current.authType = .apiKey
                         RemoteProviderManager.shared.updateProvider(
-                            toSave, apiKey: secret, oauthTokens: nil)
+                            current, apiKey: secret, oauthTokens: nil)
                     }
                     results.append(
                         ConfigApplyResult(
