@@ -608,7 +608,7 @@ private struct ChatTabItemView: View {
                 // shadow tone (each theme defines it), so the band follows a
                 // theme's tint instead of a neutral black. Full height so it
                 // sits flush with the active silhouette.
-                .fill(theme.shadowColor.opacity(theme.isDark ? 0.45 : 0.12))
+                .fill(theme.shadowColor.opacity(theme.isDark ? 0.2 : 0.06))
                 .overlay(
                     UnevenRoundedRectangle(
                         topLeadingRadius: roundsLeading ? 7 : 0,
