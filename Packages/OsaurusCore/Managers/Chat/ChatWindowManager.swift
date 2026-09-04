@@ -1029,9 +1029,9 @@ private final class ChatPanel: NSPanel {
         }
         switch (flags, key) {
         case (.command, "n") where !state.isProjectPageVisible:
-            // Always a NEW tab (like ⌘T): `startNewChat` would reuse a blank
-            // active tab in place, which reads as "nothing happened".
-            state.newTabInCurrentProject()
+            // Same entry point as the File menu: a blank active tab is
+            // reused in place, anything else opens in a new tab.
+            state.startNewChatInCurrentProject()
             return true
         case (.command, "t"):
             state.newTab()
