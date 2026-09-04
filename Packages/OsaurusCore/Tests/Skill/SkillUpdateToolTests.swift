@@ -125,6 +125,60 @@ struct SkillUpdateToolTests {
         #expect(TextSubagentKind.isExcludedChildTool("update_skill"))
     }
 
+    // MARK: - On-demand exposure
+
+    private static func makeSnapshot(agentId: UUID) -> AgentConfigSnapshot {
+        AgentConfigSnapshot(
+            agentId: agentId,
+            toolsDisabled: false,
+            memoryDisabled: false,
+            autonomousConfig: nil,
+            toolMode: .auto,
+            model: nil,
+            manualToolNames: nil,
+            systemPrompt: "",
+            dbEnabled: false
+        )
+    }
+
+    /// Kept OUT of the turn-1 baseline on purpose: a spec in the baseline is
+    /// a spec in every user's cached prompt prefix, and most users never edit
+    /// a skill from chat. It enters a session only via `capabilities` load,
+    /// which appends to the suffix and leaves the prefix byte-identical.
+    @Test @MainActor
+    func absentFromBaselineButSurvivesAsLoadedTool() {
+        ConfigurationDomainBootstrap.registerBuiltIns()
+        #expect(ToolRegistry.onDemandBuiltInToolNames.contains("update_skill"))
+        let snapshot = Self.makeSnapshot(agentId: UUID())
+
+        let baseline = Set(
+            SystemPromptComposer.resolveTools(snapshot: snapshot, executionMode: .none)
+                .map { $0.function.name })
+        #expect(!baseline.contains("update_skill"))
+
+        let loaded = Set(
+            SystemPromptComposer.resolveTools(
+                snapshot: snapshot,
+                executionMode: .none,
+                additionalToolNames: ["update_skill"]
+            ).map { $0.function.name })
+        #expect(loaded.contains("update_skill"))
+    }
+
+    /// Discovery must advertise it as loadable rather than "not exposed", or
+    /// the model reads a dead end and gives up (observed live before the
+    /// loader carve-out existed).
+    @Test @MainActor
+    func availabilityReportsLoadableWhenOutsideRequestSchema() {
+        let availability = ToolRegistry.shared.availability(
+            forTool: "update_skill",
+            agentAllowedNames: nil,
+            selectedPreflightNames: ["todo", "complete"]
+        )
+        #expect(availability.reasonCodes.contains(.loadableViaCapabilitiesLoad))
+        #expect(!availability.reasonCodes.contains(.notSelectedByPreflight))
+    }
+
     // MARK: - Harness
 
     private static func withTempSkillStorage(

@@ -2393,7 +2393,8 @@ public final class ToolRegistry: ObservableObject {
             }
         }
 
-        if !runtimeManaged,
+        let onDemandBuiltIn = Self.onDemandBuiltInToolNames.contains(toolName)
+        if !runtimeManaged, !onDemandBuiltIn,
             let selectedPreflightNames,
             !selectedPreflightNames.contains(toolName)
         {
@@ -2402,7 +2403,9 @@ public final class ToolRegistry: ObservableObject {
         }
 
         if reasons.isEmpty {
-            if dynamic {
+            // On-demand built-ins read as loadable, not "already in the
+            // baseline": they are deliberately kept out of it.
+            if dynamic || onDemandBuiltIn {
                 appendReason(.loadableViaCapabilitiesLoad)
                 details.append(L("registered \(runtime) tool; load with capabilities_load"))
             } else {
@@ -2531,6 +2534,22 @@ public final class ToolRegistry: ObservableObject {
     /// strips them otherwise. Indexing them would let the model "discover" a
     /// capability it can never load (the per-agent gate re-strips it), so they
     /// are kept out of the search index entirely.
+    /// Built-in tools that are kept OUT of every turn-1 baseline and enter a
+    /// session only through `capabilities` load. The opposite contract from
+    /// `nonDiscoverableBuiltInToolNames`: discoverable, and loadable by any
+    /// agent that has the gateway.
+    ///
+    /// Exists for `update_skill`. Most users never edit a skill from chat, and
+    /// a spec in the baseline is a spec in every user's cached prompt prefix:
+    /// adding one costs a cold prefill per conversation after the update, on
+    /// every device. Loading it on demand appends the schema to the
+    /// conversation suffix instead, so the prefix stays byte-identical for
+    /// everyone who never asks. The `.ask` permission modal remains the gate;
+    /// this set only decides how the spec reaches the schema.
+    nonisolated static let onDemandBuiltInToolNames: Set<String> = [
+        "update_skill"
+    ]
+
     static let nonDiscoverableBuiltInToolNames: Set<String> = [
         ComputerUseTool.toolName,
         BrowserUseTool.toolName,

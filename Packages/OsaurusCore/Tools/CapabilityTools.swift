@@ -1296,11 +1296,14 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         // Built-ins are not dynamic capabilities. If the composer withheld one
         // because Browser/Computer/Spawn/Image/AppleScript, an ability flag,
         // execution mode, model readiness, or Tools is off, an exact guessed ID
-        // must not activate it through the load buffer. The Default agent's
-        // configure-write family is the sole intentional deferred built-in.
+        // must not activate it through the load buffer. Two intentional
+        // exceptions: the Default agent's configure-write family, and the
+        // `onDemandBuiltInToolNames` kept out of the baseline purely for
+        // prompt-prefix stability (see that set for why).
         let isDeferredDefaultConfigureWrite =
             isDefaultAgent && configureWrites.contains(toolId)
-        if isBuiltIn, !isDeferredDefaultConfigureWrite {
+        let isOnDemandBuiltIn = ToolRegistry.onDemandBuiltInToolNames.contains(toolId)
+        if isBuiltIn, !isDeferredDefaultConfigureWrite, !isOnDemandBuiltIn {
             return .failure(
                 LoadFailure(
                     kind: .rejected,

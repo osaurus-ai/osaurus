@@ -2004,9 +2004,6 @@ public struct SystemPromptComposer: Sendable {
     private static let constraintPreservingBootstrapToolNames: Set<String> = [
         "complete", "clarify", "share_artifact",
         "write_knowledge", "delete_knowledge", "edit_knowledge",
-        // Same {find, replace, all} argument contract as `edit_knowledge`,
-        // living in the same property descriptions a compacted spec strips.
-        "update_skill",
     ]
 
     /// Compress first-turn always-loaded specs by keeping the callable name,
