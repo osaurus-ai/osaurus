@@ -5362,6 +5362,9 @@ public actor ModelRuntime {
             modelName: modelName,
             trace: trace,
             suppressProgressUI: parameters.suppressProgressUI,
+            // Background housekeeping (follow-up suggestions, titles) must not
+            // stomp the user's turn in the speculative-decoding readout.
+            recordMTPLastRun: parameters.loadIntent == .interactive,
             onConsumerCancellation: {
                 // Cancel this exact generation wrapper, not every request
                 // using the same model. The wrapper drains the direct vmlx
