@@ -1030,8 +1030,8 @@ struct ChatSessionSidebar: View {
     @State private var agentDragOrder: [Agent]?
     @State private var draggingAgentId: UUID?
     @State private var agentDragOffset: CGFloat = 0
-    /// Centre of the dragged row when the press began, in list space.
-    @State private var agentDragStartMidY: CGFloat = 0
+    /// Cumulative pitch already absorbed by live swaps during this drag.
+    @State private var agentSwappedDistance: CGFloat = 0
     @State private var agentRowFrames: [UUID: CGRect] = [:]
 
     private var displayedAgents: [Agent] { agentDragOrder ?? agentManager.agents }
@@ -1044,31 +1044,46 @@ struct ChatSessionSidebar: View {
 
     private func handleAgentDrag(_ id: UUID, translation: CGFloat) {
         if draggingAgentId != id {
-            guard let frame = agentRowFrames[id] else { return }
             draggingAgentId = id
             agentDragOrder = agentManager.agents
-            agentDragStartMidY = frame.midY
             agentDragOffset = 0
+            agentSwappedDistance = 0
         }
         guard var order = agentDragOrder,
-            let index = order.firstIndex(where: { $0.id == id })
+            var index = order.firstIndex(where: { $0.id == id })
         else { return }
-        let pointerY = agentDragStartMidY + translation
-        // The row whose frame the pointer is over becomes the target slot,
-        // clamped to the movable (non built-in) range.
-        if let target = order.indices.first(where: { i in
-            guard order[i].id != id, let f = agentRowFrames[order[i].id] else { return false }
-            return pointerY >= f.minY && pointerY < f.maxY
-        }), target != index, target >= firstMovableIndex {
-            let agent = order.remove(at: index)
-            order.insert(agent, at: target)
-            agentDragOrder = order
+        let last = order.count - 1
+        // Same scheme as the tab strip: `translation` is cumulative from
+        // the press; subtract the distance already absorbed by swaps so the
+        // row stays glued to the pointer. Each crossing of a neighbour's
+        // midpoint swaps one slot and re-bases by that slot's pitch (the
+        // neighbour's measured height plus the list spacing, since the
+        // selected row is taller than the rest).
+        var offset = translation - agentSwappedDistance
+        while index < last, offset > pitch(of: order[index + 1]) / 2 {
+            let p = pitch(of: order[index + 1])
+            order.swapAt(index, index + 1)
+            index += 1
+            agentSwappedDistance += p
+            offset -= p
         }
-        // Offset relative to where the row currently SITS (its slot moves
-        // when it is reordered), so the row stays glued to the pointer. The
-        // reported frame already includes the current offset, so back it out.
-        let restingMidY = (agentRowFrames[id]?.midY ?? agentDragStartMidY) - agentDragOffset
-        agentDragOffset = pointerY - restingMidY
+        while index > firstMovableIndex, offset < -pitch(of: order[index - 1]) / 2 {
+            let p = pitch(of: order[index - 1])
+            order.swapAt(index, index - 1)
+            index -= 1
+            agentSwappedDistance -= p
+            offset += p
+        }
+        // The end rows can't be pulled past the movable range.
+        if index == firstMovableIndex { offset = max(offset, 0) }
+        if index == last { offset = min(offset, 0) }
+        agentDragOrder = order
+        agentDragOffset = offset
+    }
+
+    /// Distance the dragged row travels to take over `agent`'s slot.
+    private func pitch(of agent: Agent) -> CGFloat {
+        (agentRowFrames[agent.id]?.height ?? 40) + 2
     }
 
     private func endAgentDrag() {
