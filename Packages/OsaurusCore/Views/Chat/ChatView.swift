@@ -4538,22 +4538,6 @@ final class ChatSession: ObservableObject {
         // Output-complete relay: the adapter announces the instant vmlx's
         // terminal info arrives (before the cache-store tail it withholds the
         // stream end for). Stop the cursor and stamp completion right then.
-        let outputCompleteSub = GenerationOutputRelay.shared.$lastCompletion
-            .compactMap { $0 }
-            .filter { $0.at >= streamStartTime }
-            .first()
-            .receive(on: RunLoop.main)
-            .sink { [weak self, weak currentTurn] completion in
-                guard let self, self.activeRunId == runId else { return }
-                if let turn = currentTurn {
-                    if turn.completedAt == nil { turn.completedAt = completion.at }
-                    if turn.lastOutputAt == nil { turn.lastOutputAt = completion.at }
-                }
-                self.outputComplete = true
-                self.rebuildVisibleBlocks()
-                print("[Osaurus][UI] output complete at \(String(format: "%.2f", completion.at.timeIntervalSince(streamStartTime)))s (run end pending on the engine tail)")
-            }
-        defer { outputCompleteSub.cancel() }
         // On every exit — clean end, cancel, tool-invocation throw, or a
         // mid-stream error — drop a tool-call-progress placeholder if it never
         // resolved to a committed tool name, so the "Preparing tool call" card
@@ -4608,6 +4592,41 @@ final class ChatSession: ObservableObject {
         var processor = StreamingDeltaProcessor(turn: currentTurn) { [weak self] in
             self?.rebuildVisibleBlocks()
         }
+        // The relay fires when the ENGINE is done; the last deltas may still
+        // be in flight to this loop and the smooth-streaming pacer may still be
+        // painting them (live: "…247 248 249 2" shown as complete for the
+        // whole tail — the "50" was in the pacing buffer). So completion is
+        // settled, not stamped: wait for a quiet window with no new delta,
+        // drain the processor so every character is painted, THEN stop the
+        // cursor and stamp. No engine output can follow `.info`, so the quiet
+        // window only ever waits on delivery, never on generation.
+        var lastDeltaAt = Date()
+        let outputCompleteSub = GenerationOutputRelay.shared.$lastCompletion
+            .compactMap { $0 }
+            .filter { $0.at >= streamStartTime }
+            .first()
+            .receive(on: RunLoop.main)
+            .sink { [weak self, weak currentTurn] completion in
+                guard let self else { return }
+                Task { @MainActor [weak self, weak currentTurn] in
+                    let quiet: TimeInterval = 0.15
+                    var waited: TimeInterval = 0
+                    while Date().timeIntervalSince(lastDeltaAt) < quiet, waited < 3 {
+                        try? await Task.sleep(nanoseconds: 50_000_000); waited += 0.05
+                    }
+                    await processor.finalize()
+                    guard let self, self.activeRunId == runId else { return }
+                    let at = Date()
+                    if let turn = currentTurn {
+                        if turn.completedAt == nil { turn.completedAt = at }
+                        if turn.lastOutputAt == nil { turn.lastOutputAt = at }
+                    }
+                    self.outputComplete = true
+                    self.rebuildVisibleBlocks()
+                    print("[Osaurus][UI] output complete at \(String(format: "%.2f", at.timeIntervalSince(streamStartTime)))s (engine done at \(String(format: "%.2f", completion.at.timeIntervalSince(streamStartTime)))s; run end pending on the engine tail)")
+                }
+            }
+        defer { outputCompleteSub.cancel() }
 
         // The engine surfaces parsed tool calls by *throwing* a
         // `ServiceToolInvocation` (or `ServiceToolInvocations`) at end-of-
@@ -4874,6 +4893,7 @@ final class ChatSession: ObservableObject {
                         ttftTrace?.emit()
                     }
                     uiDeltaCount += 1
+                    lastDeltaAt = now
                     // Content delta — counted uniformly with reasoning.
                     let tokens = ContextBudgetManager.estimateTokens(for: delta)
                     rollingRate.observe(tokens: tokens, at: now)
