@@ -122,15 +122,14 @@ struct ChatTabStripView: View {
 
     /// Leading inset that keeps the first tab at the CONTENT area's left
     /// edge while the sidebar is open — without it the tabs float over the
-    /// sidebar. When the project back-pill is visible it already supplies
-    /// this inset (and precedes the strip), so the strip adds none.
+    /// sidebar.
     private var sidebarOpenInset: CGFloat {
         let clamped = min(max(storedSidebarWidth, 260), 460)
         return max(0, CGFloat(clamped) - (measuredChromeX ?? leadingChromeWidth))
     }
 
     private var needsSidebarInset: Bool {
-        windowState.showSidebar && windowState.session.projectId == nil
+        windowState.showSidebar
     }
 
     var body: some View {

@@ -9600,10 +9600,16 @@ struct ChatView: View {
 
     private var chatHeader: some View {
         // Team layout: no agent identity in the chat header — the sidebar's
-        // Agents list (open by default) carries the selection.
-        Color.clear
-            .frame(height: 52)
-            .allowsHitTesting(false)
+        // Agents list (open by default) carries the selection. The header
+        // keeps its height and hosts the project pill (moved out of the
+        // title bar, which the session tabs own now).
+        HStack {
+            ChatProjectPill(windowState: windowState, session: session)
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 52)
+        .animation(theme.animationQuick(), value: session.projectId)
     }
 
     // MARK: - Message Thread

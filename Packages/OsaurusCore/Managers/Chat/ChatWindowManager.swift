@@ -970,9 +970,6 @@ private struct ChatFullScreenHeaderView: View {
     var body: some View {
         HStack(spacing: 8) {
             ChatToolbarSidebarView(windowState: windowState)
-            // Full-screen header has no traffic lights, so only the toggle
-            // precedes this item.
-            ChatToolbarBackView(windowState: windowState, leadingChromeWidth: 76)
             // Leading-aligned like Chrome: tabs grow left to right.
             ChatTabStripView(windowState: windowState, leadingChromeWidth: 76)
             Spacer()
@@ -1067,7 +1064,7 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     // item that AppKit still reserved spacing for, so every chat had a dead
     // gap at the toolbar's right edge.
     private static let itemIdentifiers: [NSToolbarItem.Identifier] = [
-        sidebarItem, backItem, tabsItem, .flexibleSpace, actionItem, pinItem,
+        sidebarItem, tabsItem, .flexibleSpace, actionItem, pinItem,
     ]
 
     private weak var windowState: ChatWindowState?
@@ -1098,13 +1095,6 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
                 identifier: itemIdentifier,
                 rootView:
                     ChatToolbarSidebarView(windowState: windowState)
-            )
-
-        case Self.backItem:
-            return makeHostingItem(
-                identifier: itemIdentifier,
-                rootView:
-                    ChatToolbarBackView(windowState: windowState)
             )
 
         case Self.tabsItem:
@@ -1196,111 +1186,6 @@ extension Notification.Name {
 /// belongs to a project (and the project page itself is not up); returns to
 /// that project's detail page. Split into outer/inner views for the same
 /// session-replacement reason as `ChatToolbarActionView` below.
-private struct ChatToolbarBackView: View {
-    @ObservedObject var windowState: ChatWindowState
-    /// Width of the chrome that precedes this item on the leading edge
-    /// (traffic lights + sidebar toggle in the NSToolbar; just the toggle in
-    /// the full-screen header). Subtracted from the live sidebar width to land
-    /// the button at the CONTENT area's top-left, whatever the sidebar's
-    /// user-chosen width.
-    var leadingChromeWidth: CGFloat = 136
-
-    var body: some View {
-        ChatToolbarBackContent(
-            windowState: windowState, session: windowState.session,
-            leadingChromeWidth: leadingChromeWidth)
-    }
-}
-
-private struct ChatToolbarBackContent: View {
-    @ObservedObject var windowState: ChatWindowState
-    @ObservedObject var session: ChatSession
-    var leadingChromeWidth: CGFloat = 136
-    @ObservedObject private var projectManager = ProjectManager.shared
-    /// The sidebar's user-chosen width, shared with the resizable sidebar via
-    /// the same defaults key so the pill tracks the content edge as it moves.
-    @AppStorage("chatSidebarWidth") private var storedSidebarWidth: Double = 240
-
-    @State private var isHovered = false
-
-    /// Leading inset that keeps the pill at the content area's left edge:
-    /// the (clamped) sidebar width minus the chrome that precedes this item.
-    private var sidebarOpenInset: CGFloat {
-        let clamped = min(max(storedSidebarWidth, 260), 460)
-        return max(0, CGFloat(clamped) - leadingChromeWidth)
-    }
-
-    var body: some View {
-        if !windowState.isProjectPageVisible,
-            let projectId = session.projectId,
-            let project = projectManager.project(for: projectId)
-        {
-            Button(action: {
-                NotificationCenter.default.post(
-                    name: .chatToolbarBackToProject,
-                    object: nil,
-                    userInfo: ["windowId": windowState.windowId]
-                )
-            }) {
-                HStack(spacing: 5) {
-                    // A chevron retraces the user's path when they came from
-                    // the project page; a folder signals new navigation when
-                    // the chat was opened straight from the Chats tab.
-                    Image(systemName: windowState.enteredChatFromProjectPage ? "chevron.left" : "folder")
-                        .font(.system(size: 12, weight: .medium))
-                    Text(project.name)
-                        .font(.system(size: 12, weight: .medium))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        // Hug the name. A `.frame(maxWidth:180, alignment:.leading)`
-                        // expanded to the full 180 whenever there was room,
-                        // leaving a dead gap between a short name and the
-                        // capsule's trailing edge. `fixedSize` sizes the pill to
-                        // the text; `lineLimit(1)` keeps a very long name on one
-                        // line.
-                        .fixedSize(horizontal: true, vertical: false)
-                    // Folder mode has no back chevron, so a trailing
-                    // chevron.right signals the pill navigates somewhere.
-                    if !windowState.enteredChatFromProjectPage {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
-                            .opacity(0.7)
-                    }
-                }
-                .foregroundColor(isHovered ? windowState.theme.accentColor : windowState.theme.secondaryText)
-                .padding(.horizontal, 10)
-                .frame(height: 28)
-                .liquidGlassCapsule()
-                .padding(.horizontal, 4)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            // The push/pop cursor helper loses to the title bar's cursor-rect
-            // updates over this wide an item; register a real AppKit cursor
-            // rect instead, which the title bar machinery respects.
-            .background(PointingHandCursorRect())
-            .onHover { hovering in
-                withAnimation(.easeOut(duration: 0.15)) {
-                    isHovered = hovering
-                }
-            }
-            .help(
-                Text(
-                    LocalizedStringKey(
-                        windowState.enteredChatFromProjectPage ? "Back to project" : "Open project"),
-                    bundle: .module))
-            // Anchor to the CONTENT area's top-left, not the window's:
-            // with the sidebar open, the un-padded item would sit over the
-            // sidebar beside its toggle. The inset is the live sidebar width
-            // minus what precedes this item on the leading edge, so the pill
-            // follows the content edge as the sidebar is resized.
-            .padding(.leading, windowState.showSidebar ? sidebarOpenInset : 0)
-            .animation(windowState.theme.animationQuick(), value: windowState.showSidebar)
-            .environment(\.theme, windowState.theme)
-        }
-    }
-}
-
 /// Contextual action button: new-chat plus once a conversation exists.
 /// Split into an outer view (observing `windowState`, which republishes when
 /// the window's session is replaced) and an inner content view holding the
