@@ -1231,13 +1231,28 @@ private struct ThemeColorPickerButton: View {
             }
             .onChange(of: hex) { _, newHex in
                 guard !Self.isSameHex(newHex, lastEmittedHex) else { return }
-                lastEmittedHex = newHex
-                color = Color(themeHex: newHex)
+                // Ignore partial input from the hex text field ("#FF000"
+                // mid-typing). It would parse as black, and pushing that
+                // into the picker would echo "#000000" back over what the
+                // user is typing.
+                guard Self.isCompleteHex(newHex) else { return }
+                let parsed = Color(themeHex: newHex)
+                // Record the hex the picker will report for this color so
+                // the onChange(of: color) echo is treated as our own write
+                // and never rewrites the text field.
+                lastEmittedHex = parsed.toHex(includeAlpha: true)
+                color = parsed
             }
     }
 
     private static func isSameHex(_ a: String, _ b: String) -> Bool {
         a.caseInsensitiveCompare(b) == .orderedSame
+    }
+
+    private static func isCompleteHex(_ value: String) -> Bool {
+        let digits = value.hasPrefix("#") ? String(value.dropFirst()) : value
+        guard [3, 6, 8].contains(digits.count) else { return false }
+        return digits.allSatisfy(\.isHexDigit)
     }
 }
 
