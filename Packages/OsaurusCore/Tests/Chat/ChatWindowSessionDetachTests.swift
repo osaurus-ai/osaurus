@@ -236,7 +236,11 @@ struct ChatWindowSessionDetachTests {
 
     // MARK: Agent switch while streaming
 
-    @Test func switchAgent_whileStreaming_detachesInsteadOfResetting() async throws {
+    /// Switching agents while a run is in flight opens the new agent in a
+    /// NEW tab (browser-style) rather than detaching the run to the
+    /// background registry: the streaming chat keeps its tab, keeps
+    /// rendering, and stays owned by the window.
+    @Test func switchAgent_whileStreaming_opensNewTabAndKeepsRunInItsTab() async throws {
         try await ChatHistoryTestStorage.run {
             let custom = Agent(
                 name: "DetachSwitch-\(UUID().uuidString.prefix(6))",
@@ -253,12 +257,18 @@ struct ChatWindowSessionDetachTests {
 
             #expect(window.session !== running)
             #expect(window.session.agentId == custom.id)
+            #expect(window.session.turns.isEmpty)
             #expect(running.isStreaming, "switching agents must not stop the previous run")
+            // The run stayed in its own tab, still window-owned: no registry
+            // hand-off, and the window now shows two tabs.
+            #expect(window.tabs.count == 2)
+            #expect(window.tabSessions.contains { $0 === running })
+            #expect(running.windowState === window)
             let runningId = try #require(running.sessionId)
-            #expect(mgr.liveTask(forSessionId: runningId) != nil)
+            #expect(mgr.liveTask(forSessionId: runningId) == nil)
 
             try await waitUntil { !running.isStreaming }
-            finalizeTask(ownedBy: running)
+            #expect(running.turns.contains { $0.role == .assistant && $0.content.contains("background answer") })
             window.cleanup()
             _ = await AgentManager.shared.delete(id: custom.id)
         }
