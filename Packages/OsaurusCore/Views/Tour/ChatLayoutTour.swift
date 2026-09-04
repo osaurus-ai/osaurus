@@ -59,7 +59,7 @@ extension ChatTourStop {
                 anchor: .sidebarLensBar,
                 title: L("Agents come first now"),
                 body: L(
-                    "The sidebar now lists your agents, with Projects one tab over. Pick an agent to open it in its own tab, and hover a row for its settings. The selected agent shows which chat is open."
+                    "The sidebar now lists your agents, with Projects one tab over.\n\nPick an agent to open it in its own tab, and hover a row for its settings.\n\nThe selected agent shows which chat is open."
                 )
             ),
             ChatTourStop(
@@ -81,7 +81,7 @@ extension ChatTourStop {
                 anchor: .overflowMenu,
                 title: L("Your chats didn\u{2019}t go anywhere"),
                 body: L(
-                    "Chat history moved out of the sidebar into this menu. See History lists every conversation for the selected agent, with search, import, and the same actions as before."
+                    "Chat history moved out of the sidebar into this menu.\n\nSee History lists every conversation for the selected agent, with search, import, and the same actions as before."
                 ),
                 requiresAction: true,
                 actionHint: L("Hover the ⋯ button to open the menu")
@@ -91,7 +91,7 @@ extension ChatTourStop {
                 anchor: .overflowMenu,
                 title: L("Pin Window and Settings moved too"),
                 body: L(
-                    "The pin and settings buttons now live under the same menu as history, so the title bar stays clear for your tabs."
+                    "The pin and settings buttons now live under the same menu as history.\n\nThat keeps the title bar clear for your tabs."
                 )
             ),
         ]

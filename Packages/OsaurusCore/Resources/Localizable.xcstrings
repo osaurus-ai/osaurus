@@ -69,36 +69,36 @@
         }
       }
     },
-    "Chat history moved out of the sidebar into this menu. See History lists every conversation for the selected agent, with search, import, and the same actions as before.": {
+    "Chat history moved out of the sidebar into this menu.\n\nSee History lists every conversation for the selected agent, with search, import, and the same actions as before.": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Der Chat-Verlauf ist aus der Seitenleiste in dieses Menü umgezogen. „Verlauf anzeigen“ listet alle Unterhaltungen des ausgewählten Agenten, mit Suche, Import und denselben Aktionen wie zuvor."
+            "value": "Der Chat-Verlauf ist aus der Seitenleiste in dieses Menü umgezogen.\n\n„Verlauf anzeigen“ listet alle Unterhaltungen des ausgewählten Agenten, mit Suche, Import und denselben Aktionen wie zuvor."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "채팅 기록이 사이드바에서 이 메뉴로 이동했습니다. 기록 보기에는 선택된 에이전트의 모든 대화가 검색, 가져오기 및 이전과 동일한 작업과 함께 표시됩니다."
+            "value": "채팅 기록이 사이드바에서 이 메뉴로 이동했습니다.\n\n기록 보기에는 선택된 에이전트의 모든 대화가 검색, 가져오기 및 이전과 동일한 작업과 함께 표시됩니다."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "История чатов переехала из боковой панели в это меню. «Показать историю» перечисляет все беседы выбранного агента с поиском, импортом и теми же действиями, что и раньше."
+            "value": "История чатов переехала из боковой панели в это меню.\n\n«Показать историю» перечисляет все беседы выбранного агента с поиском, импортом и теми же действиями, что и раньше."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "聊天历史从侧边栏移到了此菜单。“查看历史”会列出所选智能体的所有对话，并保留搜索、导入和之前的全部操作。"
+            "value": "聊天历史从侧边栏移到了此菜单。\n\n“查看历史”会列出所选智能体的所有对话，并保留搜索、导入和之前的全部操作。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "聊天歷史從側邊欄移到了此選單。「查看歷史」會列出所選智能體的所有對話，並保留搜尋、匯入和之前的全部操作。"
+            "value": "聊天歷史從側邊欄移到了此選單。\n\n「查看歷史」會列出所選智能體的所有對話，並保留搜尋、匯入和之前的全部操作。"
           }
         }
       }
@@ -778,70 +778,70 @@
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在停止…" } }
       }
     },
-    "The pin and settings buttons now live under the same menu as history, so the title bar stays clear for your tabs.": {
+    "The pin and settings buttons now live under the same menu as history.\n\nThat keeps the title bar clear for your tabs.": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Die Schaltflächen zum Anheften und für die Einstellungen befinden sich jetzt im selben Menü wie der Verlauf, damit die Titelleiste frei für deine Tabs bleibt."
+            "value": "Die Schaltflächen zum Anheften und für die Einstellungen befinden sich jetzt im selben Menü wie der Verlauf.\n\nSo bleibt die Titelleiste frei für deine Tabs."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "고정 및 설정 버튼은 이제 기록과 같은 메뉴에 있어 제목 표시줄을 탭을 위해 비워 둘 수 있습니다."
+            "value": "고정 및 설정 버튼은 이제 기록과 같은 메뉴에 있습니다.\n\n덕분에 제목 표시줄을 탭을 위해 비워 둘 수 있습니다."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Кнопки закрепления и настроек теперь находятся в том же меню, что и история, поэтому заголовок окна остаётся свободным для вкладок."
+            "value": "Кнопки закрепления и настроек теперь находятся в том же меню, что и история.\n\nТак заголовок окна остаётся свободным для вкладок."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "固定和设置按钮现在与历史位于同一个菜单中，让标题栏为你的标签页留出空间。"
+            "value": "固定和设置按钮现在与历史位于同一个菜单中。\n\n这样标题栏就能为你的标签页留出空间。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "釘選和設定按鈕現在與歷史位於同一個選單中，讓標題列為你的分頁留出空間。"
+            "value": "釘選和設定按鈕現在與歷史位於同一個選單中。\n\n這樣標題列就能為你的分頁留出空間。"
           }
         }
       }
     },
-    "The sidebar now lists your agents, with Projects one tab over. Pick an agent to open it in its own tab, and hover a row for its settings. The selected agent shows which chat is open.": {
+    "The sidebar now lists your agents, with Projects one tab over.\n\nPick an agent to open it in its own tab, and hover a row for its settings.\n\nThe selected agent shows which chat is open.": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Die Seitenleiste zeigt jetzt deine Agenten, Projekte sind einen Tab weiter. Wähle einen Agenten, um ihn in einem eigenen Tab zu öffnen, und fahre über eine Zeile für die Einstellungen. Der ausgewählte Agent zeigt, welcher Chat geöffnet ist."
+            "value": "Die Seitenleiste zeigt jetzt deine Agenten, Projekte sind einen Tab weiter.\n\nWähle einen Agenten, um ihn in einem eigenen Tab zu öffnen, und fahre über eine Zeile für die Einstellungen.\n\nDer ausgewählte Agent zeigt, welcher Chat geöffnet ist."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "사이드바에 이제 에이전트가 표시되며, 프로젝트는 옆 탭에 있습니다. 에이전트를 선택하면 별도의 탭에서 열리고, 행 위에 마우스를 올리면 설정이 표시됩니다. 선택된 에이전트에는 열려 있는 채팅이 표시됩니다."
+            "value": "사이드바에 이제 에이전트가 표시되며, 프로젝트는 옆 탭에 있습니다.\n\n에이전트를 선택하면 별도의 탭에서 열리고, 행 위에 마우스를 올리면 설정이 표시됩니다.\n\n선택된 에이전트에는 열려 있는 채팅이 표시됩니다."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "В боковой панели теперь перечислены ваши агенты, а проекты находятся на соседней вкладке. Выберите агента, чтобы открыть его в отдельной вкладке, и наведите курсор на строку, чтобы открыть настройки. У выбранного агента показан открытый чат."
+            "value": "В боковой панели теперь перечислены ваши агенты, а проекты находятся на соседней вкладке.\n\nВыберите агента, чтобы открыть его в отдельной вкладке, и наведите курсор на строку, чтобы открыть настройки.\n\nУ выбранного агента показан открытый чат."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "侧边栏现在列出了你的智能体，项目在旁边的选项卡中。选择一个智能体即可在单独的标签页中打开，悬停在行上可查看其设置。选中的智能体会显示当前打开的聊天。"
+            "value": "侧边栏现在列出了你的智能体，项目在旁边的选项卡中。\n\n选择一个智能体即可在单独的标签页中打开，悬停在行上可查看其设置。\n\n选中的智能体会显示当前打开的聊天。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "側邊欄現在列出了你的智能體，專案在旁邊的選項卡中。選擇一個智能體即可在單獨的分頁中開啟，懸停在列上可查看其設定。選取的智能體會顯示目前開啟的聊天。"
+            "value": "側邊欄現在列出了你的智能體，專案在旁邊的選項卡中。\n\n選擇一個智能體即可在單獨的分頁中開啟，懸停在列上可查看其設定。\n\n選取的智能體會顯示目前開啟的聊天。"
           }
         }
       }
