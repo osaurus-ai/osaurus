@@ -182,6 +182,9 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         temperature = try container.decodeIfPresent(Float.self, forKey: .temperature)
         maxTokens = try container.decodeIfPresent(Int.self, forKey: .maxTokens)
         contextLength = try container.decodeIfPresent(Int.self, forKey: .contextLength)
+        // encode(to:) is synthesized and writes this key; omitting the decode
+        // line silently reset the user's context cap on every app relaunch.
+        contextLengthCap = try container.decodeIfPresent(Int.self, forKey: .contextLengthCap)
         topPOverride = try container.decodeIfPresent(Float.self, forKey: .topPOverride)
         maxToolAttempts = try container.decodeIfPresent(Int.self, forKey: .maxToolAttempts)
         defaultModel = try container.decodeIfPresent(String.self, forKey: .defaultModel)

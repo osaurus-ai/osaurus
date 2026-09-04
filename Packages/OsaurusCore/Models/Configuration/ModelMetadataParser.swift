@@ -60,8 +60,23 @@ enum ModelMetadataParser {
         return text.hasSuffix("M") ? num / 1000.0 : num
     }
 
+    /// JANG quant/build profile tags — `JANG_6M`, `JANG_4D`, `JANG_2L`,
+    /// `JANGTQ2` — encode a QUANT PROFILE, not a parameter count. Left in
+    /// place, `Ling-3.0-tiny-JANG_6M` parsed as a 6-MILLION-parameter model
+    /// (0.006B), which flipped `prefersCompactPrompt` on a 16B bundle and
+    /// shrank its prompt/SOUL surface. Strip them before size parsing.
+    private static let jangProfileTagRegex = try? NSRegularExpression(
+        pattern: #"jang_?(?:tq)?\d+[a-z]?"#, options: .caseInsensitive)
+
+    private static func strippingJangProfileTags(_ text: String) -> String {
+        guard let regex = jangProfileTagRegex else { return text }
+        let range = NSRange(text.startIndex..., in: text)
+        return regex.stringByReplacingMatches(
+            in: text, options: [], range: range, withTemplate: "")
+    }
+
     private static func computeParameterCount(from repoId: String) -> String? {
-        let text = repoId.lowercased()
+        let text = strippingJangProfileTags(repoId.lowercased())
         for regex in parameterCountRegexes {
             let range = NSRange(text.startIndex..., in: text)
             if let match = regex.firstMatch(in: text, options: [], range: range),

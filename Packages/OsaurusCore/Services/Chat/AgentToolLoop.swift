@@ -626,8 +626,15 @@ enum AgentLoopBudget {
     /// window is fixed and not described by any `ModelInfo` bundle.
     static let foundationModelIds: Set<String> = ["foundation", "default"]
 
-    /// The Apple Foundation model's usable context window (~4K tokens).
-    static let foundationContextWindow = 4_096
+    /// The Apple Foundation model's usable context window. Probed from the
+    /// real on-device `SystemLanguageModel.contextSize` (memoized) — the same
+    /// source `ContextSizeResolver` uses — so the chip/trim budget and the
+    /// prompt-shape classifier can no longer disagree (hardcoded 4_096 here
+    /// vs a probed 8_192 there on macOS 27+ hardware). Falls back to the
+    /// 4_096 baseline when Foundation is unavailable.
+    static var foundationContextWindow: Int {
+        FoundationModelService.defaultModelContextSize ?? 4_096
+    }
 
     /// Fallback window when neither the model bundle nor the user config
     /// declares one.
