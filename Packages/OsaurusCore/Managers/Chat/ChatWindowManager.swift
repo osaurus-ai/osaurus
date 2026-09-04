@@ -1005,42 +1005,47 @@ private final class ChatPanel: NSPanel {
         super.performClose(sender)
     }
 
-    /// Tab shortcuts that have no menu item, matching browsers: ⌘T new
-    /// tab, ⇧⌘T reopen the last closed tab, ⌃Tab / ⌃⇧Tab and ⇧⌘] / ⇧⌘[
-    /// cycle tabs. (⌘N is a menu item: with the Chat setting on it starts a
-    /// new chat in the frontmost window, which `startNewChat` now opens as
-    /// a tab.) Only fires when no view in the responder chain consumed the
-    /// key.
-    override func keyDown(with event: NSEvent) {
+    /// Browser-style tab shortcuts, handled as KEY EQUIVALENTS so they win
+    /// over menu items and over views that swallow key-downs: ⌘N new tab
+    /// (overrides File ▸ New Window while the chat surface is showing; on
+    /// the project page the menu keeps ⌘N), ⌘T new tab, ⇧⌘T reopen the
+    /// last closed tab, ⌃Tab / ⌃⇧Tab and ⇧⌘] / ⇧⌘[ cycle tabs. AppKit
+    /// asks the key window before the menu bar, so returning true here is
+    /// what keeps New Window from firing.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if let state = chatWindowState, handleTabShortcut(event, state: state) {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    private func handleTabShortcut(_ event: NSEvent, state: ChatWindowState) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if let state = chatWindowState, flags == .command, event.charactersIgnoringModifiers == "t" {
-            state.newTab()
-            return
-        }
-        if let state = chatWindowState, flags == [.command, .shift],
-            event.charactersIgnoringModifiers?.lowercased() == "t"
-        {
-            state.reopenLastClosedTab()
-            return
-        }
+        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
         // Tab key (keyCode 48) with ⌃: next / previous tab.
-        if let state = chatWindowState, event.keyCode == 48, flags.contains(.control) {
+        if event.keyCode == 48, flags.contains(.control) {
             state.selectAdjacentTab(offset: flags.contains(.shift) ? -1 : 1)
-            return
+            return true
         }
-        if let state = chatWindowState, flags == [.command, .shift] {
-            switch event.charactersIgnoringModifiers {
-            case "]", "}":
-                state.selectAdjacentTab(offset: 1)
-                return
-            case "[", "{":
-                state.selectAdjacentTab(offset: -1)
-                return
-            default:
-                break
-            }
+        switch (flags, key) {
+        case (.command, "n") where !state.isProjectPageVisible:
+            state.startNewChatInCurrentProject()
+            return true
+        case (.command, "t"):
+            state.newTab()
+            return true
+        case ([.command, .shift], "t"):
+            state.reopenLastClosedTab()
+            return true
+        case ([.command, .shift], "]"), ([.command, .shift], "}"):
+            state.selectAdjacentTab(offset: 1)
+            return true
+        case ([.command, .shift], "["), ([.command, .shift], "{"):
+            state.selectAdjacentTab(offset: -1)
+            return true
+        default:
+            return false
         }
-        super.keyDown(with: event)
     }
 }
 
