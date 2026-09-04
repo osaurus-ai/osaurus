@@ -197,7 +197,7 @@ struct ChatTabStripView: View {
 
     /// Narrowest chip: avatar only, no title (Chrome's pinned-tab size).
     static let minTabWidth: CGFloat = 56
-    private static let plusButtonReserve: CGFloat = 26
+    private static let plusButtonReserve: CGFloat = 30
     private static let overflowButtonReserve: CGFloat = 40
 
     /// How many tabs fit at the floor width, keeping the active tab visible.
@@ -280,7 +280,7 @@ struct ChatTabStripView: View {
             }
 
             newTabButton
-                .padding(.leading, 2)
+                .padding(.leading, 6)
         }
         // Ideal-size pass: every chip hugs its title, clamped to the
         // computed min/max, so the row width is Σ(clamped hug widths) and
