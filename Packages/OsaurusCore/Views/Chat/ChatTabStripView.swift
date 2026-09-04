@@ -1,4 +1,4 @@
-                            || isProminent(shown[index - 1].id)//
+//
 //  ChatTabStripView.swift
 //  osaurus
 //
@@ -237,7 +237,7 @@ struct ChatTabStripView: View {
                 if index > 0 {
                     separator(
                         hidden: isProminent(tab.id)
-                            || isProminent(windowState.tabs[index - 1].id)
+                            || isProminent(shown[index - 1].id)
                     )
                 }
                 ChatTabItemView(
