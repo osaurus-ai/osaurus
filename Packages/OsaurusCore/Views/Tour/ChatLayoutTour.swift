@@ -119,7 +119,7 @@ public final class ChatLayoutTour: ObservableObject {
     /// Delay before the next card appears after an action-driven stop
     /// completes, so the card doesn't snap in the instant the pointer
     /// reaches the button. Consumed by the overlay; reset on every step.
-     private(set) var cardRevealDelay: TimeInterval = 0
+    @Published private(set) var cardRevealDelay: TimeInterval = 0
 
     let stops = ChatTourStop.all
 
