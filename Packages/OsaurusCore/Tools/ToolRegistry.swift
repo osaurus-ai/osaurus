@@ -1659,6 +1659,16 @@ public final class ToolRegistry: ObservableObject {
             && !runtimeManagedToolNames.contains(name)
     }
 
+    /// Immutable snapshot of every name `isDynamicRegisteredTool` currently
+    /// classifies as dynamic. Exists for `AgentTaskState.dynamicToolClassifier`:
+    /// the registry is MainActor-bound while HTTP/plugin drive the loop
+    /// nonisolated, so the loop gets a value-type snapshot instead of a live
+    /// registry call. The classifier is advisory-only, so a tool registered
+    /// mid-run is merely missed until the next snapshot — never a wrong block.
+    func dynamicToolNameSnapshot() -> Set<String> {
+        Set(toolsByName.keys.filter { isDynamicRegisteredTool(named: $0) })
+    }
+
     /// O(1) single-tool lookup as a `ToolEntry`. Prefer this over
     /// `listTools().first(where:)` on UI/render paths: `listTools()` sorts the
     /// entire registry and rebuilds every tool's JSON schema, while this only

@@ -92,9 +92,14 @@ public final class AgentTaskState {
 
     /// Read-like tools whose results are eligible for replay-on-duplicate and
     /// whose `path` freshness is invalidated by a write to the same path.
+    /// The knowledge trio is here for the same reason the workspace tools
+    /// are: observed live (Raptor 8B), knowledge steps were re-executed with
+    /// IDENTICAL arguments at ~14s each with zero dedupe, because these names
+    /// were simply absent from the state machine.
     private static let readLikeTools: Set<String> = [
         "file_read", "file_search", "sandbox_read_file", "sandbox_search_files",
         "web_search", "search_and_extract",
+        "search_knowledge", "read_knowledge", "list_knowledge",
     ]
 
     /// Search tools have path-less freshness entries. Local search results
@@ -102,14 +107,25 @@ public final class AgentTaskState {
     /// — invalidates them. Applying the same conservative invalidation to web
     /// results permits a deliberate refresh after intervening work while still
     /// replaying an immediate identical re-issue.
+    /// `search_knowledge` and `list_knowledge` are path-less multi-document
+    /// views over the knowledge store, so they take the same "." sentinel and
+    /// wholesale write-invalidation as `web_search`: any knowledge write may
+    /// change what they would return.
     private static let searchLikeTools: Set<String> = [
         "file_search", "sandbox_search_files", "web_search", "search_and_extract",
+        "search_knowledge", "list_knowledge",
     ]
 
     /// Tools that mutate a path; recording one invalidates any fresh read
-    /// signature for that path so a verify-read re-executes.
+    /// signature for that path so a verify-read re-executes. The knowledge
+    /// write tools are here so a knowledge mutation invalidates held
+    /// knowledge reads: `edit_knowledge` targets a top-level `path` like the
+    /// file tools, while `write_knowledge`/`delete_knowledge` are BATCH
+    /// mutations (`documents[].path` / `paths[]`) covered by the multi-path
+    /// extraction in `writeTargetPaths`.
     private static let writeLikeTools: Set<String> = [
         "file_edit", "file_write", "sandbox_write_file",
+        "write_knowledge", "edit_knowledge", "delete_knowledge",
     ]
 
     /// Tools that run arbitrary commands (`rm`/`mv`/redirects can mutate any
@@ -138,8 +154,12 @@ public final class AgentTaskState {
     /// id fails identically on every retry. `shell_run` and `db_*` are
     /// deliberately excluded — identical re-runs there are legitimate retries
     /// that may succeed.
+    /// `read_knowledge` qualifies because its `not_found` for the same
+    /// document path is deterministic on an unchanged store; a knowledge
+    /// write to that path clears the held error via the shared write rules.
     private static let deterministicErrorTools: Set<String> = [
         "file_read", "file_search", "file_edit", "capabilities_load",
+        "read_knowledge",
     ]
 
     /// Read-like tools that can explicitly classify a failure as
@@ -205,6 +225,16 @@ public final class AgentTaskState {
         "search_and_extract", "render_chart", "browser_use", "http_request",
         "file_read", "sandbox_read_file", "shell_run", "sandbox_exec",
     ]
+
+    /// Same-NAME run threshold for DYNAMIC (MCP/plugin) tools. These names
+    /// are unknowable at compile time, so every allowlist above misses them —
+    /// the observed Raptor 8B loop re-queried `underwriting_underwriter_activity`
+    /// with slightly reworded arguments turn after turn and only ever met the
+    /// weakest identical-args advisory. Four consecutive calls (matching the
+    /// `webDiscoveryRunThreshold` allowance for legitimate research) is where
+    /// varied re-querying stops looking like work. Advisory only — the call
+    /// always executes.
+    private static let dynamicToolRunThreshold = 4
 
     // MARK: State
 
@@ -287,6 +317,28 @@ public final class AgentTaskState {
     /// reworded-planning-loop nudge (e.g. `todo` re-issued every turn).
     private var planningRunName: String?
     private var planningRunCount = 0
+    /// Classifies a tool name as DYNAMIC (MCP/plugin/dynamic-native) for the
+    /// same-name run detector. A settable property rather than a `record(...)`
+    /// parameter because the recording call sites (chat loop, HTTP, plugin
+    /// host, subagent runner, evaluators) all funnel through the shared
+    /// driver — threading a parameter would touch every one of them, while a
+    /// property is wired once where the state is constructed and only by
+    /// surfaces that have registry access. The default treats every name as
+    /// non-dynamic, keeping un-wired surfaces byte-identical in behavior.
+    /// Wired with an immutable name-set snapshot (not a live registry call)
+    /// because `ToolRegistry` is MainActor-bound while HTTP/plugin drive the
+    /// loop nonisolated; the detector is advisory-only, so a tool registered
+    /// mid-run is merely missed until the next snapshot.
+    public var dynamicToolClassifier: (String) -> Bool = { _ in false }
+    /// Same-NAME run tracking for dynamic tools, args-ignored — the dynamic
+    /// mirror of `planningRunName` (reset by any interleaved different tool).
+    private var dynamicRunName: String?
+    private var dynamicRunCount = 0
+    /// Executions per signature this message, reads and replays included —
+    /// unlike `nonReadCallCounts`, which exists to arm the repeated-call
+    /// nudge and deliberately excludes reads. Backs the UI's "×N" repeat
+    /// badge via `repeatCount(name:argsJSON:)`.
+    private var callCounts: [CallSignature: Int] = [:]
     /// `web_search` executions since the last concrete retrieval/processing
     /// action, regardless of argument changes or intervening meta tools.
     private var webDiscoveryRunCount = 0
@@ -319,6 +371,11 @@ public final class AgentTaskState {
         repeatedCallName = nil
         planningRunName = nil
         planningRunCount = 0
+        // The classifier itself survives (it is configuration, like
+        // `biasEnabled`); only the run tracking resets with the message.
+        dynamicRunName = nil
+        dynamicRunCount = 0
+        callCounts.removeAll(keepingCapacity: true)
         webDiscoveryRunCount = 0
         successfulEditSnapshots.removeAll(keepingCapacity: true)
     }
@@ -444,6 +501,15 @@ public final class AgentTaskState {
         heldResult(name: name, argsJSON: argsJSON) != nil
     }
 
+    /// How many times this exact call (tool + canonical args) has been
+    /// recorded this message, replays included. Read-only display state for
+    /// the UI's "×N" repeat badge — a loop that re-issues a call should be
+    /// VISIBLE in the transcript, not just counted internally. Never a guard
+    /// input.
+    public func repeatCount(name: String, argsJSON: String) -> Int {
+        callCounts[signature(name: name, argsJSON: argsJSON)] ?? 0
+    }
+
     // MARK: Recording
 
     /// Record a tool call and its result, updating the state machine.
@@ -458,6 +524,12 @@ public final class AgentTaskState {
         lastResultEnvelope = result
         lastResultClass = resultClass
         lastToolName = name
+
+        // Every recorded call counts here — reads, writes, and replayed
+        // duplicates alike (the driver records replays too, so the transcript
+        // and the state machine stay in sync). This is display bookkeeping
+        // for `repeatCount`, never a guard input.
+        callCounts[sig] = (callCounts[sig] ?? 0) + 1
 
         // An exec can mutate ANY path (rm/mv/redirects, scripts) — wipe all
         // fresh reads so no post-mutation verify-read replays stale content.
@@ -482,19 +554,34 @@ public final class AgentTaskState {
         // may make the identical call succeed (e.g. file_write creates the
         // file a held `not_found` read complained about), and search errors
         // depend on many paths so any write clears them.
+        // One write can target several paths: the file tools take a single
+        // `path`, but `write_knowledge`/`delete_knowledge` are batch
+        // mutations (`documents[].path` / `paths[]`) — invalidate against
+        // the whole target set so a knowledge write stales every held
+        // knowledge read it touched. Search entries are wiped wholesale
+        // regardless of target (searchLikeTools rule above).
+        if Self.writeLikeTools.contains(name) {
+            let targetCanonicals = Set(writeTargetPaths(argsJSON).map(Self.canonicalPath))
+            if !targetCanonicals.isEmpty {
+                freshReads = freshReads.filter { entry in
+                    if Self.searchLikeTools.contains(entry.key.name) { return false }
+                    return !targetCanonicals.contains(entry.value.canonicalPath)
+                }
+                heldErrors = heldErrors.filter { entry in
+                    if Self.searchLikeTools.contains(entry.key.name) { return false }
+                    guard let held = entry.value.canonicalPath else { return true }
+                    return !targetCanonicals.contains(held)
+                }
+                heldAppends = heldAppends.filter {
+                    !targetCanonicals.contains($0.value.canonicalPath)
+                }
+            }
+        }
+        // Append holds and the stale-rewrite snapshot are single-path file
+        // semantics — they key on the top-level `path` the file tools use, so
+        // batch knowledge writes (no top-level `path`) never reach them.
         if Self.writeLikeTools.contains(name), let target = pathArgument(argsJSON) {
             let targetCanonical = Self.canonicalPath(target)
-            freshReads = freshReads.filter { entry in
-                if Self.searchLikeTools.contains(entry.key.name) { return false }
-                return entry.value.canonicalPath != targetCanonical
-            }
-            heldErrors = heldErrors.filter { entry in
-                if Self.searchLikeTools.contains(entry.key.name) { return false }
-                return entry.value.canonicalPath != targetCanonical
-            }
-            heldAppends = heldAppends.filter {
-                $0.value.canonicalPath != targetCanonical
-            }
             if Self.isAppendWrite(name: name, argsJSON: argsJSON),
                 ToolEnvelope.isSuccess(result),
                 let payload = successPayload
@@ -610,6 +697,23 @@ public final class AgentTaskState {
             planningRunCount = 0
         }
 
+        // Same-NAME run for DYNAMIC (MCP/plugin) tools, args-ignored — the
+        // dynamic mirror of the planning run above. These names can't appear
+        // in any compile-time allowlist, so the observed loop class (an 8B
+        // re-querying `underwriting_underwriter_activity` with reworded
+        // arguments every turn) was invisible to every detector except the
+        // identical-args counter, which reworded arguments defeat. Any
+        // interleaved different tool resets the run — consecutive varied
+        // calls to ONE dynamic name are the stuck signal, alternating tools
+        // are work. Advisory only; the call always executes.
+        if dynamicToolClassifier(name) {
+            dynamicRunCount = (previousToolName == name) ? dynamicRunCount + 1 : 1
+            dynamicRunName = dynamicRunCount >= Self.dynamicToolRunThreshold ? name : nil
+        } else {
+            dynamicRunName = nil
+            dynamicRunCount = 0
+        }
+
         // Discovery-to-retrieval transition guard. Different query text and
         // meta-tool detours must not defeat it: the observed Bonsai failure
         // repeatedly rephrased the same request, then loaded/discovered more
@@ -710,6 +814,16 @@ public final class AgentTaskState {
         if let name = planningRunName {
             return
                 "You have called `\(name)` \(Self.repeatedCallThreshold)+ times in a row without taking any other action. Re-planning is not progress — if you already have what you need, execute the next concrete step or finish the task; otherwise call a different tool. Do not issue another `\(name)` now."
+        }
+
+        // Same-name dynamic-tool run: reworded re-queries of one MCP/plugin
+        // tool. Checked AFTER the identical-args nudge above — when the
+        // current call is also an exact repeat past `repeatedCallThreshold`,
+        // that stronger notice returns first, so a duplicate never collects
+        // both nudges for the same call.
+        if let name = dynamicRunName {
+            return
+                "You have called `\(name)` \(dynamicRunCount) times in a row with varying arguments. If the results did not answer the question, state what is missing instead of re-querying; repeating similar queries will not produce different data."
         }
 
         // Reworded discovery loop: the model has URLs/snippets but keeps
@@ -982,6 +1096,28 @@ public final class AgentTaskState {
         if let p = dict["path"] as? String, !p.isEmpty { return p }
         if let p = dict["file_path"] as? String, !p.isEmpty { return p }
         return nil
+    }
+
+    /// ALL paths a write-like call targets. The file tools carry one
+    /// top-level `path`; `write_knowledge` carries `documents[].path` and
+    /// `delete_knowledge` carries `paths[]` — a batch mutation must
+    /// invalidate every document it touched, not silently none because the
+    /// single-path probe came back nil.
+    private func writeTargetPaths(_ argsJSON: String) -> [String] {
+        if let single = pathArgument(argsJSON) { return [single] }
+        guard let data = argsJSON.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return [] }
+        if let documents = dict["documents"] as? [[String: Any]] {
+            return documents.compactMap { doc in
+                guard let p = doc["path"] as? String, !p.isEmpty else { return nil }
+                return p
+            }
+        }
+        if let paths = dict["paths"] as? [String] {
+            return paths.filter { !$0.isEmpty }
+        }
+        return []
     }
 
     private static func isAppendWrite(name: String, argsJSON: String) -> Bool {

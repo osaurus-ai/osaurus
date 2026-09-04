@@ -56,6 +56,11 @@ public enum ChatSessionExporter {
 
         let agentLabel = assistantLabel(for: session)
         var previousTurnAnchor: Date? = nil
+        // Repeat detection for exported tool calls, using the SAME signature
+        // (name + canonical args) as `AgentTaskState`'s dedupe and the UI's
+        // "×N" badge. Reset at each user message to mirror `beginMessage()`:
+        // a repeat is a within-message loop signal, not a cross-message one.
+        var toolCallOrdinals: [String: Int] = [:]
         for (idx, turn) in session.turns.enumerated() {
             let role = roleLabel(for: turn, assistantLabel: agentLabel)
             let suffix = timingSuffix(for: turn, options: options, previousAnchor: previousTurnAnchor)
@@ -74,10 +79,28 @@ public enum ChatSessionExporter {
                 }
                 lines.append("")
             }
+            if turn.role == .user {
+                toolCallOrdinals.removeAll(keepingCapacity: true)
+            }
             if let calls = turn.toolCalls, !calls.isEmpty {
                 lines.append("**Tool calls**")
                 for call in calls {
-                    lines.append("- `\(call.function.name)` — `\(call.function.arguments)`")
+                    var line = "- `\(call.function.name)` — `\(call.function.arguments)`"
+                    if let duration = turn.toolCallDurations[call.id] {
+                        line += String(format: " — %.1fs", duration)
+                    }
+                    let key =
+                        call.function.name + "\u{1F}"
+                        + AgentTaskState.canonicalArgs(call.function.arguments)
+                    let ordinal = (toolCallOrdinals[key] ?? 0) + 1
+                    toolCallOrdinals[key] = ordinal
+                    // An exported loop must read as a loop — durations and
+                    // repeat markers are how a reviewer sees "3 × 14s spent
+                    // re-issuing one call" instead of three ordinary steps.
+                    if ordinal > 1 {
+                        line += " (repeat ×\(ordinal))"
+                    }
+                    lines.append(line)
                 }
                 lines.append("")
             }

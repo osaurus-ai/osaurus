@@ -22,9 +22,17 @@ struct ToolCallItem: Equatable {
     /// How long the call took to finish (seconds), shown as "· 1.2s". Nil until
     /// measured / for calls whose duration wasn't recorded.
     var duration: TimeInterval? = nil
+    /// Which occurrence of this exact call (name + canonical args) this is
+    /// since the last user message, shown as "· ×N" when > 1. Computed from
+    /// the transcript at block-build time (not read from `AgentTaskState`,
+    /// whose counters reset on the NEXT `beginMessage` — a badge sourced
+    /// there would vanish from history as soon as the next send began).
+    /// A repeating loop should be VISIBLE, not just internally counted.
+    var repeatCount: Int = 1
 
     static func == (lhs: ToolCallItem, rhs: ToolCallItem) -> Bool {
         lhs.call.id == rhs.call.id && lhs.result == rhs.result && lhs.duration == rhs.duration
+            && lhs.repeatCount == rhs.repeatCount
     }
 }
 
@@ -519,7 +527,12 @@ extension ContentBlock {
         from turns: [ChatTurn],
         streamingTurnId: UUID?,
         agentName: String,
-        previousTurn: ChatTurn? = nil
+        previousTurn: ChatTurn? = nil,
+        // callId → occurrence ordinal for the "×N" repeat badge, computed by
+        // `BlockMemoizer` over the FULL transcript (this function may only be
+        // given a suffix of it on the incremental paths). Nil (tests, other
+        // callers) renders every call unbadged.
+        repeatCounts: [String: Int]? = nil
     ) -> [ContentBlock] {
         var blocks: [ContentBlock] = []
         var previousRole: MessageRole? = previousTurn?.role
@@ -773,7 +786,10 @@ extension ContentBlock {
                         // phases, so removing it at completion read as a
                         // flicker; the card alone also lost the duration badge.
                         regularItems.append(
-                            ToolCallItem(call: call, result: result, duration: turn.toolCallDurations[call.id])
+                            ToolCallItem(
+                                call: call, result: result,
+                                duration: turn.toolCallDurations[call.id],
+                                repeatCount: repeatCounts?[call.id] ?? 1)
                         )
                         flushRegularItems()
                         turnBlocks.append(
@@ -798,7 +814,10 @@ extension ContentBlock {
                         // failed row (error in the title + expandable envelope)
                         // with the content as a "preview"-badged card below.
                         regularItems.append(
-                            ToolCallItem(call: call, result: result, duration: turn.toolCallDurations[call.id])
+                            ToolCallItem(
+                                call: call, result: result,
+                                duration: turn.toolCallDurations[call.id],
+                                repeatCount: repeatCounts?[call.id] ?? 1)
                         )
                         flushRegularItems()
                         turnBlocks.append(
@@ -824,7 +843,9 @@ extension ContentBlock {
                         // real diff replaces the card under the same block id
                         // when the result lands.
                         regularItems.append(
-                            ToolCallItem(call: call, result: nil, duration: nil)
+                            ToolCallItem(
+                                call: call, result: nil, duration: nil,
+                                repeatCount: repeatCounts?[call.id] ?? 1)
                         )
                         flushRegularItems()
                         turnBlocks.append(
@@ -832,7 +853,10 @@ extension ContentBlock {
                         )
                     } else {
                         regularItems.append(
-                            ToolCallItem(call: call, result: result, duration: turn.toolCallDurations[call.id])
+                            ToolCallItem(
+                                call: call, result: result,
+                                duration: turn.toolCallDurations[call.id],
+                                repeatCount: repeatCounts?[call.id] ?? 1)
                         )
                     }
                 }

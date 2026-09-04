@@ -6394,6 +6394,12 @@ final class ChatSession: ObservableObject {
                     // Reset within-message dedupe/bias tracking for this user
                     // turn (lastListing intentionally persists across messages).
                     taskState.beginMessage()
+                    // Refresh the dynamic-tool classifier per message: MCP /
+                    // plugin tools can (dis)connect between sends, and the
+                    // snapshot keeps the MainActor-bound registry out of the
+                    // loop's isolation (see `dynamicToolClassifier`).
+                    let dynamicToolNames = ToolRegistry.shared.dynamicToolNameSnapshot()
+                    taskState.dynamicToolClassifier = { dynamicToolNames.contains($0) }
                     // Transient stream errors (e.g. provider closes connection
                     // mid-tool-args, see `RemoteProviderService` truncation
                     // detection) shouldn't immediately surface to the user — they

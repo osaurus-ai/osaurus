@@ -36,6 +36,16 @@ final class BlockMemoizer {
     private var lastStreamingTurnId: UUID?
     private let streamingMaxBlocks = 80
     private let nonStreamingMaxBlocks = 400
+    /// callId → occurrence ordinal of that exact call (name + canonical args)
+    /// since the last user message; feeds the "×N" repeat badge. Owned HERE
+    /// rather than computed inside `generateBlocks` because the incremental /
+    /// append paths hand `generateBlocks` only a SUFFIX of the turns — a
+    /// counter local to it would undercount repeats spanning earlier turns
+    /// and the badge would change value on the next full rebuild. Recomputed
+    /// only when the transcript's total call count changes (canonicalising
+    /// args is a JSON parse per call — too much for every streaming sync).
+    private var cachedRepeatCounts: [String: Int] = [:]
+    private var lastRepeatCallTotal = -1
 
     /// Maps each block's turnId to its visual group's header turnId.
     /// Updated alongside blocks in `blocks(from:...)`.
@@ -69,6 +79,16 @@ final class BlockMemoizer {
             && streamingTurnId == lastStreamingTurnId
         {
             return limited(streaming: streamingTurnId != nil)
+        }
+
+        // Refresh the repeat-badge map when the set of calls could have
+        // changed: a new call arrived (total moved) or the transcript was
+        // structurally replaced (version bump / turn-count change with an
+        // unchanged total, e.g. history reload).
+        let callTotal = turns.reduce(0) { $0 + ($1.toolCalls?.count ?? 0) }
+        if callTotal != lastRepeatCallTotal || version != lastVersion || count != lastCount {
+            cachedRepeatCounts = Self.repeatCounts(for: turns)
+            lastRepeatCallTotal = callTotal
         }
 
         // Incremental: only last turn's content changed during streaming
@@ -112,7 +132,8 @@ final class BlockMemoizer {
             blocks = ContentBlock.generateBlocks(
                 from: turns,
                 streamingTurnId: streamingTurnId,
-                agentName: agentName
+                agentName: agentName,
+                repeatCounts: cachedRepeatCounts
             )
             wasIncremental = false
         }
@@ -162,7 +183,8 @@ final class BlockMemoizer {
             return ContentBlock.generateBlocks(
                 from: turns,
                 streamingTurnId: streamingTurnId,
-                agentName: agentName
+                agentName: agentName,
+                repeatCounts: cachedRepeatCounts
             )
         }
 
@@ -174,11 +196,14 @@ final class BlockMemoizer {
             ? turns.prefix(turnIndex).last { $0.role != .tool }
             : nil
 
+        // `cachedRepeatCounts` is keyed by call id over the FULL transcript,
+        // so handing it to a suffix regeneration stays correct.
         let freshBlocks = ContentBlock.generateBlocks(
             from: turnsToGenerate,
             streamingTurnId: streamingTurnId,
             agentName: agentName,
-            previousTurn: previousTurn
+            previousTurn: previousTurn,
+            repeatCounts: cachedRepeatCounts
         )
 
         return stablePrefix + freshBlocks
@@ -221,6 +246,38 @@ final class BlockMemoizer {
         lastVersion = -1
         lastStreamingTurnId = nil
         lastAgentName = nil
+        cachedRepeatCounts = [:]
+        lastRepeatCallTotal = -1
+    }
+
+    // MARK: - Repeat counts
+
+    /// Occurrence ordinal per call id: the Nth time the same call (name +
+    /// canonical args, matching `AgentTaskState`'s dedupe signature exactly)
+    /// appears since the last USER message. Resetting at user turns mirrors
+    /// `AgentTaskState.beginMessage()` — a repeat is a within-message stuck
+    /// signal, and the same question asked again in a later message must not
+    /// badge its first call "×2".
+    private static func repeatCounts(for turns: [ChatTurn]) -> [String: Int] {
+        var ordinalBySignature: [String: Int] = [:]
+        var byCallId: [String: Int] = [:]
+        for turn in turns {
+            if turn.role == .user {
+                ordinalBySignature.removeAll(keepingCapacity: true)
+                continue
+            }
+            for call in turn.toolCalls ?? [] {
+                // U+1F is an unprintable joiner that cannot appear in a tool
+                // name, so the key never collides across name/args boundaries.
+                let key =
+                    call.function.name + "\u{1F}"
+                    + AgentTaskState.canonicalArgs(call.function.arguments)
+                let ordinal = (ordinalBySignature[key] ?? 0) + 1
+                ordinalBySignature[key] = ordinal
+                byCallId[call.id] = ordinal
+            }
+        }
+        return byCallId
     }
 
     // MARK: - Group Header Map

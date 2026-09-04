@@ -1130,7 +1130,7 @@ final class NativeToolCallRowView: NSView {
                 }
             }()
             // Append the recorded duration after an interpunct, dimmed.
-            if item.duration != nil || sourceTag != nil {
+            if item.duration != nil || sourceTag != nil || item.repeatCount > 1 {
                 let s = NSMutableAttributedString(
                     string: past,
                     attributes: [.font: titleFont, .foregroundColor: NSColor(theme.primaryText)]
@@ -1153,6 +1153,23 @@ final class NativeToolCallRowView: NSView {
                             attributes: [
                                 .font: NSFont.systemFont(ofSize: 12, weight: .regular),
                                 .foregroundColor: NSColor(theme.tertiaryText),
+                            ]
+                        )
+                    )
+                }
+                // Repeat badge: the Nth identical call (name + canonical args)
+                // this message. Without it a looping model reads as N distinct
+                // productive steps — the observed Raptor 8B run re-executed
+                // identical knowledge calls at ~14s each and the transcript
+                // showed nothing amiss. Slightly brighter than the duration:
+                // a repeat is a signal, not metadata.
+                if item.repeatCount > 1 {
+                    s.append(
+                        NSAttributedString(
+                            string: " · ×\(item.repeatCount)",
+                            attributes: [
+                                .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+                                .foregroundColor: NSColor(theme.secondaryText),
                             ]
                         )
                     )
