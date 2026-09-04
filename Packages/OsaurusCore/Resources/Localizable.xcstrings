@@ -1,6 +1,40 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Close Tab": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tab schließen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "탭 닫기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Закрыть вкладку"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭标签页"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "關閉分頁"
+          }
+        }
+      }
+    },
     "Generating": {
       "localizations": {
         "de": { "stringUnit": { "state": "translated", "value": "Generierung" } },
@@ -8,6 +42,40 @@
         "ru": { "stringUnit": { "state": "translated", "value": "Генерация" } },
         "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在生成" } },
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在生成" } }
+      }
+    },
+    "Go to that tab": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zu diesem Tab wechseln"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "해당 탭으로 이동"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перейти к этой вкладке"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前往该标签页"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前往該分頁"
+          }
+        }
       }
     },
     "Inference now": {
@@ -37,6 +105,210 @@
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在載入模型" } }
       }
     },
+    "More Tabs": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weitere Tabs"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "더 많은 탭"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Другие вкладки"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更多标签页"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更多分頁"
+          }
+        }
+      }
+    },
+    "New Agent": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neuer Agent"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "새 에이전트"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Новый агент"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新建智能体"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新建智能體"
+          }
+        }
+      }
+    },
+    "New Tab": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neuer Tab"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "새 탭"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Новая вкладка"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新建标签页"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新增分頁"
+          }
+        }
+      }
+    },
+    "Only one local model can run at a time, and another tab in this window is using it right now. Wait for that reply to finish, stop it, or switch this chat to a remote model.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Es kann immer nur ein lokales Modell gleichzeitig ausgeführt werden, und ein anderer Tab in diesem Fenster verwendet es gerade. Warte, bis diese Antwort abgeschlossen ist, halte sie an oder wechsle in diesem Chat zu einem Remote-Modell."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "로컬 모델은 한 번에 하나만 실행할 수 있으며, 현재 이 창의 다른 탭에서 사용 중입니다. 해당 응답이 완료될 때까지 기다리거나, 중지하거나, 이 채팅을 원격 모델로 전환하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Одновременно может работать только одна локальная модель, и прямо сейчас её использует другая вкладка этого окна. Подождите, пока ответ завершится, остановите его или переключите этот чат на удалённую модель."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一次只能运行一个本地模型，目前此窗口的另一个标签页正在使用它。请等待该回复完成、停止它，或将此聊天切换为远程模型。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一次只能運行一個本地模型，目前此視窗的另一個分頁正在使用它。請等待該回覆完成、停止它，或將此聊天切換為遠端模型。"
+          }
+        }
+      }
+    },
+    "Open in New Tab": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In neuem Tab öffnen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "새 탭에서 열기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открыть в новой вкладке"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在新标签页中打开"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在新分頁中開啟"
+          }
+        }
+      }
+    },
+    "Pin Window": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fenster anheften"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "창 고정"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Закрепить окно"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "固定窗口"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "釘選視窗"
+          }
+        }
+      }
+    },
     "Processing prompt": {
       "localizations": {
         "de": { "stringUnit": { "state": "translated", "value": "Eingabe wird verarbeitet" } },
@@ -53,6 +325,40 @@
         "ru": { "stringUnit": { "state": "translated", "value": "Сохранение кэша" } },
         "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在保存缓存" } },
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在儲存快取" } }
+      }
+    },
+    "See History": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verlauf anzeigen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "기록 보기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показать историю"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看历史"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看歷史"
+          }
+        }
       }
     },
     "Stopping…": {
@@ -127,6 +433,40 @@
         "ru": { "stringUnit": { "state": "translated", "value": "Начать новый чат" } },
         "zh-Hans": { "stringUnit": { "state": "translated", "value": "开始新聊天" } },
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "開始新聊天" } }
+      }
+    },
+    "Unpin Window": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fenster lösen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "창 고정 해제"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открепить окно"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消固定窗口"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消釘選視窗"
+          }
+        }
       }
     },
     "You switched from %@ to %@ in this conversation.": {
