@@ -434,6 +434,22 @@ struct ChatTourOverlayView: View {
     }
 
     private static let spotlightPadding: CGFloat = 6
+
+    /// Pad the reported anchor frame into the spotlight. The tab strip's
+    /// reported frame runs a little left of the chips (the strip's own
+    /// leading inset and the active tab's flare) and stops short of the
+    /// plus button's hit circle, so it gets an asymmetric correction.
+    private static func calibrated(_ frame: CGRect, for anchor: ChatTourAnchor) -> CGRect {
+        let p = spotlightPadding
+        switch anchor {
+        case .tabStrip:
+            return CGRect(
+                x: frame.minX + 12, y: frame.minY - p,
+                width: frame.width - 12 + 10, height: frame.height + 2 * p)
+        default:
+            return frame.insetBy(dx: -p, dy: -p)
+        }
+    }
     private static let cardWidth: CGFloat = 320
 
     var body: some View {
@@ -443,8 +459,9 @@ struct ChatTourOverlayView: View {
             // Window coords are bottom-left; SwiftUI is top-left.
             // AppKit (bottom-left) cutout for the blur mask, SwiftUI (top-left)
             // for the scrim and card.
-            let appKitCutout: CGRect? = stop.flatMap { tour.frame(of: $0.anchor) }?
-                .insetBy(dx: -Self.spotlightPadding, dy: -Self.spotlightPadding)
+            let appKitCutout: CGRect? = stop.flatMap { s in
+                tour.frame(of: s.anchor).map { Self.calibrated(-e, for: s.anchor) }
+            }
             let spotlight: CGRect? = appKitCutout.map { f in
                 CGRect(x: f.minX, y: size.height - f.maxY, width: f.width, height: f.height)
             }
@@ -545,11 +562,12 @@ struct ChatTourOverlayView: View {
                 }
                 .padding(.top, 2)
             }
-            HStack(spacing: 8) {
+            // Footer: progress + Skip on the left, navigation on the right,
+            // so the destructive-ish Skip never sits beside Next.
+            HStack(spacing: 12) {
                 Text(verbatim: "\(tour.stepIndex + 1) / \(tour.stops.count)")
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
-                Spacer()
                 Button { tour.skip() } label: {
                     Text("Skip", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
@@ -557,11 +575,15 @@ struct ChatTourOverlayView: View {
                 }
                 .buttonStyle(.plain)
                 .pointingHandCursor()
+                Spacer(minLength: 16)
                 if tour.stepIndex > 0 {
                     Button { tour.back() } label: {
                         Text("Back", bundle: .module)
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
+                            .foregroundColor(theme.primaryText)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .background(Capsule().stroke(theme.cardBorder, lineWidth: 1))
                     }
                     .buttonStyle(.plain)
                     .pointingHandCursor()
