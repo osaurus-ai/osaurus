@@ -1005,20 +1005,30 @@ private final class ChatPanel: NSPanel {
         super.performClose(sender)
     }
 
-    /// Tab shortcuts that have no menu item: ⌘T opens a new tab,
-    /// ⇧⌘] / ⇧⌘[ cycle tabs. Only fires when no view in the responder
-    /// chain consumed the key.
+    /// Tab shortcuts that have no menu item, matching browsers: ⌘T new
+    /// tab, ⇧⌘T reopen the last closed tab, ⌃Tab / ⌃⇧Tab and ⇧⌘] / ⇧⌘[
+    /// cycle tabs. (⌘N is a menu item: with the Chat setting on it starts a
+    /// new chat in the frontmost window, which `startNewChat` now opens as
+    /// a tab.) Only fires when no view in the responder chain consumed the
+    /// key.
     override func keyDown(with event: NSEvent) {
-        if let state = chatWindowState,
-            event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-            event.charactersIgnoringModifiers == "t"
-        {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if let state = chatWindowState, flags == .command, event.charactersIgnoringModifiers == "t" {
             state.newTab()
             return
         }
-        if let state = chatWindowState,
-            event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.command, .shift]
+        if let state = chatWindowState, flags == [.command, .shift],
+            event.charactersIgnoringModifiers.lowercased() == "t"
         {
+            state.reopenLastClosedTab()
+            return
+        }
+        // Tab key (keyCode 48) with ⌃: next / previous tab.
+        if let state = chatWindowState, event.keyCode == 48, flags.contains(.control) {
+            state.selectAdjacentTab(offset: flags.contains(.shift) ? -1 : 1)
+            return
+        }
+        if let state = chatWindowState, flags == [.command, .shift] {
             switch event.charactersIgnoringModifiers {
             case "]", "}":
                 state.selectAdjacentTab(offset: 1)

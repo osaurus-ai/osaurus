@@ -394,7 +394,16 @@ final class ChatWindowState: ObservableObject {
         s.turns.isEmpty && !s.isStreaming && s.awaitingClarify == nil
     }
 
+    /// Start a new chat. Browser-style: a blank active tab is reused in
+    /// place; otherwise the current conversation keeps its tab (a running
+    /// reply keeps streaming there) and the new chat opens in a new tab.
+    /// Callers that stamp project membership afterwards act on `session`,
+    /// which is then the new tab's session.
     func startNewChat() {
+        guard isBlank(session) else {
+            newTab()
+            return
+        }
         TTSService.shared.stop()
         if !session.turns.isEmpty { session.save() }
         flushCurrentSession()
@@ -583,6 +592,7 @@ final class ChatWindowState: ObservableObject {
     func closeTab(id: UUID) {
         guard tabs.count > 1, let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
         let closing = tabs[idx]
+        rememberClosedTab(closing, at: idx)
         // The removal itself animates (the strip keys a layout animation on
         // the tab ids, so neighbors slide over); the session swap below is
         // wrapped un-animated so ChatView's remount doesn't interpolate.
@@ -674,6 +684,46 @@ final class ChatWindowState: ObservableObject {
         closingSession.stop()
         closingSession.onSessionChanged = nil
         closingSession.windowState = nil
+    }
+
+    // MARK: Recently closed tabs (⇧⌘T)
+
+    private struct ClosedTab {
+        let sessionId: UUID
+        let index: Int
+    }
+
+    /// Most recent last. Only persisted conversations are remembered: a
+    /// blank tab has nothing to reopen.
+    private var recentlyClosedTabs: [ClosedTab] = []
+    private static let recentlyClosedLimit = 10
+
+    private func rememberClosedTab(_ tab: ChatTab, at index: Int) {
+        guard let sessionId = tab.session.sessionId,
+            tab.isHibernated || !tab.session.turns.isEmpty
+        else { return }
+        recentlyClosedTabs.removeAll { $0.sessionId == sessionId }
+        recentlyClosedTabs.append(ClosedTab(sessionId: sessionId, index: index))
+        if recentlyClosedTabs.count > Self.recentlyClosedLimit {
+            recentlyClosedTabs.removeFirst(recentlyClosedTabs.count - Self.recentlyClosedLimit)
+        }
+    }
+
+    /// Reopen the most recently closed tab at its old position (browser
+    /// ⇧⌘T). Conversations deleted since, or already open in another tab,
+    /// are skipped / focused respectively.
+    func reopenLastClosedTab() {
+        while let closed = recentlyClosedTabs.popLast() {
+            if let open = tabs.first(where: { $0.session.sessionId == closed.sessionId }) {
+                selectTab(id: open.id)
+                return
+            }
+            guard let data = ChatSessionStore.load(id: closed.sessionId) else { continue }
+            // Reuses a blank active tab, otherwise opens a new one.
+            openSessionInNewTab(data)
+            moveTab(id: activeTabId, to: min(closed.index, tabs.count - 1))
+            return
+        }
     }
 
     // MARK: Tab hibernation (LRU)
