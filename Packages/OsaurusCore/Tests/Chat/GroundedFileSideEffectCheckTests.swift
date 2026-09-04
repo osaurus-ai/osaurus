@@ -372,7 +372,18 @@ struct FileClaimLoopDriverTests {
         )
         #expect(result.exit == .finalResponse)
         #expect(surface.noticeCount() == AgentToolLoop.maxUngroundedFileClaimNotices)
-        #expect(result.iterations == 3)
+        // Delivery, not staging: the notice rides the transient channel of
+        // the iteration AFTER each of the first two narrated turns (built
+        // messages #2 and #3), exactly once per iteration. The third
+        // narration is past the bound, so the final turn's build carries
+        // nothing, and nothing was regenerated.
+        let delivered = surface.builtNotices.map { notices in
+            notices.filter { $0.contains(GroundedFileSideEffectCheck.ungroundedFileClaimNotice) }.count
+        }
+        #expect(delivered == [0, 1, 1, 0])
+        #expect(surface.retryPreparations == 0)
+        // Three tool-calling turns plus the final answer; nothing refunded.
+        #expect(result.iterations == 4)
     }
 
     /// Surfaces that do not supply the hook are untouched.
