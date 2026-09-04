@@ -602,8 +602,20 @@ private struct ChatTabItemView: View {
                     topTrailingRadius: roundsTrailing ? 7 : 0,
                     style: .continuous
                 )
-                .fill(theme.tertiaryBackground.opacity(isHovered ? 0.5 : 0.22))
-                .padding(.vertical, 3)
+                // Darker than the active tab (which is the light, raised
+                // surface) and full height so the band sits flush with the
+                // active silhouette instead of reading as a squashed pill.
+                .fill(theme.primaryBackground.opacity(theme.isDark ? 0.55 : 0.35))
+                .overlay(
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: roundsLeading ? 7 : 0,
+                        bottomLeadingRadius: roundsLeading ? 7 : 0,
+                        bottomTrailingRadius: roundsTrailing ? 7 : 0,
+                        topTrailingRadius: roundsTrailing ? 7 : 0,
+                        style: .continuous
+                    )
+                    .fill(theme.tertiaryBackground.opacity(isHovered ? 0.4 : 0))
+                )
             }
         }
         .contentShape(Rectangle())
