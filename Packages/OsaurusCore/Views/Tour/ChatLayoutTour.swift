@@ -218,6 +218,11 @@ public final class ChatLayoutTour: ObservableObject {
         overflowMenuHeight = height
     }
 
+    func noteOverflowMenuDidClose() {
+        guard isActive else { return }
+        overflowMenuHeight = 0
+    }
+
     /// Blur everything behind the overlay except the spotlight. The blur is
     /// an `NSVisualEffectView` (behind-window) whose mask clears the cutout;
     /// the cleared region is fully transparent, so hover and clicks there

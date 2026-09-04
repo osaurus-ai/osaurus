@@ -1382,6 +1382,8 @@ private struct ChatToolbarTrailingView: View {
         // Layout tour: let its card clear the menu we are about to show.
         ChatLayoutTour.shared.noteOverflowMenuWillOpen(height: menu.size.height)
         menu.popUp(positioning: nil, at: NSPoint(x: origin.x - 8, y: origin.y - 16), in: nil)
+        // `popUp` returns once the menu has closed.
+        ChatLayoutTour.shared.noteOverflowMenuDidClose()
     }
 }
 
