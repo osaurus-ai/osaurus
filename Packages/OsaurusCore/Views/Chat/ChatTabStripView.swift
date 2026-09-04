@@ -599,6 +599,11 @@ private struct ChatTabItemView: View {
         )
         .onHover(perform: onHover)
         .animation(.easeOut(duration: 0.1), value: isHovered)
+        // The title is hidden on narrow chips and truncated on medium ones,
+        // so the tooltip is how a tab is recognised in a small window. It
+        // carries the agent name too, since avatars alone don't identify a
+        // chat once several tabs share an agent.
+        .help(Text(verbatim: "\(title) · \(agent.displayName)"))
     }
 }
 
