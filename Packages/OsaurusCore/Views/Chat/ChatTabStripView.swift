@@ -185,17 +185,19 @@ struct ChatTabStripView: View {
     /// Per-tab width cap, shrunk as tabs multiply so the whole row (tabs +
     /// separators + "+" button) always fits inside `stripWidth`.
     private var maxTabWidth: CGFloat {
-        guard let stripWidth else { return 260 }
+        guard let stripWidth else { return Self.maxTabWidthCap }
         let count = CGFloat(max(visibleTabs.count, 1))
         let available = stripWidth - Self.plusButtonReserve - (count - 1)
             - (hiddenTabs.isEmpty ? 0 : Self.overflowButtonReserve)
         // Floor at the compact chip: below it a tab is unreadable, so tabs
         // that would push under the floor drop into the overflow menu
         // instead (see `visibleTabs`) — the row never exceeds the strip.
-        return min(260, max(Self.minTabWidth, available / count))
+        return min(Self.maxTabWidthCap, max(Self.minTabWidth, available / count))
     }
 
     /// Narrowest chip: avatar only, no title (Chrome's pinned-tab size).
+    /// Widest a tab grows with room to spare (Chrome caps around 240).
+    static let maxTabWidthCap: CGFloat = 200
     static let minTabWidth: CGFloat = 56
     private static let plusButtonReserve: CGFloat = 30
     private static let overflowButtonReserve: CGFloat = 40
