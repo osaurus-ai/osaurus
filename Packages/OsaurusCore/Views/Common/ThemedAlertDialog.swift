@@ -116,6 +116,10 @@ public struct ThemedAlertRequest: Identifiable {
     /// Accessibility description for the header artwork as a whole. Ignored
     /// when no header images are set.
     public let headerImageAccessibilityLabel: String?
+    /// False hides the default symbol header (the "?" / "!" badge) when no
+    /// header artwork is set — for content dialogs (e.g. chat history)
+    /// where a question-mark badge over a list reads as noise.
+    public let showsHeaderIcon: Bool
     /// Optional accessory view rendered between the message and the button row.
     /// Use for extras like a "Don't ask again" toggle.
     public let accessory: AnyView?
@@ -144,6 +148,7 @@ public struct ThemedAlertRequest: Identifiable {
         message: String?,
         headerImageNames: [String] = [],
         headerImageAccessibilityLabel: String? = nil,
+        showsHeaderIcon: Bool = true,
         accessory: AnyView? = nil,
         buttons: [AlertButtonConfig],
         showsCloseButton: Bool = false,
@@ -156,6 +161,7 @@ public struct ThemedAlertRequest: Identifiable {
         self.message = message
         self.headerImageNames = headerImageNames
         self.headerImageAccessibilityLabel = headerImageAccessibilityLabel
+        self.showsHeaderIcon = showsHeaderIcon
         self.accessory = accessory
         self.buttons = buttons
         self.showsCloseButton = showsCloseButton
@@ -216,6 +222,7 @@ private struct ThemedAlertDialogContent: View {
     let message: String?
     var headerImageNames: [String] = []
     var headerImageAccessibilityLabel: String? = nil
+    var showsHeaderIcon: Bool = true
     let accessory: AnyView?
     let buttons: [AlertButtonConfig]
     let showsCloseButton: Bool
@@ -341,7 +348,7 @@ private struct ThemedAlertDialogContent: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(headerImageAccessibilityLabel ?? "")
                 .accessibilityHidden(headerImageAccessibilityLabel == nil)
-            } else {
+            } else if showsHeaderIcon {
                 iconHeader
             }
 
@@ -665,6 +672,7 @@ public struct ThemedAlertHost: View {
                     message: request.message,
                     headerImageNames: request.headerImageNames,
                     headerImageAccessibilityLabel: request.headerImageAccessibilityLabel,
+                    showsHeaderIcon: request.showsHeaderIcon,
                     accessory: request.accessory,
                     buttons: request.buttons,
                     showsCloseButton: request.showsCloseButton,

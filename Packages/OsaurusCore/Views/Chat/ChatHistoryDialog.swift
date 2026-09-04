@@ -29,6 +29,7 @@ enum ChatHistoryDialog {
                 id: requestId,
                 title: "History",
                 message: nil,
+                showsHeaderIcon: false,
                 buttons: [.cancel(L("Close"))],
                 showsCloseButton: true,
                 customContent: AnyView(content),
@@ -49,7 +50,17 @@ private struct ChatHistoryDialogContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            HStack(spacing: 8) {
+                let agent = windowState.cachedActiveAgent
+                AgentAvatarView(
+                    mascotId: agent.avatar,
+                    name: agent.displayName,
+                    tint: agentColorFor(agent.name),
+                    diameter: 20,
+                    customImageURL: agent.customAvatarURL,
+                    monogramFontSize: 9,
+                    borderWidth: 0
+                )
                 Text(windowState.cachedAgentDisplayName)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.secondaryText)

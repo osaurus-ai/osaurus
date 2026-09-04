@@ -1422,73 +1422,63 @@ private struct ChatToolbarTrailingView: View {
     // tabs + minimal chrome. History and pin are chat-only; the project
     // page keeps just Settings.
     var body: some View {
-        Menu {
-            if !windowState.isProjectPageVisible {
-                Button {
-                    ChatHistoryDialog.present(for: windowState)
-                } label: {
-                    Label {
-                        Text("See History", bundle: .module)
-                    } icon: {
-                        Image(systemName: "clock.arrow.circlepath")
-                    }
-                }
+        // A real `HeaderActionButton` (Liquid Glass circle like every other
+        // toolbar button) that pops an AppKit menu — a SwiftUI `Menu` label
+        // doesn't get the interactive glass treatment.
+        HeaderActionButton(
+            icon: windowState.isWindowPinned ? "chevron.down.circle.fill" : "chevron.down",
+            help: "More",
+            action: { presentOverflowMenu() }
+        )
+        .environment(\.theme, windowState.theme)
+    }
 
-                Button {
+    private func presentOverflowMenu() {
+        let menu = NSMenu()
+        if !windowState.isProjectPageVisible {
+            menu.addItem(
+                ChatToolbarMenuItem(
+                    title: L("See History"),
+                    symbol: "clock.arrow.circlepath"
+                ) { [windowState] in
+                    ChatHistoryDialog.present(for: windowState)
+                })
+            menu.addItem(
+                ChatToolbarMenuItem(
+                    title: windowState.isWindowPinned ? L("Unpin Window") : L("Pin Window"),
+                    symbol: windowState.isWindowPinned ? "pin.fill" : "pin"
+                ) { [windowState] in
                     windowState.isWindowPinned.toggle()
                     ChatWindowManager.shared.setWindowPinned(
                         id: windowState.windowId, pinned: windowState.isWindowPinned)
-                } label: {
-                    Label {
-                        Text(windowState.isWindowPinned ? "Unpin Window" : "Pin Window", bundle: .module)
-                    } icon: {
-                        Image(systemName: windowState.isWindowPinned ? "pin.fill" : "pin")
-                    }
-                }
-
-                Divider()
-            }
-
-            Button {
-                AppDelegate.shared?.showManagementWindow(initialTab: nil)
-            } label: {
-                Label {
-                    Text("Settings", bundle: .module)
-                } icon: {
-                    Image(systemName: "gearshape")
-                }
-            }
-        } label: {
-            ChatToolbarChevronLabel(isPinned: windowState.isWindowPinned)
+                })
+            menu.addItem(.separator())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .environment(\.theme, windowState.theme)
+        menu.addItem(
+            ChatToolbarMenuItem(title: L("Settings"), symbol: "gearshape") {
+                AppDelegate.shared?.showManagementWindow(initialTab: nil)
+            })
+        // Anchor just under the pointer (the button the user clicked).
+        let origin = NSEvent.mouseLocation
+        menu.popUp(positioning: nil, at: NSPoint(x: origin.x - 8, y: origin.y - 6), in: nil)
     }
 }
 
-/// Chevron glyph for the overflow menu, styled like `HeaderActionButton`.
-/// Tints accent while the window is pinned so that state stays visible
-/// without a dedicated button.
-private struct ChatToolbarChevronLabel: View {
-    let isPinned: Bool
-    @State private var isHovered = false
-    @Environment(\.theme) private var theme
+/// `NSMenuItem` with a closure action and an SF Symbol image, for the
+/// toolbar overflow menu.
+private final class ChatToolbarMenuItem: NSMenuItem {
+    private let handler: () -> Void
 
-    var body: some View {
-        Image(systemName: "chevron.down")
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(isPinned || isHovered ? theme.accentColor : theme.secondaryText)
-            .frame(width: 28, height: 28)
-            .liquidGlassCircle()
-            .padding(.horizontal, 4)
-            .contentShape(Rectangle())
-            .onHover { hovering in
-                withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
-            }
-            .help(Text(LocalizedStringKey("More"), bundle: .module))
+    init(title: String, symbol: String, handler: @escaping () -> Void) {
+        self.handler = handler
+        super.init(title: title, action: #selector(fire), keyEquivalent: "")
+        self.target = self
+        self.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
     }
+
+    required init(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    @objc private func fire() { handler() }
 }
 
 // MARK: - Window Delegate
