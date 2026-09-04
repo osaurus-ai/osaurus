@@ -429,6 +429,12 @@ struct ChatTourOverlayView: View {
     @ObservedObject var tour: ChatLayoutTour
     let windowId: UUID
 
+    /// Seconds left before Next unlocks on the current stop. A short hold
+    /// so the card is actually read before it can be clicked away; the
+    /// action-driven stop has no Next and skips the countdown.
+    @State private var secondsUntilNext = 0
+    private static let readingDelay = 3
+
     private var theme: ThemeProtocol {
         ChatWindowManager.shared.windowState(id: windowId)?.theme ?? ThemeManager.shared.currentTheme
     }
@@ -487,6 +493,18 @@ struct ChatTourOverlayView: View {
             .onAppear { tour.updateBlurMask(cutout: appKitCutout) }
             .onChange(of: appKitCutout) { _, cutout in tour.updateBlurMask(cutout: cutout) }
             .onChange(of: size) { _, _ in tour.updateBlurMask(cutout: appKitCutout) }
+            .task(id: tour.stepIndex) {
+                guard let stop = tour.currentStop, !stop.requiresAction else {
+                    secondsUntilNext = 0
+                    return
+                }
+                secondsUntilNext = Self.readingDelay
+                while secondsUntilNext > 0 {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    secondsUntilNext -= 1
+                }
+            }
         }
         .environment(\.theme, theme)
     }
@@ -562,19 +580,12 @@ struct ChatTourOverlayView: View {
                 }
                 .padding(.top, 2)
             }
-            // Footer: progress + Skip on the left, navigation on the right,
-            // so the destructive-ish Skip never sits beside Next.
+            // Footer: progress on the left, navigation on the right. No Skip:
+            // four short stops don't need one (Esc still bails out).
             HStack(spacing: 12) {
                 Text(verbatim: "\(tour.stepIndex + 1) / \(tour.stops.count)")
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
-                Button { tour.skip() } label: {
-                    Text("Skip", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
                 Spacer(minLength: 16)
                 if tour.stepIndex > 0 {
                     Button { tour.back() } label: {
@@ -599,16 +610,28 @@ struct ChatTourOverlayView: View {
                     }
                     .foregroundColor(theme.accentColor)
                 } else {
+                    let locked = secondsUntilNext > 0
+                    let isLast = tour.stepIndex + 1 == tour.stops.count
                     Button { tour.next() } label: {
-                        Text(tour.stepIndex + 1 == tour.stops.count ? "Done" : "Next", bundle: .module)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 5)
-                            .background(Capsule().fill(theme.accentColor))
+                        HStack(spacing: 5) {
+                            Text(isLast ? "Done" : "Next", bundle: .module)
+                            if locked {
+                                // Live countdown while the button is held.
+                                Text(verbatim: "\(secondsUntilNext)")
+                                    .monospacedDigit()
+                                    .opacity(0.8)
+                            }
+                        }
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(theme.accentColor.opacity(locked ? 0.45 : 1)))
                     }
                     .buttonStyle(.plain)
+                    .disabled(locked)
                     .pointingHandCursor()
+                    .animation(.easeOut(duration: 0.15), value: locked)
                 }
             }
             .padding(.top, 2)
