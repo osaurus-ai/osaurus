@@ -1272,8 +1272,9 @@ private struct AgentSidebarRow: View {
 
             // Hover-only gear opening this agent's detail page in the
             // management window. The selected row is already signalled by
-            // its background, so no checkmark.
-            if isHovered {
+            // its background, so no checkmark. Built-ins (the default
+            // Osaurus agent) have no editable detail page, so no gear.
+            if isHovered, !agent.isBuiltIn {
                 Button {
                     AppDelegate.shared?.showManagementWindow(
                         initialTab: .agents, deeplinkAgentId: agent.id)
