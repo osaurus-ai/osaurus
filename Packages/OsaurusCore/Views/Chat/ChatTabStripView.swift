@@ -196,7 +196,7 @@ struct ChatTabStripView: View {
     }
 
     /// Narrowest chip: avatar only, no title (Chrome's pinned-tab size).
-    static let minTabWidth: CGFloat = 44
+    static let minTabWidth: CGFloat = 56
     private static let plusButtonReserve: CGFloat = 26
     private static let overflowButtonReserve: CGFloat = 30
 
