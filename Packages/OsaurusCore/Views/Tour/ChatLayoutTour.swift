@@ -113,6 +113,9 @@ public final class ChatLayoutTour: ObservableObject {
     @Published private(set) var stepIndex: Int = 0
     /// Latest reported frame per anchor, per window (window coordinates).
     @Published private(set) var anchors: [UUID: [ChatTourAnchor: CGRect]] = [:]
+    /// Height of the overflow menu while it is open, so the last stop's
+    /// card can sit BELOW the menu instead of behind it. Reset per step.
+    @Published private(set) var overflowMenuHeight: CGFloat = 0
 
     let stops = ChatTourStop.all
 
@@ -183,6 +186,7 @@ public final class ChatLayoutTour: ObservableObject {
 
     func next() {
         guard isActive else { return }
+        overflowMenuHeight = 0
         if stepIndex + 1 < stops.count {
             stepIndex += 1
         } else {
@@ -192,6 +196,7 @@ public final class ChatLayoutTour: ObservableObject {
 
     func back() {
         guard isActive, stepIndex > 0 else { return }
+        overflowMenuHeight = 0
         stepIndex -= 1
     }
 
@@ -205,6 +210,12 @@ public final class ChatLayoutTour: ObservableObject {
     func noteOverflowHovered() {
         guard let stop = currentStop, stop.requiresAction, stop.anchor == .overflowMenu else { return }
         next()
+    }
+
+    /// Called just before the overflow menu pops up (its size is known then).
+    func noteOverflowMenuWillOpen(height: CGFloat) {
+        guard isActive else { return }
+        overflowMenuHeight = height
     }
 
     /// Blur everything behind the overlay except the spotlight. The blur is
@@ -487,7 +498,7 @@ struct ChatTourOverlayView: View {
                     card(for: stop)
                         .frame(width: Self.cardWidth)
                         .fixedSize(horizontal: false, vertical: true)
-                        .offset(cardOffset(spotlight: spotlight, in: size))
+                        .offset(cardOffset(spotlight: spotlight, in: size, clearance: tour.overflowMenuHeight))
                 }
             }
             .frame(width: size.width, height: size.height)
@@ -541,9 +552,11 @@ struct ChatTourOverlayView: View {
     /// Place the card under the spotlight when there is room, else above,
     /// clamped inside the window horizontally. With no anchor (not laid out
     /// yet or hidden) the card sits centred.
-    private func cardOffset(spotlight: CGRect?, in size: CGSize) -> CGSize {
+    private func cardOffset(spotlight: CGRect?, in size: CGSize, clearance: CGFloat = 0) -> CGSize {
         let cardHeight: CGFloat = 240
-        let gap: CGFloat = 12
+        // `clearance`: an open menu hanging under the anchor; the card drops
+        // below it (menus pop up ~16pt under the pointer, hence the slack).
+        let gap: CGFloat = 12 + (clearance > 0 ? clearance + 16 : 0)
         guard let s = spotlight else {
             return CGSize(width: (size.width - Self.cardWidth) / 2, height: (size.height - cardHeight) / 2)
         }
@@ -614,6 +627,11 @@ struct ChatTourOverlayView: View {
                             .font(.system(size: 11.5, weight: .medium))
                     }
                     .foregroundColor(theme.accentColor)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(theme.accentColor.opacity(0.14)))
+                    .overlay(Capsule().stroke(theme.accentColor.opacity(0.35), lineWidth: 1))
+                    .modifier(TourShimmer())
                 } else {
                     let locked = secondsUntilNext > 0
                     let isLast = tour.stepIndex + 1 == tour.stops.count
@@ -661,4 +679,37 @@ struct ChatTourOverlayView: View {
 private final class TourOverlayWindow: NSWindow {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+}
+
+/// A soft highlight that sweeps across the view on a loop, to draw the eye
+/// to the one control the user has to act on. Static under Reduce Motion.
+private struct TourShimmer: ViewModifier {
+    @State private var phase: CGFloat = -1
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                if !reduceMotion {
+                    GeometryReader { proxy in
+                        let w = proxy.size.width
+                        LinearGradient(
+                            colors: [.clear, Color.white.opacity(0.35), .clear],
+                            startPoint: .leading, endPoint: .trailing
+                        )
+                        .frame(width: w * 0.6)
+                        .offset(x: phase * w)
+                        .blendMode(.plusLighter)
+                    }
+                    .clipShape(Capsule())
+                    .allowsHitTesting(false)
+                }
+            }
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) {
+                    phase = 1.2
+                }
+            }
+    }
 }

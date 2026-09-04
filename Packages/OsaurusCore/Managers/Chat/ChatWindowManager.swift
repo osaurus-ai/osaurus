@@ -1379,6 +1379,8 @@ private struct ChatToolbarTrailingView: View {
         // Anchor just under the button (the pointer is over it). `popUp`
         // runs its own tracking loop and returns when the menu closes.
         let origin = NSEvent.mouseLocation
+        // Layout tour: let its card clear the menu we are about to show.
+        ChatLayoutTour.shared.noteOverflowMenuWillOpen(height: menu.size.height)
         menu.popUp(positioning: nil, at: NSPoint(x: origin.x - 8, y: origin.y - 16), in: nil)
     }
 }
