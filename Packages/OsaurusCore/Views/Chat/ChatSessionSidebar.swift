@@ -252,6 +252,8 @@ struct ChatSessionSidebar: View {
                 agentListView
             }
         }
+        // Tour spotlight anchor (invisible; reports the sidebar's frame).
+        .background(TourAnchorMarker(anchor: .sidebar))
         // Adopting a new agent (via the dropdown's switchAgent or the
         // sidebar's loadSession) is a context change — wipe per-window
         // filter state so the new agent starts on "All" with an empty

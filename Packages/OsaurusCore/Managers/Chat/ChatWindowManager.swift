@@ -810,6 +810,9 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     // Called by delegate when window becomes key
     fileprivate func windowDidBecomeKey(id: UUID) {
         lastFocusedWindowId = id
+        // Once-per-user layout tour for users updating from the pre-tabs
+        // layout; a no-op after it has run or been skipped.
+        ChatLayoutTour.shared.autoStartIfEligible(windowId: id)
         // Idle residency may have unloaded this window's selected model while
         // the user was away. Re-arm the existing speculative warm-up when the
         // user returns; its RAM and competing-residency gates still decide
@@ -1324,6 +1327,8 @@ private struct ChatToolbarTrailingView: View {
             help: "More",
             action: { presentOverflowMenu() }
         )
+        // Tour spotlight anchor (invisible; reports the button's frame).
+        .background(TourAnchorMarker(anchor: .overflowMenu))
         .environment(\.theme, windowState.theme)
         // Open on hover (after a short dwell so brushing past the button
         // doesn't pop it); click still works as a fallback.

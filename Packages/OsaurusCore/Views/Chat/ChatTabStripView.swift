@@ -145,6 +145,8 @@ struct ChatTabStripView: View {
             // the "+" button outside the toolbar item's bounds, where it
             // still draws but no longer hit-tests.
             tabsRow()
+            // Tour spotlight anchor (invisible; reports the strip's frame).
+            .background(TourAnchorMarker(anchor: .tabStrip))
             // Tabs slide over when a neighbor closes (Chrome-like). Opening
             // stays un-animated: `newTab()` disables animations in its
             // transaction so the strip doesn't interpolate while ChatView
