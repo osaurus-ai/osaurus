@@ -460,7 +460,7 @@ struct ChatTourOverlayView: View {
             // AppKit (bottom-left) cutout for the blur mask, SwiftUI (top-left)
             // for the scrim and card.
             let appKitCutout: CGRect? = stop.flatMap { s in
-                tour.frame(of: s.anchor).map { Self.calibrated(-e, for: s.anchor) }
+                tour.frame(of: s.anchor).map { Self.calibrated($0, for: s.anchor) }
             }
             let spotlight: CGRect? = appKitCutout.map { f in
                 CGRect(x: f.minX, y: size.height - f.maxY, width: f.width, height: f.height)
