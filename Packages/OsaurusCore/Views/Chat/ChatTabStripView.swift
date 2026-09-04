@@ -109,6 +109,13 @@ struct ChatTabStripView: View {
     /// hide beside the hovered tab, matching Chrome.
     @State private var hoveredTabId: UUID?
 
+    /// Drag-to-reorder: the tab under the pointer and how far it has been
+    /// pulled from its slot. Reordering happens LIVE as the pointer crosses
+    /// a neighbour's midpoint (Chrome), so the offset is re-based by one
+    /// slot pitch on every swap to keep the chip glued to the pointer.
+    @State private var draggingTabId: UUID?
+    @State private var dragOffset: CGFloat = 0
+
     /// The sidebar's user-chosen width, shared with the resizable sidebar
     /// via the same defaults key so the strip tracks the content edge.
     @AppStorage("chatSidebarWidth") private var storedSidebarWidth: Double = 240
@@ -219,8 +226,14 @@ struct ChatTabStripView: View {
                     isHovered: hoveredTabId == tab.id,
                     canClose: windowState.tabs.count > 1,
                     width: maxTabWidth,
+                    isDragging: draggingTabId == tab.id,
+                    dragOffset: draggingTabId == tab.id ? dragOffset : 0,
                     onSelect: { windowState.selectTab(id: tab.id) },
                     onClose: { windowState.closeTab(id: tab.id) },
+                    onDragChanged: { translation in
+                        handleDragChanged(tab.id, translation: translation)
+                    },
+                    onDragEnded: { endDrag() },
                     onHover: { hovering in
                         if hovering {
                             hoveredTabId = tab.id
@@ -244,6 +257,61 @@ struct ChatTabStripView: View {
         id == windowState.activeTabId || id == hoveredTabId
     }
 
+
+    // MARK: Drag to reorder
+
+    /// Distance between adjacent tab origins: tab width plus the 1pt
+    /// separator laid out between neighbours.
+    private var slotPitch: CGFloat { maxTabWidth + 1 }
+
+    /// Cumulative pitch already absorbed by live swaps during this drag.
+    @State private var swappedDistance: CGFloat = 0
+
+    private func handleDragChanged(_ id: UUID, translation: CGFloat) {
+        if draggingTabId != id {
+            // Pressing a tab selects it (Chrome) before it starts moving.
+            draggingTabId = id
+            dragOffset = 0
+            swappedDistance = 0
+            windowState.selectTab(id: id)
+        }
+        guard var index = windowState.tabs.firstIndex(where: { $0.id == id }) else { return }
+        let last = windowState.tabs.count - 1
+        // `translation` is cumulative from the press; subtract the slots
+        // already swapped so the chip stays glued to the pointer. Each
+        // crossing of a neighbour's midpoint swaps one slot and re-bases.
+        var offset = translation - swappedDistance
+        while offset > slotPitch / 2, index < last {
+            index += 1
+            move(id, to: index)
+            swappedDistance += slotPitch
+            offset -= slotPitch
+        }
+        while offset < -slotPitch / 2, index > 0 {
+            index -= 1
+            move(id, to: index)
+            swappedDistance -= slotPitch
+            offset += slotPitch
+        }
+        // The end tabs can't be pulled past the strip edges.
+        if index == 0 { offset = max(offset, 0) }
+        if index == last { offset = min(offset, 0) }
+        dragOffset = offset
+    }
+
+    private func move(_ id: UUID, to index: Int) {
+        withAnimation(.easeOut(duration: 0.15)) {
+            windowState.moveTab(id: id, to: index)
+        }
+    }
+
+    private func endDrag() {
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
+            dragOffset = 0
+        }
+        draggingTabId = nil
+        swappedDistance = 0
+    }
     private func separator(hidden: Bool) -> some View {
         Rectangle()
             .fill(windowState.theme.primaryBorder.opacity(hidden ? 0 : 0.55))
@@ -292,8 +360,15 @@ private struct ChatTabItemView: View {
     /// (Chrome-style), shrinking together as tabs multiply, so the strip
     /// reads as a uniform band rather than a ragged row of hugged chips.
     let width: CGFloat
+    /// Drag-to-reorder state owned by the strip: lifted above siblings and
+    /// translated by `dragOffset` while the pointer holds it.
+    let isDragging: Bool
+    let dragOffset: CGFloat
     let onSelect: () -> Void
     let onClose: () -> Void
+    /// Horizontal translation since the press (≥ minimum distance).
+    let onDragChanged: (CGFloat) -> Void
+    let onDragEnded: () -> Void
     let onHover: (Bool) -> Void
 
     @Environment(\.theme) private var theme
@@ -386,7 +461,16 @@ private struct ChatTabItemView: View {
             }
         }
         .contentShape(Rectangle())
+        .offset(x: dragOffset)
+        .zIndex(isDragging ? 1 : 0)
         .onTapGesture(perform: onSelect)
+        // A short travel threshold keeps plain clicks as taps; beyond it
+        // the press becomes a reorder drag.
+        .gesture(
+            DragGesture(minimumDistance: 4, coordinateSpace: .global)
+                .onChanged { onDragChanged($0.translation.width) }
+                .onEnded { _ in onDragEnded() }
+        )
         .onHover(perform: onHover)
         .animation(.easeOut(duration: 0.1), value: isHovered)
     }

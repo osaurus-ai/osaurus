@@ -520,6 +520,16 @@ final class ChatWindowState: ObservableObject {
     /// Switch the visible chat to another tab. Unlike `loadSession`, the
     /// outgoing session is neither detached nor released — its tab keeps it
     /// live, so an in-flight stream keeps rendering into that tab.
+    /// Reorder a tab (drag-to-reorder in the strip). Pure array move; the
+    /// active tab and its session are untouched.
+    func moveTab(id: UUID, to newIndex: Int) {
+        guard let from = tabs.firstIndex(where: { $0.id == id }) else { return }
+        let to = min(max(newIndex, 0), tabs.count - 1)
+        guard from != to else { return }
+        let tab = tabs.remove(at: from)
+        tabs.insert(tab, at: to)
+    }
+
     func selectTab(id: UUID) {
         guard id != activeTabId, let tab = tabs.first(where: { $0.id == id }) else { return }
         persistActiveSessionForTabSwitch()
