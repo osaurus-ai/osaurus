@@ -353,7 +353,7 @@ struct ChatSettingsView: View {
                 SettingsToggle(
                     title: L("⌘+N Starts a New Chat in the Current Window"),
                     description:
-                        "Make ⌘+N start a new chat in the frontmost chat window, like the sidebar's New Chat button. New Window moves to ⇧+⌘+N, matching other chat apps. Turn off to keep ⌘+N opening a new window.",
+                        "Make ⌘+N start a new chat in the frontmost chat window, staying in the current project if there is one. New Window moves to ⇧+⌘+N, matching other chat apps. Turn off to keep ⌘+N opening a new window.",
                     isOn: $cmdNStartsNewChatInCurrentWindow
                 )
                 .settingsLandingAnchor("settings.chat.cmdNNewChat")
