@@ -101,7 +101,9 @@ struct ChatTabStripView: View {
         // extra 12 covers the toolbar item's own ~8pt frame padding (log:
         // frame = fitting + 8) and live-resize rounding — budgeting to the
         // exact pixel folds the item on a 1pt overshoot.
-        let available = windowContentWidth - measuredChromeX - inset - trailingChromeReserve - 12
+        // `footFlare` keeps the active tab's outward-curving feet inside the
+        // content area instead of over the sidebar edge / trailing buttons.
+        let available = windowContentWidth - measuredChromeX - inset - trailingChromeReserve - 12 - 2 * Self.footFlare
         return max(0, available)
     }
 
@@ -157,7 +159,7 @@ struct ChatTabStripView: View {
             .frame(width: stripWidth, alignment: .leading)
             .frame(maxWidth: stripWidth == nil ? 700 : nil, alignment: .leading)
             .frame(height: 30)
-            .padding(.leading, needsSidebarInset ? sidebarOpenInset : 0)
+            .padding(.leading, (needsSidebarInset ? sidebarOpenInset : 0) + Self.footFlare)
             // Anchored to the strip's OUTER leading edge (after the padding
             // modifier, so the padding lies inside the measured bounds and
             // the reading is the pre-inset chrome edge — no feedback loop).
@@ -194,6 +196,10 @@ struct ChatTabStripView: View {
         // instead (see `visibleTabs`) — the row never exceeds the strip.
         return min(Self.maxTabWidthCap, max(Self.minTabWidth, available / count))
     }
+
+    /// How far the active tab's feet flare beyond its slot (mirrors the
+    /// item's `footRadius`); the strip is inset by this on both sides.
+    static let footFlare: CGFloat = 8
 
     /// Narrowest chip: avatar only, no title (Chrome's pinned-tab size).
     /// Widest a tab grows with room to spare (Chrome caps around 240).
