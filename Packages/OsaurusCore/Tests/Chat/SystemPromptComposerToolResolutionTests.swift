@@ -2126,4 +2126,31 @@ struct SystemPromptComposerToolResolutionTests {
             }
         }
     }
+
+    @Test("web search alone exposes retrieval — no charts required")
+    func webSearchAloneExposesSearchAndExtract() {
+        // The discovery→retrieval transition advertised inside `web_search`
+        // results must be callable on turn 1. Retrieval used to be composed
+        // in only for Charts+Web or the orchestrator; ordinary web-enabled
+        // chat got discovery alone, and models either rephrased the same
+        // query in a loop or hallucinated a fetch tool (`web_fetch`).
+        let tools = SystemPromptComposer.resolveTools(
+            snapshot: makeSnapshot(webSearchEnabled: true),
+            executionMode: .none,
+            query: "What changed in the latest mlx release?"
+        )
+        let names = Set(tools.map(\.function.name))
+        #expect(names.contains("web_search"))
+        #expect(names.contains("search_and_extract"))
+
+        // And the web gate still strips BOTH halves when off.
+        let withoutWeb = SystemPromptComposer.resolveTools(
+            snapshot: makeSnapshot(webSearchEnabled: false),
+            executionMode: .none,
+            query: "What changed in the latest mlx release?"
+        )
+        let namesWithoutWeb = Set(withoutWeb.map(\.function.name))
+        #expect(!namesWithoutWeb.contains("web_search"))
+        #expect(!namesWithoutWeb.contains("search_and_extract"))
+    }
 }

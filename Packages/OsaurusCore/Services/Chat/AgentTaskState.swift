@@ -714,12 +714,15 @@ public final class AgentTaskState {
 
         // Reworded discovery loop: the model has URLs/snippets but keeps
         // searching instead of retrieving or processing a selected source.
-        // Name the real tool boundary and the dynamic-load path; if those
-        // capabilities are unavailable, require a truthful blocker instead of
-        // another cosmetic query rewrite.
+        // Name the real tool boundary directly. `search_and_extract` is
+        // composed into the schema whenever web search is enabled, so the old
+        // `capabilities_load tool/search_and_extract` detour here pointed at a
+        // loader round-trip for a tool already in the schema — and on the
+        // Default agent, at a loader gated to configure writes that would
+        // REJECT the load. Steer to the tool itself.
         if webDiscoveryRunCount >= Self.webDiscoveryRunThreshold {
             return
-                "You have called `web_search` \(Self.webDiscoveryRunThreshold)+ times in a row. `web_search` is discovery-only and returns URLs/snippets, not page bodies or downloadable data. Stop searching. Use a returned source with an available extraction, download, or file tool; if available, load `tool/search_and_extract` with `capabilities_load`, then process the retrieved data and call `render_chart` when that tool is available. If retrieval or chart rendering is unavailable, report that blocker clearly instead of rephrasing the search again."
+                "You have called `web_search` \(Self.webDiscoveryRunThreshold)+ times in a row. `web_search` is discovery-only and returns URLs/snippets, not page bodies or downloadable data. Stop searching. Pick the best returned URLs and call `search_and_extract` with them (`{\"urls\": [...]}`) to retrieve page content, then process the retrieved data and call `render_chart` when that tool is available. If retrieval or chart rendering is unavailable, report that blocker clearly instead of rephrasing the search again."
         }
 
         // Listing nudges are reactive: suppressed until the model is observed

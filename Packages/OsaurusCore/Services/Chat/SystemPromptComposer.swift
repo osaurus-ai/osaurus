@@ -2726,15 +2726,17 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
-        // A chart assembled from live web data needs both halves of the web
-        // pipeline in the same turn: discovery (`web_search`) and retrieval
-        // (`search_and_extract`). Keeping extraction dynamic for ordinary
-        // chat still preserves the lean baseline, while the explicit Charts
-        // + Web capability combination is a strong signal that retrieval is
-        // required. Expose the real tool contract up front so small local
-        // models do not get trapped rephrasing discovery queries while trying
-        // to guess the capabilities-load transition.
-        if !isManual, snapshot.renderChartEnabled, snapshot.webSearchEnabled {
+        // Web search enabled means BOTH halves of the web pipeline are in the
+        // schema from turn 1: discovery (`web_search`) and retrieval
+        // (`search_and_extract`). Retrieval used to stay dynamic outside the
+        // Charts+Web combination to keep the baseline lean, and that gap is
+        // exactly where models fell apart in practice: with only `web_search`
+        // visible they either rephrased the same discovery query in a loop or
+        // hallucinated a fetch tool (`web_fetch`) that has never existed —
+        // observed live as a Raptor research run producing zero page reads.
+        // The discovery→retrieval transition advertised inside `web_search`
+        // results must be callable the moment those results arrive.
+        if !isManual, snapshot.webSearchEnabled {
             add(
                 ToolRegistry.shared.specs(forTools: ["search_and_extract"]),
                 replacingExisting: true

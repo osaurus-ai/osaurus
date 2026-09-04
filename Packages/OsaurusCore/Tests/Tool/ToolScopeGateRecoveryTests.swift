@@ -277,4 +277,47 @@ struct ToolScopeGateRecoveryTests {
         #expect(tool.executions == 1)
         #expect(!ToolEnvelope.isError(result))
     }
+
+    // MARK: - Hallucinated fetch-tool steering
+
+    @Test
+    func hallucinatedFetchName_isSteeredToSearchAndExtract_whenExposed() async throws {
+        // `web_fetch` has never existed in osaurus, but models trained on
+        // other harnesses call it as if it were universal — observed live as
+        // a research run that burned its whole turn on it and read zero
+        // pages. When the request exposes `search_and_extract`, the dead end
+        // must instead point at the fetch tool already in the schema.
+        let scope = ToolExecutionScope(exposed: [])
+        scope.activate(["web_search", "search_and_extract"])
+        let result = try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+            try await ToolRegistry.shared.execute(
+                name: "web_fetch",
+                argumentsJSON: "{\"url\": \"https://example.com\"}"
+            )
+        }
+        let parsed = try envelope(result)
+        #expect(parsed?["ok"] as? Bool == false)
+        #expect(parsed?["kind"] as? String == "tool_not_found")
+        #expect(parsed?["retryable"] as? Bool == true)
+        let message = parsed?["message"] as? String ?? ""
+        #expect(message.contains("search_and_extract"))
+        #expect(message.contains("urls"))
+    }
+
+    @Test
+    func hallucinatedFetchName_staysOpaque_whenRetrievalIsNotExposed() async throws {
+        // Web disabled for this agent: the steering must not leak the name of
+        // a tool the request cannot call. The plain unregistered-name refusal
+        // applies.
+        let scope = ToolExecutionScope(exposed: [])
+        scope.activate(["get_current_time"])
+        let result = try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+            try await ToolRegistry.shared.execute(name: "web_fetch", argumentsJSON: "{}")
+        }
+        let parsed = try envelope(result)
+        #expect(parsed?["ok"] as? Bool == false)
+        #expect(parsed?["kind"] as? String == "tool_not_found")
+        let message = parsed?["message"] as? String ?? ""
+        #expect(!message.contains("search_and_extract"))
+    }
 }

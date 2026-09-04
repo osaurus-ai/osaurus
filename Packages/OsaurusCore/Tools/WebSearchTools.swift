@@ -174,9 +174,9 @@ final class WebSearchTool: OsaurusTool, @unchecked Sendable {
         "Discover relevant web sources. Just pass `query`; results come from the user's "
         + "configured search providers with automatic fallback. Returns ranked titles, URLs, "
         + "and snippets only — it does not fetch page bodies or downloadable data. Once you "
-        + "select a source, retrieve its content with `search_and_extract`; if that tool is not "
-        + "loaded and `capabilities_load` is available, load `tool/search_and_extract`. Do not "
-        + "keep rephrasing `web_search` when you need source content."
+        + "select a source, retrieve its content with `search_and_extract` (pass the chosen "
+        + "URLs). Do not keep rephrasing `web_search` when you need source content, and do "
+        + "not invent fetch tools — `search_and_extract` IS the fetch tool."
 
     // Immutable by design: `web_search` is an always-loaded baseline tool, so
     // its schema is part of every composed prompt's static prefix. Deriving

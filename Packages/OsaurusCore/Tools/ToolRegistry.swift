@@ -899,6 +899,39 @@ public final class ToolRegistry: ObservableObject {
         // `tool/` handling in CapabilityTools.resolve.
         let name = resolvedRegisteredName(for: rawName)
 
+        // Hallucinated fetch tools get steered, not dead-ended. Models trained
+        // on other harnesses call `web_fetch` / `fetch_url` / `open_url` as if
+        // they were universal — observed live: a Raptor research run burned its
+        // entire turn on `web_fetch` (a tool that has never existed in osaurus)
+        // and produced zero page reads. The general no-"did you mean" rule
+        // exists because naming other tools teaches models to invent siblings;
+        // it does not apply here, because the steering target is only named
+        // when THIS request already exposes it — the model is being pointed at
+        // a tool sitting in its own schema, not at a rumor. Guarded to names
+        // with no real registration so a plugin/MCP tool that legitimately
+        // registers one of these names always wins — and a user-installed
+        // plugin GROUP that happens to share an alias name (`plugin/fetch`)
+        // keeps its own load rescue instead of being steered away from the
+        // capability the user deliberately installed.
+        if toolsByName[name] == nil, Self.hallucinatedFetchToolNames.contains(name.lowercased()),
+            toolsByName["search_and_extract"] != nil,
+            ChatExecutionContext.toolExecutionScope?.permits("search_and_extract") == true,
+            groupIdCallRescueEnvelope(for: name) == nil
+        {
+            ToolRegistryLogger.registry.notice(
+                "steering hallucinated fetch tool '\(name, privacy: .public)' to search_and_extract"
+            )
+            return ToolErrorEnvelope(
+                kind: .toolNotFound,
+                reason:
+                    "There is no '\(name)' tool. To fetch a web page, call search_and_extract "
+                    + "with {\"urls\": [\"<url>\"]} — it fetches the pages and returns their "
+                    + "readable content. To find sources first, call web_search.",
+                toolName: name,
+                retryable: true
+            ).toJSONString()
+        }
+
         // A tool this request never exposed must not run, however convincingly the model asks
         // for it.
         //
@@ -2416,6 +2449,23 @@ public final class ToolRegistry: ObservableObject {
 
     static let capabilityToolNames: Set<String> = [
         "capabilities", "capabilities_discover", "capabilities_load",
+    ]
+
+    /// Fetch-tool names models import from other harnesses (Claude Code's
+    /// WebFetch, LangChain requests_get, the reference MCP fetch server, …).
+    /// None have ever existed in osaurus; calls to them are steered to
+    /// `search_and_extract` when this request exposes it (see `execute`).
+    /// Lowercase; matched case-insensitively. Only consulted for names with
+    /// NO real registration, so a plugin/MCP tool legitimately claiming one
+    /// of these always wins. Deliberately excludes browser-intent names
+    /// (`browse`, `open_url`) — steering "log in and click" intent to a
+    /// read-only extractor points AWAY from a `browser_use` sitting in the
+    /// schema — and shell-intent names (`curl`), whose POST/API shapes
+    /// extraction cannot serve.
+    static let hallucinatedFetchToolNames: Set<String> = [
+        "web_fetch", "webfetch", "fetch", "fetch_url", "fetch_page",
+        "fetch_webpage", "http_get", "get_url", "get_webpage", "read_url",
+        "read_webpage", "visit_page", "load_url", "url_fetch",
     ]
 
     /// Built-in tools that are authoritatively gated per-agent and must never
