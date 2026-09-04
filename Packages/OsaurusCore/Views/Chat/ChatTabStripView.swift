@@ -245,7 +245,7 @@ struct ChatTabStripView: View {
             }
 
             newTabButton
-                .padding(.leading, 6)
+                .padding(.leading, 2)
         }
         // Ideal-size pass: every chip hugs its title, clamped to the
         // computed min/max, so the row width is Σ(clamped hug widths) and
@@ -323,7 +323,7 @@ struct ChatTabStripView: View {
             Image(systemName: "plus")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(windowState.theme.secondaryText)
-                .frame(width: 24, height: 24)
+                .frame(width: 20, height: 20)
                 .contentShape(Circle())
         }
         .buttonStyle(ChromeHoverCircleButtonStyle(theme: windowState.theme))
