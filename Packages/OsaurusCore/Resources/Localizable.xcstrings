@@ -196297,6 +196297,41 @@
         }
       }
     },
+    "Speculative decoding last run": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spekulative Dekodierung – letzter Lauf"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "마지막 추측 디코딩 실행"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Последний запуск спекулятивного декодирования"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上次推测解码运行"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上次推測解碼執行"
+          }
+        }
+      }
+    },
     "Speech Model": {
       "localizations": {
         "de": {
