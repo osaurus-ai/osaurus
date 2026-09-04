@@ -7595,14 +7595,6 @@ final class ChatSession: ObservableObject {
                             else { return nil }
                             return assistantTurn.content
                         },
-                        assistantVisibleText: {
-                            // Ungated sibling of `finalVisibleText` for the
-                            // file side-effect advisory: read BEFORE
-                            // `onBatchComplete` swaps in a fresh buffer, so a
-                            // tool-calling message's narration is what the
-                            // loop sees, not the empty next turn.
-                            assistantTurn.content
-                        },
                         prepareGroundedClaimRetry: {
                             // Same persistence-backed boundary as the tracked-
                             // task continuation: the ungrounded final stays
@@ -7620,6 +7612,14 @@ final class ChatSession: ObservableObject {
                             self.turns.append(retryTurn)
                             assistantTurn = retryTurn
                             self.rebuildVisibleBlocks()
+                        },
+                        assistantVisibleText: {
+                            // Ungated sibling of `finalVisibleText` for the
+                            // file side-effect advisory: read BEFORE
+                            // `onBatchComplete` swaps in a fresh buffer, so a
+                            // tool-calling message's narration is what the
+                            // loop sees, not the empty next turn.
+                            assistantTurn.content
                         }
                     )
 
