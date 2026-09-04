@@ -144,7 +144,18 @@ public final class ExecutionContext: ObservableObject {
 
     /// Begin execution with the given prompt.
     public func start(prompt: String) async {
-        await activateFolderContextIfNeeded()
+        let folderFailure = await activateFolderContextIfNeeded()
+        if let folderFailure {
+            // The dispatch NAMED a folder and that folder cannot be read.
+            // Proceeding silently produced the live Watcher failure: the run
+            // fell back to the agent's sandbox, read `/workspace/agents/<uuid>`,
+            // and reported "the monitored folder is empty" over a folder full
+            // of files. The run still executes (the result must reach the
+            // watcher log/UI), but the model is told the truth up front so it
+            // reports the real problem instead of inventing one.
+            chatSession.send(folderFailure + "\n\n" + prompt)
+            return
+        }
         chatSession.send(prompt)
     }
 
@@ -153,19 +164,32 @@ public final class ExecutionContext: ObservableObject {
     /// folder the session had persisted (the dispatch asked for that folder);
     /// without one, a reattached session keeps its own restored folder. Never
     /// touches any other session's folder or process-wide state.
-    private func activateFolderContextIfNeeded() async {
+    /// Returns nil on success (or when no folder was requested). On failure
+    /// returns a prompt preamble stating which folder could not be read, so
+    /// the run reports the real problem instead of introspecting whatever
+    /// directory its fallback execution mode happens to be rooted in.
+    private func activateFolderContextIfNeeded() async -> String? {
         // A dispatch may carry a picker bookmark (GUI-created Watcher) OR a
         // plain path (orchestrator-created Watcher, whose config tool stores
         // no bookmark). Either must reach the run — a path-only dispatch used
         // to drop the folder entirely because only the bookmark was threaded.
-        guard folderBookmark != nil || (folderPath?.isEmpty == false) else { return }
+        guard folderBookmark != nil || (folderPath?.isEmpty == false) else { return nil }
         let restored = await chatSession.folderState.restoreAndWait(
             bookmark: folderBookmark,
             path: folderPath
         )
         if restored == nil {
-            print("[ExecutionContext] Dispatch folder could not be restored, skipping")
+            let path = folderPath ?? "(bookmark-only)"
+            print(
+                "[ExecutionContext] Dispatch folder could not be restored: \(path) — run proceeds with an explicit folder-unreadable preamble"
+            )
             return
+                "IMPORTANT — the configured folder for this task, '\(path)', could not "
+                + "be read (it is missing, not a directory, or macOS denied access). "
+                + "Do NOT inspect other directories in its place and do NOT report the "
+                + "folder as empty. Report this access problem as the outcome and stop; "
+                + "the user can restore access by re-picking the folder in Settings → "
+                + "Watchers."
         }
         // This folder came from a background dispatch (Watcher / schedule /
         // plugin), not an interactive UI pick. Mark it so
@@ -173,6 +197,7 @@ public final class ExecutionContext: ObservableObject {
         // sandbox — the dispatched agent must be able to see its target
         // folder (the Voice Memo Watcher "empty folder" bug).
         await MainActor.run { chatSession.folderContextFromDispatchBookmark = true }
+        return nil
     }
 
     /// Poll until execution completes or the task is cancelled.

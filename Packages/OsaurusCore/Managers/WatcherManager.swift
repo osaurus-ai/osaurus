@@ -580,17 +580,25 @@ public final class WatcherManager {
                     break
                 }
 
-                // Compute change count before overwriting lastKnown. The diff
+                // Compute the change set before overwriting lastKnown. The diff
                 // builds path sets over every entry, which is slow enough on
                 // large folders to hang the UI, so it runs off the main actor
-                // like the capture.
+                // like the capture. The PATHS are kept, not just the count —
+                // they anchor the dispatch prompt (a run that is only told
+                // "changes were detected" has introspected its own sandbox
+                // agent home instead of the watched folder, live).
+                let changedPaths: [String]
                 let changeCount: Int
                 if let known = self.lastKnownFingerprints[watcherId] {
-                    changeCount = await Task.detached(priority: .userInitiated) {
-                        fingerprint.diff(from: known).totalCount
+                    let diff = await Task.detached(priority: .userInitiated) {
+                        fingerprint.diff(from: known)
                     }.value
+                    changeCount = diff.totalCount
+                    changedPaths = Array(diff.added.union(diff.modified).union(diff.removed))
+                        .sorted()
                 } else {
                     changeCount = fingerprint.entries.count
+                    changedPaths = []
                 }
 
                 // Store the fingerprint that triggered this dispatch as lastKnown.
@@ -603,7 +611,11 @@ public final class WatcherManager {
 
                 print("[Osaurus] [\(watcher.name)] phase → processing (iteration \(iteration), \(changeCount) changes)")
 
-                let prompt = self.buildDispatchPrompt(for: watcher, iteration: iteration)
+                let prompt = self.buildDispatchPrompt(
+                    for: watcher,
+                    iteration: iteration,
+                    changedPaths: changedPaths
+                )
 
                 let request = DispatchRequest(
                     prompt: prompt,
@@ -702,18 +714,48 @@ public final class WatcherManager {
 
     // MARK: - Prompt Builder
 
+    /// How many changed paths the dispatch prompt names before summarizing
+    /// the remainder. Enough to make every ordinary event fully explicit;
+    /// bounded so a bulk copy of thousands of files cannot flood the prompt.
+    static let dispatchPromptChangedPathCap = 20
+
     /// Build the dispatch prompt. The AI gets the full directory tree via
-    /// FolderContext when the folder is set, so we only need to provide
-    /// the user's instructions and the idempotency footer.
-    private func buildDispatchPrompt(for watcher: Watcher, iteration: Int = 1) -> String {
+    /// FolderContext when the folder is set — but the prompt must still NAME
+    /// the watched folder and the changed files. Live failure without the
+    /// anchor: a watcher agent ran in an execution mode rooted elsewhere,
+    /// read its own sandbox agent home (`/workspace/agents/<uuid>` — SOUL.md
+    /// + plugins/), and reported "the monitored folder is empty" while the
+    /// real watched folder held the files. The changed-path list also makes
+    /// the Watchers guide's "receives the recently changed files" promise
+    /// true — it wasn't, before this.
+    /// Internal (not private) so the prompt-anchoring contract is unit-testable.
+    func buildDispatchPrompt(
+        for watcher: Watcher,
+        iteration: Int = 1,
+        changedPaths: [String] = []
+    ) -> String {
         var prompt = watcher.instructions
+
+        prompt +=
+            "\n\nWatched folder (work HERE, not in any other directory): \(watcher.watchPath)\n"
+        if !changedPaths.isEmpty {
+            let shown = changedPaths.prefix(Self.dispatchPromptChangedPathCap)
+            prompt += "Changed since the last check:\n"
+            for path in shown {
+                prompt += "- \(path)\n"
+            }
+            let overflow = changedPaths.count - shown.count
+            if overflow > 0 {
+                prompt += "…and \(overflow) more changed file(s).\n"
+            }
+        }
 
         if iteration == 1 {
             prompt +=
-                "\n\nChanges were detected in the watched folder. Use `file_read` (which lists a directory when given one) and other file tools to inspect the current state of the directory and take action.\n"
+                "\nChanges were detected in the watched folder. Use `file_read` (which lists a directory when given one) and other file tools to inspect the current state of the directory and take action.\n"
         } else {
             prompt +=
-                "\n\nThis is a follow-up check after a previous organizing pass. Quickly verify the directory state with a single `file_read` call on the folder. If everything looks organized, return immediately without further inspection. Only take action if you see clearly unorganized files.\n"
+                "\nThis is a follow-up check after a previous organizing pass. Quickly verify the directory state with a single `file_read` call on the folder. If everything looks organized, return immediately without further inspection. Only take action if you see clearly unorganized files.\n"
         }
 
         prompt +=

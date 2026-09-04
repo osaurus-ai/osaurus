@@ -1954,10 +1954,28 @@ enum ConfigPlanner {
                 }
             } else {
                 let path = (entry.path.map { ($0 as NSString).expandingTildeInPath }) ?? "?"
+                // Same-path advisory: a model that thinks its last create
+                // "didn't work" retries under a variant name ("Voice Memos
+                // Watcher" next to "Voice Memo Watcher") — observed live,
+                // yielding two near-identical watchers on one folder. The
+                // create still proceeds (different-name creations are
+                // legitimate and never refused); the plan just names the
+                // existing watcher so an accidental duplicate becomes an
+                // update-by-that-name instead.
+                var risks: [String] = []
+                if let duplicate = existing.first(where: {
+                    $0.watchPath == path && $0.name.lowercased() != entry.name.lowercased()
+                }) {
+                    risks.append(
+                        "watcher `\(duplicate.name)` already watches this path — if you meant "
+                            + "to change it, reuse that exact name to update it instead of "
+                            + "creating a duplicate.")
+                }
                 actions.append(
                     ConfigPlanAction(
                         section: "watchers", target: entry.name, kind: .create,
-                        changes: ["watch \(path) with agent `\(entry.agent ?? "?")`"]))
+                        changes: ["watch \(path) with agent `\(entry.agent ?? "?")`"],
+                        risks: risks))
             }
         }
 
