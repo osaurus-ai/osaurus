@@ -19,9 +19,11 @@ enum ChatHistoryDialog {
         let content = ChatHistoryDialogContent(
             windowState: windowState,
             scope: scope,
+            // Selecting a chat opens it in its own tab (or focuses the tab
+            // that already shows it) rather than replacing the active chat.
             onSelect: { session in
                 dismiss()
-                windowState.loadSession(session)
+                windowState.openSessionInNewTab(session)
             },
             onOpenInNewTab: { session in
                 dismiss()

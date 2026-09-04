@@ -567,7 +567,12 @@ final class ChatWindowState: ObservableObject {
             selectTab(id: existing.id)
             return
         }
-        newTab()
+        // Chrome-style: an untouched empty tab is reused rather than left
+        // behind as a blank tab next to the one we just opened.
+        let activeIsBlank = session.turns.isEmpty && !session.isStreaming
+        if !activeIsBlank {
+            newTab()
+        }
         loadSession(sessionData)
     }
 
