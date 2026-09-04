@@ -244,6 +244,9 @@ struct ChatTabStripView: View {
                     session: tab.session,
                     isActive: tab.id == windowState.activeTabId,
                     isHovered: hoveredTabId == tab.id,
+                    roundsLeading: index == 0 || shown[index - 1].id == windowState.activeTabId,
+                    roundsTrailing: index == shown.count - 1
+                        || shown[index + 1].id == windowState.activeTabId,
                     canClose: windowState.tabs.count > 1,
                     width: maxTabWidth,
                     isDragging: draggingTabId == tab.id,
@@ -438,6 +441,11 @@ private struct ChatTabItemView: View {
     @ObservedObject var session: ChatSession
     let isActive: Bool
     let isHovered: Bool
+    /// Inactive tabs share one continuous tinted band; only the ends of a
+    /// run (strip edge, or beside the active tab) are rounded so adjacent
+    /// inactive tabs merge into a single surface.
+    var roundsLeading: Bool = true
+    var roundsTrailing: Bool = true
     /// False while this is the window's only tab — `closeTab` refuses to
     /// close the last tab, so the × is hidden rather than dead.
     let canClose: Bool
@@ -581,15 +589,21 @@ private struct ChatTabItemView: View {
                 ChromeTabShape(topRadius: 8, footRadius: Self.footRadius)
                     .fill(theme.tertiaryBackground.opacity(theme.isDark ? 0.95 : 0.85))
                     .padding(.horizontal, -Self.footRadius)
-            } else if isHovered {
-                // Inactive tabs are FLAT at rest (Chrome): only the hairline
-                // separators divide them, so the raised active silhouette is
-                // the one thing with depth and its feet blend straight into
-                // the bar. A soft inset rect appears on hover only.
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(theme.tertiaryBackground.opacity(0.45))
-                    .padding(.vertical, 3)
-                    .padding(.horizontal, 2)
+            } else {
+                // Resting tint for inactive tabs, drawn as ONE continuous
+                // band per run (no per-tab inset, corners only at the run's
+                // ends) so the raised active tab's flared feet cover the
+                // band edge and blend into it like Chrome. Hover brightens
+                // just this tab's stretch of the band.
+                UnevenRoundedRectangle(
+                    topLeadingRadius: roundsLeading ? 7 : 0,
+                    bottomLeadingRadius: roundsLeading ? 7 : 0,
+                    bottomTrailingRadius: roundsTrailing ? 7 : 0,
+                    topTrailingRadius: roundsTrailing ? 7 : 0,
+                    style: .continuous
+                )
+                .fill(theme.tertiaryBackground.opacity(isHovered ? 0.5 : 0.22))
+                .padding(.vertical, 3)
             }
         }
         .contentShape(Rectangle())
