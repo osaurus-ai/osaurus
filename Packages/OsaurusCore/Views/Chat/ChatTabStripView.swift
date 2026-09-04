@@ -604,11 +604,11 @@ private struct ChatTabItemView: View {
                     topTrailingRadius: roundsTrailing ? 7 : 0,
                     style: .continuous
                 )
-                // Darker than the BAR it sits on (a theme colour was invisible
-                // against a bar of the same colour): a black overlay reads as
-                // recessed in both appearances, below the light raised active
-                // tab. Full height so it sits flush with the active silhouette.
-                .fill(Color.black.opacity(theme.isDark ? 0.28 : 0.07))
+                // Recessed below the raised active tab using the palette's own
+                // shadow tone (each theme defines it), so the band follows a
+                // theme's tint instead of a neutral black. Full height so it
+                // sits flush with the active silhouette.
+                .fill(theme.shadowColor.opacity(theme.isDark ? 0.45 : 0.12))
                 .overlay(
                     UnevenRoundedRectangle(
                         topLeadingRadius: roundsLeading ? 7 : 0,
