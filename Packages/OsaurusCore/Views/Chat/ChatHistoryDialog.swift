@@ -75,17 +75,25 @@ private struct ChatHistoryDialogContent: View {
                 Button {
                     requestImport()
                 } label: {
-                    HStack(spacing: 5) {
+                    // The tray glyph sits low on its baseline; centre the
+                    // icon on the text's cap height instead of the line box
+                    // so the two read as one aligned unit.
+                    HStack(alignment: .center, spacing: 5) {
                         Image(systemName: "square.and.arrow.down")
                             .font(.system(size: 11, weight: .medium))
+                            .offset(y: -1)
                         Text("Import", bundle: .module)
                             .font(.system(size: 11, weight: .medium))
                     }
                     .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
                     .contentShape(Rectangle())
+                    // Cursor on the label: the button chrome itself has no
+                    // hover surface inside the alert overlay.
+                    .pointingHandCursor()
                 }
                 .buttonStyle(.plain)
-                .pointingHandCursor()
                 .localizedHelp("Import Conversations")
             }
 
