@@ -14,7 +14,6 @@
             <description sparkle:format="markdown"><![CDATA[
 ## What's Changed
 
-- Web pipeline: retrieval rides with discovery; hallucinated fetch calls get steered (#2625) by @jjang-ai
 - Live Activity: show what the adaptive MTP controller actually ran last turn (#2624) by @jjang-ai
 - MTP detector + depth buttons appear during warmup, by weight, Flash-Next/27B only (#2620) by @jjang-ai
 
