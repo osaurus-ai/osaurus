@@ -8640,13 +8640,13 @@ struct ChatView: View {
                             currentSessionId: session.sessionId,
                             width: sidebarWidth,
                             onSelect: { data in
-                                openProjectId = nil
+                                setOpenProject(nil)
                                 windowState.enteredChatFromProjectPage = false
                                 windowState.loadSession(data)
                                 isPinnedToBottom = true
                             },
                             onNewChat: { projectId in
-                                openProjectId = nil
+                                setOpenProject(nil)
                                 windowState.enteredChatFromProjectPage = projectId != nil
                                 startProjectChat(
                                     defaultAgentId: projectManager.project(for: projectId)?
@@ -8718,12 +8718,12 @@ struct ChatView: View {
                                     session.projectId = nil
                                 }
                                 if openProjectId == id {
-                                    openProjectId = nil
+                                    setOpenProject(nil)
                                 }
                                 windowState.refreshSessions()
                             },
                             onOpenProject: { project in
-                                openProjectId = project.id
+                                setOpenProject(project.id)
                             },
                             onExport: { metadata, format in
                                 ChatSessionExportCoordinator.run(
@@ -8753,7 +8753,7 @@ struct ChatView: View {
                                 )
                             },
                             onOpenInNewTab: { sessionData in
-                                openProjectId = nil
+                                setOpenProject(nil)
                                 windowState.enteredChatFromProjectPage = false
                                 windowState.openSessionInNewTab(sessionData)
                             },
@@ -8973,13 +8973,13 @@ struct ChatView: View {
                             project: project,
                             currentAgentId: windowState.agentId,
                             onOpenSession: { data in
-                                openProjectId = nil
+                                setOpenProject(nil)
                                 windowState.enteredChatFromProjectPage = true
                                 windowState.loadSession(data)
                                 isPinnedToBottom = true
                             },
                             onNewChat: {
-                                openProjectId = nil
+                                setOpenProject(nil)
                                 windowState.enteredChatFromProjectPage = true
                                 startProjectChat(defaultAgentId: project.defaultAgentId)
                                 windowState.session.projectId = project.id
@@ -8990,7 +8990,7 @@ struct ChatView: View {
                                 if session.projectId == project.id {
                                     session.projectId = nil
                                 }
-                                openProjectId = nil
+                                setOpenProject(nil)
                                 windowState.refreshSessions()
                             }
                         )
@@ -9032,7 +9032,7 @@ struct ChatView: View {
             guard let targetWindowId = notification.userInfo?["windowId"] as? UUID,
                 targetWindowId == windowState.windowId
             else { return }
-            openProjectId = session.projectId
+            setOpenProject(session.projectId)
         }
         // Keep the live session's membership in sync with sidebar/other-window
         // moves: compose reads `session.projectId` every turn, so a stale copy
@@ -9604,7 +9604,7 @@ struct ChatView: View {
         // keeps its height and hosts the project pill (moved out of the
         // title bar, which the session tabs own now).
         HStack {
-            ChatProjectPill(windowState: windowState, session: session)
+            ChatProjectPill(windowState: windowState)
             Spacer()
         }
         .padding(.horizontal, 16)
@@ -10313,6 +10313,16 @@ extension ChatView {
     // `.onExitCommand` machinery, so every state that should win over
     // "close window" must either be handled here or explicitly passed
     // through to the responder chain.
+    /// Open/close the project page. Writes the window flag directly instead
+    /// of relying on `onChange(of: openProjectId)`: when the chat switch
+    /// remounts ChatView (new session instance → new `.id`), the outgoing
+    /// view's onChange never fires and the flag stuck at `true`, hiding the
+    /// tabs and trimming the overflow menu to just Settings.
+    private func setOpenProject(_ id: UUID?) {
+        openProjectId = id
+        windowState.isProjectPageVisible = id != nil
+    }
+
     /// Start a fresh chat for a project, honoring its default agent when one
     /// is set and still exists. `switchAgent` already installs a fresh
     /// session for the target agent, so the two branches are equivalent

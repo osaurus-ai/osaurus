@@ -10,7 +10,18 @@
 
 import SwiftUI
 
+/// Outer view observes the window (which republishes when its session is
+/// replaced by a tab switch / load); the inner view observes the session's
+/// own `projectId`.
 struct ChatProjectPill: View {
+    @ObservedObject var windowState: ChatWindowState
+
+    var body: some View {
+        ChatProjectPillContent(windowState: windowState, session: windowState.session)
+    }
+}
+
+private struct ChatProjectPillContent: View {
     @ObservedObject var windowState: ChatWindowState
     @ObservedObject var session: ChatSession
     @ObservedObject private var projectManager = ProjectManager.shared
@@ -18,7 +29,8 @@ struct ChatProjectPill: View {
     @State private var isHovered = false
 
     var body: some View {
-        if let projectId = session.projectId,
+        if !windowState.isProjectPageVisible,
+            let projectId = session.projectId,
             let project = projectManager.project(for: projectId)
         {
             Button(action: {
