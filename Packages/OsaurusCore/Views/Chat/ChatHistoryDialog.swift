@@ -90,6 +90,7 @@ private struct ChatHistoryDialogContent: View {
             ChatHistoryList(
                 sessions: windowState.filteredSessions,
                 currentSessionId: windowState.session.sessionId,
+                scope: scope,
                 onSelect: onSelect,
                 onDelete: { id in
                     // Same semantics as the sidebar: cancel a registry-owned

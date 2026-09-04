@@ -2156,6 +2156,8 @@ private struct DontAskAgainToggle: View {
 struct ChatHistoryList: View {
     let sessions: [ChatSessionData]
     let currentSessionId: UUID?
+    /// Alert scope for the batch-delete confirmation.
+    let scope: ThemedAlertScope
     let onSelect: (ChatSessionData) -> Void
     let onDelete: (UUID) -> Void
     let onRename: (UUID, String) -> Void
@@ -2179,6 +2181,9 @@ struct ChatHistoryList: View {
     @State private var isContentSearchInFlight = false
     @FocusState private var isSearchFocused: Bool
     @State private var editingSessionId: UUID?
+    /// Multi-selection (⌘-click toggles, ⇧-click extends from the anchor).
+    @State private var selectedIds: Set<UUID> = []
+    @State private var selectionAnchorId: UUID?
 
     private var filteredSessions: [ChatSessionData] {
         let visible = sessions.filter { !$0.archived }
@@ -2215,6 +2220,11 @@ struct ChatHistoryList: View {
                 isSearching: isContentSearchInFlight
             )
 
+            if !selectedIds.isEmpty {
+                selectionActionBar
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
             if sessions.isEmpty {
                 placeholder(icon: "bubble.left.and.bubble.right", text: "No chats yet")
             } else if filteredSessions.isEmpty, isContentSearchInFlight {
@@ -2232,10 +2242,11 @@ struct ChatHistoryList: View {
                                 session: session,
                                 agent: agentManager.agent(for: session.agentId ?? Agent.defaultId),
                                 isSelected: session.id == currentSessionId,
+                                isMultiSelected: selectedIds.contains(session.id),
                                 isImportHighlighted: importHighlight.sessionIds.contains(session.id),
                                 activityStatus: activityMonitor.statuses[session.id],
                                 isEditing: editingSessionId == session.id,
-                                onSelect: { onSelect(session) },
+                                onSelect: { handleTap(session) },
                                 onStartRename: { editingSessionId = session.id },
                                 onConfirmRename: { newTitle in
                                     let trimmed = newTitle.trimmingCharacters(in: .whitespaces)
@@ -2268,9 +2279,161 @@ struct ChatHistoryList: View {
                 .frame(maxHeight: 360)
             }
         }
+        .animation(theme.animationQuick(), value: selectedIds)
         .onChange(of: searchQuery) { _, query in
             scheduleContentSearch(query)
         }
+    }
+
+    // MARK: Multi-selection
+
+    private func handleTap(_ session: ChatSessionData) {
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.command) {
+            toggleSelection(session.id)
+        } else if flags.contains(.shift) {
+            extendSelection(to: session.id)
+        } else if !selectedIds.isEmpty {
+            toggleSelection(session.id)
+        } else {
+            selectionAnchorId = session.id
+            onSelect(session)
+        }
+    }
+
+    private func toggleSelection(_ id: UUID) {
+        if selectedIds.contains(id) { selectedIds.remove(id) } else { selectedIds.insert(id) }
+        selectionAnchorId = id
+    }
+
+    private func extendSelection(to id: UUID) {
+        let ids = filteredSessions.map(\.id)
+        guard
+            let anchor = selectionAnchorId ?? currentSessionId,
+            let anchorIndex = ids.firstIndex(of: anchor),
+            let targetIndex = ids.firstIndex(of: id)
+        else {
+            selectedIds.insert(id)
+            selectionAnchorId = id
+            return
+        }
+        let range = anchorIndex <= targetIndex ? anchorIndex...targetIndex : targetIndex...anchorIndex
+        selectedIds.formUnion(ids[range])
+    }
+
+    private func clearSelection() {
+        selectedIds.removeAll()
+        selectionAnchorId = nil
+    }
+
+    /// Batch bar for the selection: move to project, archive, delete, clear.
+    private var selectionActionBar: some View {
+        HStack(spacing: 8) {
+            Text("\(selectedIds.count) selected", bundle: .module)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+
+            Spacer(minLength: 4)
+
+            if !projectManager.projects.isEmpty {
+                Menu {
+                    ForEach(projectManager.projects) { project in
+                        Button { moveSelected(to: project.id) } label: { Text(verbatim: project.name) }
+                    }
+                    Divider()
+                    Button { moveSelected(to: nil) } label: {
+                        Text("Remove from Project", bundle: .module)
+                    }
+                } label: {
+                    Image(systemName: "folder.badge.plus")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
+                        .background(
+                            RoundedRectangle(cornerRadius: SidebarStyle.actionButtonCornerRadius, style: .continuous)
+                                .fill(theme.secondaryBackground.opacity(0.5))
+                        )
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .tint(theme.secondaryText)
+                .fixedSize()
+                .localizedHelp("Move to Project")
+            }
+            selectionBarButton(icon: "archivebox", help: "Archive", tint: theme.secondaryText) {
+                for id in selectedIds { onSetArchived(id, true) }
+                clearSelection()
+            }
+            selectionBarButton(icon: "trash", help: "Delete", tint: .red) {
+                requestDeleteSelected()
+            }
+            selectionBarButton(icon: "xmark", help: "Clear Selection", tint: theme.secondaryText) {
+                clearSelection()
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous)
+                .fill(theme.accentColor.opacity(theme.isDark ? 0.16 : 0.10))
+        )
+    }
+
+    private func selectionBarButton(
+        icon: String, help: LocalizedStringKey, tint: Color, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(tint)
+                .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
+                .background(
+                    RoundedRectangle(cornerRadius: SidebarStyle.actionButtonCornerRadius, style: .continuous)
+                        .fill(theme.secondaryBackground.opacity(0.5))
+                )
+        }
+        .buttonStyle(.plain)
+        .localizedHelp(help)
+    }
+
+    private func moveSelected(to projectId: UUID?) {
+        for id in selectedIds { onSetProject(id, projectId) }
+        clearSelection()
+    }
+
+    /// Confirms once, then deletes every selected session; honors the
+    /// "don't ask again" opt-out like the single-row flow.
+    private func requestDeleteSelected() {
+        let ids = selectedIds
+        guard !ids.isEmpty else { return }
+        if DeleteConfirmationPreference.shared.skipForSession {
+            performDelete(ids)
+            return
+        }
+        let requestId = UUID()
+        let scope = self.scope
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: "Delete Conversations?",
+                message: L("\(ids.count) conversations will be removed permanently. This can't be undone."),
+                accessory: AnyView(DontAskAgainToggle()),
+                buttons: [
+                    .cancel(L("Cancel")),
+                    .destructive(L("Delete")) { performDelete(ids) },
+                ],
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
+    }
+
+    private func performDelete(_ ids: Set<UUID>) {
+        for id in ids { onDelete(id) }
+        clearSelection()
     }
 
     private func placeholder(icon: String?, text: LocalizedStringKey) -> some View {
