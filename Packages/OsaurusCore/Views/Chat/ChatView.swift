@@ -8041,7 +8041,6 @@ struct ChatView: View {
     @State private var sidebarDragAnchor: Double?
     /// Project whose detail page is shown in the content area (opened from
     /// the sidebar's Projects tab). nil shows the normal chat surface.
-    @State private var openProjectId: UUID?
     /// Observed so project renames/edits re-render the open detail page.
     @ObservedObject private var projectManager = ProjectManager.shared
     @State private var scrollToBottomTrigger: Int = 0
@@ -8646,24 +8645,22 @@ struct ChatView: View {
                             currentSessionId: session.sessionId,
                             width: sidebarWidth,
                             onSelect: { data in
-                                openProjectId = nil
+                                windowState.openProjectId = nil
                                 windowState.enteredChatFromProjectPage = false
                                 windowState.loadSession(data)
                                 isPinnedToBottom = true
                             },
                             onNewChat: { projectId in
-                                openProjectId = nil
-                                windowState.enteredChatFromProjectPage = projectId != nil
-                                startProjectChat(
-                                    defaultAgentId: projectManager.project(for: projectId)?
-                                        .defaultAgentId)
-                                // A chat started from a project's page joins
-                                // that project; persisted with the first
-                                // turn's save via toSessionData().
-                                if let projectId {
-                                    session.projectId = projectId
+                                // The sidebar's own New Chat button passes nil:
+                                // it is the explicit way to start a chat outside
+                                // any project (⌘N stays in the current one).
+                                if let project = projectManager.project(for: projectId) {
+                                    windowState.startNewChat(in: project)
+                                } else {
+                                    windowState.openProjectId = nil
+                                    windowState.enteredChatFromProjectPage = false
+                                    windowState.startNewChat()
                                 }
-                                applyProjectFolderIfNeeded(for: projectId)
                             },
                             onDelete: { id in
                                 // Deleting a chat is an explicit destructive
@@ -8723,13 +8720,13 @@ struct ChatView: View {
                                 if session.projectId == id {
                                     session.projectId = nil
                                 }
-                                if openProjectId == id {
-                                    openProjectId = nil
+                                if windowState.openProjectId == id {
+                                    windowState.openProjectId = nil
                                 }
                                 windowState.refreshSessions()
                             },
                             onOpenProject: { project in
-                                openProjectId = project.id
+                                windowState.openProjectId = project.id
                             },
                             onExport: { metadata, format in
                                 ChatSessionExportCoordinator.run(
@@ -8966,29 +8963,23 @@ struct ChatView: View {
                     // a project is open from the sidebar's Projects tab.
                     // Opaque and full-size so the chat beneath neither shows
                     // nor receives events.
-                    if let project = projectManager.project(for: openProjectId) {
+                    if let project = projectManager.project(for: windowState.openProjectId) {
                         ProjectDetailView(
                             project: project,
                             currentAgentId: windowState.agentId,
                             onOpenSession: { data in
-                                openProjectId = nil
+                                windowState.openProjectId = nil
                                 windowState.enteredChatFromProjectPage = true
                                 windowState.loadSession(data)
                                 isPinnedToBottom = true
                             },
-                            onNewChat: {
-                                openProjectId = nil
-                                windowState.enteredChatFromProjectPage = true
-                                startProjectChat(defaultAgentId: project.defaultAgentId)
-                                session.projectId = project.id
-                                applyProjectFolderIfNeeded(for: project.id)
-                            },
+                            onNewChat: { windowState.startNewChat(in: project) },
                             onDelete: {
                                 ChatSessionsManager.shared.deleteProject(id: project.id)
                                 if session.projectId == project.id {
                                     session.projectId = nil
                                 }
-                                openProjectId = nil
+                                windowState.openProjectId = nil
                                 windowState.refreshSessions()
                             }
                         )
@@ -8996,7 +8987,7 @@ struct ChatView: View {
                         .zIndex(2)
                     }
                 }
-                .animation(theme.animationQuick(), value: openProjectId)
+                .animation(theme.animationQuick(), value: windowState.openProjectId)
             }
         }
         // Allow the window to narrow down to 550pt so it tiles comfortably
@@ -9021,16 +9012,11 @@ struct ChatView: View {
             )
         )
         .ignoresSafeArea()
-        // Mirror the project page's visibility onto the window state so the
-        // toolbar (agent pill, window pin) can hide chat-only chrome.
-        .onChange(of: openProjectId) { _, newValue in
-            windowState.isProjectPageVisible = newValue != nil
-        }
         .onReceive(NotificationCenter.default.publisher(for: .chatToolbarBackToProject)) { notification in
             guard let targetWindowId = notification.userInfo?["windowId"] as? UUID,
                 targetWindowId == windowState.windowId
             else { return }
-            openProjectId = session.projectId
+            windowState.openProjectId = session.projectId
         }
         // Keep the live session's membership in sync with sidebar/other-window
         // moves: compose reads `session.projectId` every turn, so a stale copy
@@ -10303,39 +10289,6 @@ extension ChatView {
     // `.onExitCommand` machinery, so every state that should win over
     // "close window" must either be handled here or explicitly passed
     // through to the responder chain.
-    /// Start a fresh chat for a project, honoring its default agent when one
-    /// is set and still exists. `switchAgent` already installs a fresh
-    /// session for the target agent, so the two branches are equivalent
-    /// apart from the agent change.
-    private func startProjectChat(defaultAgentId: UUID?) {
-        if let defaultAgentId,
-            defaultAgentId != windowState.agentId,
-            windowState.agents.contains(where: { $0.id == defaultAgentId })
-        {
-            windowState.switchAgent(to: defaultAgentId)
-        } else {
-            windowState.startNewChat()
-        }
-    }
-
-    /// Open a fresh project chat with the project's working folder, if one is
-    /// set. Applied only when the new chat has no folder of its own, so it's a
-    /// default and never overrides a folder the user later picks in the chat
-    /// (mirrors how `defaultAgentId` nudges without locking). Restoring the
-    /// project's security-scoped bookmark is the same path a persisted chat
-    /// folder takes on reopen.
-    private func applyProjectFolderIfNeeded(for projectId: UUID?) {
-        guard let projectId,
-            let project = projectManager.project(for: projectId),
-            project.folderBookmark != nil,
-            !windowState.session.folderState.hasActiveFolder
-        else { return }
-        windowState.session.folderState.restore(
-            bookmark: project.folderBookmark,
-            path: project.folderPath
-        )
-    }
-
     private func setupKeyMonitor() {
         if keyMonitor != nil { return }
 

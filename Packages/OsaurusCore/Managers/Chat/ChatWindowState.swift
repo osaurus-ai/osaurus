@@ -59,10 +59,15 @@ final class ChatWindowState: ObservableObject {
     /// immediately; the toolbar toggle still collapses it per window.
     @Published var showSidebar: Bool = true
 
+    /// The project whose detail page currently covers the chat surface, or
+    /// nil while the chat is showing. Owned here (not as `ChatView` state)
+    /// so window-level actions like ⌘N can both read it and dismiss it.
+    @Published var openProjectId: UUID?
+
     /// True while the content area shows a project detail page instead of
-    /// the chat surface. Set by `ChatView`; read by the toolbar item views
-    /// so chat-specific chrome (agent pill, window pin) hides with it.
-    @Published var isProjectPageVisible: Bool = false
+    /// the chat surface. Read by the toolbar item views so chat-specific
+    /// chrome (agent pill, window pin) hides with it.
+    var isProjectPageVisible: Bool { openProjectId != nil }
 
     /// True when the current chat was entered FROM its project's detail page
     /// (as opposed to the sidebar's Chats tab). The toolbar's back-to-project
@@ -318,6 +323,49 @@ final class ChatWindowState: ObservableObject {
         session.projectId = inheritedProjectId
         refreshSessions()
         refreshSandboxChanges()
+    }
+
+    /// Start a new chat that stays in the user's current project context:
+    /// the open project page when one is showing, otherwise the current
+    /// chat's project. Bound to ⌘N so running out of context mid-project
+    /// doesn't silently drop the project's instructions, knowledge, and
+    /// folder. Falls back to a plain new chat outside any project.
+    func startNewChatInCurrentProject() {
+        let projectId = openProjectId ?? session.projectId
+        guard let project = ProjectManager.shared.project(for: projectId) else {
+            openProjectId = nil
+            enteredChatFromProjectPage = false
+            startNewChat()
+            return
+        }
+        startNewChat(in: project)
+    }
+
+    /// Start a fresh chat inside `project`: closes the project page if it is
+    /// showing, honors the project's default agent when set and still
+    /// existing, stamps membership (persisted with the first turn's save),
+    /// and opens the project's working folder when the chat has none.
+    func startNewChat(in project: Project) {
+        openProjectId = nil
+        enteredChatFromProjectPage = true
+        // `switchAgent` already installs a fresh session for the target
+        // agent, so the two branches differ only in the agent change.
+        if let defaultAgentId = project.defaultAgentId,
+            defaultAgentId != agentId,
+            agents.contains(where: { $0.id == defaultAgentId })
+        {
+            switchAgent(to: defaultAgentId)
+        } else {
+            startNewChat()
+        }
+        // `reset`/`installFreshSession` clear membership; re-stamp it.
+        session.projectId = project.id
+        // A default, not a lock: never overrides a folder the chat picks
+        // itself. Restoring the security-scoped bookmark is the same path
+        // a persisted chat folder takes on reopen.
+        if project.folderBookmark != nil, !session.folderState.hasActiveFolder {
+            session.folderState.restore(bookmark: project.folderBookmark, path: project.folderPath)
+        }
     }
 
     func startNewChat() {

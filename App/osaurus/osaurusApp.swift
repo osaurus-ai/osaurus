@@ -70,10 +70,12 @@ private extension osaurusApp {
 
     var fileMenuCommands: some Commands {
         CommandGroup(replacing: .newItem) {
-            // With the Chat setting on, ⌘N matches the sidebar "New Chat"
-            // button (new chat in the frontmost window) and "New Window"
-            // moves to ⇧⌘N, matching most chat apps. Default keeps the
-            // historical ⌘N = New Window behavior.
+            // With the Chat setting on, ⌘N starts a new chat in the frontmost
+            // window, staying in the current project (open project page or
+            // the current chat's project) so a mid-project "out of context"
+            // restart keeps its instructions, knowledge, and folder. "New
+            // Window" moves to ⇧⌘N, matching most chat apps. Default keeps
+            // the historical ⌘N = New Window behavior.
             if cmdNStartsNewChatInCurrentWindow {
                 Button {
                     Task { @MainActor in
