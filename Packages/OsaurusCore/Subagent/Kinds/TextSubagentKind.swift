@@ -337,6 +337,9 @@ final class TextSubagentKind:
         }
     }
 
+    /// Retained for the shared `SubagentResidency.resolve` signature. The
+    /// handoff toggle no longer refuses a different local model — OFF means
+    /// "run without the unload/reload sequence" — so this copy is not thrown.
     private var residencyDeniedMessage: String {
         switch target {
         case .agent:
@@ -1036,6 +1039,9 @@ final class TextSubagentKind:
                 "iterations": result.iterations,
                 "elapsed_seconds": elapsed,
                 "handoff": residencyPlan.shouldUnload,
+                // Which delegation residency mode ran (the swap handoff adds
+                // `handoff_sequence` / `handoff_summary` on top of this).
+                "residency_mode": residencyPlan.mode,
             ]
             if case .agent = target {
                 payload["agent"] = resolvedAgentName
@@ -1198,6 +1204,7 @@ final class TextSubagentKind:
             "iterations": outcome.assistantTurns,
             "elapsed_seconds": outcome.elapsed,
             "handoff": residencyPlan.shouldUnload,
+            "residency_mode": residencyPlan.mode,
         ]
         // Ephemeral-path parity: compact count only — the typed artifacts
         // were adopted into the parent's store and travel through

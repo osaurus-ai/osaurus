@@ -19,17 +19,27 @@ import Foundation
 import os
 
 /// Models unloaded by a handoff, to be reloaded when the job finishes.
+///
+/// `restoreModelNames` is the list the restore leg reloads. It defaults to
+/// `unloadedModelNames`, and differs only for a RESTORE-ONLY lease: the
+/// delegation sequence found the invoking chat model not loaded (evicted by
+/// memory pressure, a prior API request, or never warmed) — nothing to
+/// unload, but the sequence still ends with the chat model loaded back so
+/// the chat turn continues on its own model either way.
 struct ChatResidencyLease: Sendable, Equatable {
     var unloadedModelNames: [String]
+    var restoreModelNames: [String]
     var unloadedParentIdentity: ModelResidencyIdentity?
     let childOwnershipToken: ModelResidencyOwnershipToken
 
     init(
         unloadedModelNames: [String],
+        restoreModelNames: [String]? = nil,
         unloadedParentIdentity: ModelResidencyIdentity? = nil,
         childOwnershipToken: ModelResidencyOwnershipToken = ModelResidencyOwnershipToken()
     ) {
         self.unloadedModelNames = unloadedModelNames
+        self.restoreModelNames = restoreModelNames ?? unloadedModelNames
         self.unloadedParentIdentity = unloadedParentIdentity
         self.childOwnershipToken = childOwnershipToken
     }
@@ -37,7 +47,11 @@ struct ChatResidencyLease: Sendable, Equatable {
     static var empty: ChatResidencyLease {
         ChatResidencyLease(unloadedModelNames: [])
     }
-    var isEmpty: Bool { unloadedModelNames.isEmpty }
+    /// True when there is nothing to reload afterwards.
+    var isEmpty: Bool { restoreModelNames.isEmpty }
+    /// True when the chat model was NOT loaded when the sequence began and
+    /// the lease only carries the restore leg.
+    var isRestoreOnly: Bool { unloadedModelNames.isEmpty && !restoreModelNames.isEmpty }
 }
 
 enum ChatResidencyHandoff {
@@ -232,9 +246,17 @@ enum ChatResidencyHandoff {
     /// so the subagent/task model is the single resident GPU producer. Returns the
     /// lease of unloaded names (empty when nothing was resident — e.g. a cloud
     /// orchestrator).
+    ///
+    /// `restoreParentWhenNotResident` is the delegation sequence's parity leg:
+    /// when the invoking parent is an INSTALLED local model that is simply not
+    /// loaded right now, return a restore-only lease (nothing unloaded, parent
+    /// queued for reload) instead of refusing, so the sequence ends with the
+    /// chat model loaded back whether or not it was loaded at the start.
+    /// Image jobs keep the default (`false`) and their historical behaviour.
     static func unloadResidentChatModels(
         parentModelName: String? = nil,
         maxElapsedSeconds: Int,
+        restoreParentWhenNotResident: Bool = false,
         onPhase: (_ phase: String, _ detail: String) -> Void = { _, _ in }
     ) async throws -> ChatResidencyLease {
         let waitMs = max(15, min(maxElapsedSeconds, 300)) * 1000
@@ -264,12 +286,29 @@ enum ChatResidencyHandoff {
                 named: requestedParent
             )
         }
-        guard
-            let identity = await ModelRuntime.shared.residencyIdentity(
-                named: requestedParent
-            ),
-            parentIsOwned
-        else {
+        let parentIdentity = await ModelRuntime.shared.residencyIdentity(
+            named: requestedParent
+        )
+        if parentIdentity == nil, restoreParentWhenNotResident {
+            // Main chat model NOT loaded: skip the unload leg, keep the restore
+            // leg. Only an installed local bundle can be reloaded; a cloud or
+            // unknown parent has nothing to restore and gets an empty lease.
+            guard let installed = ModelManager.findInstalledModel(named: requestedParent)
+            else {
+                return .empty
+            }
+            onPhase(
+                "chat_model_not_loaded",
+                "\(installed.name) is not loaded; it will be loaded back after the delegate runs"
+            )
+            return ChatResidencyLease(
+                unloadedModelNames: [],
+                restoreModelNames: [installed.name],
+                unloadedParentIdentity: nil,
+                childOwnershipToken: ModelResidencyOwnershipToken()
+            )
+        }
+        guard let identity = parentIdentity, parentIsOwned else {
             throw HandoffError.parentNotReclaimable(requestedParent)
         }
 
@@ -289,18 +328,41 @@ enum ChatResidencyHandoff {
         )
     }
 
-    /// Reload the models that `unloadResidentChatModels` unloaded. Safe to call
-    /// with `.empty` (no-op). Best-effort: callers should also call this on the
-    /// failure path so the orchestrator is never left unloaded.
+    /// Reload the models that `unloadResidentChatModels` unloaded (or queued
+    /// for reload in a restore-only lease). Safe to call with `.empty`
+    /// (no-op). Best-effort: callers should also call this on the failure
+    /// path so the orchestrator is never left unloaded.
+    ///
+    /// Two ordered legs of the delegation RAM-safety sequence: first
+    /// `releaseOwnedChildModels` (unload the delegate model this handoff
+    /// cold-loaded), then `reloadParent` (load the chat model back). Kept as
+    /// one call for the image coordinator and other single-step callers; the
+    /// spawn handoff drives the two legs separately so the order is visible.
     @discardableResult
     static func restore(
+        _ lease: ChatResidencyLease,
+        onPhase: (_ phase: String, _ detail: String) -> Void = { _, _ in }
+    ) async throws -> [String] {
+        _ = try await releaseOwnedChildModels(lease, onPhase: onPhase)
+        return try await reloadParent(lease, onPhase: onPhase)
+    }
+
+    /// Sequence leg "unload the delegate model": release every model whose
+    /// residency this handoff cold-loaded (tracked by the lease's ownership
+    /// token). Pre-existing residents are never touched. Returns the names
+    /// released.
+    @discardableResult
+    static func releaseOwnedChildModels(
         _ lease: ChatResidencyLease,
         onPhase: (_ phase: String, _ detail: String) -> Void = { _, _ in }
     ) async throws -> [String] {
         let ownedChildren = await ModelRuntime.shared.childOwnedResidentNames(
             by: lease.childOwnershipToken
         )
+        guard !ownedChildren.isEmpty else { return [] }
+        onPhase("releasing_delegate_model", ownedChildren.joined(separator: ", "))
         var cleanupFailures: [String] = []
+        var released: [String] = []
         for child in ownedChildren {
             let result = await ModelRuntime.shared.unloadChildOwned(
                 name: child,
@@ -309,14 +371,26 @@ enum ChatResidencyHandoff {
             )
             if result != .unloaded && result != .notResident {
                 cleanupFailures.append(child)
+            } else {
+                released.append(child)
             }
         }
         guard cleanupFailures.isEmpty else {
             throw HandoffError.ownedChildCleanupFailed(models: cleanupFailures)
         }
+        return released
+    }
 
+    /// Sequence leg "load the main chat model back": reload every name in the
+    /// lease's restore list through the normal warm load path (prefix cache
+    /// intact; `.handoffRestore` intent). Verified resident after the load.
+    @discardableResult
+    static func reloadParent(
+        _ lease: ChatResidencyLease,
+        onPhase: (_ phase: String, _ detail: String) -> Void = { _, _ in }
+    ) async throws -> [String] {
         guard !lease.isEmpty else { return [] }
-        onPhase("restoring_chat_models", lease.unloadedModelNames.joined(separator: ", "))
+        onPhase("restoring_chat_models", lease.restoreModelNames.joined(separator: ", "))
 
         // Surface the reload in the chat input's "Loading Model…" indicator.
         // `preload` bypasses `generateEventStream` (which is what normally bumps
@@ -328,7 +402,7 @@ enum ChatResidencyHandoff {
 
         var restored: [String] = []
         var failures: [String] = []
-        for name in lease.unloadedModelNames {
+        for name in lease.restoreModelNames {
             do {
                 try await reloadAndVerify(name, ownershipToken: lease.childOwnershipToken)
                 restored.append(name)

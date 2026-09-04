@@ -106,7 +106,7 @@ struct SubagentSettingsSection: View {
                         SettingsToggle(
                             title: "Local Orchestrator Handoff",
                             description:
-                                "When the main chat model is itself local, unload it to run the helper, then reload it afterward. On by default so a local agent can run a local helper; turn off to keep local-to-local handoff disabled and avoid double residency. (Cloud orchestrators never need this.)",
+                                "RAM-safety sequence for every delegation whose helper is a different local model: unload the chat model → load the helper → run → unload the helper → load the chat model back → continue the turn. Applies whether or not the chat model was loaded at the start, and to any agent that delegates. Same-model helpers never swap. Off: the helper runs without this sequence and the server eviction policy decides what stays loaded. (Cloud helpers never need this.)",
                             isOn: $configuration.localTextDelegationEnabled
                         )
 
@@ -120,7 +120,7 @@ struct SubagentSettingsSection: View {
                         SettingsToggle(
                             title: "Keep Chat Model Loaded (Coexistence)",
                             description:
-                                "Experimental: when the server eviction policy is Flexible (Multi Model) and memory projections say both fit, load the helper model alongside the chat model instead of unloading and reloading it — skipping the swap round-trip on high-RAM Macs. Tight RAM or the Strict policy always falls back to the normal handoff.",
+                                "Experimental, only while Local Orchestrator Handoff is off: when the server eviction policy is Flexible (Multi Model) and memory projections say both fit, load the helper model alongside the chat model — skipping the swap round-trip on high-RAM Macs. With the handoff on, the unload/reload sequence always runs instead.",
                             isOn: $configuration.subagentCoexistenceEnabled
                         )
                     }

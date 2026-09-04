@@ -23,6 +23,13 @@ import Foundation
 /// defaults, and child budgets. Custom agents carry their own per-agent
 /// equivalents in `agents[].capabilities`.
 public struct DelegationSection: Codable, Equatable, Sendable {
+    /// The "Local Orchestrator Handoff" toggle
+    /// (`SubagentConfiguration.localTextDelegationEnabled`): the one stored
+    /// value behind the Settings → Subagents switch, the spawn editors' status
+    /// note (main chat + every custom agent), and this key. ON enforces the
+    /// delegation RAM-safety sequence (unload chat model → load helper → run →
+    /// unload helper → reload chat model) for every agent; OFF runs a
+    /// different-model local helper without that sequence.
     public var localTextEnabled: Bool?
     public var imageEnabled: Bool?
     public var videoEnabled: Bool?
