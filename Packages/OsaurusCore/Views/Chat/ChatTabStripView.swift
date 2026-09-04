@@ -448,7 +448,9 @@ private struct ChatTabItemView: View {
         // reserved halo so the AVATAR (not its invisible ring frame) sits
         // the same distance from the edge as the close button does.
         .padding(.leading, Self.footRadius + 14 - (TabActivityRing.diameter - Self.avatarDiameter) / 2)
-        .padding(.trailing, Self.footRadius + 14)
+        // The × glyph is inset inside its 15pt hit circle, so it reads
+        // further from the edge than the avatar; pull it 4pt closer.
+        .padding(.trailing, Self.footRadius + 10)
         .frame(width: width)
         .frame(maxHeight: .infinity)
         .background(alignment: .bottom) {
