@@ -334,6 +334,9 @@ public struct ThemeBackground: Codable, Equatable, Sendable {
     public var type: BackgroundType
     public var solidColor: String?
     public var gradientColors: [String]?
+    /// Gradient direction in degrees using the CSS convention: 0 points
+    /// up (bottom to top), 90 points right, 180 points down (top to
+    /// bottom, the default when unset).
     public var gradientAngle: Double?
     public var imageData: String?  // Base64 encoded image data
     public var imageFit: ImageFit?
@@ -390,6 +393,21 @@ public struct ThemeBackground: Codable, Equatable, Sendable {
         else { return nil }
         Self.decodedImageCache.setObject(image, forKey: key)
         return image
+    }
+
+    /// Start and end points for a `LinearGradient` that honors
+    /// `gradientAngle`. Unset angle renders top to bottom, matching the
+    /// pre-angle behavior of every background surface.
+    public var gradientUnitPoints: (start: UnitPoint, end: UnitPoint) {
+        let radians = (gradientAngle ?? 180) * .pi / 180
+        // CSS convention: 0deg points up, angles increase clockwise. In
+        // SwiftUI unit space y grows downward, so "up" is negative y.
+        let dx = sin(radians) / 2
+        let dy = -cos(radians) / 2
+        return (
+            UnitPoint(x: 0.5 - dx, y: 0.5 - dy),
+            UnitPoint(x: 0.5 + dx, y: 0.5 + dy)
+        )
     }
 }
 

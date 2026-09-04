@@ -51,3 +51,28 @@ struct ThemeHexColorRoundTripTests {
         #expect(back.r == 0x3B && back.g == 0x82 && back.b == 0xF6 && back.a == 0x80)
     }
 }
+
+@Suite("Theme gradient angle")
+struct ThemeGradientAngleTests {
+    private func points(_ angle: Double?) -> (start: UnitPoint, end: UnitPoint) {
+        ThemeBackground(type: .gradient, gradientAngle: angle).gradientUnitPoints
+    }
+
+    private func near(_ a: UnitPoint, _ b: UnitPoint) -> Bool {
+        abs(a.x - b.x) < 0.001 && abs(a.y - b.y) < 0.001
+    }
+
+    @Test("unset angle keeps the legacy top-to-bottom direction")
+    func unsetAngleIsTopToBottom() {
+        let p = points(nil)
+        #expect(near(p.start, .top) && near(p.end, .bottom))
+    }
+
+    @Test("0 degrees runs bottom to top, 90 runs left to right")
+    func cssAngleConvention() {
+        let up = points(0)
+        #expect(near(up.start, .bottom) && near(up.end, .top))
+        let right = points(90)
+        #expect(near(right.start, .leading) && near(right.end, .trailing))
+    }
+}
