@@ -1206,7 +1206,7 @@ struct ChatSessionSidebar: View {
 // MARK: - Agent Row (prototype)
 
 /// Row in the agents-focused sidebar. Mirrors `SessionRow`'s hover and
-/// selection treatment: avatar, name, checkmark on the active agent.
+/// selection treatment: avatar, name, hover-only gear to the agent's settings.
 private struct AgentSidebarRow: View {
     let agent: Agent
     let isSelected: Bool
@@ -1270,10 +1270,24 @@ private struct AgentSidebarRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            if isSelected {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
+            // Hover-only gear opening this agent's detail page in the
+            // management window. The selected row is already signalled by
+            // its background, so no checkmark.
+            if isHovered {
+                Button {
+                    AppDelegate.shared?.showManagementWindow(
+                        initialTab: .agents, deeplinkAgentId: agent.id)
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointingHandCursor()
+                .localizedHelp("Agent Settings")
+                .transition(.opacity)
             }
         }
         .padding(.horizontal, 10)
