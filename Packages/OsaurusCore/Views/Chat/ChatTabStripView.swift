@@ -482,6 +482,9 @@ private struct ChatTabItemView: View {
                 .onEnded { _ in onDragEnded() }
         )
         .onHover(perform: onHover)
+        // Inactive tabs are links to elsewhere, so they get the hand
+        // cursor; the active tab is the current page and keeps the arrow.
+        .applyIf(!isActive) { $0.pointingHandCursor() }
         .animation(.easeOut(duration: 0.1), value: isHovered)
     }
 }
