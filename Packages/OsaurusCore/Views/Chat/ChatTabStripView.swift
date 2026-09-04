@@ -198,7 +198,7 @@ struct ChatTabStripView: View {
     /// Narrowest chip: avatar only, no title (Chrome's pinned-tab size).
     static let minTabWidth: CGFloat = 56
     private static let plusButtonReserve: CGFloat = 26
-    private static let overflowButtonReserve: CGFloat = 30
+    private static let overflowButtonReserve: CGFloat = 40
 
     /// How many tabs fit at the floor width, keeping the active tab visible.
     /// While unmeasured every tab is visible (the first layout pass).
@@ -362,10 +362,13 @@ struct ChatTabStripView: View {
                     .font(.system(size: 10, weight: .semibold))
             }
             .foregroundColor(windowState.theme.secondaryText)
-            .frame(width: 28, height: 20)
+            // Wide enough that the capsule highlight reads as a pill, not a
+            // squeezed circle around the chevron and count.
+            .padding(.horizontal, 8)
+            .frame(height: 22)
             .contentShape(Capsule())
         }
-        .buttonStyle(ChromeHoverCircleButtonStyle(theme: windowState.theme))
+        .buttonStyle(ChromeHoverCapsuleButtonStyle(theme: windowState.theme))
         .help(Text(LocalizedStringKey("More Tabs"), bundle: .module))
     }
 
@@ -406,6 +409,22 @@ private struct ChromeHoverCircleButtonStyle: ButtonStyle {
         configuration.label
             .background(
                 Circle()
+                    .fill(theme.tertiaryBackground)
+                    .opacity(isHovered || configuration.isPressed ? 1 : 0)
+            )
+            .onHover { isHovered = $0 }
+    }
+}
+
+/// Capsule variant of the hover highlight for the wider overflow button.
+private struct ChromeHoverCapsuleButtonStyle: ButtonStyle {
+    let theme: ThemeProtocol
+    @State private var isHovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                Capsule()
                     .fill(theme.tertiaryBackground)
                     .opacity(isHovered || configuration.isPressed ? 1 : 0)
             )
