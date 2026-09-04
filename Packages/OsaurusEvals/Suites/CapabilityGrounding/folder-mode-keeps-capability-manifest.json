@@ -1,0 +1,24 @@
+{
+  "id": "prompt_surface.folder-mode-keeps-capability-manifest",
+  "domain": "prompt_surface",
+  "label": "capability grounding • folder-mode custom agent still gets the enabled-capabilities manifest",
+  "query": "",
+  "notes": "Regression pin for the PR #2300 breakage: `resolveEnabledManifest` excluded `usesHostFolderTools`, so a custom agent with a workspace folder attached composed a prompt with ZERO mention that its MCP/plugin capabilities existed — reported live as agents 'unable to find' connected Exa/fetch MCP tools and file tools. The census composes in host-folder mode by construction, and the granted eval probe is a registered dynamic tool, so the ≥1-dynamic-tool manifest gate is satisfied: if `enabledManifest` is absent here, folder mode is dropping the manifest again. `capabilities` must also be in the schema — the manifest's load instructions are unusable without the loader.",
+  "fixtures": {
+    "enableTools": [
+      "eval_dynamic_load_probe"
+    ]
+  },
+  "expect": {
+    "promptSurface": {
+      "mustIncludeSections": [
+        "enabledManifest"
+      ],
+      "mustIncludeTools": [
+        "capabilities"
+      ],
+      "expectDeterministic": true,
+      "composeModel": "eval-capability-grounding-surface"
+    }
+  }
+}

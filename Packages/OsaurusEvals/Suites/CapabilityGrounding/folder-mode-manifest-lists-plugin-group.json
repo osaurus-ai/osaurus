@@ -1,0 +1,24 @@
+{
+  "id": "prompt_surface.folder-mode-manifest-lists-plugin-group",
+  "domain": "prompt_surface",
+  "label": "capability grounding • folder-mode manifest renders the grouped plugin path too",
+  "query": "",
+  "notes": "Companion to folder-mode-keeps-capability-manifest: the grouped probe registers under a plugin group id, exercising the `plugin/<id>` manifest rendering (the compact-tier line small models load to expand a whole group). Pins that folder-mode composition carries grouped capabilities, not just ungrouped tool/<name> entries.",
+  "fixtures": {
+    "enableTools": [
+      "eval_grouped_load_probe"
+    ]
+  },
+  "expect": {
+    "promptSurface": {
+      "mustIncludeSections": [
+        "enabledManifest"
+      ],
+      "mustIncludeTools": [
+        "capabilities"
+      ],
+      "expectDeterministic": true,
+      "composeModel": "eval-capability-grounding-surface"
+    }
+  }
+}

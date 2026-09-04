@@ -975,6 +975,28 @@ public final class ToolRegistry: ObservableObject {
             if let groupRescue = groupIdCallRescueEnvelope(for: name) {
                 return groupRescue
             }
+            // Workspace file/shell tools have ONE actionable next step and it
+            // is user-facing, not model-facing: attach a folder. The generic
+            // opaque refusal here produced the observed "file_write wasn't
+            // available in this session, so I couldn't save this" fallback —
+            // the model paraphrased the dead end and silently delivered an
+            // artifact instead of telling the user how to get real files. The
+            // helpful text already existed (`noActiveFolderEnvelope`) but
+            // lives in tool bodies this gate prevents from running. Naming
+            // the Folder chip leaks nothing: it is public UX, and the tool
+            // stays refused — no execution boundary moves.
+            if Self.coreWorkspaceToolNames.contains(name) {
+                return ToolErrorEnvelope(
+                    kind: .toolNotFound,
+                    reason:
+                        "\(name) needs a workspace folder and this chat has none attached. "
+                        + "Ask the user to attach one via the Folder chip (or enable "
+                        + "Autonomous execution). Until then, deliver file content with "
+                        + "share_artifact and say why.",
+                    toolName: name,
+                    retryable: false
+                ).toJSONString()
+            }
             return ToolErrorEnvelope(
                 kind: .toolNotFound,
                 reason: "\(name) is not available in this conversation.",
@@ -1588,6 +1610,15 @@ public final class ToolRegistry: ObservableObject {
     /// names so two providers with the same sanitized prefix can't collide.
     func registeredToolNames() -> [String] {
         Array(toolsByName.keys)
+    }
+
+    /// True when `name` is a registered DYNAMIC tool (plugin/MCP/dynamic
+    /// native) — i.e. a name `capabilities` can legitimately load as
+    /// `tool/<name>`. Built-ins are excluded: they are never loadable ids, so
+    /// rescuing a bare built-in name into `tool/<name>` would only move the
+    /// caller onto the gated-built-in refusal with a worse message.
+    func isDynamicRegisteredTool(named name: String) -> Bool {
+        toolsByName[name] != nil && !builtInToolNames.contains(name)
     }
 
     /// O(1) single-tool lookup as a `ToolEntry`. Prefer this over

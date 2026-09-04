@@ -205,6 +205,23 @@ final class CapabilitiesTool: OsaurusTool, @unchecked Sendable {
                     "Exact capability IDs from the enabled list or an earlier search; IDs are values, not function names"
                 ),
             ]),
+            // The enabled-list pagination the bare-call result advertises
+            // (`Next page: {"list": "enabled", "page": 2}`). Without these two
+            // properties that hint taught an INVALID call: the strict
+            // `additionalProperties: false` preflight rejected the harness's
+            // own suggested continuation, so an agent with >40 enabled
+            // capability lines could never see page 2.
+            "list": .object([
+                "type": .string("string"),
+                "enum": .array([.string("enabled")]),
+                "description": .string(
+                    "Pass \"enabled\" to list this agent's enabled capability IDs (paginated)."
+                ),
+            ]),
+            "page": .object([
+                "type": .string("integer"),
+                "description": .string("Page of the enabled list (default 1)."),
+            ]),
         ]),
     ])
 
@@ -234,11 +251,22 @@ final class CapabilitiesTool: OsaurusTool, @unchecked Sendable {
         // call until the turn collapsed into verbatim repetition. Answer the
         // question instead — the enabled list is read-only, and it hands the
         // model the exact ids its NEXT call needs, which is what actually
-        // breaks the loop.
+        // breaks the loop. `list`/`page` is that result's own advertised
+        // continuation, so it lands here too (a bare call IS page 1).
+        //
+        // Agent resolution: the registered instance has `agentId == nil`, and
+        // falling straight through to `activeAgent` listed the WRONG agent's
+        // capabilities for delegated/background/multi-window runs. Prefer the
+        // TaskLocal that names the agent actually executing this call — the
+        // same resolution the query path already gets via
+        // `CapabilitiesDiscoverTool`.
+        let page = (args["page"] as? Int) ?? Int(args["page"] as? String ?? "") ?? 1
         return relabel(
             Self.normalizeLegacyNames(
                 await CapabilitiesDiscoverTool.listEnabledCapabilities(
-                    page: 1, agentId: agentId, tool: name)
+                    page: max(page, 1),
+                    agentId: agentId ?? ChatExecutionContext.currentAgentId,
+                    tool: name)
             )
         )
     }
@@ -419,18 +447,28 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
         // `ToolRegistry.configure*ToolNames` read the `@MainActor`
         // `ConfigurationDomainRegistry`; snapshot once so the search
         // loop below stays off the main actor.
-        let (configureWrites, configureAll, globallyEnabled) = await MainActor.run {
+        let (configureWrites, configureAll, globallyEnabled, builtIns) = await MainActor.run {
             (
                 ToolRegistry.configureWriteToolNames,
                 ToolRegistry.configureToolNames,
-                Set(ToolRegistry.shared.listTools().filter(\.enabled).map(\.name))
+                Set(ToolRegistry.shared.listTools().filter(\.enabled).map(\.name)),
+                ToolRegistry.shared.builtInToolNames
             )
         }
         let effectiveAllowedToolNames: Set<String>?
         if isDefaultAgent {
             effectiveAllowedToolNames = configureWrites
         } else if let base = baseAllowedToolNames {
-            effectiveAllowedToolNames = base.subtracting(configureAll)
+            // The per-agent grant is documented as scoping DYNAMIC tools
+            // ("must not return a dynamic tool the agent has not been
+            // granted") but was applied to every indexed hit. Built-ins can
+            // never be IN the grant — the seed/picker only handle dynamic
+            // tools — so seeded agents could not discover any indexed
+            // built-in at all. Exempt built-ins from the mask; configure
+            // tools stay masked (subtracted after the union), and
+            // authoritatively-gated built-ins never enter the index in the
+            // first place, so nothing withheld is revealed.
+            effectiveAllowedToolNames = base.union(builtIns).subtracting(configureAll)
         } else {
             // A nil grant means legacy global-enabled discovery, not permission
             // to cross the Default-agent-only configuration boundary. Materialize
@@ -975,7 +1013,25 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         var sections: [String] = []
         var failures: [LoadFailure] = []
 
-        for id in ids {
+        // Bare-name rescue: `{"ids": ["Exa_search"]}` is the single most
+        // natural way to ask for a tool the model just saw named, and it
+        // used to be a hard invalid_args. The registry already rescues the
+        // REVERSE shape (a `tool/`-prefixed FUNCTION call); mirror it here —
+        // a bare id that matches a registered dynamic tool resolves to
+        // `tool/<name>`. Unmatched bare ids keep the format error (guessing
+        // a prefix for an unknown name would just move the failure
+        // downstream with a worse message). Snapshot the membership once,
+        // off the loop, to keep the loop off the main actor.
+        let bareIds = ids.filter { $0.firstIndex(of: "/") == nil }
+        let rescuableBareIds: Set<String> =
+            bareIds.isEmpty
+            ? []
+            : await MainActor.run {
+                Set(bareIds.filter { ToolRegistry.shared.isDynamicRegisteredTool(named: $0) })
+            }
+
+        for rawId in ids {
+            let id = rescuableBareIds.contains(rawId) ? "tool/\(rawId)" : rawId
             guard let slashIdx = id.firstIndex(of: "/") else {
                 failures.append(
                     LoadFailure(
@@ -1180,7 +1236,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
             }
         }
         let allowedNames = await grantedToolNamesForCurrentAgent()
-        let (availability, isEnabled, isBuiltIn, toolSpec) = await MainActor.run {
+        let (availability, isEnabled, isBuiltIn, toolSpec, isWorkspaceTool) = await MainActor.run {
             (
                 ToolRegistry.shared.availability(
                     forTool: toolId,
@@ -1188,7 +1244,8 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 ),
                 ToolRegistry.shared.isGlobalEnabled(toolId),
                 ToolRegistry.shared.builtInToolNames.contains(toolId),
-                ToolRegistry.shared.specs(forTools: [toolId])
+                ToolRegistry.shared.specs(forTools: [toolId]),
+                ToolRegistry.coreWorkspaceToolNames.contains(toolId)
             )
         }
         guard !availability.reasonCodes.contains(.notRegistered) else {
@@ -1223,6 +1280,23 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         let isDeferredDefaultConfigureWrite =
             isDefaultAgent && configureWrites.contains(toolId)
         if isBuiltIn, !isDeferredDefaultConfigureWrite {
+            // Workspace tools: keep the refusal (the execution boundary does
+            // not move on a model's say-so) but name the one real next step,
+            // which is user-facing. "Enable its owning setting first" gave a
+            // small model nothing it could relay; live result was "file_write
+            // wasn't available in this session" + a silent artifact fallback.
+            if isWorkspaceTool {
+                return .failure(
+                    LoadFailure(
+                        kind: .rejected,
+                        message:
+                            "Tool '\(toolId)' is a workspace tool and cannot be loaded here — "
+                            + "it activates only when a workspace folder is attached. Ask the "
+                            + "user to attach one via the Folder chip (or enable Autonomous "
+                            + "execution); deliver file content with share_artifact meanwhile."
+                    )
+                )
+            }
             return .failure(
                 LoadFailure(
                     kind: .rejected,

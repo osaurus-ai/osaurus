@@ -277,4 +277,29 @@ struct ToolScopeGateRecoveryTests {
         #expect(tool.executions == 1)
         #expect(!ToolEnvelope.isError(result))
     }
+
+    // MARK: - Workspace-tool dead end names the real next step
+
+    @Test
+    func workspaceToolWithoutFolder_namesTheFolderChipAndArtifactFallback() async throws {
+        // No folder attached: the model's file_write call must not die on an
+        // opaque "not available" — that produced the observed "file_write
+        // wasn't available in this session" + silent artifact fallback. The
+        // refusal stands (execution boundary unmoved), but it now tells the
+        // model what to relay: attach a folder via the Folder chip, deliver
+        // via share_artifact meanwhile.
+        let scope = ToolExecutionScope(exposed: [])
+        let result = try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+            try await ToolRegistry.shared.execute(
+                name: "file_write",
+                argumentsJSON: "{}"
+            )
+        }
+        let parsed = try envelope(result)
+        #expect(parsed?["ok"] as? Bool == false)
+        #expect(parsed?["retryable"] as? Bool == false)
+        let message = parsed?["message"] as? String ?? ""
+        #expect(message.contains("Folder chip"))
+        #expect(message.contains("share_artifact"))
+    }
 }

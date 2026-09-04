@@ -858,6 +858,14 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// The profiled surface must cost strictly fewer tokens than the
         /// no-profile baseline (requires `profile`).
         public let requireSavingsVsBaseline: Bool?
+        /// Model id the census composes FOR, overriding the run model. No
+        /// model loads either way — the id only drives window/size-class
+        /// resolution — but a floors-gated case must not inherit whatever
+        /// the run model happens to be: on a tiny-class run model the case
+        /// SKIPS (tools stripped), turning a 1.0-floor suite vacuous. An
+        /// unrecognized id resolves conservatively to the tools-on class,
+        /// so a stable synthetic id here makes the case environment-proof.
+        public let composeModel: String?
 
         public init(
             profile: ExperimentProfile? = nil,
@@ -871,7 +879,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             maxSurfaceTokens: Int? = nil,
             expectCompactPrompt: Bool? = nil,
             expectDeterministic: Bool? = nil,
-            requireSavingsVsBaseline: Bool? = nil
+            requireSavingsVsBaseline: Bool? = nil,
+            composeModel: String? = nil
         ) {
             self.profile = profile
             self.expectInvalidProfile = expectInvalidProfile
@@ -885,6 +894,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.expectCompactPrompt = expectCompactPrompt
             self.expectDeterministic = expectDeterministic
             self.requireSavingsVsBaseline = requireSavingsVsBaseline
+            self.composeModel = composeModel
         }
     }
 
