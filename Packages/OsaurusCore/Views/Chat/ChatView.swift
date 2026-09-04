@@ -4525,6 +4525,7 @@ final class ChatSession: ObservableObject {
         currentTurn.terminalStopReason = nil
         currentTurn.unclosedReasoning = false
         currentTurn.completedAt = nil
+        currentTurn.lastOutputAt = nil
         // On every exit — clean end, cancel, tool-invocation throw, or a
         // mid-stream error — drop a tool-call-progress placeholder if it never
         // resolved to a committed tool name, so the "Preparing tool call" card
@@ -4833,6 +4834,7 @@ final class ChatSession: ObservableObject {
                         now: now,
                         turn: currentTurn
                     )
+                    currentTurn.lastOutputAt = now
                     processor.receiveReasoning(reasoning)
                 } else if !delta.isEmpty {
                     let now = Date()
@@ -4853,6 +4855,7 @@ final class ChatSession: ObservableObject {
                         now: now,
                         turn: currentTurn
                     )
+                    currentTurn.lastOutputAt = now
                     processor.receiveDelta(delta)
 
                     // The model has collapsed into a phrase-repetition loop.
@@ -4958,9 +4961,19 @@ final class ChatSession: ObservableObject {
         // unconditionally so cancelled and zero-token streams still get
         // a timestamp — the token count tells the consumer how much was
         // actually generated.
-        currentTurn.completedAt = Date()
+        let streamEndedAt = Date()
+        currentTurn.completedAt = streamEndedAt
 
-        let totalTime = Date().timeIntervalSince(streamStartTime)
+        let totalTime = streamEndedAt.timeIntervalSince(streamStartTime)
+        // Last visible delta → stream termination. For local models this is
+        // vmlx's post-generation cache store (the adapter holds the terminal
+        // stats until the upstream drains): measured 4.3 s AR / 10–13 s
+        // native-MTP on a 930-token JANG_4M answer. A tok/s derived from
+        // `completedAt` silently absorbs it; this makes it visible per turn.
+        let visibleTailMs =
+            currentTurn.lastOutputAt.map {
+                Int(max(0, streamEndedAt.timeIntervalSince($0)) * 1000)
+            } ?? -1
         let uiSentinelOnlyCount =
             uiToolSentinelCount + uiReasoningItemCount + uiStatsHintCount
             + uiBillingHintCount + uiPrefillHintCount
@@ -4969,7 +4982,7 @@ final class ChatSession: ObservableObject {
             ? (uiSentinelOnlyCount > 0 ? "sentinel-only" : "empty")
             : "non-empty"
         print(
-            "[Osaurus][UI] Stream consumption completed: contentDeltas=\(uiDeltaCount) reasoningDeltas=\(uiReasoningDeltaCount) classification=\(uiStreamClassification) in \(String(format: "%.2f", totalTime))s, final contentLen=\(currentTurn.contentLength), toolSentinels=\(uiToolSentinelCount), reasoningItems=\(uiReasoningItemCount), stats=\(uiStatsHintCount), billing=\(uiBillingHintCount), prefill=\(uiPrefillHintCount), capturedTools=\(capturedInvocations.count)"
+            "[Osaurus][UI] Stream consumption completed: contentDeltas=\(uiDeltaCount) reasoningDeltas=\(uiReasoningDeltaCount) classification=\(uiStreamClassification) in \(String(format: "%.2f", totalTime))s, lastOutput→completion tailMs=\(visibleTailMs), final contentLen=\(currentTurn.contentLength), toolSentinels=\(uiToolSentinelCount), reasoningItems=\(uiReasoningItemCount), stats=\(uiStatsHintCount), billing=\(uiBillingHintCount), prefill=\(uiPrefillHintCount), capturedTools=\(capturedInvocations.count)"
         )
 
         return (capturedInvocations, currentTurn)
