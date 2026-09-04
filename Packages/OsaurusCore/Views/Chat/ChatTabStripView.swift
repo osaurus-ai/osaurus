@@ -602,10 +602,11 @@ private struct ChatTabItemView: View {
                     topTrailingRadius: roundsTrailing ? 7 : 0,
                     style: .continuous
                 )
-                // Darker than the active tab (which is the light, raised
-                // surface) and full height so the band sits flush with the
-                // active silhouette instead of reading as a squashed pill.
-                .fill(theme.primaryBackground.opacity(theme.isDark ? 0.55 : 0.35))
+                // Darker than the BAR it sits on (a theme colour was invisible
+                // against a bar of the same colour): a black overlay reads as
+                // recessed in both appearances, below the light raised active
+                // tab. Full height so it sits flush with the active silhouette.
+                .fill(Color.black.opacity(theme.isDark ? 0.28 : 0.07))
                 .overlay(
                     UnevenRoundedRectangle(
                         topLeadingRadius: roundsLeading ? 7 : 0,
