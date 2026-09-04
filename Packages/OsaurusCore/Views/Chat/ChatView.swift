@@ -9026,7 +9026,6 @@ struct ChatView: View {
         // Mirror the project page's visibility onto the window state so the
         // toolbar (agent pill, window pin) can hide chat-only chrome.
         .onChange(of: openProjectId) { _, newValue in
-            TabStripDebugLog.log("onChange openProjectId \(String(describing: newValue)) session=\(ObjectIdentifier(session))")
             windowState.isProjectPageVisible = newValue != nil
         }
         .onReceive(NotificationCenter.default.publisher(for: .chatToolbarBackToProject)) { notification in
@@ -10315,7 +10314,6 @@ extension ChatView {
     /// view's onChange never fires and the flag stuck at `true`, hiding the
     /// tabs and trimming the overflow menu to just Settings.
     private func setOpenProject(_ id: UUID?) {
-        TabStripDebugLog.log("setOpenProject \(String(describing: id)) window=\(windowState.windowId) session=\(ObjectIdentifier(session))")
         openProjectId = id
         windowState.isProjectPageVisible = id != nil
     }
