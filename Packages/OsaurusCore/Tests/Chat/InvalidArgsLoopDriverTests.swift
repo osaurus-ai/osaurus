@@ -264,14 +264,31 @@ private final class InvalidArgsLoopSurface {
     var scriptedResults: [String]
     var builtNotices: [[String]] = []
     var executions: [(tool: String, args: String)] = []
+    /// When true the hooks carry an `executeBatch` executor, which puts the
+    /// loop on the slotting (HTTP-semantics) path where whole-batch
+    /// advisories such as the task-tracking notice are staged.
+    let batch: Bool
 
-    init(steps: [AgentLoopModelStep], results: [String]) {
+    init(steps: [AgentLoopModelStep], results: [String], batch: Bool = false) {
         self.steps = steps
         self.scriptedResults = results
+        self.batch = batch
+    }
+
+    private func pop(for inv: ServiceToolInvocation) -> AgentLoopToolExecution {
+        executions.append((inv.toolName, inv.jsonArguments))
+        guard !scriptedResults.isEmpty else {
+            return AgentLoopToolExecution(result: Fixture.success(tool: inv.toolName))
+        }
+        let result = scriptedResults.removeFirst()
+        return AgentLoopToolExecution(
+            result: result,
+            isError: ToolEnvelope.isError(result)
+        )
     }
 
     func makeHooks() -> AgentLoopHooks {
-        AgentLoopHooks(
+        var hooks = AgentLoopHooks(
             buildMessages: { notices in
                 self.builtNotices.append(notices)
                 return AgentLoopIterationInput(
@@ -282,18 +299,12 @@ private final class InvalidArgsLoopSurface {
                 guard !self.steps.isEmpty else { return .finalResponse }
                 return self.steps.removeFirst()
             },
-            executeTool: { inv, _ in
-                self.executions.append((inv.toolName, inv.jsonArguments))
-                guard !self.scriptedResults.isEmpty else {
-                    return AgentLoopToolExecution(result: Fixture.success(tool: inv.toolName))
-                }
-                let result = self.scriptedResults.removeFirst()
-                return AgentLoopToolExecution(
-                    result: result,
-                    isError: ToolEnvelope.isError(result)
-                )
-            }
+            executeTool: { inv, _ in self.pop(for: inv) }
         )
+        if batch {
+            hooks.executeBatch = { calls in calls.map { self.pop(for: $0.invocation) } }
+        }
+        return hooks
     }
 
     /// Per-build count of argument-rejection notices delivered.
@@ -483,5 +494,143 @@ struct InvalidArgsLoopDriverTests {
         // streak: the notice lands on the build after the second rejection.
         #expect(surface.deliveredPerBuild() == [0, 0, 0, 0, 1, 0])
         #expect(surface.executions.count == 5)
+    }
+
+    // MARK: - Notice-slot composition
+
+    private var trackingThreshold: Int { 3 }
+
+    private func batchPolicy() -> AgentLoopPolicy {
+        AgentLoopPolicy(
+            maxIterations: 8,
+            stopOnToolRejection: false,
+            dedupeNoticeEnabled: false,
+            todoRequiredBeforeToolCallCount: trackingThreshold
+        )
+    }
+
+    /// (f) The state-notice slot used to be a single string: in batch mode
+    /// the task-tracking advisory staged right after `nextStepBias()` simply
+    /// overwrote the invalid-args notice, and the model never saw it. Both
+    /// are staged in ONE iteration here — the second consecutive rejection
+    /// of `osaurus_config` rides in the same batch as a sibling whose result
+    /// is the structured `task_tracking_required` precondition failure — and
+    /// both must be delivered on the next build, invalid-args first.
+    ///
+    /// The rejected `osaurus_config` is the LAST call of the batch: the bias
+    /// is read once after the whole batch is recorded, and `record` arms the
+    /// invalid-args notice for the most recent call only.
+    @Test
+    func invalidArgsAndTaskTrackingNoticesInOneIteration_bothDelivered() async throws {
+        let tracking = AgentToolLoop.taskTrackingRequiredResult(
+            toolName: "web_search",
+            threshold: trackingThreshold
+        )
+        let surface = InvalidArgsLoopSurface(
+            steps: [
+                .toolCalls([configApply(#"{"action":"apply","yaml":"mcp_servers: {}"}"#)]),
+                .toolCalls([
+                    ServiceToolInvocation(toolName: "web_search", jsonArguments: #"{"query":"q"}"#),
+                    configApply(#"{"action":"apply","set_api_key":"true"}"#),
+                ]),
+                .finalResponse,
+            ],
+            results: [
+                Fixture.invalidArgs(tool: "osaurus_config", message: Fixture.envVarMessage),
+                tracking,
+                Fixture.invalidArgs(
+                    tool: "osaurus_config",
+                    message: Fixture.unexpectedPropertyMessage,
+                    field: "set_api_key"
+                ),
+            ],
+            batch: true
+        )
+        let result = try await AgentToolLoop.run(
+            policy: batchPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+        #expect(result.exit == .finalResponse)
+        #expect(surface.executions.count == 3)
+        // The invalid-args notice is still delivered exactly once, on the
+        // build after the second rejection.
+        #expect(surface.deliveredPerBuild() == [0, 0, 1])
+
+        let expectedTracking = AgentToolLoop.taskTrackingRequiredNotice(threshold: trackingThreshold)
+        let build = try #require(surface.builtNotices.dropFirst(2).first)
+        #expect(build.count == 2, "both notices ride the same build: \(build)")
+        let invalidArgsIndex = try #require(build.firstIndex { $0.contains(Fixture.noticeMarker) })
+        let trackingIndex = try #require(build.firstIndex { $0 == expectedTracking })
+        #expect(invalidArgsIndex < trackingIndex, "invalid-args rides first")
+        #expect(build[invalidArgsIndex].contains("\"\(Fixture.unexpectedPropertyMessage)\""))
+        // Nothing leaks into the later builds.
+        #expect(surface.builtNotices.dropFirst(3).allSatisfy { $0.isEmpty })
+    }
+
+    /// (g) Composition is de-duplicated: two `task_tracking_required` results
+    /// in one batch stage the advisory once, and the invalid-args notice
+    /// beside it is untouched.
+    @Test
+    func duplicateTaskTrackingResultsInOneBatch_stageOneNotice() async throws {
+        let tracking = AgentToolLoop.taskTrackingRequiredResult(
+            toolName: "web_search",
+            threshold: trackingThreshold
+        )
+        let surface = InvalidArgsLoopSurface(
+            steps: [
+                .toolCalls([configApply(#"{"action":"apply","yaml":"a: 1"}"#)]),
+                .toolCalls([
+                    ServiceToolInvocation(toolName: "web_search", jsonArguments: #"{"query":"a"}"#),
+                    ServiceToolInvocation(toolName: "web_search", jsonArguments: #"{"query":"b"}"#),
+                    configApply(#"{"action":"apply","yaml":"b: 2"}"#),
+                ]),
+                .finalResponse,
+            ],
+            results: [
+                Fixture.invalidArgs(tool: "osaurus_config", message: Fixture.envVarMessage),
+                tracking,
+                tracking,
+                Fixture.invalidArgs(tool: "osaurus_config", message: Fixture.envVarMessage),
+            ],
+            batch: true
+        )
+        _ = try await AgentToolLoop.run(
+            policy: batchPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+        let expectedTracking = AgentToolLoop.taskTrackingRequiredNotice(threshold: trackingThreshold)
+        let build = try #require(surface.builtNotices.dropFirst(2).first)
+        #expect(build.filter { $0 == expectedTracking }.count == 1)
+        #expect(build.filter { $0.contains(Fixture.noticeMarker) }.count == 1)
+        #expect(build.count == 2)
+    }
+
+    /// (h) Without an invalid-args streak the task-tracking notice is
+    /// delivered alone — composition never invents a second notice.
+    @Test
+    func taskTrackingNoticeAlone_isDeliveredAlone() async throws {
+        let tracking = AgentToolLoop.taskTrackingRequiredResult(
+            toolName: "web_search",
+            threshold: trackingThreshold
+        )
+        let surface = InvalidArgsLoopSurface(
+            steps: [
+                .toolCalls([
+                    ServiceToolInvocation(toolName: "web_search", jsonArguments: #"{"query":"q"}"#)
+                ]),
+                .finalResponse,
+            ],
+            results: [tracking],
+            batch: true
+        )
+        _ = try await AgentToolLoop.run(
+            policy: batchPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+        let expectedTracking = AgentToolLoop.taskTrackingRequiredNotice(threshold: trackingThreshold)
+        #expect(surface.builtNotices == [[], [expectedTracking]])
     }
 }

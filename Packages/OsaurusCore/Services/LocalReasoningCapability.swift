@@ -309,6 +309,26 @@ enum LocalReasoningCapability {
         ) {
             return lower[match].contains("true")
         }
+        // Normalisation block (Bailing V3 / Raptor / Ling 3): the template
+        // branches on `enable_thinking is defined` and the SAME-DEPTH
+        // `else` / `elif` branch is what runs when the kwarg is absent, e.g.
+        //
+        //     {%- if enable_thinking is defined %}
+        //       {%- if enable_thinking %}{%- set thinking_option = 'on' %}
+        //       {%- else %}{%- set thinking_option = 'off' %}{%- endif %}
+        //     {%- elif thinking_option is not defined %}
+        //       {%- set thinking_option = 'on' %}
+        //     {%- endif %}
+        //
+        // Neither the `default(...)` filter nor the negative-gate idioms
+        // below match this shape, so it used to fall through to "OFF" and
+        // the Thinking chip lied for a default-on bundle. Read the fallback
+        // branch and classify what it sets.
+        if let fallback = undefinedKwargFallbackBranch(lower),
+            let verdict = fallbackBranchTurnsThinkingOn(fallback)
+        {
+            return verdict
+        }
         // Negative gate: the OFF path requires `enable_thinking` to be explicitly
         // false, so an absent kwarg falls through to thinking-ON (Ornith, Qwen3).
         if lower.contains("enable_thinking is false")
@@ -320,6 +340,96 @@ enum LocalReasoningCapability {
         // Otherwise the template only turns thinking ON when `enable_thinking` is
         // explicitly truthy (Gemma-4), so an absent kwarg means thinking-OFF.
         return false
+    }
+
+    /// The text of the branch a `{% if enable_thinking is defined %}` block
+    /// runs when the kwarg is ABSENT: the first `else` / `elif` tag at the
+    /// block's own nesting depth, up to the next same-depth tag. Nil when the
+    /// template has no such block or the block has no fallback branch (Qwen3
+    /// only ever asks `is defined` to guard a read, never to normalise).
+    /// Pure and testable; exposed for the unit tests.
+    static func undefinedKwargFallbackBranch(_ lower: String) -> String? {
+        guard
+            let tagRegex = try? NSRegularExpression(
+                pattern: #"\{%-?\s*(.*?)\s*-?%\}"#,
+                options: [.dotMatchesLineSeparators]
+            )
+        else { return nil }
+        let ns = lower as NSString
+        let tags = tagRegex.matches(in: lower, range: NSRange(location: 0, length: ns.length))
+        guard !tags.isEmpty else { return nil }
+
+        func body(_ match: NSTextCheckingResult) -> String {
+            ns.substring(with: match.range(at: 1))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        func isOpener(_ body: String) -> Bool {
+            body == "if enable_thinking is defined"
+                || body == "if (enable_thinking is defined)"
+        }
+
+        guard let start = tags.firstIndex(where: { isOpener(body($0)) }) else { return nil }
+        func branch(from branchStart: Int, to end: Int) -> String {
+            ns.substring(with: NSRange(location: branchStart, length: end - branchStart))
+        }
+        var depth = 0
+        var branchStart: Int?
+        for match in tags[(start + 1)...] {
+            let text = body(match)
+            let keyword = text.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
+            switch keyword {
+            case "if":
+                depth += 1
+            case "endif":
+                if depth == 0 {
+                    return branchStart.map { branch(from: $0, to: match.range.location) }
+                }
+                depth -= 1
+            case "else", "elif":
+                guard depth == 0 else { continue }
+                if let branchStart {
+                    return branch(from: branchStart, to: match.range.location)
+                }
+                branchStart = match.range.location + match.range.length
+            default:
+                continue
+            }
+        }
+        return nil
+    }
+
+    /// Classify what a normalisation fallback branch does: an assignment of
+    /// a thinking-ish variable to an ON value (`'on'`, `true`, `'think'`...)
+    /// or a bare `<think>` opener means thinking-ON; an OFF value or a
+    /// closed `<think></think>` prefill means thinking-OFF. Nil when the
+    /// branch does neither, so the older heuristics keep their turn.
+    static func fallbackBranchTurnsThinkingOn(_ branch: String) -> Bool? {
+        let assignment =
+            #"set\s+[a-z0-9_]*(think|reason)[a-z0-9_]*\s*=\s*(true|false|['"]([a-z_]+)['"])"#
+        if let regex = try? NSRegularExpression(pattern: assignment),
+            let match = regex.firstMatch(
+                in: branch, range: NSRange(location: 0, length: (branch as NSString).length)
+            )
+        {
+            let ns = branch as NSString
+            let value: String
+            if match.range(at: 3).location != NSNotFound {
+                value = ns.substring(with: match.range(at: 3))
+            } else {
+                value = ns.substring(with: match.range(at: 2))
+            }
+            switch value {
+            case "true", "on", "think", "thinking", "reason", "reasoning", "enabled", "high", "max":
+                return true
+            case "false", "off", "no_think", "nothink", "chat", "direct", "none", "disabled":
+                return false
+            default:
+                return nil
+            }
+        }
+        if branch.contains("</think>") { return false }
+        if branch.contains("<think>") { return true }
+        return nil
     }
 
     /// Internal (not private): `DeclaredReasoningEffort` resolves bundles
@@ -394,8 +504,7 @@ enum LocalReasoningCapability {
     /// so unit tests can feed in fixtures without a filesystem.
     static func analyzeJangConfig(data: Data) -> Capability? {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let chat = root["chat"] as? [String: Any],
-            let reasoning = chat["reasoning"] as? [String: Any],
+            let reasoning = jangReasoningBlock(root),
             let supported = reasoning["supported"] as? Bool,
             supported
         else {
@@ -467,25 +576,48 @@ enum LocalReasoningCapability {
     /// send nothing until the user/API makes an explicit choice.
     private static func readTemplateDefaultThinkingOn(at dir: URL) -> Bool? {
         let jangURL = dir.appendingPathComponent("jang_config.json")
-        guard let data = readSmallConfigFile(jangURL),
-            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let chat = root["chat"] as? [String: Any],
-            let reasoning = chat["reasoning"] as? [String: Any]
+        guard let data = readSmallConfigFile(jangURL) else { return nil }
+        return jangConfigDefaultThinkingOn(data: data)
+    }
+
+    /// Pure, testable read of the jang_config serving default. Accepts both
+    /// the legacy `chat.reasoning` sub-object (DSV4-Flash) and the newer
+    /// TOP-LEVEL `reasoning` block (Raptor / Ling 3 converters stamp
+    /// `"reasoning": {"default": "on", ...}` beside `chat`, the same block
+    /// `DeclaredReasoningEffort` already reads). Nil when neither carries a
+    /// recognised default key.
+    static func jangConfigDefaultThinkingOn(data: Data) -> Bool? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let reasoning = jangReasoningBlock(root)
         else {
             return nil
         }
         return jangReasoningDefaultThinkingOn(reasoning)
     }
 
+    /// The bundle's reasoning declaration: top-level `reasoning` first, then
+    /// the legacy `chat.reasoning` location. Mirrors
+    /// `DeclaredReasoningEffort.parseJangDeclaration` so the two readers can
+    /// never disagree about which block a bundle declares.
+    private static func jangReasoningBlock(_ root: [String: Any]) -> [String: Any]? {
+        (root["reasoning"] as? [String: Any])
+            ?? ((root["chat"] as? [String: Any])?["reasoning"] as? [String: Any])
+    }
+
     private static func jangReasoningDefaultThinkingOn(_ reasoning: [String: Any]) -> Bool? {
         if let enabled = reasoning["default_enabled"] as? Bool {
             return enabled
         }
-        if let mode = reasoning["default_mode"] as? String {
+        // Top-level block convention: `"default": "on" | "off"` (a bool is
+        // accepted too, so a converter that stamps `true` is not misread).
+        if let enabled = reasoning["default"] as? Bool {
+            return enabled
+        }
+        if let mode = (reasoning["default"] as? String) ?? (reasoning["default_mode"] as? String) {
             switch mode.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-            case "think", "thinking", "reason", "reasoning", "high", "max":
+            case "on", "enabled", "true", "think", "thinking", "reason", "reasoning", "high", "max":
                 return true
-            case "chat", "direct", "none", "no_think", "nothink", "off":
+            case "off", "disabled", "false", "chat", "direct", "none", "no_think", "nothink":
                 return false
             default:
                 break
