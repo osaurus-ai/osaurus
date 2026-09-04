@@ -104,8 +104,7 @@ extension ChatTourStop {
 public final class ChatLayoutTour: ObservableObject {
     public static let shared = ChatLayoutTour()
 
-    /// Once-per-user gate. Set when the tour finishes or is skipped, and
-    /// silently on fresh installs (no prior chats: nothing "moved" for them).
+    /// Once-per-user gate. Set when the tour finishes or is dismissed.
     private static let completedKey = "chatLayoutTourCompleted"
 
     /// The chat window the tour is running in, or nil when inactive.
@@ -156,18 +155,14 @@ public final class ChatLayoutTour: ObservableObject {
 
     // MARK: Eligibility
 
-    /// Auto-offer once, to users who already had chats before this layout
-    /// (an update); fresh installs are marked done without a tour. Called
-    /// when a chat window becomes key; runs at most once per launch.
+    /// Auto-offer once per user: existing users get it as a "here's what
+    /// moved" walkthrough, fresh installs as a first-run intro to the same
+    /// layout. Called when a chat window becomes key; runs at most once per
+    /// launch, and never again once finished or dismissed.
     func autoStartIfEligible(windowId: UUID) {
         guard !didAutoCheckThisLaunch else { return }
         didAutoCheckThisLaunch = true
-        let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: Self.completedKey) else { return }
-        guard !ChatSessionsManager.shared.sessions.isEmpty else {
-            defaults.set(true, forKey: Self.completedKey)
-            return
-        }
+        guard !UserDefaults.standard.bool(forKey: Self.completedKey) else { return }
         // Let the first layout pass settle so anchors are reported.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             self?.start(in: windowId)
