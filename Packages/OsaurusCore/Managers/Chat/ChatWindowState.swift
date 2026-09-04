@@ -111,9 +111,9 @@ final class ChatWindowState: ObservableObject {
     /// no view re-renders.
     var cancelInlineEdit: (() -> Void)?
 
-    /// Trailing chat-history panel (agents-sidebar prototype): toggled by
-    /// the toolbar's history button, lists the selected agent's chats.
-    @Published var isHistoryPanelVisible: Bool = false
+    /// Float-on-top state, driven by the toolbar overflow menu's Pin Window
+    /// item (was local state inside the old PinButton).
+    @Published var isWindowPinned: Bool = false
 
     /// Drives the in-conversation find bar (Cmd+F). Set by the window-level
     /// key monitor (which cannot touch `ChatView`'s `@State`) and cleared by

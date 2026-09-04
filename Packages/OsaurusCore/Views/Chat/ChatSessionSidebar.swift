@@ -996,6 +996,12 @@ struct ChatSessionSidebar: View {
                     AgentSidebarRow(
                         agent: agent,
                         isSelected: agent.id == agentId,
+                        // The selected agent's row reflects the session the
+                        // window is showing (the active tab's chat), so the
+                        // sidebar always answers "which chat is this?".
+                        currentSessionTitle: agent.id == agentId
+                            ? sessions.first(where: { $0.id == currentSessionId })?.title
+                            : nil,
                         activityStatus: activityStatus(for: agent),
                         onSelect: { onSelectAgent?(agent.id) }
                     )
@@ -1120,6 +1126,9 @@ struct ChatSessionSidebar: View {
 private struct AgentSidebarRow: View {
     let agent: Agent
     let isSelected: Bool
+    /// Title of the session currently open for this agent (selected row
+    /// only); shown as the subtitle so the row tracks the active chat.
+    var currentSessionTitle: String? = nil
     /// Live activity rolled up from the agent's sessions: `.working`
     /// animates the avatar ring exactly like the old session rows.
     var activityStatus: SessionActivityMonitor.Status? = nil
@@ -1156,7 +1165,12 @@ private struct AgentSidebarRow: View {
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                if agent.isBuiltIn {
+                if let currentSessionTitle {
+                    Text(currentSessionTitle)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.accentColor.opacity(0.9))
+                        .lineLimit(1)
+                } else if agent.isBuiltIn {
                     Text("Orchestrator", bundle: .module)
                         .font(.system(size: 10))
                         .foregroundColor(theme.secondaryText.opacity(0.85))

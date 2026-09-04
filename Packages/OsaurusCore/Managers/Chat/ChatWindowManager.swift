@@ -954,18 +954,8 @@ private struct ChatWindowRootView: View {
             if windowState.isFullScreen {
                 ChatFullScreenHeaderView(windowState: windowState)
             }
-            HStack(spacing: 0) {
-                ChatView(windowState: windowState)
-                    .id(ObjectIdentifier(windowState.session))
-                    .frame(maxWidth: .infinity)
-
-                // Layout sibling, not an overlay: the chat surface must
-                // RESIZE to make room when the history panel opens.
-                if windowState.isHistoryPanelVisible {
-                    ChatHistoryPanel(windowState: windowState)
-                        .transition(.move(edge: .trailing))
-                }
-            }
+            ChatView(windowState: windowState)
+                .id(ObjectIdentifier(windowState.session))
         }
         .environment(\.theme, windowState.theme)
     }
@@ -984,9 +974,7 @@ private struct ChatFullScreenHeaderView: View {
             // precedes this item.
             ChatToolbarBackView(windowState: windowState, leadingChromeWidth: 76)
             // Leading-aligned like Chrome: tabs grow left to right.
-            // Chat tabs hidden while the agents-focused sidebar prototype
-            // is explored; the tab machinery stays live underneath.
-            // ChatTabStripView(windowState: windowState, leadingChromeWidth: 76)
+            ChatTabStripView(windowState: windowState, leadingChromeWidth: 76)
             Spacer()
             ChatToolbarActionView(windowState: windowState)
             ChatToolbarTrailingView(windowState: windowState)
@@ -1062,8 +1050,6 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     /// "ChatToolbar.agent" identifier falls through to `default: nil` if
     /// AppKit ever replays it from stale persisted state.)
     fileprivate static let tabsItem = NSToolbarItem.Identifier("ChatToolbar.tabs")
-    /// Chat-history panel toggle (agents-sidebar prototype).
-    fileprivate static let historyItem = NSToolbarItem.Identifier("ChatToolbar.history")
     fileprivate static let actionItem = NSToolbarItem.Identifier("ChatToolbar.action")
     // The trailing item; hosts the pin (chat) or the settings gear
     // (project page). Named `pin` for backward identity continuity.
@@ -1081,9 +1067,7 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     // item that AppKit still reserved spacing for, so every chat had a dead
     // gap at the toolbar's right edge.
     private static let itemIdentifiers: [NSToolbarItem.Identifier] = [
-        // tabsItem omitted: chat tabs hidden during the agents-sidebar
-        // prototype (re-insert after backItem to restore).
-        sidebarItem, backItem, .flexibleSpace, actionItem, historyItem, pinItem,
+        sidebarItem, backItem, tabsItem, .flexibleSpace, actionItem, pinItem,
     ]
 
     private weak var windowState: ChatWindowState?
@@ -1130,13 +1114,6 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
                     ChatTabStripView(windowState: windowState)
             )
 
-        case Self.historyItem:
-            return makeHostingItem(
-                identifier: itemIdentifier,
-                rootView:
-                    ChatToolbarHistoryView(windowState: windowState)
-            )
-
         case Self.actionItem:
             return makeHostingItem(
                 identifier: itemIdentifier,
@@ -1178,28 +1155,6 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
 }
 
 // MARK: - Toolbar Item Views
-
-/// Chat-history panel toggle: opens the trailing panel listing the selected
-/// agent's conversations (agents-focused sidebar prototype).
-private struct ChatToolbarHistoryView: View {
-    @ObservedObject var windowState: ChatWindowState
-
-    var body: some View {
-        // History is chat chrome; it hides on the project page like the pin.
-        if !windowState.isProjectPageVisible {
-            HeaderActionButton(
-                icon: "text.justify",
-                help: windowState.isHistoryPanelVisible ? "Hide chat history" : "Show chat history",
-                action: {
-                    withAnimation(windowState.theme.animationQuick()) {
-                        windowState.isHistoryPanelVisible.toggle()
-                    }
-                }
-            )
-            .environment(\.theme, windowState.theme)
-        }
-    }
-}
 
 /// Sidebar toggle button.
 private struct ChatToolbarSidebarView: View {
@@ -1462,18 +1417,77 @@ private struct ChatToolbarChangesButton: View {
 private struct ChatToolbarTrailingView: View {
     @ObservedObject var windowState: ChatWindowState
 
+    // Team layout: ONE chevron opening an overflow menu (See History, Pin
+    // Window, Settings) instead of a row of buttons, so the title bar is
+    // tabs + minimal chrome. History and pin are chat-only; the project
+    // page keeps just Settings.
     var body: some View {
-        if windowState.isProjectPageVisible {
-            HeaderActionButton(
-                icon: "gearshape",
-                help: "Settings",
-                action: { AppDelegate.shared?.showManagementWindow(initialTab: nil) }
-            )
-            .environment(\.theme, windowState.theme)
-        } else {
-            PinButton(windowId: windowState.windowId)
-                .environment(\.theme, windowState.theme)
+        Menu {
+            if !windowState.isProjectPageVisible {
+                Button {
+                    ChatHistoryDialog.present(for: windowState)
+                } label: {
+                    Label {
+                        Text("See History", bundle: .module)
+                    } icon: {
+                        Image(systemName: "clock.arrow.circlepath")
+                    }
+                }
+
+                Button {
+                    windowState.isWindowPinned.toggle()
+                    ChatWindowManager.shared.setWindowPinned(
+                        id: windowState.windowId, pinned: windowState.isWindowPinned)
+                } label: {
+                    Label {
+                        Text(windowState.isWindowPinned ? "Unpin Window" : "Pin Window", bundle: .module)
+                    } icon: {
+                        Image(systemName: windowState.isWindowPinned ? "pin.fill" : "pin")
+                    }
+                }
+
+                Divider()
+            }
+
+            Button {
+                AppDelegate.shared?.showManagementWindow(initialTab: nil)
+            } label: {
+                Label {
+                    Text("Settings", bundle: .module)
+                } icon: {
+                    Image(systemName: "gearshape")
+                }
+            }
+        } label: {
+            ChatToolbarChevronLabel(isPinned: windowState.isWindowPinned)
         }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .environment(\.theme, windowState.theme)
+    }
+}
+
+/// Chevron glyph for the overflow menu, styled like `HeaderActionButton`.
+/// Tints accent while the window is pinned so that state stays visible
+/// without a dedicated button.
+private struct ChatToolbarChevronLabel: View {
+    let isPinned: Bool
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Image(systemName: "chevron.down")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(isPinned || isHovered ? theme.accentColor : theme.secondaryText)
+            .frame(width: 28, height: 28)
+            .liquidGlassCircle()
+            .padding(.horizontal, 4)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
+            }
+            .help(Text(LocalizedStringKey("More"), bundle: .module))
     }
 }
 
