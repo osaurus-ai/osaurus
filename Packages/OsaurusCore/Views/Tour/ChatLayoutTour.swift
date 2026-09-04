@@ -79,7 +79,7 @@ extension ChatTourStop {
             ChatTourStop(
                 id: "history",
                 anchor: .overflowMenu,
-                title: L("Your chats didn\u{2019}t go anywhere"),
+                title: L("Your chats didn’t go anywhere"),
                 body: L(
                     "Chat history moved out of the sidebar into this menu.\n\nSee History lists every conversation for the selected agent, with search, import, and the same actions as before."
                 ),
