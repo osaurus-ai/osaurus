@@ -315,7 +315,7 @@ public final class ChatLayoutTour: ObservableObject {
         blur.state = .active
         // Partial opacity softens the blur so the layout underneath stays
         // recognisable; the card's shadow carries the focus instead.
-        blur.alphaValue = 0.8
+        blur.alphaValue = 0.92
         blur.autoresizingMask = [.width, .height]
         let host = NSHostingView(rootView: ChatTourOverlayView(tour: self, windowId: id))
         host.frame = blur.bounds
