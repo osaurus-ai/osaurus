@@ -281,25 +281,68 @@ struct ToolScopeGateRecoveryTests {
     // MARK: - Workspace-tool dead end names the real next step
 
     @Test
-    func workspaceToolWithoutFolder_namesTheFolderChipAndArtifactFallback() async throws {
-        // No folder attached: the model's file_write call must not die on an
-        // opaque "not available" — that produced the observed "file_write
-        // wasn't available in this session" + silent artifact fallback. The
-        // refusal stands (execution boundary unmoved), but it now tells the
-        // model what to relay: attach a folder via the Folder chip, deliver
-        // via share_artifact meanwhile.
+    func workspaceToolWithoutFolder_namesTheFolderChip_regardlessOfRegistration() async throws {
+        // No folder attached to THIS chat: the model's file_write call must
+        // not die on an opaque "not available" (the observed "file_write
+        // wasn't available in this session" + silent artifact fallback), and
+        // it must not be steered into a capabilities load either — on any
+        // process where a folder was ever mounted, the registered
+        // runtime-managed tool reads `.alreadyLoaded` and the loadable-hint
+        // branch used to win, sending the model into a load the dynamic
+        // gates refuse. The answer is keyed on the NAME, so it must be
+        // byte-identical in BOTH registry states.
         let scope = ToolExecutionScope(exposed: [])
-        let result = try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
-            try await ToolRegistry.shared.execute(
-                name: "file_write",
-                argumentsJSON: "{}"
-            )
+        for registered in [false, true] {
+            if registered {
+                FolderToolManager.shared.ensureFolderToolsRegistered()
+            } else {
+                FolderToolManager.shared._unregisterAllForTesting()
+            }
+            defer { if registered { FolderToolManager.shared._unregisterAllForTesting() } }
+
+            let result = try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+                try await ToolRegistry.shared.execute(
+                    name: "file_write",
+                    argumentsJSON: "{}"
+                )
+            }
+            let parsed = try envelope(result)
+            #expect(parsed?["ok"] as? Bool == false, "registered=\(registered)")
+            #expect(parsed?["retryable"] as? Bool == false, "registered=\(registered)")
+            let message = parsed?["message"] as? String ?? ""
+            #expect(message.contains("Folder chip"), "registered=\(registered)")
+            #expect(message.contains("share_artifact"), "registered=\(registered)")
+            #expect(
+                !message.contains("Call capabilities"),
+                "registered=\(registered): must never steer into a loader round-trip")
         }
-        let parsed = try envelope(result)
-        #expect(parsed?["ok"] as? Bool == false)
-        #expect(parsed?["retryable"] as? Bool == false)
-        let message = parsed?["message"] as? String ?? ""
-        #expect(message.contains("Folder chip"))
-        #expect(message.contains("share_artifact"))
+    }
+
+    @Test @MainActor
+    func workspaceToolLoad_namesTheFolderChip_regardlessOfRegistration() async throws {
+        // Same contract on the load path: `capabilities {"ids":
+        // ["tool/file_write"]}` must answer with the folder guidance in both
+        // registry states. The first cut nested this under `isBuiltIn`,
+        // which is provably dead for runtime-managed workspace tools —
+        // unregistered they hit "not found", registered they hit the
+        // dynamic-grant refusals or a false "callable NOW".
+        for registered in [false, true] {
+            if registered {
+                FolderToolManager.shared.ensureFolderToolsRegistered()
+            } else {
+                FolderToolManager.shared._unregisterAllForTesting()
+            }
+            defer { if registered { FolderToolManager.shared._unregisterAllForTesting() } }
+
+            let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+                try await CapabilitiesLoadTool().execute(
+                    argumentsJSON: #"{"ids":["tool/file_write"]}"#
+                )
+            }
+            #expect(ToolEnvelope.isError(result), "registered=\(registered)")
+            #expect(result.contains("Folder chip"), "registered=\(registered)")
+            #expect(result.contains("share_artifact"), "registered=\(registered)")
+            #expect(!result.contains("callable NOW"), "registered=\(registered)")
+        }
     }
 }

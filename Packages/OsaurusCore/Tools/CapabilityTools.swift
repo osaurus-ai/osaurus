@@ -1248,6 +1248,27 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 ToolRegistry.coreWorkspaceToolNames.contains(toolId)
             )
         }
+        // Workspace tools BEFORE any registration/built-in branching: they are
+        // runtime-managed (never in `builtInToolNames`), so a nested check
+        // under `isBuiltIn` was dead code, and depending on whether a folder
+        // was ever mounted this process they'd otherwise hit "not registered",
+        // "not enabled for this agent", or a false "loaded — callable NOW".
+        // Keyed on the NAME so the answer is state-independent. The refusal
+        // stands (the execution boundary does not move on a model's say-so);
+        // it just names the one real next step, which is user-facing.
+        if isWorkspaceTool {
+            return .failure(
+                LoadFailure(
+                    kind: .rejected,
+                    message:
+                        "Tool '\(toolId)' is a workspace tool and cannot be loaded here — "
+                        + "it activates only when a workspace folder is attached to this "
+                        + "chat. Ask the user to attach one via the Folder chip (or enable "
+                        + "Autonomous execution); deliver file content with share_artifact "
+                        + "meanwhile."
+                )
+            )
+        }
         guard !availability.reasonCodes.contains(.notRegistered) else {
             return .failure(
                 LoadFailure(
@@ -1280,23 +1301,6 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         let isDeferredDefaultConfigureWrite =
             isDefaultAgent && configureWrites.contains(toolId)
         if isBuiltIn, !isDeferredDefaultConfigureWrite {
-            // Workspace tools: keep the refusal (the execution boundary does
-            // not move on a model's say-so) but name the one real next step,
-            // which is user-facing. "Enable its owning setting first" gave a
-            // small model nothing it could relay; live result was "file_write
-            // wasn't available in this session" + a silent artifact fallback.
-            if isWorkspaceTool {
-                return .failure(
-                    LoadFailure(
-                        kind: .rejected,
-                        message:
-                            "Tool '\(toolId)' is a workspace tool and cannot be loaded here — "
-                            + "it activates only when a workspace folder is attached. Ask the "
-                            + "user to attach one via the Folder chip (or enable Autonomous "
-                            + "execution); deliver file content with share_artifact meanwhile."
-                    )
-                )
-            }
             return .failure(
                 LoadFailure(
                     kind: .rejected,
