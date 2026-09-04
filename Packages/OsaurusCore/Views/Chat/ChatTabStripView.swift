@@ -577,11 +577,17 @@ private struct ChatTabItemView: View {
                 // baseline so it reads as rising out of the content below.
                 ChromeTabShape(topRadius: 8, footRadius: Self.footRadius)
                     .fill(theme.tertiaryBackground.opacity(theme.isDark ? 0.95 : 0.85))
-            } else if isHovered {
-                // Inactive tabs hover-light with an inset rounded rect,
-                // never the full shape — that's reserved for the active tab.
+            } else {
+                // Inactive tabs sit "behind" the active one (Chrome's 3D
+                // read): a faint inset rounded rect at rest, brightening on
+                // hover. Never the full silhouette — that is reserved for the
+                // active tab, which is what makes it look raised.
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(theme.tertiaryBackground.opacity(0.45))
+                    .fill(theme.tertiaryBackground.opacity(isHovered ? 0.55 : 0.22))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .stroke(theme.primaryBorder.opacity(isHovered ? 0.35 : 0.2), lineWidth: 1)
+                    )
                     .padding(.vertical, 3)
                     .padding(.horizontal, 2)
             }
