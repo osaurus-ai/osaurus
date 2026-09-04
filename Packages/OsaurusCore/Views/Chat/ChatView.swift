@@ -157,10 +157,19 @@ final class ChatSession: ObservableObject {
 
     @Published var turns: [ChatTurn] = []
 
+    /// The model's OUTPUT for the in-flight run is complete (vmlx emitted its
+    /// terminal info) even though the RUN has not ended: the adapter keeps the
+    /// stream open through vmlx's post-generation cache store (9.5–15 s on a
+    /// 96 GB bundle, measured 2026-09-04) to preserve allocator ordering. The
+    /// streaming cursor keys on this so it stops at the last letter; the send
+    /// gate keys on `isStreaming`, which still waits for the real end.
+    @Published var outputComplete: Bool = false
+
     @Published var isStreaming: Bool = false {
         didSet {
             guard isStreaming != oldValue else { return }
             if isStreaming {
+                outputComplete = false
                 ChatPerfTrace.shared.begin("stream-\(Int(Date().timeIntervalSince1970))")
                 beginRunProgressMonitor()
             } else {
@@ -1791,7 +1800,7 @@ final class ChatSession: ObservableObject {
         // In Mode 2 the remote agent owns the conversation, so its name heads
         // the thread; otherwise fall back to the local agent's name.
         let displayName = threadAgentDisplayName ?? localName
-        var streamingTurnId = isStreaming ? turns.last?.id : nil
+        var streamingTurnId = (isStreaming && !outputComplete) ? turns.last?.id : nil
 
         // While a send waits on the pre-send warm-up handshake there is no
         // assistant turn yet; render a placeholder typing-indicator group so
@@ -4526,6 +4535,25 @@ final class ChatSession: ObservableObject {
         currentTurn.unclosedReasoning = false
         currentTurn.completedAt = nil
         currentTurn.lastOutputAt = nil
+        // Output-complete relay: the adapter announces the instant vmlx's
+        // terminal info arrives (before the cache-store tail it withholds the
+        // stream end for). Stop the cursor and stamp completion right then.
+        let outputCompleteSub = GenerationOutputRelay.shared.$lastCompletion
+            .compactMap { $0 }
+            .filter { $0.at >= streamStartTime }
+            .first()
+            .receive(on: RunLoop.main)
+            .sink { [weak self, weak currentTurn] completion in
+                guard let self, self.activeRunId == runId else { return }
+                if let turn = currentTurn {
+                    if turn.completedAt == nil { turn.completedAt = completion.at }
+                    if turn.lastOutputAt == nil { turn.lastOutputAt = completion.at }
+                }
+                self.outputComplete = true
+                self.rebuildVisibleBlocks()
+                print("[Osaurus][UI] output complete at \(String(format: "%.2f", completion.at.timeIntervalSince(streamStartTime)))s (run end pending on the engine tail)")
+            }
+        defer { outputCompleteSub.cancel() }
         // On every exit — clean end, cancel, tool-invocation throw, or a
         // mid-stream error — drop a tool-call-progress placeholder if it never
         // resolved to a committed tool name, so the "Preparing tool call" card
