@@ -1,4 +1,11 @@
-//
+    private func rememberClosedTab(_ tab: ChatTab, at index: Int) {
+        let persisted = tab.isHibernated || !tab.session.turns.isEmpty
+        let sessionId = persisted ? tab.session.sessionId : nil
+        if let sessionId {
+            recentlyClosedTabs.removeAll { $0.sessionId == sessionId }
+        }
+        recentlyClosedTabs.append(
+            ClosedTab(sessionId: sessionId, agentId: tab.session.agentId ?? Agent.defaultId, index: index))//
 //  ChatWindowState.swift
 //  osaurus
 //
@@ -442,6 +449,21 @@ final class ChatWindowState: ObservableObject {
         }
     }
 
+    /// ⌘N: open a NEW tab that stays in the current project context (the
+    /// current chat's project, if any), stamping membership and the
+    /// project folder the same way `startNewChat(in:)` does.
+    func newTabInCurrentProject() {
+        let project = ProjectManager.shared.project(for: openProjectId ?? session.projectId)
+        openProjectId = nil
+        enteredChatFromProjectPage = project != nil
+        newTab()
+        guard let project else { return }
+        session.projectId = project.id
+        if project.folderBookmark != nil, !session.folderState.hasActiveFolder {
+            session.folderState.restore(bookmark: project.folderBookmark, path: project.folderPath)
+        }
+    }
+
     /// Start a new chat. Browser-style: a blank active tab is reused in
     /// place; otherwise the current conversation keeps its tab (a running
     /// reply keeps streaming there) and the new chat opens in a new tab.
@@ -737,12 +759,14 @@ final class ChatWindowState: ObservableObject {
     // MARK: Recently closed tabs (⇧⌘T)
 
     private struct ClosedTab {
-        let sessionId: UUID
+        /// nil for a blank (never sent) tab, which reopens as a fresh chat.
+        let sessionId: UUID?
+        let agentId: UUID
         let index: Int
     }
 
-    /// Most recent last. Only persisted conversations are remembered: a
-    /// blank tab has nothing to reopen.
+    /// Most recent last. Blank tabs are remembered too (browsers reopen an
+    /// empty new-tab page), as a fresh chat for the same agent.
     private var recentlyClosedTabs: [ClosedTab] = []
     private static let recentlyClosedLimit = 10
 
@@ -762,11 +786,16 @@ final class ChatWindowState: ObservableObject {
     /// are skipped / focused respectively.
     func reopenLastClosedTab() {
         while let closed = recentlyClosedTabs.popLast() {
-            if let open = tabs.first(where: { $0.session.sessionId == closed.sessionId }) {
+            guard let sessionId = closed.sessionId else {
+                newTab(agentId: closed.agentId)
+                moveTab(id: activeTabId, to: min(closed.index, tabs.count - 1))
+                return
+            }
+            if let open = tabs.first(where: { $0.session.sessionId == sessionId }) {
                 selectTab(id: open.id)
                 return
             }
-            guard let data = ChatSessionStore.load(id: closed.sessionId) else { continue }
+            guard let data = ChatSessionStore.load(id: sessionId) else { continue }
             // Reuses a blank active tab, otherwise opens a new one.
             openSessionInNewTab(data)
             moveTab(id: activeTabId, to: min(closed.index, tabs.count - 1))
