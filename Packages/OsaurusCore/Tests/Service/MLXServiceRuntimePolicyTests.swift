@@ -209,6 +209,107 @@ struct MLXServiceRuntimePolicyTests {
         )
     }
 
+    @Test func zayaVLRequiresARealTemplateToolContractDespiteLegacyTrueStamp() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-zaya-vl-tools-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try #"{"model_type":"zaya1_vl"}"#.write(
+            to: root.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"capabilities":{"supports_tools":true,"tool_parser":"zaya_xml"}}"#.write(
+            to: root.appendingPathComponent("jang_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"chat_template":"{% for message in messages %}{{ message.content }}{% endfor %}"}"#.write(
+            to: root.appendingPathComponent("chat_template.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        #expect(
+            MLXService.supportsLocalToolCalling(
+                modelName: "ZAYA1-VL-8B-JANGTQ4",
+                modelId: "JANGQ-AI/ZAYA1-VL-8B-JANGTQ4",
+                modelDirectory: root
+            ) == false
+        )
+        #expect(throws: MLXService.RuntimePolicyError.self) {
+            try MLXService.validateRuntimePolicy(
+                modelName: "ZAYA1-VL-8B-JANGTQ4",
+                modelId: "JANGQ-AI/ZAYA1-VL-8B-JANGTQ4",
+                messages: [ChatMessage(role: "user", content: "Use line_count")],
+                parameters: GenerationParameters(temperature: nil, maxTokens: 16),
+                tools: [Self.lineCountTool()],
+                runtime: VMLXServerRuntimeSettings(),
+                modelDirectory: root
+            )
+        }
+    }
+
+    @Test func correctedZayaVLStampStaysToolDisabled() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-zaya-vl-disabled-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try #"{"model_type":"zaya1_vl"}"#.write(
+            to: root.appendingPathComponent("config.json"), atomically: true, encoding: .utf8)
+        try #"{"capabilities":{"supports_tools":false,"tool_parser":"zaya_xml"}}"#.write(
+            to: root.appendingPathComponent("jang_config.json"), atomically: true, encoding: .utf8)
+        try #"{"chat_template":"{{ tools }} <tool_call>{{ call }}</tool_call>"}"#.write(
+            to: root.appendingPathComponent("chat_template.json"), atomically: true, encoding: .utf8)
+
+        #expect(
+            MLXService.supportsLocalToolCalling(
+                modelName: "ZAYA1-VL", modelId: "local/zaya-vl", modelDirectory: root
+            ) == false
+        )
+    }
+
+    @Test func futureZayaVLTemplateCanOptBackIntoToolsWithoutNameAllowlisting() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-zaya-vl-enabled-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try #"{"model_type":"zaya1_vl"}"#.write(
+            to: root.appendingPathComponent("config.json"), atomically: true, encoding: .utf8)
+        try #"{"capabilities":{"supports_tools":true,"tool_parser":"zaya_xml"}}"#.write(
+            to: root.appendingPathComponent("jang_config.json"), atomically: true, encoding: .utf8)
+        try #"{"chat_template":"{% if tools %}{{ tools }}{% endif %}<tool_call>{{ call }}</tool_call>"}"#.write(
+            to: root.appendingPathComponent("chat_template.json"), atomically: true, encoding: .utf8)
+
+        #expect(
+            MLXService.supportsLocalToolCalling(
+                modelName: "ZAYA1-VL", modelId: "local/zaya-vl", modelDirectory: root
+            ) == true
+        )
+    }
+
+    @Test func installedZayaVLBundleUsesItsActualTemplateContractWhenProvided() throws {
+        guard
+            let path = ProcessInfo.processInfo.environment["OSAURUS_ZAYA_VL_TEST_MODEL"]
+        else { return }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        #expect(
+            FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent("config.json").path
+            )
+        )
+        #expect(
+            MLXService.supportsLocalToolCalling(
+                modelName: directory.lastPathComponent,
+                modelId: "local/\(directory.lastPathComponent)",
+                modelDirectory: directory
+            ) == false
+        )
+    }
+
     @Test func vibeThinkerIsTreatedAsToolUnsupported() {
         // VibeThinker carries the standard Qwen2.5 Hermes tool template (so format
         // detection would call it tool-capable), but the reasoning fine-tune wraps
