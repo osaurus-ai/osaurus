@@ -237,13 +237,20 @@ public final class ChatLayoutTour: ObservableObject {
             return
         }
         secondsUntilNext = Self.readingDelay
-        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] timer in
+        // The timer is only ever touched through `countdownTimer` (main-actor
+        // state), never via the closure's non-Sendable parameter.
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.stepIndex == step else { timer.invalidate(); return }
+                guard let self else { return }
+                guard self.stepIndex == step else {
+                    self.countdownTimer?.invalidate()
+                    self.countdownTimer = nil
+                    return
+                }
                 self.secondsUntilNext = max(0, self.secondsUntilNext - 1)
                 if self.secondsUntilNext == 0 {
                     self.unlockedSteps.insert(step)
-                    timer.invalidate()
+                    self.countdownTimer?.invalidate()
                     self.countdownTimer = nil
                 }
             }
