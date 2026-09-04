@@ -35,6 +35,108 @@
         }
       }
     },
+    "Agents come first now": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agenten stehen jetzt an erster Stelle"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이제 에이전트가 먼저입니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Теперь агенты на первом месте"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "智能体现在优先显示"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "智能體現在優先顯示"
+          }
+        }
+      }
+    },
+    "Chat history moved out of the sidebar into this menu. See History lists every conversation for the selected agent, with search, import, and the same actions as before.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Chat-Verlauf ist aus der Seitenleiste in dieses Menü umgezogen. „Verlauf anzeigen“ listet alle Unterhaltungen des ausgewählten Agenten, mit Suche, Import und denselben Aktionen wie zuvor."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "채팅 기록이 사이드바에서 이 메뉴로 이동했습니다. 기록 보기에는 선택된 에이전트의 모든 대화가 검색, 가져오기 및 이전과 동일한 작업과 함께 표시됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "История чатов переехала из боковой панели в это меню. «Показать историю» перечисляет все беседы выбранного агента с поиском, импортом и теми же действиями, что и раньше."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "聊天历史从侧边栏移到了此菜单。“查看历史”会列出所选智能体的所有对话，并保留搜索、导入和之前的全部操作。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "聊天歷史從側邊欄移到了此選單。「查看歷史」會列出所選智能體的所有對話，並保留搜尋、匯入和之前的全部操作。"
+          }
+        }
+      }
+    },
+    "Chat Layout Tour": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tour durch das Chat-Layout"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "채팅 레이아웃 둘러보기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Обзор макета чата"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "聊天布局导览"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "聊天版面導覽"
+          }
+        }
+      }
+    },
     "Close Tab": {
       "localizations": {
         "de": {
@@ -65,6 +167,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "關閉分頁"
+          }
+        }
+      }
+    },
+    "Every chat is a tab": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jeder Chat ist ein Tab"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모든 채팅은 탭입니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Каждый чат — это вкладка"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每个聊天都是一个标签页"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每個聊天都是一個分頁"
           }
         }
       }
@@ -309,6 +445,40 @@
         }
       }
     },
+    "Open several chats side by side, like a browser. A reply keeps streaming in a background tab, and you can drag tabs to reorder them.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Öffne mehrere Chats nebeneinander wie in einem Browser. Eine Antwort läuft in einem Hintergrund-Tab weiter, und du kannst Tabs per Drag & Drop neu anordnen."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "브라우저처럼 여러 채팅을 나란히 열 수 있습니다. 답변은 백그라운드 탭에서 계속 스트리밍되며, 탭을 드래그하여 순서를 바꿀 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открывайте несколько чатов рядом, как в браузере. Ответ продолжает поступать в фоновой вкладке, а вкладки можно перетаскивать, чтобы изменить их порядок."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "像浏览器一样并排打开多个聊天。回复会在后台标签页中继续生成，你还可以拖动标签页重新排序。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "像瀏覽器一樣並排開啟多個聊天。回覆會在背景分頁中繼續生成，你還可以拖曳分頁重新排序。"
+          }
+        }
+      }
+    },
     "Pin Window": {
       "localizations": {
         "de": {
@@ -339,6 +509,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "釘選視窗"
+          }
+        }
+      }
+    },
+    "Pin Window and Settings moved too": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fenster anheften und Einstellungen sind auch umgezogen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "창 고정과 설정도 이동했습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Закрепить окно и настройки тоже переехали"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "固定窗口和设置也移到了这里"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "釘選視窗和設定也移到了這裡"
           }
         }
       }
@@ -402,6 +606,74 @@
         "ru": { "stringUnit": { "state": "translated", "value": "Остановка…" } },
         "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在停止…" } },
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在停止…" } }
+      }
+    },
+    "The pin and settings buttons now live under the same menu as history, so the title bar stays clear for your tabs.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Schaltflächen zum Anheften und für die Einstellungen befinden sich jetzt im selben Menü wie der Verlauf, damit die Titelleiste frei für deine Tabs bleibt."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "고정 및 설정 버튼은 이제 기록과 같은 메뉴에 있어 제목 표시줄을 탭을 위해 비워 둘 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кнопки закрепления и настроек теперь находятся в том же меню, что и история, поэтому заголовок окна остаётся свободным для вкладок."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "固定和设置按钮现在与历史位于同一个菜单中，让标题栏为你的标签页留出空间。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "釘選和設定按鈕現在與歷史位於同一個選單中，讓標題列為你的分頁留出空間。"
+          }
+        }
+      }
+    },
+    "The sidebar lists your agents. Pick one to open it in its own tab, hover a row for its settings, and switch to Projects with the tab above. The selected agent shows which chat is open.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Seitenleiste zeigt deine Agenten. Wähle einen aus, um ihn in einem eigenen Tab zu öffnen, fahre über eine Zeile für die Einstellungen und wechsle über den Tab oben zu Projekten. Der ausgewählte Agent zeigt, welcher Chat geöffnet ist."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "사이드바에 에이전트가 표시됩니다. 하나를 선택하면 별도의 탭에서 열리고, 행 위에 마우스를 올리면 설정이 표시되며, 위쪽 탭으로 프로젝트로 전환할 수 있습니다. 선택된 에이전트에는 열려 있는 채팅이 표시됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В боковой панели перечислены ваши агенты. Выберите одного, чтобы открыть его в отдельной вкладке, наведите курсор на строку, чтобы открыть настройки, и переключитесь на проекты с помощью вкладки выше. У выбранного агента показан открытый чат."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "侧边栏列出了你的智能体。选择一个即可在单独的标签页中打开，悬停在行上可查看其设置，通过上方的选项卡可切换到项目。选中的智能体会显示当前打开的聊天。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "側邊欄列出了你的智能體。選擇一個即可在單獨的分頁中開啟，懸停在列上可查看其設定，透過上方的選項卡可切換到專案。選取的智能體會顯示目前開啟的聊天。"
+          }
+        }
       }
     },
     "Unloading model": {
@@ -1289,6 +1561,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "卸載模型"
+          }
+        }
+      }
+    },
+    "Your chats didn’t go anywhere": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deine Chats sind noch da"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "채팅은 사라지지 않았습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ваши чаты никуда не делись"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你的聊天都还在"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你的聊天都還在"
           }
         }
       }
