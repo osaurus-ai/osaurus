@@ -1018,7 +1018,7 @@ private final class ChatPanel: NSPanel {
             return
         }
         if let state = chatWindowState, flags == [.command, .shift],
-            event.charactersIgnoringModifiers.lowercased() == "t"
+            event.charactersIgnoringModifiers?.lowercased() == "t"
         {
             state.reopenLastClosedTab()
             return
