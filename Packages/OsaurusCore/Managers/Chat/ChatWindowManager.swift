@@ -1350,6 +1350,8 @@ private struct ChatToolbarTrailingView: View {
         guard !isMenuOpen else { return }
         isMenuOpen = true
         defer { isMenuOpen = false }
+        // Layout tour: opening this menu completes its action-driven stop.
+        ChatLayoutTour.shared.noteOverflowMenuOpened()
         let menu = NSMenu()
         if !windowState.isProjectPageVisible {
             menu.addItem(

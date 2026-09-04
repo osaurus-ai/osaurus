@@ -23,9 +23,16 @@ import SwiftUI
 
 /// The UI elements the tour points at.
 public enum ChatTourAnchor: String, Sendable {
+    /// The Agents | Projects lens switcher at the top of the sidebar.
+    case sidebarLensBar
     case sidebar
     case tabStrip
     case overflowMenu
+}
+
+struct ChatTourShortcut: Hashable {
+    let keys: String
+    let label: String
 }
 
 struct ChatTourStop: Identifiable {
@@ -33,8 +40,13 @@ struct ChatTourStop: Identifiable {
     let anchor: ChatTourAnchor
     let title: String
     let body: String
-    /// Keyboard shortcut chips shown under the body.
-    let chips: [String]
+    /// Keyboard shortcuts listed under the body, one per row.
+    var shortcuts: [ChatTourShortcut] = []
+    /// Action-driven stop: no Next button; it completes when the user
+    /// performs the spotlighted action (see `ChatLayoutTour.noteAction`).
+    var requiresAction: Bool = false
+    /// Hint shown instead of Next while an action is awaited.
+    var actionHint: String? = nil
 }
 
 extension ChatTourStop {
@@ -44,12 +56,25 @@ extension ChatTourStop {
         [
             ChatTourStop(
                 id: "agents",
-                anchor: .sidebar,
+                anchor: .sidebarLensBar,
                 title: L("Agents come first now"),
                 body: L(
-                    "The sidebar lists your agents. Pick one to open it in its own tab, hover a row for its settings, and switch to Projects with the tab above. The selected agent shows which chat is open."
+                    "The sidebar now lists your agents, with Projects one tab over. Pick an agent to open it in its own tab, and hover a row for its settings. The selected agent shows which chat is open."
+                )
+            ),
+            ChatTourStop(
+                id: "tabs",
+                anchor: .tabStrip,
+                title: L("Every chat is a tab"),
+                body: L(
+                    "Open several chats side by side, like a browser.\n\nA reply keeps streaming in a background tab.\n\nDrag tabs to reorder them."
                 ),
-                chips: []
+                shortcuts: [
+                    ChatTourShortcut(keys: "⌘T", label: L("New tab")),
+                    ChatTourShortcut(keys: "⌘W", label: L("Close tab")),
+                    ChatTourShortcut(keys: "⇧⌘T", label: L("Reopen the last closed tab")),
+                    ChatTourShortcut(keys: "⌃Tab", label: L("Next tab")),
+                ]
             ),
             ChatTourStop(
                 id: "history",
@@ -58,16 +83,8 @@ extension ChatTourStop {
                 body: L(
                     "Chat history moved out of the sidebar into this menu. See History lists every conversation for the selected agent, with search, import, and the same actions as before."
                 ),
-                chips: []
-            ),
-            ChatTourStop(
-                id: "tabs",
-                anchor: .tabStrip,
-                title: L("Every chat is a tab"),
-                body: L(
-                    "Open several chats side by side, like a browser. A reply keeps streaming in a background tab, and you can drag tabs to reorder them."
-                ),
-                chips: ["⌘T", "⌘W", "⇧⌘T", "⌃Tab"]
+                requiresAction: true,
+                actionHint: L("Hover the ⋯ button to open the menu")
             ),
             ChatTourStop(
                 id: "menu",
@@ -75,8 +92,7 @@ extension ChatTourStop {
                 title: L("Pin Window and Settings moved too"),
                 body: L(
                     "The pin and settings buttons now live under the same menu as history, so the title bar stays clear for your tabs."
-                ),
-                chips: []
+                )
             ),
         ]
     }
@@ -102,6 +118,7 @@ public final class ChatLayoutTour: ObservableObject {
 
     private var overlayWindow: NSWindow?
     private var overlayHost: NSHostingView<ChatTourOverlayView>?
+    private var blurView: NSVisualEffectView?
     private var windowObservers: [NSObjectProtocol] = []
     private var escapeMonitor: Any?
     private var didAutoCheckThisLaunch = false
@@ -179,6 +196,35 @@ public final class ChatLayoutTour: ObservableObject {
         finish(markCompleted: true)
     }
 
+    /// Action-driven stops complete here. Called by the overflow button when
+    /// its menu opens; the menu's own tracking loop runs synchronously, so
+    /// the advance is deferred until it has closed.
+    func noteOverflowMenuOpened() {
+        guard let stop = currentStop, stop.requiresAction, stop.anchor == .overflowMenu else { return }
+        DispatchQueue.main.async { [weak self] in self?.next() }
+    }
+
+    /// Blur everything behind the overlay except the spotlight. The blur is
+    /// an `NSVisualEffectView` (behind-window) whose mask clears the cutout;
+    /// the cleared region is fully transparent, so hover and clicks there
+    /// reach the chat window (which the action-driven stop relies on).
+    func updateBlurMask(cutout: CGRect?) {
+        guard let blurView, let overlayWindow else { return }
+        let size = overlayWindow.frame.size
+        guard size.width > 0, size.height > 0 else { return }
+        let image = NSImage(size: size, flipped: false) { rect in
+            NSColor.black.setFill()
+            rect.fill()
+            if let cutout {
+                NSGraphicsContext.current?.compositingOperation = .clear
+                NSBezierPath(roundedRect: cutout, xRadius: 10, yRadius: 10).fill()
+            }
+            return true
+        }
+        image.resizingMode = .stretch
+        blurView.maskImage = image
+    }
+
     private func finish(markCompleted: Bool) {
         if markCompleted {
             UserDefaults.standard.set(true, forKey: Self.completedKey)
@@ -226,12 +272,20 @@ public final class ChatLayoutTour: ObservableObject {
         overlay.isReleasedWhenClosed = false
         overlay.level = chatWindow.level
         overlay.collectionBehavior = [.fullScreenAuxiliary, .transient]
+        // Blur layer (behind-window) under the SwiftUI scrim + card.
+        let blur = NSVisualEffectView(frame: NSRect(origin: .zero, size: chatWindow.frame.size))
+        blur.blendingMode = .behindWindow
+        blur.material = .hudWindow
+        blur.state = .active
+        blur.autoresizingMask = [.width, .height]
         let host = NSHostingView(rootView: ChatTourOverlayView(tour: self, windowId: id))
-        host.frame = NSRect(origin: .zero, size: chatWindow.frame.size)
+        host.frame = blur.bounds
         host.autoresizingMask = [.width, .height]
-        overlay.contentView = host
+        blur.addSubview(host)
+        overlay.contentView = blur
+        blurView = blur
         chatWindow.addChildWindow(overlay, ordered: .above)
-        overlay.makeKeyAndOrderFront(nil)
+        overlay.orderFront(nil)
         overlayWindow = overlay
         overlayHost = host
 
@@ -278,6 +332,7 @@ public final class ChatLayoutTour: ObservableObject {
         }
         overlayWindow = nil
         overlayHost = nil
+        blurView = nil
     }
 }
 
@@ -361,9 +416,12 @@ struct ChatTourOverlayView: View {
             let size = proxy.size
             let stop = tour.currentStop
             // Window coords are bottom-left; SwiftUI is top-left.
-            let spotlight: CGRect? = stop.flatMap { tour.frame(of: $0.anchor) }.map { f in
+            // AppKit (bottom-left) cutout for the blur mask, SwiftUI (top-left)
+            // for the scrim and card.
+            let appKitCutout: CGRect? = stop.flatMap { tour.frame(of: $0.anchor) }?
+                .insetBy(dx: -Self.spotlightPadding, dy: -Self.spotlightPadding)
+            let spotlight: CGRect? = appKitCutout.map { f in
                 CGRect(x: f.minX, y: size.height - f.maxY, width: f.width, height: f.height)
-                    .insetBy(dx: -Self.spotlightPadding, dy: -Self.spotlightPadding)
             }
             ZStack(alignment: .topLeading) {
                 scrim(cutout: spotlight, in: size)
@@ -384,13 +442,18 @@ struct ChatTourOverlayView: View {
             .frame(width: size.width, height: size.height)
             .animation(theme.springAnimation(responseMultiplier: 0.9), value: tour.stepIndex)
             .animation(theme.springAnimation(responseMultiplier: 0.9), value: spotlight)
+            .onAppear { tour.updateBlurMask(cutout: appKitCutout) }
+            .onChange(of: appKitCutout) { _, cutout in tour.updateBlurMask(cutout: cutout) }
+            .onChange(of: size) { _, _ in tour.updateBlurMask(cutout: appKitCutout) }
         }
         .environment(\.theme, theme)
     }
 
     private func scrim(cutout: CGRect?, in size: CGSize) -> some View {
         Rectangle()
-            .fill(Color.black.opacity(0.45))
+            // Light tint only: the behind-window blur underneath does the
+            // work of pulling focus to the card.
+            .fill(Color.black.opacity(theme.isDark ? 0.25 : 0.12))
             .mask {
                 ZStack {
                     Rectangle()
@@ -414,7 +477,7 @@ struct ChatTourOverlayView: View {
     /// clamped inside the window horizontally. With no anchor (not laid out
     /// yet or hidden) the card sits centred.
     private func cardOffset(spotlight: CGRect?, in size: CGSize) -> CGSize {
-        let cardHeight: CGFloat = 200
+        let cardHeight: CGFloat = 240
         let gap: CGFloat = 12
         guard let s = spotlight else {
             return CGSize(width: (size.width - Self.cardWidth) / 2, height: (size.height - cardHeight) / 2)
@@ -435,20 +498,27 @@ struct ChatTourOverlayView: View {
                 .font(.system(size: 12.5))
                 .foregroundColor(theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
-            if !stop.chips.isEmpty {
-                HStack(spacing: 6) {
-                    ForEach(stop.chips, id: \.self) { chip in
-                        Text(verbatim: chip)
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundColor(theme.primaryText)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(
-                                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                    .fill(theme.tertiaryBackground.opacity(0.8))
-                            )
+            if !stop.shortcuts.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(stop.shortcuts, id: \.self) { shortcut in
+                        HStack(spacing: 10) {
+                            Text(verbatim: shortcut.keys)
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundColor(theme.primaryText)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .frame(minWidth: 56)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                        .fill(theme.tertiaryBackground.opacity(0.8))
+                                )
+                            Text(verbatim: shortcut.label)
+                                .font(.system(size: 12))
+                                .foregroundColor(theme.secondaryText)
+                        }
                     }
                 }
+                .padding(.top, 2)
             }
             HStack(spacing: 8) {
                 Text(verbatim: "\(tour.stepIndex + 1) / \(tour.stops.count)")
@@ -471,17 +541,28 @@ struct ChatTourOverlayView: View {
                     .buttonStyle(.plain)
                     .pointingHandCursor()
                 }
-                Button { tour.next() } label: {
-                    Text(tour.stepIndex + 1 == tour.stops.count ? "Done" : "Next", bundle: .module)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 5)
-                        .background(Capsule().fill(theme.accentColor))
+                if stop.requiresAction {
+                    // Action-driven: the user performs the spotlighted action
+                    // to move on; the hint replaces Next.
+                    HStack(spacing: 5) {
+                        Image(systemName: "hand.point.up.left")
+                            .font(.system(size: 11, weight: .medium))
+                        Text(verbatim: stop.actionHint ?? "")
+                            .font(.system(size: 11.5, weight: .medium))
+                    }
+                    .foregroundColor(theme.accentColor)
+                } else {
+                    Button { tour.next() } label: {
+                        Text(tour.stepIndex + 1 == tour.stops.count ? "Done" : "Next", bundle: .module)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .background(Capsule().fill(theme.accentColor))
+                    }
+                    .buttonStyle(.plain)
+                    .pointingHandCursor()
                 }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-                .keyboardShortcut(.defaultAction)
             }
             .padding(.top, 2)
         }
@@ -498,9 +579,11 @@ struct ChatTourOverlayView: View {
     }
 }
 
-/// Borderless windows refuse key status by default; the overlay takes it
-/// so its buttons respond to the first click and Return advances.
+/// The overlay never takes key: the chat window stays key so its hover
+/// tracking (the action-driven stop) keeps working underneath the cutout.
+/// Mouse events at fully transparent pixels of a non-opaque window pass
+/// through to the window below, which is how the cutout stays live.
 private final class TourOverlayWindow: NSWindow {
-    override var canBecomeKey: Bool { true }
+    override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 }
