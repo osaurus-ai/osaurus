@@ -2146,3 +2146,167 @@ private struct DontAskAgainToggle: View {
         }
     }
 #endif
+
+// MARK: - History List (dialog)
+
+/// The chat list the sidebar used to show, hosted by the History dialog:
+/// search (title, metadata and full-text over message bodies) above the
+/// same `SessionRow`s with activity rings, capability badges and the
+/// per-row actions popover. Reuses the sidebar's private row types.
+struct ChatHistoryList: View {
+    let sessions: [ChatSessionData]
+    let currentSessionId: UUID?
+    let onSelect: (ChatSessionData) -> Void
+    let onDelete: (UUID) -> Void
+    let onRename: (UUID, String) -> Void
+    let onSetArchived: (UUID, Bool) -> Void
+    let onSetPinned: (UUID, Bool) -> Void
+    let onSetProject: (UUID, UUID?) -> Void
+    let onExport: (ChatSessionData, ChatSessionSidebar.ExportFormat) -> Void
+    var onStop: ((UUID) -> Void)? = nil
+    var onOpenInNewWindow: ((ChatSessionData) -> Void)? = nil
+    var onOpenInNewTab: ((ChatSessionData) -> Void)? = nil
+
+    @Environment(\.theme) private var theme
+    @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var projectManager = ProjectManager.shared
+    @ObservedObject private var activityMonitor = SessionActivityMonitor.shared
+    @ObservedObject private var importHighlight = ChatSessionImportHighlight.shared
+
+    @State private var searchQuery: String = ""
+    @State private var contentMatchedSessionIds: Set<UUID> = []
+    @State private var contentSearchTask: Task<Void, Never>?
+    @State private var isContentSearchInFlight = false
+    @FocusState private var isSearchFocused: Bool
+    @State private var editingSessionId: UUID?
+
+    private var filteredSessions: [ChatSessionData] {
+        let visible = sessions.filter { !$0.archived }
+        let trimmed = searchQuery.trimmingCharacters(in: .whitespaces)
+        let matched: [ChatSessionData]
+        if trimmed.isEmpty {
+            matched = visible
+        } else {
+            matched = visible.filter { session in
+                if SearchService.matches(query: searchQuery, in: session.title) { return true }
+                if let key = session.externalSessionKey,
+                    SearchService.matches(query: searchQuery, in: key)
+                {
+                    return true
+                }
+                if contentMatchedSessionIds.contains(session.id) { return true }
+                return session.capabilities.contains { cap in
+                    SearchService.matches(query: searchQuery, in: cap.label)
+                }
+            }
+        }
+        return SessionActivityOrdering.ordered(
+            matched,
+            activeIds: Set(activityMonitor.statuses.keys)
+        )
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            SidebarSearchField(
+                text: $searchQuery,
+                placeholder: "Search chats...",
+                isFocused: $isSearchFocused,
+                isSearching: isContentSearchInFlight
+            )
+
+            if sessions.isEmpty {
+                placeholder(icon: "bubble.left.and.bubble.right", text: "No chats yet")
+            } else if filteredSessions.isEmpty, isContentSearchInFlight {
+                placeholder(icon: nil, text: "Searching conversations…")
+            } else if filteredSessions.isEmpty {
+                SidebarNoResultsView(searchQuery: searchQuery) {
+                    withAnimation(theme.animationQuick()) { searchQuery = "" }
+                }
+                .frame(maxHeight: 360)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(filteredSessions) { session in
+                            SessionRow(
+                                session: session,
+                                agent: agentManager.agent(for: session.agentId ?? Agent.defaultId),
+                                isSelected: session.id == currentSessionId,
+                                isImportHighlighted: importHighlight.sessionIds.contains(session.id),
+                                activityStatus: activityMonitor.statuses[session.id],
+                                isEditing: editingSessionId == session.id,
+                                onSelect: { onSelect(session) },
+                                onStartRename: { editingSessionId = session.id },
+                                onConfirmRename: { newTitle in
+                                    let trimmed = newTitle.trimmingCharacters(in: .whitespaces)
+                                    if !trimmed.isEmpty { onRename(session.id, trimmed) }
+                                    editingSessionId = nil
+                                },
+                                onCancelRename: { editingSessionId = nil },
+                                onDelete: {
+                                    editingSessionId = nil
+                                    onDelete(session.id)
+                                },
+                                onToggleArchive: { onSetArchived(session.id, !session.archived) },
+                                onTogglePin: { onSetPinned(session.id, !session.pinned) },
+                                projects: projectManager.projects,
+                                onSetProject: { onSetProject(session.id, $0) },
+                                onExport: { onExport(session, $0) },
+                                onStop: onStop.map { stop in { stop(session.id) } },
+                                onOpenInNewWindow: onOpenInNewWindow.map { open in { open(session) } },
+                                onOpenInNewTab: onOpenInNewTab.map { open in { open(session) } }
+                            )
+                            .id(session.id)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    .animation(
+                        theme.springAnimation(responseMultiplier: 0.9),
+                        value: filteredSessions.map(\.id))
+                }
+                .scrollIndicators(.hidden)
+                .frame(maxHeight: 360)
+            }
+        }
+        .onChange(of: searchQuery) { _, query in
+            scheduleContentSearch(query)
+        }
+    }
+
+    private func placeholder(icon: String?, text: LocalizedStringKey) -> some View {
+        VStack(spacing: 6) {
+            if let icon {
+                Image(systemName: icon)
+                    .font(.system(size: 20, weight: .regular))
+                    .foregroundColor(theme.secondaryText.opacity(0.6))
+            } else {
+                ProgressView().controlSize(.small)
+            }
+            Text(text, bundle: .module)
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
+    }
+
+    /// Debounced full-text lookup, mirroring the sidebar's implementation.
+    private func scheduleContentSearch(_ query: String) {
+        contentSearchTask?.cancel()
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else {
+            contentMatchedSessionIds = []
+            isContentSearchInFlight = false
+            return
+        }
+        isContentSearchInFlight = true
+        contentSearchTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            let ids = await ChatSessionStore.sessionIds(withContentContaining: trimmed)
+            guard !Task.isCancelled else { return }
+            contentMatchedSessionIds = ids
+            isContentSearchInFlight = false
+        }
+    }
+}

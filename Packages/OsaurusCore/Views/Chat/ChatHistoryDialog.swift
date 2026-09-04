@@ -22,6 +22,10 @@ enum ChatHistoryDialog {
             onSelect: { session in
                 dismiss()
                 windowState.loadSession(session)
+            },
+            onOpenInNewTab: { session in
+                dismiss()
+                windowState.openSessionInNewTab(session)
             }
         )
         ThemedAlertCenter.shared.present(
@@ -45,6 +49,7 @@ private struct ChatHistoryDialogContent: View {
     @ObservedObject var windowState: ChatWindowState
     let scope: ThemedAlertScope
     let onSelect: (ChatSessionData) -> Void
+    let onOpenInNewTab: (ChatSessionData) -> Void
 
     @Environment(\.theme) private var theme
 
@@ -82,37 +87,59 @@ private struct ChatHistoryDialogContent: View {
                 .localizedHelp("Import Conversations")
             }
 
-            if windowState.filteredSessions.isEmpty {
-                emptyState
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(windowState.filteredSessions) { session in
-                            HistoryRow(
-                                session: session,
-                                isSelected: session.id == windowState.session.sessionId,
-                                onSelect: { onSelect(session) }
-                            )
-                        }
+            ChatHistoryList(
+                sessions: windowState.filteredSessions,
+                currentSessionId: windowState.session.sessionId,
+                onSelect: onSelect,
+                onDelete: { id in
+                    // Same semantics as the sidebar: cancel a registry-owned
+                    // run, detach this window, then delete.
+                    if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: id) {
+                        BackgroundTaskManager.shared.cancelTask(liveTask.id)
                     }
+                    windowState.prepareForSessionDeletion(id: id)
+                    ChatSessionsManager.shared.delete(id: id)
+                    windowState.refreshSessions()
+                },
+                onRename: { id, title in
+                    ChatSessionsManager.shared.rename(id: id, title: title)
+                    if windowState.session.sessionId == id { windowState.session.title = title }
+                    windowState.refreshSessions()
+                },
+                onSetArchived: { id, archived in
+                    ChatSessionsManager.shared.setArchived(id: id, archived: archived)
+                    if windowState.session.sessionId == id { windowState.session.archived = archived }
+                    windowState.refreshSessions()
+                },
+                onSetPinned: { id, pinned in
+                    ChatSessionsManager.shared.setPinned(id: id, pinned: pinned)
+                    if windowState.session.sessionId == id { windowState.session.pinned = pinned }
+                    windowState.refreshSessions()
+                },
+                onSetProject: { id, projectId in
+                    ChatSessionsManager.shared.setProject(id: id, projectId: projectId)
+                    if windowState.session.sessionId == id { windowState.session.projectId = projectId }
+                    windowState.refreshSessions()
+                },
+                onExport: { metadata, format in
+                    ChatSessionExportCoordinator.run(
+                        metadataSession: metadata, format: format, scope: scope)
+                },
+                onStop: { id in
+                    if windowState.session.sessionId == id {
+                        windowState.session.stop()
+                    } else {
+                        SessionActivityMonitor.shared.stop(sessionId: id)
+                    }
+                },
+                onOpenInNewWindow: { data in
+                    ChatWindowManager.shared.createWindow(agentId: data.agentId, sessionData: data)
+                },
+                onOpenInNewTab: { data in
+                    onOpenInNewTab(data)
                 }
-                .scrollIndicators(.hidden)
-                .frame(maxHeight: 360)
-            }
+            )
         }
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 20, weight: .regular))
-                .foregroundColor(theme.secondaryText.opacity(0.6))
-            Text("No chats yet", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
     }
 
     /// Same Import flow the old sidebar had: first-time provider guide,
@@ -157,40 +184,3 @@ private struct ChatHistoryDialogContent: View {
     }
 }
 
-/// History row: title + relative timestamp, selection/hover treatment
-/// matching the sidebar rows.
-private struct HistoryRow: View {
-    let session: ChatSessionData
-    let isSelected: Bool
-    let onSelect: () -> Void
-
-    @Environment(\.theme) private var theme
-    @State private var isHovered = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(session.title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text(session.updatedAt, format: .relative(presentation: .named))
-                .font(.system(size: 10))
-                .foregroundColor(theme.secondaryText.opacity(0.85))
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
-        .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
-        .onTapGesture(perform: onSelect)
-        .onHover { hovering in
-            withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
-                isHovered = hovering
-            }
-        }
-    }
-}
