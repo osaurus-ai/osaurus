@@ -1,15 +1,4 @@
-        guard let sessionId = tab.session.sessionId,
-            tab.isHibernated || !tab.session.turns.isEmpty
-        else { return }
-        recentlyClosedTabs.removeAll { $0.sessionId == sessionId }
-        recentlyClosedTabs.append(ClosedTab(sessionId: sessionId, index: index))    private func rememberClosedTab(_ tab: ChatTab, at index: Int) {
-        let persisted = tab.isHibernated || !tab.session.turns.isEmpty
-        let sessionId = persisted ? tab.session.sessionId : nil
-        if let sessionId {
-            recentlyClosedTabs.removeAll { $0.sessionId == sessionId }
-        }
-        recentlyClosedTabs.append(
-            ClosedTab(sessionId: sessionId, agentId: tab.session.agentId ?? Agent.defaultId, index: index))//
+//
 //  ChatWindowState.swift
 //  osaurus
 //
