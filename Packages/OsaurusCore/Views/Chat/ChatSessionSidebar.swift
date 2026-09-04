@@ -985,8 +985,10 @@ struct ChatSessionSidebar: View {
     /// highlighted, tap to make it this window's agent.
     private var agentListView: some View {
         ScrollView {
-            LazyVStack(spacing: 2) {
-                ForEach(agentManager.agents) { agent in
+            // Plain VStack: every row needs a live frame for drag-to-reorder
+            // hit testing, and the agent list is small.
+            VStack(spacing: 2) {
+                ForEach(displayedAgents) { agent in
                     AgentSidebarRow(
                         agent: agent,
                         isSelected: agent.id == agentId,
@@ -997,14 +999,87 @@ struct ChatSessionSidebar: View {
                             ? sessions.first(where: { $0.id == currentSessionId })?.title
                             : nil,
                         activityStatus: activityStatus(for: agent),
-                        onSelect: { onSelectAgent?(agent.id) }
+                        onSelect: { onSelectAgent?(agent.id) },
+                        isReorderable: !agent.isBuiltIn,
+                        isDragging: draggingAgentId == agent.id,
+                        dragOffset: draggingAgentId == agent.id ? agentDragOffset : 0,
+                        onDragChanged: { handleAgentDrag(agent.id, translation: $0) },
+                        onDragEnded: { endAgentDrag() }
+                    )
+                    .background(
+                        GeometryReader { proxy in
+                            Color.clear.preference(
+                                key: AgentRowFramesKey.self,
+                                value: [agent.id: proxy.frame(in: .named("agentList"))])
+                        }
                     )
                 }
             }
             .padding(.vertical, 8)
             .padding(.horizontal, 8)
+            .coordinateSpace(name: "agentList")
+            .onPreferenceChange(AgentRowFramesKey.self) { agentRowFrames = $0 }
+            .animation(theme.animationQuick(), value: displayedAgents.map(\.id))
         }
         .scrollIndicators(.hidden)
+    }
+
+    // MARK: Agent drag-to-reorder
+
+    /// Live order while a drag is in flight; nil otherwise (manager order).
+    @State private var agentDragOrder: [Agent]?
+    @State private var draggingAgentId: UUID?
+    @State private var agentDragOffset: CGFloat = 0
+    /// Centre of the dragged row when the press began, in list space.
+    @State private var agentDragStartMidY: CGFloat = 0
+    @State private var agentRowFrames: [UUID: CGRect] = [:]
+
+    private var displayedAgents: [Agent] { agentDragOrder ?? agentManager.agents }
+
+    /// Built-ins (the orchestrator) stay pinned at the top: the movable
+    /// range starts after the last built-in row.
+    private var firstMovableIndex: Int {
+        displayedAgents.lastIndex(where: { $0.isBuiltIn }).map { $0 + 1 } ?? 0
+    }
+
+    private func handleAgentDrag(_ id: UUID, translation: CGFloat) {
+        if draggingAgentId != id {
+            guard let frame = agentRowFrames[id] else { return }
+            draggingAgentId = id
+            agentDragOrder = agentManager.agents
+            agentDragStartMidY = frame.midY
+            agentDragOffset = 0
+        }
+        guard var order = agentDragOrder,
+            let index = order.firstIndex(where: { $0.id == id })
+        else { return }
+        let pointerY = agentDragStartMidY + translation
+        // The row whose frame the pointer is over becomes the target slot,
+        // clamped to the movable (non built-in) range.
+        if let target = order.indices.first(where: { i in
+            guard order[i].id != id, let f = agentRowFrames[order[i].id] else { return false }
+            return pointerY >= f.minY && pointerY < f.maxY
+        }), target != index, target >= firstMovableIndex {
+            let agent = order.remove(at: index)
+            order.insert(agent, at: target)
+            agentDragOrder = order
+        }
+        // Offset relative to where the row currently SITS (its slot moves
+        // when it is reordered), so the row stays glued to the pointer. The
+        // reported frame already includes the current offset, so back it out.
+        let restingMidY = (agentRowFrames[id]?.midY ?? agentDragStartMidY) - agentDragOffset
+        agentDragOffset = pointerY - restingMidY
+    }
+
+    private func endAgentDrag() {
+        if let order = agentDragOrder {
+            agentManager.reorder(orderedIds: order.filter { !$0.isBuiltIn }.map(\.id))
+        }
+        withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
+            agentDragOffset = 0
+        }
+        draggingAgentId = nil
+        agentDragOrder = nil
     }
 
     /// Roll the per-session activity up to the agent: `.working` wins over
@@ -1127,6 +1202,13 @@ private struct AgentSidebarRow: View {
     /// animates the avatar ring exactly like the old session rows.
     var activityStatus: SessionActivityMonitor.Status? = nil
     let onSelect: () -> Void
+    /// Drag-to-reorder (custom agents only; built-ins are pinned to the
+    /// top). The list owns the state; the row just reports translation.
+    var isReorderable: Bool = false
+    var isDragging: Bool = false
+    var dragOffset: CGFloat = 0
+    var onDragChanged: ((CGFloat) -> Void)? = nil
+    var onDragEnded: (() -> Void)? = nil
 
     @Environment(\.theme) private var theme
     @State private var isHovered = false
@@ -1184,7 +1266,18 @@ private struct AgentSidebarRow: View {
         .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
         .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        .offset(y: dragOffset)
+        .zIndex(isDragging ? 1 : 0)
+        .shadow(color: .black.opacity(isDragging ? 0.18 : 0), radius: 8, y: 2)
         .onTapGesture(perform: onSelect)
+        // Same threshold as the tab strip: a short travel keeps clicks as
+        // taps; beyond it the press becomes a reorder drag.
+        .gesture(
+            DragGesture(minimumDistance: 4, coordinateSpace: .global)
+                .onChanged { onDragChanged?($0.translation.height) }
+                .onEnded { _ in onDragEnded?() },
+            including: isReorderable ? .all : .none
+        )
         .onHover { hovering in
             withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
                 isHovered = hovering
@@ -2465,5 +2558,13 @@ struct ChatHistoryList: View {
             contentMatchedSessionIds = ids
             isContentSearchInFlight = false
         }
+    }
+}
+
+/// Row frames for the agent list's drag-to-reorder hit testing.
+private struct AgentRowFramesKey: PreferenceKey {
+    static var defaultValue: [UUID: CGRect] = [:]
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
     }
 }
