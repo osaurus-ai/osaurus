@@ -171,6 +171,40 @@
         }
       }
     },
+    "Close tab": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tab schließen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "탭 닫기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Закрыть вкладку"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭标签页"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "關閉分頁"
+          }
+        }
+      }
+    },
     "Every chat is a tab": {
       "localizations": {
         "de": {
@@ -244,6 +278,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "前往該分頁"
+          }
+        }
+      }
+    },
+    "Hover the ⋯ button to open the menu": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fahre über die ⋯-Schaltfläche, um das Menü zu öffnen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⋯ 버튼 위에 마우스를 올려 메뉴를 여세요"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Наведите курсор на кнопку ⋯, чтобы открыть меню"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将鼠标悬停在 ⋯ 按钮上以打开菜单"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "將滑鼠懸停在 ⋯ 按鈕上以開啟選單"
           }
         }
       }
@@ -377,6 +445,74 @@
         }
       }
     },
+    "New tab": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neuer Tab"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "새 탭"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Новая вкладка"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新建标签页"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新增分頁"
+          }
+        }
+      }
+    },
+    "Next tab": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nächster Tab"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "다음 탭"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Следующая вкладка"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下一个标签页"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下一個分頁"
+          }
+        }
+      }
+    },
     "Only one local model can run at a time, and another tab in this window is using it right now. Wait for that reply to finish, stop it, or switch this chat to a remote model.": {
       "localizations": {
         "de": {
@@ -445,36 +581,36 @@
         }
       }
     },
-    "Open several chats side by side, like a browser. A reply keeps streaming in a background tab, and you can drag tabs to reorder them.": {
+    "Open several chats side by side, like a browser.\n\nA reply keeps streaming in a background tab.\n\nDrag tabs to reorder them.": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Öffne mehrere Chats nebeneinander wie in einem Browser. Eine Antwort läuft in einem Hintergrund-Tab weiter, und du kannst Tabs per Drag & Drop neu anordnen."
+            "value": "Öffne mehrere Chats nebeneinander wie in einem Browser.\n\nEine Antwort läuft in einem Hintergrund-Tab weiter.\n\nZiehe Tabs, um sie neu anzuordnen."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "브라우저처럼 여러 채팅을 나란히 열 수 있습니다. 답변은 백그라운드 탭에서 계속 스트리밍되며, 탭을 드래그하여 순서를 바꿀 수 있습니다."
+            "value": "브라우저처럼 여러 채팅을 나란히 열 수 있습니다.\n\n답변은 백그라운드 탭에서 계속 스트리밍됩니다.\n\n탭을 드래그하여 순서를 바꿀 수 있습니다."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Открывайте несколько чатов рядом, как в браузере. Ответ продолжает поступать в фоновой вкладке, а вкладки можно перетаскивать, чтобы изменить их порядок."
+            "value": "Открывайте несколько чатов рядом, как в браузере.\n\nОтвет продолжает поступать в фоновой вкладке.\n\nПеретаскивайте вкладки, чтобы изменить их порядок."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "像浏览器一样并排打开多个聊天。回复会在后台标签页中继续生成，你还可以拖动标签页重新排序。"
+            "value": "像浏览器一样并排打开多个聊天。\n\n回复会在后台标签页中继续生成。\n\n拖动标签页可重新排序。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "像瀏覽器一樣並排開啟多個聊天。回覆會在背景分頁中繼續生成，你還可以拖曳分頁重新排序。"
+            "value": "像瀏覽器一樣並排開啟多個聊天。\n\n回覆會在背景分頁中繼續生成。\n\n拖曳分頁可重新排序。"
           }
         }
       }
@@ -554,6 +690,40 @@
         "ru": { "stringUnit": { "state": "translated", "value": "Обработка запроса" } },
         "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在处理提示词" } },
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在處理提示詞" } }
+      }
+    },
+    "Reopen the last closed tab": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zuletzt geschlossenen Tab wieder öffnen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "마지막으로 닫은 탭 다시 열기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открыть последнюю закрытую вкладку"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新打开最近关闭的标签页"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新開啟最近關閉的分頁"
+          }
+        }
       }
     },
     "Saving cache": {
@@ -642,36 +812,36 @@
         }
       }
     },
-    "The sidebar lists your agents. Pick one to open it in its own tab, hover a row for its settings, and switch to Projects with the tab above. The selected agent shows which chat is open.": {
+    "The sidebar now lists your agents, with Projects one tab over. Pick an agent to open it in its own tab, and hover a row for its settings. The selected agent shows which chat is open.": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Die Seitenleiste zeigt deine Agenten. Wähle einen aus, um ihn in einem eigenen Tab zu öffnen, fahre über eine Zeile für die Einstellungen und wechsle über den Tab oben zu Projekten. Der ausgewählte Agent zeigt, welcher Chat geöffnet ist."
+            "value": "Die Seitenleiste zeigt jetzt deine Agenten, Projekte sind einen Tab weiter. Wähle einen Agenten, um ihn in einem eigenen Tab zu öffnen, und fahre über eine Zeile für die Einstellungen. Der ausgewählte Agent zeigt, welcher Chat geöffnet ist."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "사이드바에 에이전트가 표시됩니다. 하나를 선택하면 별도의 탭에서 열리고, 행 위에 마우스를 올리면 설정이 표시되며, 위쪽 탭으로 프로젝트로 전환할 수 있습니다. 선택된 에이전트에는 열려 있는 채팅이 표시됩니다."
+            "value": "사이드바에 이제 에이전트가 표시되며, 프로젝트는 옆 탭에 있습니다. 에이전트를 선택하면 별도의 탭에서 열리고, 행 위에 마우스를 올리면 설정이 표시됩니다. 선택된 에이전트에는 열려 있는 채팅이 표시됩니다."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "В боковой панели перечислены ваши агенты. Выберите одного, чтобы открыть его в отдельной вкладке, наведите курсор на строку, чтобы открыть настройки, и переключитесь на проекты с помощью вкладки выше. У выбранного агента показан открытый чат."
+            "value": "В боковой панели теперь перечислены ваши агенты, а проекты находятся на соседней вкладке. Выберите агента, чтобы открыть его в отдельной вкладке, и наведите курсор на строку, чтобы открыть настройки. У выбранного агента показан открытый чат."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "侧边栏列出了你的智能体。选择一个即可在单独的标签页中打开，悬停在行上可查看其设置，通过上方的选项卡可切换到项目。选中的智能体会显示当前打开的聊天。"
+            "value": "侧边栏现在列出了你的智能体，项目在旁边的选项卡中。选择一个智能体即可在单独的标签页中打开，悬停在行上可查看其设置。选中的智能体会显示当前打开的聊天。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "側邊欄列出了你的智能體。選擇一個即可在單獨的分頁中開啟，懸停在列上可查看其設定，透過上方的選項卡可切換到專案。選取的智能體會顯示目前開啟的聊天。"
+            "value": "側邊欄現在列出了你的智能體，專案在旁邊的選項卡中。選擇一個智能體即可在單獨的分頁中開啟，懸停在列上可查看其設定。選取的智能體會顯示目前開啟的聊天。"
           }
         }
       }
