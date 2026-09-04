@@ -930,7 +930,11 @@ final class ExternalPlugin: @unchecked Sendable {
                 // DIFFERENT plugin's context, or none at all — giving the
                 // dying plugin values it never wrote (or nil where it always
                 // saw a value), which some plugins dereference and crash on.
-                PluginHostContext.withTLSScope(pluginId: self.id, agentId: nil) {
+                // `lifecycle: true`: teardown has no chat-bound agent, so
+                // without it `config_get` returns nil here and plugins that
+                // read credentials in `destroy` (final webhook delete, ...)
+                // dereference the unexpected NULL and crash.
+                PluginHostContext.withTLSScope(pluginId: self.id, agentId: nil, lifecycle: true) {
                     self.api.destroy?(self.ctx)
                 }
                 continuation.resume()
@@ -1286,7 +1290,11 @@ final class ExternalPlugin: @unchecked Sendable {
         agentId: UUID?
     ) {
         guard !self.isShutDown.withLock({ $0 }) else { return }
-        PluginHostContext.withTLSScope(pluginId: pluginId, agentId: agentId) {
+        // `lifecycle: true`: config delivery is host-initiated; when
+        // `agentId` is nil, `config_get` inside `on_config_changed` must
+        // resolve the Default agent's namespace rather than return nil —
+        // plugins guard on that value and abort when it vanishes.
+        PluginHostContext.withTLSScope(pluginId: pluginId, agentId: agentId, lifecycle: true) {
             for (key, value) in filtered {
                 key.withCString { keyPtr in
                     value.withCString { valuePtr in

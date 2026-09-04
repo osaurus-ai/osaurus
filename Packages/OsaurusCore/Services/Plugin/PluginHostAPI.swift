@@ -227,6 +227,19 @@ final class PluginHostContext: @unchecked Sendable {
         return id == Agent.defaultId ? nil : id
     }
 
+    /// Agent namespace for `config_get` / `config_set` / `config_delete`.
+    /// Same as `resolvedAgentIdOrNil`, except inside a host-driven
+    /// lifecycle scope (`destroy`, config delivery) where a nil agent
+    /// resolves to the Default agent's namespace: plugins routinely call
+    /// `config_get("api_key")` from teardown and `on_config_changed`
+    /// bodies and dereference the result without a nil check, so the
+    /// anonymous-read lockout must not apply to callbacks the host
+    /// itself initiates.
+    var resolvedConfigAgentId: UUID? {
+        if let id = resolvedAgentIdOrNil { return id }
+        return Self.isLifecycleScope() ? Agent.defaultId : nil
+    }
+
     /// Deterministic synthetic UUID used as the bucket key for per-agent rate
     /// limiting when the current invocation has no chat-bound agent context.
     /// Distinct from `Agent.defaultId` so anonymous plugin traffic doesn't
@@ -315,7 +328,9 @@ final class PluginHostContext: @unchecked Sendable {
         // Anonymous reads (no chat-bound agent) must not silently fall back
         // to the Default agent's secret namespace. Warn-once and return nil
         // so the plugin reads no value rather than the Default agent's.
-        guard let agentId = resolvedAgentIdOrNil else {
+        // Host-driven lifecycle callbacks are exempt — see
+        // `resolvedConfigAgentId`.
+        guard let agentId = resolvedConfigAgentId else {
             Self.warnNoAgentContextOnce(pluginId: pluginId, op: "config_get")
             return nil
         }
@@ -349,7 +364,9 @@ final class PluginHostContext: @unchecked Sendable {
         }
         // Anonymous writes (no chat-bound agent) must not silently land in
         // the Default agent's secret namespace. No-op + warn-once instead.
-        guard let agentId = resolvedAgentIdOrNil else {
+        // Host-driven lifecycle callbacks are exempt — see
+        // `resolvedConfigAgentId`.
+        guard let agentId = resolvedConfigAgentId else {
             Self.warnNoAgentContextOnce(pluginId: pluginId, op: "config_set")
             return
         }
@@ -358,7 +375,7 @@ final class PluginHostContext: @unchecked Sendable {
     }
 
     func configDelete(key: String) {
-        guard let agentId = resolvedAgentIdOrNil else {
+        guard let agentId = resolvedConfigAgentId else {
             Self.warnNoAgentContextOnce(pluginId: pluginId, op: "config_delete")
             return
         }
@@ -3541,6 +3558,15 @@ extension PluginHostContext {
     /// different agents on the same invokeQueue resolve the correct agent.
     private static let agentTlsKey: String = "ai.osaurus.plugin.agent"
 
+    /// Thread-local marker set around host-driven lifecycle callbacks
+    /// (`destroy`, config delivery). Inside such a scope, config reads
+    /// with no chat-bound agent resolve against the Default agent's
+    /// namespace instead of returning nil — plugin teardown and
+    /// `on_config_changed` bodies routinely call `config_get` and
+    /// crash on an unexpected nil. The anonymous-path lockout (no
+    /// Default-agent fallback) still applies everywhere else.
+    private static let lifecycleTlsKey: String = "ai.osaurus.plugin.lifecycle"
+
     /// Best-effort fallback for plugin-spawned background threads that don't
     /// have TLS set. Protected by `fallbackLock` to avoid data races under
     /// concurrent execution. TLS (option 1) is the authoritative mechanism.
@@ -3573,16 +3599,27 @@ extension PluginHostContext {
         Thread.current.threadDictionary[agentTlsKey] as? UUID
     }
 
+    static func isLifecycleScope() -> Bool {
+        (Thread.current.threadDictionary[lifecycleTlsKey] as? Bool) == true
+    }
+
     /// Run `body` with the plugin TLS slots set to `pluginId` and
     /// `agentId`, then clear them on exit (success or throw). Collapses
     /// the set / defer-clear pattern repeated by `dispatchPluginCall`,
     /// `notifyConfigBatch`, and `notifyTaskEvent` in `ExternalPlugin`.
-    static func withTLSScope<R>(pluginId: String, agentId: UUID?, _ body: () -> R) -> R {
+    /// `lifecycle: true` marks the scope as a host-driven lifecycle
+    /// callback (see `lifecycleTlsKey`) so nil-agent config reads fall
+    /// back to the Default agent's namespace instead of returning nil.
+    static func withTLSScope<R>(
+        pluginId: String, agentId: UUID?, lifecycle: Bool = false, _ body: () -> R
+    ) -> R {
         setActivePlugin(pluginId)
         if let agentId { setActiveAgent(agentId) }
+        if lifecycle { Thread.current.threadDictionary[lifecycleTlsKey] = true }
         defer {
             clearActivePlugin()
             clearActiveAgent()
+            if lifecycle { Thread.current.threadDictionary.removeObject(forKey: lifecycleTlsKey) }
         }
         return body()
     }
