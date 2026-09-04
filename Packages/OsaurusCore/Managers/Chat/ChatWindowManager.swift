@@ -1426,7 +1426,7 @@ private struct ChatToolbarTrailingView: View {
         // toolbar button) that pops an AppKit menu — a SwiftUI `Menu` label
         // doesn't get the interactive glass treatment.
         HeaderActionButton(
-            icon: windowState.isWindowPinned ? "chevron.down.circle.fill" : "chevron.down",
+            icon: windowState.isWindowPinned ? "ellipsis.circle.fill" : "ellipsis",
             help: "More",
             action: { presentOverflowMenu() }
         )
