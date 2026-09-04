@@ -9001,13 +9001,13 @@ struct ChatView: View {
                 .animation(theme.animationQuick(), value: openProjectId)
             }
         }
-        // Allow the window to narrow down to 550pt so it tiles comfortably
-        // beside other windows. The content is responsive (the selector chips
-        // collapse to icons, the thread is width-capped and centered), so a
-        // narrow width just reflows the same UI rather than clipping it. Ideal
-        // width stays wide for the default/unconstrained window size.
+        // Allow the window to narrow down to 680pt so it tiles beside other
+        // windows. With the sidebar open by default (260pt) plus the tab strip,
+        // anything narrower squished the chat column; the content is responsive
+        // (chips collapse to icons, tabs fold into an overflow menu), so a narrow
+        // width reflows the same UI rather than clipping it.
         .frame(
-            minWidth: 550,
+            minWidth: 680,
             idealWidth: 950,
             maxWidth: .infinity,
             minHeight: 575,
