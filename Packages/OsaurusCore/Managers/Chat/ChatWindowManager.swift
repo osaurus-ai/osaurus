@@ -1335,6 +1335,7 @@ private struct ChatToolbarTrailingView: View {
         guard !isMenuOpen else { return }
         isMenuOpen = true
         defer { isMenuOpen = false }
+        TabStripDebugLog.log("overflow menu: projectPage=\(windowState.isProjectPageVisible) window=\(windowState.windowId) session=\(ObjectIdentifier(windowState.session))")
         let menu = NSMenu()
         if !windowState.isProjectPageVisible {
             menu.addItem(
