@@ -116,10 +116,13 @@ public final class ChatLayoutTour: ObservableObject {
     /// Height of the overflow menu while it is open, so the last stop's
     /// card can sit BELOW the menu instead of behind it. Reset per step.
     @Published private(set) var overflowMenuHeight: CGFloat = 0
-    /// Delay before the next card appears after an action-driven stop
-    /// completes, so the card doesn't snap in the instant the pointer
-    /// reaches the button. Consumed by the overlay; reset on every step.
-    @Published private(set) var cardRevealDelay: TimeInterval = 0
+    /// True while the next card is being held back after an action-driven
+    /// stop completes, so it doesn't snap in the instant the pointer reaches
+    /// the button. Driven by a run-loop timer in common modes: the overflow
+    /// menu's tracking loop would starve a main-actor `Task.sleep` until the
+    /// menu closed.
+    @Published private(set) var cardRevealPending = false
+    private var cardRevealTimer: Timer?
 
     let stops = ChatTourStop.all
 
@@ -191,7 +194,8 @@ public final class ChatLayoutTour: ObservableObject {
     func next() {
         guard isActive else { return }
         overflowMenuHeight = 0
-        cardRevealDelay = 0
+        cardRevealTimer?.invalidate()
+        cardRevealPending = false
         if stepIndex + 1 < stops.count {
             stepIndex += 1
         } else {
@@ -202,7 +206,8 @@ public final class ChatLayoutTour: ObservableObject {
     func back() {
         guard isActive, stepIndex > 0 else { return }
         overflowMenuHeight = 0
-        cardRevealDelay = 0
+        cardRevealTimer?.invalidate()
+        cardRevealPending = false
         stepIndex -= 1
     }
 
@@ -216,7 +221,16 @@ public final class ChatLayoutTour: ObservableObject {
     func noteOverflowHovered() {
         guard let stop = currentStop, stop.requiresAction, stop.anchor == .overflowMenu else { return }
         next()
-        cardRevealDelay = 1.0
+        cardRevealPending = true
+        cardRevealTimer?.invalidate()
+        let timer = Timer(timeInterval: 1.0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                withAnimation(.easeOut(duration: 0.35)) { self.cardRevealPending = false }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        cardRevealTimer = timer
     }
 
     /// Called just before the overflow menu pops up (its size is known then).
@@ -459,8 +473,6 @@ struct ChatTourOverlayView: View {
     /// Stops whose countdown already ran; revisiting one via Back unlocks
     /// Next immediately.
     @State private var unlockedSteps: Set<Int> = []
-    /// False while a delayed card reveal is pending (see `cardRevealDelay`).
-    @State private var cardVisible = true
     private static let readingDelay = 3
 
     private var theme: ThemeProtocol {
@@ -512,8 +524,8 @@ struct ChatTourOverlayView: View {
                     card(for: stop)
                         .frame(width: Self.cardWidth)
                         .fixedSize(horizontal: false, vertical: true)
-                        .opacity(cardVisible ? 1 : 0)
-                        .allowsHitTesting(cardVisible)
+                        .opacity(tour.cardRevealPending ? 0 : 1)
+                        .allowsHitTesting(!tour.cardRevealPending)
                         .offset(cardOffset(spotlight: spotlight, in: size, clearance: tour.overflowMenuHeight))
                 }
             }
@@ -525,15 +537,6 @@ struct ChatTourOverlayView: View {
             .onChange(of: size) { _, _ in tour.updateBlurMask(cutout: appKitCutout) }
             .task(id: tour.stepIndex) {
                 let step = tour.stepIndex
-                // Delayed reveal after an action-driven stop.
-                if tour.cardRevealDelay > 0 {
-                    cardVisible = false
-                    try? await Task.sleep(nanoseconds: UInt64(tour.cardRevealDelay * 1_000_000_000))
-                    guard !Task.isCancelled else { return }
-                    withAnimation(theme.springAnimation(responseMultiplier: 0.9)) { cardVisible = true }
-                } else {
-                    cardVisible = true
-                }
                 guard let stop = tour.currentStop, !stop.requiresAction, !unlockedSteps.contains(step) else {
                     secondsUntilNext = 0
                     return
