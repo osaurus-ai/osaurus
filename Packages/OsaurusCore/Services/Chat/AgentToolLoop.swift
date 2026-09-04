@@ -533,6 +533,15 @@ struct AgentLoopHooks {
     /// one answer, so the driver skips the check when this is nil.
     var prepareGroundedClaimRetry: (() async -> Void)?
 
+    /// The user-visible text of the assistant message the surface just
+    /// classified — a tool-calling message's narration OR a final answer —
+    /// for the file side-effect advisory (`GroundedFileSideEffectCheck`).
+    /// Unlike `finalVisibleText` this is not scoped to a tool surface. The
+    /// loop reads it BEFORE executing a tool batch, because a streaming
+    /// surface may swap in a fresh buffer in `onBatchComplete`. Leaving it
+    /// nil opts the surface out; a nil return skips the check for that turn.
+    var assistantVisibleText: (() async -> String?)?
+
     init(
         isCancelled: @escaping () async -> Bool = { false },
         buildMessages: @escaping (_ notices: [String]) async -> AgentLoopIterationInput,
@@ -556,7 +565,8 @@ struct AgentLoopHooks {
         emitFallbackText: ((_ text: String) async -> Void)? = nil,
         emitToolRejectionText: ((_ text: String) async -> Void)? = nil,
         finalVisibleText: (() async -> String?)? = nil,
-        prepareGroundedClaimRetry: (() async -> Void)? = nil
+        prepareGroundedClaimRetry: (() async -> Void)? = nil,
+        assistantVisibleText: (() async -> String?)? = nil
     ) {
         self.isCancelled = isCancelled
         self.buildMessages = buildMessages
@@ -574,6 +584,7 @@ struct AgentLoopHooks {
         self.emitToolRejectionText = emitToolRejectionText
         self.finalVisibleText = finalVisibleText
         self.prepareGroundedClaimRetry = prepareGroundedClaimRetry
+        self.assistantVisibleText = assistantVisibleText
     }
 }
 
@@ -1259,6 +1270,13 @@ enum AgentToolLoop {
     /// corrected once. The notice reflects true executed state back to the
     /// model; the model always writes its own corrected answer.
     static let maxGroundedClaimRetries = 2
+
+    /// Bounded file side-effect advisories per run for TOOL-CALLING turns
+    /// (see `GroundedFileSideEffectCheck`): the notice is staged for the
+    /// next step and the loop continues — never a stop — so a model that
+    /// ignores it is nudged at most this many times rather than every
+    /// iteration. Final-answer trips share `maxGroundedClaimRetries`.
+    static let maxUngroundedFileClaimNotices = 2
 
     static let incompleteReasoningFallback =
         "The model ended in reasoning without producing a user-visible final answer. "
@@ -2037,6 +2055,11 @@ enum AgentToolLoop {
         // final-response check has consumed (bounded, never editing output).
         var hasGroundedConfigApply = false
         var groundedClaimRetries = 0
+        // File side-effect grounding (`GroundedFileSideEffectCheck`): whether
+        // any file-writing tool succeeded this run, and how many advisory
+        // notices tool-calling turns have staged (bounded).
+        var hasGroundedFileWrite = false
+        var ungroundedFileClaimNotices = 0
         // Consecutive announce-only turns (visible "let me…" preamble, no
         // call). Reset by any productive turn, for the same reason.
         var consecutiveAnnouncedToolCalls = 0
@@ -2206,6 +2229,29 @@ enum AgentToolLoop {
                     await prepareRetry()
                     // Protocol correction, not agent progress — don't charge
                     // the tool-iteration budget (same as the empty-turn path).
+                    iteration -= 1
+                    continue
+                }
+                // File side-effect grounding on a final answer ("I've saved
+                // the report" with no file-writing tool landed this run):
+                // same bounded, notice-and-regenerate channel as above. The
+                // model writes its own corrected answer — either it calls
+                // the file tool now, or it says nothing was written.
+                if let assistantVisibleText = hooks.assistantVisibleText,
+                    let prepareRetry = hooks.prepareGroundedClaimRetry,
+                    !hasGroundedFileWrite,
+                    groundedClaimRetries < Self.maxGroundedClaimRetries,
+                    let visibleText = await assistantVisibleText(),
+                    GroundedFileSideEffectCheck.containsFileSideEffectClaim(visibleText)
+                {
+                    groundedClaimRetries += 1
+                    print(
+                        "[Osaurus] Ungrounded file side-effect claim in final answer "
+                            + "(retry \(groundedClaimRetries)/\(Self.maxGroundedClaimRetries)); "
+                            + "no file-writing tool succeeded this run"
+                    )
+                    pendingStateNotice = GroundedFileSideEffectCheck.ungroundedFileClaimNotice
+                    await prepareRetry()
                     iteration -= 1
                     continue
                 }
@@ -2379,6 +2425,15 @@ enum AgentToolLoop {
                 consecutiveEmptyTurns = 0
                 consecutiveAnnouncedToolCalls = 0
                 consecutiveContinuationRequests = 0
+
+                // File side-effect advisory (`GroundedFileSideEffectCheck`):
+                // capture this message's visible narration BEFORE any tool
+                // runs — chat's `onBatchComplete` swaps in a fresh assistant
+                // buffer, so reading afterwards would see the empty next turn.
+                var toolCallVisibleText: String? = nil
+                if let assistantVisibleText = hooks.assistantVisibleText {
+                    toolCallVisibleText = await assistantVisibleText()
+                }
 
                 // A desktop subagent already completed successfully, and the
                 // very next model step emitted only a malformed repeat of that
@@ -2928,6 +2983,37 @@ enum AgentToolLoop {
                     })
                 {
                     hasGroundedConfigApply = true
+                }
+                // File side-effect grounding: one successful file-writing
+                // tool this run grounds later "saved / appended…" narration.
+                if !hasGroundedFileWrite,
+                    outcomes.contains(where: {
+                        GroundedFileSideEffectCheck.isGroundedFileWriteOutcome(
+                            toolName: $0.invocation.toolName,
+                            result: $0.result
+                        )
+                    })
+                {
+                    hasGroundedFileWrite = true
+                }
+                // Advisory, never a stop: the model narrated a file write
+                // ("appended to the file") in a message whose tool calls
+                // wrote nothing (observed live: `fetch_html` with no write
+                // tool in the schema). Stage the factual notice for the next
+                // step and keep going; bounded per run.
+                if !hasGroundedFileWrite,
+                    ungroundedFileClaimNotices < Self.maxUngroundedFileClaimNotices,
+                    let narration = toolCallVisibleText,
+                    GroundedFileSideEffectCheck.containsFileSideEffectClaim(narration)
+                {
+                    ungroundedFileClaimNotices += 1
+                    print(
+                        "[Osaurus] Ungrounded file side-effect claim in a tool-calling turn "
+                            + "(notice \(ungroundedFileClaimNotices)/\(Self.maxUngroundedFileClaimNotices)); "
+                            + "no file-writing tool succeeded this run"
+                    )
+                    let notice = GroundedFileSideEffectCheck.ungroundedFileClaimNotice
+                    pendingStateNotice = pendingStateNotice.map { $0 + "\n" + notice } ?? notice
                 }
                 let successfulTodoOutcomes = outcomes.filter { outcome in
                     outcome.invocation.toolName == "todo"

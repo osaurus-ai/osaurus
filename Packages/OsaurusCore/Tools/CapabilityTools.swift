@@ -1263,9 +1263,11 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                     message:
                         "Tool '\(toolId)' is a workspace tool and cannot be loaded here — "
                         + "it activates only when a workspace folder is attached to this "
-                        + "chat. Ask the user to attach one via the Folder chip (or enable "
-                        + "Autonomous execution); deliver file content with share_artifact "
-                        + "meanwhile."
+                        + "chat. An agent's Host Files folder (Agent → Abilities) does not "
+                        + "apply here: that grant is mounted only for authenticated remote "
+                        + "agent runs, never for in-app chat. Ask the user to attach a "
+                        + "folder via the Folder chip (or enable Autonomous execution); "
+                        + "deliver file content with share_artifact meanwhile."
                 )
             )
         }

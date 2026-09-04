@@ -985,9 +985,10 @@ public final class ToolRegistry: ObservableObject {
                     kind: .toolNotFound,
                     reason:
                         "\(name) needs a workspace attached to THIS chat and there is none. "
-                        + "Ask the user to attach a folder via the Folder chip (or enable "
-                        + "Autonomous execution). Until then, deliver file content with "
-                        + "share_artifact and say why.",
+                        + "The agent's Host Files folder is not active in chat (it applies "
+                        + "only to authenticated remote agent runs). Ask the user to attach "
+                        + "a folder via the Folder chip (or enable Autonomous execution). "
+                        + "Until then, deliver file content with share_artifact and say why.",
                     toolName: name,
                     retryable: false
                 ).toJSONString()
