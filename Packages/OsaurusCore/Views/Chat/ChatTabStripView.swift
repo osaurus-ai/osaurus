@@ -420,6 +420,9 @@ private struct ChatTabItemView: View {
 
             Text(title)
                 .font(.system(size: 11.5, weight: .regular))
+                // Optical centring: the label's x-height sits a hair above
+                // the avatar's centre at this size.
+                .offset(y: 0.5)
                 .foregroundColor(isActive ? theme.primaryText : theme.secondaryText)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -441,8 +444,11 @@ private struct ChatTabItemView: View {
             }
         }
         // Inset content past the active shape's feet so text never sits on
-        // the curved corners.
-        .padding(.horizontal, Self.footRadius + 14)
+        // the curved corners. The leading inset is trimmed by the ring's
+        // reserved halo so the AVATAR (not its invisible ring frame) sits
+        // the same distance from the edge as the close button does.
+        .padding(.leading, Self.footRadius + 14 - (TabActivityRing.diameter - Self.avatarDiameter) / 2)
+        .padding(.trailing, Self.footRadius + 14)
         .frame(width: width)
         .frame(maxHeight: .infinity)
         .background(alignment: .bottom) {
