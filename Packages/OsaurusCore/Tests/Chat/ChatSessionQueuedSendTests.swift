@@ -601,13 +601,20 @@ private actor DelayedCancellingBeforeDeltaChatEngine: ChatEngineProtocol {
 
 // MARK: - Local waitUntil (file-private to avoid colliding with other test files)
 
+/// Main-actor isolated on purpose: a nonisolated helper hops off the main
+/// actor after the predicate passes and hops back when returning to the
+/// `@MainActor` test, and that suspension lets queued main-actor work run
+/// between the satisfied predicate and the `#expect`s that follow it. Keeping
+/// the helper on the main actor makes "predicate passed" and "assertions
+/// observe the same state" one uninterrupted stretch.
+@MainActor
 private func waitUntil(
     timeout: Duration,
     _ predicate: @MainActor @escaping () -> Bool
 ) async throws {
     let deadline = ContinuousClock.now + timeout
     while ContinuousClock.now < deadline {
-        if await predicate() { return }
+        if predicate() { return }
         try await Task.sleep(for: .milliseconds(20))
     }
     throw NSError(domain: "ChatSessionQueuedSendTests", code: 2)
