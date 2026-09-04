@@ -448,9 +448,11 @@ private struct ChatTabItemView: View {
         // reserved halo so the AVATAR (not its invisible ring frame) sits
         // the same distance from the edge as the close button does.
         .padding(.leading, Self.footRadius + 14 - (TabActivityRing.diameter - Self.avatarDiameter) / 2)
-        // The × glyph is inset inside its 15pt hit circle, so it reads
-        // further from the edge than the avatar; pull it 4pt closer.
-        .padding(.trailing, Self.footRadius + 10)
+        // Inactive tabs: the hover highlight is inset 2pt from the chip and
+        // the × glyph sits inside its 15pt hit circle, so it reads further
+        // from the edge than the avatar; pull it 4pt closer. The active
+        // tab's full silhouette keeps the symmetric inset.
+        .padding(.trailing, Self.footRadius + (isActive ? 14 : 10))
         .frame(width: width)
         .frame(maxHeight: .infinity)
         .background(alignment: .bottom) {
