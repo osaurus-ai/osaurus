@@ -383,6 +383,9 @@ public final class ChatLayoutTour: ObservableObject {
     private func dismissOverlay() {
         passThroughTimer?.invalidate()
         passThroughTimer = nil
+        cardRevealTimer?.invalidate()
+        cardRevealTimer = nil
+        cardRevealPending = false
         currentCutout = nil
         windowObservers.forEach { NotificationCenter.default.removeObserver($0) }
         windowObservers = []
