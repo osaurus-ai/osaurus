@@ -439,7 +439,7 @@ private struct ChatTabItemView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(Text(L("Open project \"\(project.name)\"")))
+                .help(Text(verbatim: project.name))
             }
 
             Text(title)
