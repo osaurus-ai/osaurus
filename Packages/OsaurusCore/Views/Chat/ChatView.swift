@@ -8655,7 +8655,7 @@ struct ChatView: View {
                                 // that project; persisted with the first
                                 // turn's save via toSessionData().
                                 if let projectId {
-                                    session.projectId = projectId
+                                    windowState.session.projectId = projectId
                                 }
                                 applyProjectFolderIfNeeded(for: projectId)
                             },
@@ -8982,7 +8982,7 @@ struct ChatView: View {
                                 openProjectId = nil
                                 windowState.enteredChatFromProjectPage = true
                                 startProjectChat(defaultAgentId: project.defaultAgentId)
-                                session.projectId = project.id
+                                windowState.session.projectId = project.id
                                 applyProjectFolderIfNeeded(for: project.id)
                             },
                             onDelete: {

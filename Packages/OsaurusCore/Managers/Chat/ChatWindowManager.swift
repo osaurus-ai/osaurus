@@ -406,7 +406,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             return active.session
         }
         for state in windowStates.values {
-            if let match = state.tabSessions.first(where: { $0.sessionId == sessionId }) {
+            if let match = state.liveTabSessions.first(where: { $0.sessionId == sessionId }) {
                 return match
             }
         }
