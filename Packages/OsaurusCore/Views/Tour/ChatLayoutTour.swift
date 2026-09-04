@@ -119,6 +119,9 @@ public final class ChatLayoutTour: ObservableObject {
     private var overlayWindow: NSWindow?
     private var overlayHost: NSHostingView<ChatTourOverlayView>?
     private var blurView: NSVisualEffectView?
+    /// Current spotlight in window coordinates, for the pass-through check.
+    private var currentCutout: CGRect?
+    private var passThroughTimer: Timer?
     private var windowObservers: [NSObjectProtocol] = []
     private var escapeMonitor: Any?
     private var didAutoCheckThisLaunch = false
@@ -209,6 +212,7 @@ public final class ChatLayoutTour: ObservableObject {
     /// the cleared region is fully transparent, so hover and clicks there
     /// reach the chat window (which the action-driven stop relies on).
     func updateBlurMask(cutout: CGRect?) {
+        currentCutout = cutout
         guard let blurView, let overlayWindow else { return }
         let size = overlayWindow.frame.size
         guard size.width > 0, size.height > 0 else { return }
@@ -306,11 +310,29 @@ public final class ChatLayoutTour: ObservableObject {
                 MainActor.assumeIsolated { self?.finish(markCompleted: false) }
             },
         ]
+        // Mouse pass-through: an overlay window swallows events even where
+        // it is transparent, so while the cursor sits inside the spotlight
+        // the whole overlay steps aside (`ignoresMouseEvents`) and the real
+        // control underneath gets the hover/click — the action-driven stop
+        // depends on it. Polled: mouse-moved events aren't delivered to a
+        // window that ignores them, so a monitor can't see the cursor leave.
+        passThroughTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updatePassThrough() }
+        }
         // Esc skips, wherever keyboard focus is.
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53 else { return event }
             MainActor.assumeIsolated { self?.skip() }
             return nil
+        }
+    }
+
+    private func updatePassThrough() {
+        guard let overlayWindow, let cutout = currentCutout else { return }
+        let screenCutout = cutout.offsetBy(dx: overlayWindow.frame.minX, dy: overlayWindow.frame.minY)
+        let inside = screenCutout.contains(NSEvent.mouseLocation)
+        if overlayWindow.ignoresMouseEvents != inside {
+            overlayWindow.ignoresMouseEvents = inside
         }
     }
 
@@ -322,6 +344,9 @@ public final class ChatLayoutTour: ObservableObject {
     }
 
     private func dismissOverlay() {
+        passThroughTimer?.invalidate()
+        passThroughTimer = nil
+        currentCutout = nil
         windowObservers.forEach { NotificationCenter.default.removeObserver($0) }
         windowObservers = []
         if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
