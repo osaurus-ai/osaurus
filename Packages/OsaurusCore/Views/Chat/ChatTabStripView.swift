@@ -581,17 +581,13 @@ private struct ChatTabItemView: View {
                 ChromeTabShape(topRadius: 8, footRadius: Self.footRadius)
                     .fill(theme.tertiaryBackground.opacity(theme.isDark ? 0.95 : 0.85))
                     .padding(.horizontal, -Self.footRadius)
-            } else {
-                // Inactive tabs sit "behind" the active one (Chrome's 3D
-                // read): a faint inset rounded rect at rest, brightening on
-                // hover. Never the full silhouette — that is reserved for the
-                // active tab, which is what makes it look raised.
+            } else if isHovered {
+                // Inactive tabs are FLAT at rest (Chrome): only the hairline
+                // separators divide them, so the raised active silhouette is
+                // the one thing with depth and its feet blend straight into
+                // the bar. A soft inset rect appears on hover only.
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(theme.tertiaryBackground.opacity(isHovered ? 0.55 : 0.22))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .stroke(theme.primaryBorder.opacity(isHovered ? 0.35 : 0.2), lineWidth: 1)
-                    )
+                    .fill(theme.tertiaryBackground.opacity(0.45))
                     .padding(.vertical, 3)
                     .padding(.horizontal, 2)
             }
