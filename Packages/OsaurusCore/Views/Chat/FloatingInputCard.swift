@@ -8872,7 +8872,14 @@ private struct FloatingVoiceButton: View {
         // `SpeechService.autoLoadIfNeeded` at launch) would otherwise
         // freeze the button and swallow the tap that needs to surface
         // either the system mic prompt or the denied alert.
-        let micAuthorized = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        // Read the service's published mirror rather than
+        // `AVCaptureDevice.authorizationStatus` directly: the direct call is
+        // a synchronous TCC daemon round-trip, and this getter runs on every
+        // body evaluation. The mirror is seeded at launch, re-checked on app
+        // activation, and updated by the request path, so it can only lag
+        // across an in-Settings toggle while the app stays frontmost — the
+        // same staleness every other voice surface already accepts.
+        let micAuthorized = speechService.microphonePermissionGranted
         return Group {
             if speechService.isLoadingModel && micAuthorized {
                 // Original disabled-spinner state — only when mic is

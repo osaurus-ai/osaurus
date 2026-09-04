@@ -52,13 +52,24 @@ public enum TokenEstimator {
     /// 1-char strings don't silently round to zero tokens.
     public static func estimate(_ text: String?) -> Int {
         guard let text, !text.isEmpty else { return 0 }
-        return max(1, text.count / charsPerToken)
+        // `utf8.count`, not `count`: Character counting walks the whole
+        // string grapheme by grapheme, and the budget pipeline re-estimates
+        // entire conversations (every tool result included) inside view-body
+        // evaluation — O(total transcript) per render was showing up as
+        // main-thread hangs. The UTF-8 length is stored on native strings
+        // (O(1)), identical for ASCII, and if anything a fairer proxy for
+        // dense scripts, whose tokenizers see bytes-per-token closer to this.
+        return max(1, text.utf8.count / charsPerToken)
     }
 
     /// Estimate tokens for a single tool-call envelope. `id` defaults to
     /// "" because some callers (streaming deltas) only have the function
     /// name + arguments and not the synthetic call id.
     public static func toolCallTokens(name: String, arguments: String, id: String = "") -> Int {
-        max(1, (name.count + arguments.count + id.count + toolCallEnvelopeChars) / charsPerToken)
+        // utf8.count for the same O(1) reason as `estimate`.
+        max(
+            1,
+            (name.utf8.count + arguments.utf8.count + id.utf8.count + toolCallEnvelopeChars)
+                / charsPerToken)
     }
 }

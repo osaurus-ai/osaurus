@@ -232,7 +232,7 @@ public struct ContextBudgetManager: Sendable {
                 }
             }
             for (_, result) in turn.toolResults {
-                t += max(1, result.count / TokenEstimator.charsPerToken)
+                t += TokenEstimator.estimate(result)
             }
             if turn.hasThinking {
                 t += max(1, turn.thinkingLength / TokenEstimator.charsPerToken)
@@ -330,6 +330,15 @@ public struct ContextBudgetManager: Sendable {
     /// watermark exists to protect.
     public static let trimmedHistoryNote =
         "[Note: Earlier messages were trimmed to fit the context window. The original task and recent actions are preserved.]"
+
+    /// The counted context note the stateless trim path inserts after a drop.
+    static func statelessTrimNote(droppedCount: Int) -> ChatMessage {
+        ChatMessage(
+            role: "user",
+            content:
+                "[Note: \(droppedCount) earlier messages were trimmed to fit context window. The original task and recent actions are preserved.]"
+        )
+    }
 
     /// Sticky trim variant that also reports whether the transcript STILL
     /// exceeds the history budget after every compaction lever (summaries,
@@ -577,7 +586,17 @@ public struct ContextBudgetManager: Sendable {
         let middle = Array(trimmed[firstMessageCount ..< protectedTailStart])
         let units = Self.groupIntoUnits(middle)
         var keptUnits: [[ChatMessage]] = []
-        var runningTokens = Self.estimateTokens(for: result) + Self.estimateTokens(for: tail)
+        // Reaching Phase 2 means the fully-summarized transcript is still
+        // over budget, so at least one unit WILL be dropped and the context
+        // note WILL be inserted. Reserve the note's cost before deciding what
+        // fits; sizing it with `middle.count` (the largest count the note can
+        // carry) keeps the reservation a safe upper bound. Leaving it out let
+        // the keep loop fill the budget exactly and then push the note on top.
+        let noteReservation = Self.estimateTokens(
+            forMessage: Self.statelessTrimNote(droppedCount: middle.count)
+        )
+        var runningTokens =
+            Self.estimateTokens(for: result) + Self.estimateTokens(for: tail) + noteReservation
 
         for unit in units.reversed() {
             let unitTokens = Self.estimateTokens(for: unit)
@@ -593,12 +612,7 @@ public struct ContextBudgetManager: Sendable {
         // If we dropped some middle messages, insert a context note
         if middleToKeep.count < middle.count {
             let droppedCount = middle.count - middleToKeep.count
-            let contextNote = ChatMessage(
-                role: "user",
-                content:
-                    "[Note: \(droppedCount) earlier messages were trimmed to fit context window. The original task and recent actions are preserved.]"
-            )
-            result.append(contextNote)
+            result.append(Self.statelessTrimNote(droppedCount: droppedCount))
         }
 
         result.append(contentsOf: middleToKeep)

@@ -457,13 +457,42 @@ public final class SwapPressureMonitor: @unchecked Sendable {
         {
             return severity
         }
-        let root = dataRoot ?? OsaurusPaths.root()
-        let flag = root.appendingPathComponent("debug/swap-emulate")
-        guard let raw = try? String(contentsOf: flag, encoding: .utf8) else {
-            return nil
+        // The flag file is read on a background queue and memoized:
+        // `currentState()` runs on the caller's thread — in practice the chat
+        // card's main-thread 2s tick — and a synchronous read here can park
+        // for seconds on exactly the swap-thrashed disk this monitor exists
+        // to detect. The memo means a flag edit lands one tick late, which
+        // the "re-read every sample" contract tolerates.
+        if let dataRoot {
+            // Explicit roots come from tests; keep them synchronous and
+            // un-memoized so suites see their own fixture immediately.
+            let flag = dataRoot.appendingPathComponent("debug/swap-emulate")
+            guard let raw = try? String(contentsOf: flag, encoding: .utf8) else { return nil }
+            return parseEmulation(raw)
         }
-        return parseEmulation(raw)
+        emulationFlagLock.lock()
+        let memo = emulationFlagMemo
+        let refreshInFlight = emulationFlagRefreshInFlight
+        if !refreshInFlight { emulationFlagRefreshInFlight = true }
+        emulationFlagLock.unlock()
+        if !refreshInFlight {
+            DispatchQueue.global(qos: .utility).async {
+                let flag = OsaurusPaths.root().appendingPathComponent("debug/swap-emulate")
+                let severity = (try? String(contentsOf: flag, encoding: .utf8))
+                    .flatMap(parseEmulation)
+                emulationFlagLock.lock()
+                emulationFlagMemo = severity
+                emulationFlagRefreshInFlight = false
+                emulationFlagLock.unlock()
+            }
+        }
+        return memo
     }
+
+    // nonisolated(unsafe): every read and write is inside emulationFlagLock.
+    private static let emulationFlagLock = NSLock()
+    nonisolated(unsafe) private static var emulationFlagMemo: Severity?
+    nonisolated(unsafe) private static var emulationFlagRefreshInFlight = false
 
     static func parseEmulation(_ raw: String) -> Severity? {
         switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {

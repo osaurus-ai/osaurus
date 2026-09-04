@@ -969,6 +969,29 @@ public final class ToolRegistry: ObservableObject {
             let loadableCodes: Set<ToolAvailabilityReasonCode> = [
                 .available, .alreadyLoaded, .loadableViaCapabilitiesLoad,
             ]
+            // Workspace file/shell tools FIRST, before the loadable-hint: they
+            // are runtime-managed, so on any process where a folder was ever
+            // mounted (or a sandbox agent exists) `availability` reports them
+            // `.alreadyLoaded` and the loadable branch below would steer the
+            // model into `capabilities {"ids":["tool/file_write"]}` — a load
+            // the dynamic gates then refuse opaquely. Their one actionable
+            // next step is user-facing (attach a folder), never a loader
+            // round-trip; keyed on the NAME so the answer is identical
+            // whether or not the tools happen to be registered right now.
+            // The refusal stands — no execution boundary moves. Naming the
+            // Folder chip leaks nothing: it is public UX.
+            if Self.coreWorkspaceToolNames.contains(name) {
+                return ToolErrorEnvelope(
+                    kind: .toolNotFound,
+                    reason:
+                        "\(name) needs a workspace attached to THIS chat and there is none. "
+                        + "Ask the user to attach a folder via the Folder chip (or enable "
+                        + "Autonomous execution). Until then, deliver file content with "
+                        + "share_artifact and say why.",
+                    toolName: name,
+                    retryable: false
+                ).toJSONString()
+            }
             let toolAvailability = availability(forTool: name, agentAllowedNames: agentAllowed)
             // The default agent's capabilities_load is gated to the configure
             // write tools, so the hint would only steer it into a rejected
@@ -1621,6 +1644,19 @@ public final class ToolRegistry: ObservableObject {
     /// names so two providers with the same sanitized prefix can't collide.
     func registeredToolNames() -> [String] {
         Array(toolsByName.keys)
+    }
+
+    /// True when `name` is a registered DYNAMIC tool (plugin/MCP/dynamic
+    /// native) — i.e. a name `capabilities` can legitimately load as
+    /// `tool/<name>`. Matches `listDynamicTools`' classification exactly:
+    /// built-in AND runtime-managed tools are excluded — neither is a
+    /// loadable id, so rescuing a bare `file_write`/`shell_run` into
+    /// `tool/<name>` would only route the caller into the dynamic-load
+    /// gates' opaque refusals instead of the workspace guidance.
+    func isDynamicRegisteredTool(named name: String) -> Bool {
+        toolsByName[name] != nil
+            && !builtInToolNames.contains(name)
+            && !runtimeManagedToolNames.contains(name)
     }
 
     /// O(1) single-tool lookup as a `ToolEntry`. Prefer this over
@@ -2480,6 +2516,13 @@ public final class ToolRegistry: ObservableObject {
     static let nonDiscoverableBuiltInToolNames: Set<String> = [
         ComputerUseTool.toolName,
         BrowserUseTool.toolName,
+        // Same authoritative per-agent contract as the pair above: the
+        // composer injects these only when the owning agent flag is on and
+        // strips them otherwise, with no capabilities_load carve-out.
+        // Discovering them on an agent with the flag off produced a
+        // discover→load dead loop ("gated built-in and cannot be enabled").
+        "spawn_agent", "spawn_model", "spawn_batch",
+        "applescript", "mac_query",
     ]
 
     /// Always-loaded tool specs: built-in + runtime-managed tools.

@@ -49,7 +49,9 @@ public enum ComputerUsePolicyStore {
     }
 
     /// Synchronously drain any pending write (call from `applicationWillTerminate`).
-    public static func flushPendingWrites(timeout: TimeInterval = 1.5) {
+    /// `nonisolated` so the quit path can drain all stores concurrently off
+    /// main; the coordinator is internally locked.
+    nonisolated public static func flushPendingWrites(timeout: TimeInterval = 1.5) {
         writeCoordinator.flushSync(timeout: timeout)
     }
 
@@ -60,7 +62,7 @@ public enum ComputerUsePolicyStore {
         return OsaurusPaths.computerUseConfigFile()
     }
 
-    private static let writeCoordinator = WriteCoordinator()
+    nonisolated private static let writeCoordinator = WriteCoordinator()
 
     private final class WriteCoordinator: @unchecked Sendable {
         private let queue = DispatchQueue(label: "com.osaurus.computeruse.write", qos: .utility)

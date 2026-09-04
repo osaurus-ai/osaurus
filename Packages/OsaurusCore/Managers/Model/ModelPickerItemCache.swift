@@ -18,8 +18,17 @@ final class ModelPickerItemCache: ObservableObject {
     /// in flight. Concurrent rebuild requests are coalesced through a single
     /// in-flight Task so that the "last writer wins" race that previously caused
     /// remote-provider models to disappear at launch can no longer occur.
-    @Published private(set) var items: [ModelPickerItem] = []
+    @Published private(set) var items: [ModelPickerItem] = [] {
+        didSet { chatModelCandidates = items.chatModelCandidates }
+    }
     @Published private(set) var isLoaded = false
+
+    /// Stored projection of `items.chatModelCandidates`, recomputed once per
+    /// rebuild. The filter runs `isLikelyChatCapable` string matching over
+    /// every item, and the subagent model pickers read the candidate list in
+    /// their view bodies — per-render recomputation there multiplies that
+    /// scan by every graph update while the picker is on screen.
+    private(set) var chatModelCandidates: [ModelPickerItem] = []
 
     /// Whether at least one ready text-to-image model is installed. A synchronous
     /// read off the already-warmed picker cache, used by the subagent gate to

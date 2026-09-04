@@ -514,7 +514,10 @@ struct SpawnConfigurationEditor: View {
     }
 
     private var modelCandidates: [ModelPickerItem] {
-        modelPickerCache.items.chatModelCandidates
+        // Stored projection on the cache (recomputed per rebuild), not
+        // `items.chatModelCandidates` — the filter's per-item string matching
+        // is too heavy to rerun on every body evaluation.
+        modelPickerCache.chatModelCandidates
     }
 
     /// Spawn persistence uses immutable provider UUIDs for remote rows. Local
