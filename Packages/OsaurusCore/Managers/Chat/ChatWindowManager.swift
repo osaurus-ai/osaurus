@@ -1431,9 +1431,26 @@ private struct ChatToolbarTrailingView: View {
             action: { presentOverflowMenu() }
         )
         .environment(\.theme, windowState.theme)
+        // Open on hover (after a short dwell so brushing past the button
+        // doesn't pop it); click still works as a fallback.
+        .onHover { hovering in
+            hoverTask?.cancel()
+            guard hovering else { return }
+            hoverTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 120_000_000)
+                guard !Task.isCancelled, !isMenuOpen else { return }
+                presentOverflowMenu()
+            }
+        }
     }
 
+    @State private var hoverTask: Task<Void, Never>?
+    @State private var isMenuOpen = false
+
     private func presentOverflowMenu() {
+        guard !isMenuOpen else { return }
+        isMenuOpen = true
+        defer { isMenuOpen = false }
         let menu = NSMenu()
         if !windowState.isProjectPageVisible {
             menu.addItem(
@@ -1458,9 +1475,10 @@ private struct ChatToolbarTrailingView: View {
             ChatToolbarMenuItem(title: L("Settings"), symbol: "gearshape") {
                 AppDelegate.shared?.showManagementWindow(initialTab: nil)
             })
-        // Anchor just under the pointer (the button the user clicked).
+        // Anchor just under the button (the pointer is over it). `popUp`
+        // runs its own tracking loop and returns when the menu closes.
         let origin = NSEvent.mouseLocation
-        menu.popUp(positioning: nil, at: NSPoint(x: origin.x - 8, y: origin.y - 6), in: nil)
+        menu.popUp(positioning: nil, at: NSPoint(x: origin.x - 8, y: origin.y - 16), in: nil)
     }
 }
 

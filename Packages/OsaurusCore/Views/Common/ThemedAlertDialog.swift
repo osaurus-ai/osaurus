@@ -251,7 +251,11 @@ private struct ThemedAlertDialogContent: View {
                 .overlay(alignment: .topTrailing) {
                     if showsCloseButton, let cancel = cancelButton {
                         closeButton(cancel)
-                            .padding(10)
+                            .padding(.horizontal, 10)
+                            // With no artwork above the title, the X
+                            // shares the title row: centre it on the
+                            // 16pt title (24pt top inset, ~19pt line).
+                            .padding(.top, titleLeadsHeader ? 22 : 10)
                     }
                 }
                 .scaleEffect(isAppearing ? 1 : 0.9)
@@ -358,6 +362,11 @@ private struct ThemedAlertDialogContent: View {
                 .foregroundColor(theme.primaryText)
                 .multilineTextAlignment(.center)
         }
+    }
+
+    /// True when the header is just the title (no images, no icon).
+    private var titleLeadsHeader: Bool {
+        headerImageNames.isEmpty && !showsHeaderIcon
     }
 
     private var iconHeader: some View {
