@@ -2207,7 +2207,7 @@ struct ChatHistoryList: View {
     }
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 12) {
             SidebarSearchField(
                 text: $searchQuery,
                 placeholder: "Search chats...",
@@ -2259,7 +2259,7 @@ struct ChatHistoryList: View {
                             .id(session.id)
                         }
                     }
-                    .padding(.vertical, 4)
+                    .padding(.bottom, 4)
                     .animation(
                         theme.springAnimation(responseMultiplier: 0.9),
                         value: filteredSessions.map(\.id))

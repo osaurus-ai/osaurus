@@ -54,7 +54,7 @@ private struct ChatHistoryDialogContent: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
                 let agent = windowState.cachedActiveAgent
                 AgentAvatarView(
