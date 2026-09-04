@@ -768,8 +768,10 @@ final class ChatWindowState: ObservableObject {
                 return
             }
             guard let data = ChatSessionStore.load(id: sessionId) else { continue }
-            // Reuses a blank active tab, otherwise opens a new one.
-            openSessionInNewTab(data)
+            // Always its own tab (a blank active tab is left alone), like a
+            // browser restoring a closed tab.
+            newTab(agentId: data.agentId ?? Agent.defaultId)
+            loadSession(data)
             moveTab(id: activeTabId, to: min(closed.index, tabs.count - 1))
             return
         }
