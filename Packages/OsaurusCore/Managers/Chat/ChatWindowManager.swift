@@ -1041,7 +1041,6 @@ private final class ChatPanel: NSPanel {
 @MainActor
 private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     fileprivate static let sidebarItem = NSToolbarItem.Identifier("ChatToolbar.sidebar")
-    fileprivate static let backItem = NSToolbarItem.Identifier("ChatToolbar.back")
     /// The centered slot. Hosted the agent pill until the pill moved into
     /// the sidebar's Chats tab; now hosts the chat tab strip. (The old
     /// "ChatToolbar.agent" identifier falls through to `default: nil` if
