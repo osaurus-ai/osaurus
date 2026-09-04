@@ -43,6 +43,11 @@ struct ThemeEditorView: View {
     @State private var rawThemeJSON: String
     @State private var rawThemeJSONError: String?
     @State private var rawThemeJSONIsDirty = false
+    /// Pending debounced re-encode of the Raw JSON text. A color-picker drag
+    /// mutates `editingTheme` many times per second, and pretty-printing the
+    /// whole theme plus replacing the TextEditor text on every tick made the
+    /// picker stutter.
+    @State private var rawThemeJSONSyncTask: Task<Void, Never>?
 
     let onDismiss: () -> Void
 
@@ -66,8 +71,11 @@ struct ThemeEditorView: View {
         .task(id: editingTheme.background.imageData) {
             backgroundPreviewImage = await decodeThemeBackgroundImage(editingTheme.background.imageData)
         }
-        .onChange(of: editingTheme) { _, newTheme in
-            syncRawThemeJSONIfNeeded(newTheme)
+        .onChange(of: editingTheme) { _, _ in
+            scheduleRawThemeJSONSync()
+        }
+        .onDisappear {
+            rawThemeJSONSyncTask?.cancel()
         }
         .fileImporter(
             isPresented: $showImagePicker,
@@ -904,12 +912,7 @@ struct ThemeEditorView: View {
 
             colorSwatch(hex: hex.wrappedValue)
 
-            colorPickerButton(
-                selection: Binding(
-                    get: { Color(themeHex: hex.wrappedValue) },
-                    set: { hex.wrappedValue = $0.toHex(includeAlpha: true) }
-                )
-            )
+            colorPickerButton(hex: hex)
         }
     }
 
@@ -932,9 +935,9 @@ struct ThemeEditorView: View {
                 colorSwatch(hex: hex.wrappedValue ?? "#000000")
 
                 colorPickerButton(
-                    selection: Binding(
-                        get: { Color(themeHex: hex.wrappedValue ?? "#000000") },
-                        set: { hex.wrappedValue = $0.toHex(includeAlpha: true) }
+                    hex: Binding(
+                        get: { hex.wrappedValue ?? "#000000" },
+                        set: { hex.wrappedValue = $0 }
                     )
                 )
 
@@ -982,10 +985,8 @@ struct ThemeEditorView: View {
             .overlay(RoundedRectangle(cornerRadius: 4).stroke(currentTheme.primaryBorder, lineWidth: 1))
     }
 
-    private func colorPickerButton(selection: Binding<Color>) -> some View {
-        ColorPicker("", selection: selection, supportsOpacity: true)
-            .labelsHidden()
-            .frame(width: 44)
+    private func colorPickerButton(hex: Binding<String>) -> some View {
+        ThemeColorPickerButton(hex: hex)
     }
 
     private func themeTextField(
@@ -1058,6 +1059,16 @@ struct ThemeEditorView: View {
     }
 
     // MARK: - Actions
+
+    private func scheduleRawThemeJSONSync() {
+        guard !rawThemeJSONIsDirty else { return }
+        rawThemeJSONSyncTask?.cancel()
+        rawThemeJSONSyncTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            syncRawThemeJSONIfNeeded(editingTheme)
+        }
+    }
 
     private func syncRawThemeJSONIfNeeded(_ theme: CustomTheme) {
         guard !rawThemeJSONIsDirty else { return }
@@ -1174,6 +1185,59 @@ struct ThemeEditorView: View {
             let pngData = bitmapRep.representation(using: .png, properties: [:])
         else { return nil }
         return pngData
+    }
+}
+
+// MARK: - Color Picker Button
+
+/// System color picker that owns its own `Color` state and mirrors it to a
+/// hex string, instead of binding the picker straight to the hex.
+///
+/// Binding the picker to `Color(themeHex:)` / `toHex()` directly meant every
+/// drag tick was quantized to 8 bits per channel and handed back to the
+/// picker as a brand-new color. NSColorPanel re-derives its wheel and slider
+/// positions from that color, so at low saturation or brightness (where the
+/// hue is lost in the round-trip) the pointer snapped away from where the
+/// user was dragging. Keeping the picker's color local and only pushing the
+/// hex outward avoids the feedback loop. The hex is pulled back into the
+/// picker only when it changes from elsewhere (the hex text field, Apply
+/// JSON).
+private struct ThemeColorPickerButton: View {
+    @Binding var hex: String
+
+    @State private var color: Color
+    /// The last hex this view wrote to the binding, so the echo of our own
+    /// write coming back through `onChange(of: hex)` is not re-applied to
+    /// the picker.
+    @State private var lastEmittedHex: String
+
+    init(hex: Binding<String>) {
+        _hex = hex
+        _color = State(initialValue: Color(themeHex: hex.wrappedValue))
+        _lastEmittedHex = State(initialValue: hex.wrappedValue)
+    }
+
+    var body: some View {
+        ColorPicker("", selection: $color, supportsOpacity: true)
+            .labelsHidden()
+            .frame(width: 44)
+            .onChange(of: color) { _, newColor in
+                let newHex = newColor.toHex(includeAlpha: true)
+                guard !Self.isSameHex(newHex, lastEmittedHex) else { return }
+                lastEmittedHex = newHex
+                if !Self.isSameHex(newHex, hex) {
+                    hex = newHex
+                }
+            }
+            .onChange(of: hex) { _, newHex in
+                guard !Self.isSameHex(newHex, lastEmittedHex) else { return }
+                lastEmittedHex = newHex
+                color = Color(themeHex: newHex)
+            }
+    }
+
+    private static func isSameHex(_ a: String, _ b: String) -> Bool {
+        a.caseInsensitiveCompare(b) == .orderedSame
     }
 }
 

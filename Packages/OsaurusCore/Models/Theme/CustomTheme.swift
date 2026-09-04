@@ -1592,8 +1592,13 @@ extension Color {
         let b = Int((nsColor.blueComponent * 255).rounded())
         let a = Int((nsColor.alphaComponent * 255).rounded())
 
+        // Trailing alpha ("#RRGGBBAA") to match how Color(themeHex:) parses
+        // 8-digit strings. This used to emit leading alpha, so every color
+        // with opacity below 100% round-tripped with its channels shifted
+        // (alpha became red), which made the theme editor's color picker
+        // snap to a different color on every drag tick.
         if includeAlpha && a < 255 {
-            return String(format: "#%02X%02X%02X%02X", a, r, g, b)
+            return String(format: "#%02X%02X%02X%02X", r, g, b, a)
         }
         return String(format: "#%02X%02X%02X", r, g, b)
     }
