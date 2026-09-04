@@ -8120,19 +8120,32 @@ struct ChatView: View {
             excludingSession: session)
     }
 
+    /// The sibling TAB in this window whose local-model run holds the slot,
+    /// if that is the blocker. Tabs share the single inference slot exactly
+    /// like windows do, but the fix is one click away: jump to that tab.
+    private var blockingSiblingTab: ChatTab? {
+        windowState.tabs.first { $0.session !== session && $0.session.isStreamingLocalModel }
+    }
+
     /// Telling someone to "wait for that reply to finish" is only true while a
     /// window still shows the reply. When the owning window was closed the run
     /// detaches and keeps the single local-model slot, so that sentence sends
     /// the user to look for something that does not exist — reported in #2343,
     /// where the only way out was restarting the app.
     private var localModelBusyMessage: String {
-        blockingDetachedTaskId == nil
-            ? L(
-                "Only one local model can run at a time, and another chat window is using it right now. Wait for that reply to finish, or switch this chat to a remote model."
-            )
-            : L(
+        if blockingDetachedTaskId != nil {
+            return L(
                 "Only one local model can run at a time. A reply is still running in the background from a chat window you closed. Reopen it to watch it finish, stop it to free the model, or switch this chat to a remote model."
             )
+        }
+        if blockingSiblingTab != nil {
+            return L(
+                "Only one local model can run at a time, and another tab in this window is using it right now. Wait for that reply to finish, stop it, or switch this chat to a remote model."
+            )
+        }
+        return L(
+            "Only one local model can run at a time, and another chat window is using it right now. Wait for that reply to finish, or switch this chat to a remote model."
+        )
     }
 
     /// The cancel capability already existed (`BackgroundTaskManager.cancelTask`)
@@ -8142,6 +8155,13 @@ struct ChatView: View {
     /// keeps the lock, which is a product decision left open in #2343.
     private var localModelBusyButtons: [AlertButtonConfig] {
         guard let taskId = blockingDetachedTaskId else {
+            if let tab = blockingSiblingTab {
+                return [
+                    .destructive(L("Stop it")) { tab.session.stop() },
+                    .primary(L("Go to that tab")) { windowState.selectTab(id: tab.id) },
+                    .cancel(L("Not now")),
+                ]
+            }
             return [.cancel(L("OK"))]
         }
         return [
