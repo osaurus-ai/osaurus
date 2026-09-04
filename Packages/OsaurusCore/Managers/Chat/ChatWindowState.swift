@@ -442,6 +442,22 @@ final class ChatWindowState: ObservableObject {
         }
     }
 
+    /// ⌘N: ALWAYS open a new tab (like ⌘T), staying in the current project
+    /// context: the current chat's project, if any, is stamped on the new
+    /// tab along with the project folder, the same way `startNewChat(in:)`
+    /// does. Unlike `startNewChat`, a blank active tab is not reused.
+    func newTabInCurrentProject() {
+        let project = ProjectManager.shared.project(for: openProjectId ?? session.projectId)
+        openProjectId = nil
+        enteredChatFromProjectPage = project != nil
+        newTab()
+        guard let project else { return }
+        session.projectId = project.id
+        if project.folderBookmark != nil, !session.folderState.hasActiveFolder {
+            session.folderState.restore(bookmark: project.folderBookmark, path: project.folderPath)
+        }
+    }
+
     /// Start a new chat. Browser-style: a blank active tab is reused in
     /// place; otherwise the current conversation keeps its tab (a running
     /// reply keeps streaming there) and the new chat opens in a new tab.
