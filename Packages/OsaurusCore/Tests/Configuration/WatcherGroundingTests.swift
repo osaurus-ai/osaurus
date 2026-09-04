@@ -161,7 +161,14 @@ struct WatcherDuplicatePathAdvisoryTests {
         let agent = AgentManager.shared.create(
             name: "Dup Advisory Agent \(UUID().uuidString.prefix(6))",
             description: "", systemPrompt: "")
+        // The planner validates that a watcher path is an existing directory,
+        // so the fixture path must really exist (CI caught this: the plan
+        // threw ConfigPlanIssues "not an existing directory" before ever
+        // reaching the advisory).
         let path = "/tmp/osaurus-dup-watch-\(UUID().uuidString.prefix(6))"
+        try FileManager.default.createDirectory(
+            atPath: path, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: path) }
         let existing = WatcherManager.shared.create(
             name: "Voice Memo Watcher \(UUID().uuidString.prefix(6))",
             instructions: "transcribe",
