@@ -56,8 +56,8 @@ struct ModelManagerSuggestedTests {
 
     @Test func curatedSuggestedIds_includesLingEntries() {
         let ids = ModelManager.curatedSuggestedIds
-        #expect(ids.contains("osaurusai/ling-2.6-flash-mxfp4"))
-        #expect(ids.contains("osaurusai/ling-2.6-flash-jangtq"))
+        #expect(!ids.contains("osaurusai/ling-2.6-flash-mxfp4"))  // Ling 2.6 runtime no longer shipped
+        #expect(!ids.contains("osaurusai/ling-2.6-flash-jangtq"))
     }
 
     @Test @MainActor func curatedSuggestedIds_matchInitialSuggestedModels() async {
@@ -119,8 +119,8 @@ struct ModelManagerSuggestedTests {
         // curated Bailing entry.
         await withIsolatedModelSizeCache {
             let suggested = ModelManager().suggestedModels
-            #expect(!suggested.contains { $0.id.contains("Ling-2.6") })
-            let raptor = suggested.first { $0.id == "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M" }
+            #expect(!suggested.contains { $0.id.lowercased().contains("ling-2.6") })
+            let raptor = suggested.first { $0.id.lowercased() == "osaurusai/raptor-v0.5-8b-a1b-jang_6m" }
             #expect(raptor?.modelType == "bailing_hybrid")
         }
     }
