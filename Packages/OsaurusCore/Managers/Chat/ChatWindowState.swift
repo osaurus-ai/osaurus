@@ -1,4 +1,8 @@
-    private func rememberClosedTab(_ tab: ChatTab, at index: Int) {
+        guard let sessionId = tab.session.sessionId,
+            tab.isHibernated || !tab.session.turns.isEmpty
+        else { return }
+        recentlyClosedTabs.removeAll { $0.sessionId == sessionId }
+        recentlyClosedTabs.append(ClosedTab(sessionId: sessionId, index: index))    private func rememberClosedTab(_ tab: ChatTab, at index: Int) {
         let persisted = tab.isHibernated || !tab.session.turns.isEmpty
         let sessionId = persisted ? tab.session.sessionId : nil
         if let sessionId {
@@ -744,14 +748,12 @@ final class ChatWindowState: ObservableObject {
     // MARK: Recently closed tabs (⇧⌘T)
 
     private struct ClosedTab {
-        /// nil for a blank (never sent) tab, which reopens as a fresh chat.
-        let sessionId: UUID?
-        let agentId: UUID
+        let sessionId: UUID
         let index: Int
     }
 
-    /// Most recent last. Blank tabs are remembered too (browsers reopen an
-    /// empty new-tab page), as a fresh chat for the same agent.
+    /// Most recent last. Only persisted conversations are remembered: a
+    /// blank tab has nothing to reopen.
     private var recentlyClosedTabs: [ClosedTab] = []
     private static let recentlyClosedLimit = 10
 
@@ -771,11 +773,7 @@ final class ChatWindowState: ObservableObject {
     /// are skipped / focused respectively.
     func reopenLastClosedTab() {
         while let closed = recentlyClosedTabs.popLast() {
-            guard let sessionId = closed.sessionId else {
-                newTab(agentId: closed.agentId)
-                moveTab(id: activeTabId, to: min(closed.index, tabs.count - 1))
-                return
-            }
+            let sessionId = closed.sessionId
             if let open = tabs.first(where: { $0.session.sessionId == sessionId }) {
                 selectTab(id: open.id)
                 return
