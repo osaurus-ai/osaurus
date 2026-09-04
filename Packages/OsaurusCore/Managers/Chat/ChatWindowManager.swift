@@ -1335,6 +1335,8 @@ private struct ChatToolbarTrailingView: View {
         .onHover { hovering in
             hoverTask?.cancel()
             guard hovering else { return }
+            // Layout tour: reaching this button completes its action step.
+            ChatLayoutTour.shared.noteOverflowHovered()
             hoverTask = Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 120_000_000)
                 guard !Task.isCancelled, !isMenuOpen else { return }
@@ -1350,8 +1352,6 @@ private struct ChatToolbarTrailingView: View {
         guard !isMenuOpen else { return }
         isMenuOpen = true
         defer { isMenuOpen = false }
-        // Layout tour: opening this menu completes its action-driven stop.
-        ChatLayoutTour.shared.noteOverflowMenuOpened()
         let menu = NSMenu()
         if !windowState.isProjectPageVisible {
             menu.addItem(

@@ -199,12 +199,12 @@ public final class ChatLayoutTour: ObservableObject {
         finish(markCompleted: true)
     }
 
-    /// Action-driven stops complete here. Called by the overflow button when
-    /// its menu opens; the menu's own tracking loop runs synchronously, so
-    /// the advance is deferred until it has closed.
-    func noteOverflowMenuOpened() {
+    /// Action-driven stop: completes the moment the pointer reaches the
+    /// overflow button (the hover that opens its menu), so the card is gone
+    /// by the time the menu appears.
+    func noteOverflowHovered() {
         guard let stop = currentStop, stop.requiresAction, stop.anchor == .overflowMenu else { return }
-        DispatchQueue.main.async { [weak self] in self?.next() }
+        next()
     }
 
     /// Blur everything behind the overlay except the spotlight. The blur is
@@ -433,6 +433,9 @@ struct ChatTourOverlayView: View {
     /// so the card is actually read before it can be clicked away; the
     /// action-driven stop has no Next and skips the countdown.
     @State private var secondsUntilNext = 0
+    /// Stops whose countdown already ran; revisiting one via Back unlocks
+    /// Next immediately.
+    @State private var unlockedSteps: Set<Int> = []
     private static let readingDelay = 3
 
     private var theme: ThemeProtocol {
@@ -494,7 +497,8 @@ struct ChatTourOverlayView: View {
             .onChange(of: appKitCutout) { _, cutout in tour.updateBlurMask(cutout: cutout) }
             .onChange(of: size) { _, _ in tour.updateBlurMask(cutout: appKitCutout) }
             .task(id: tour.stepIndex) {
-                guard let stop = tour.currentStop, !stop.requiresAction else {
+                let step = tour.stepIndex
+                guard let stop = tour.currentStop, !stop.requiresAction, !unlockedSteps.contains(step) else {
                     secondsUntilNext = 0
                     return
                 }
@@ -504,6 +508,7 @@ struct ChatTourOverlayView: View {
                     guard !Task.isCancelled else { return }
                     secondsUntilNext -= 1
                 }
+                unlockedSteps.insert(step)
             }
         }
         .environment(\.theme, theme)
@@ -617,7 +622,7 @@ struct ChatTourOverlayView: View {
                             Text(isLast ? "Done" : "Next", bundle: .module)
                             if locked {
                                 // Live countdown while the button is held.
-                                Text(verbatim: "\(secondsUntilNext)")
+                                Text(verbatim: "(\(secondsUntilNext))")
                                     .monospacedDigit()
                                     .opacity(0.8)
                             }
