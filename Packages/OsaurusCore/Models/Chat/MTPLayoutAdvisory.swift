@@ -113,21 +113,30 @@ public struct MTPLayoutAdvisory: Equatable, Sendable {
     /// Nil is the overwhelmingly common answer and must stay cheap: any
     /// bundle that is not a Flash-Next JANG returns after one small
     /// config.json read.
-    public static func evaluate(
+    /// The family gate on its own: a Qwen 3.8 Flash-Next JANG bundle is
+    /// `model_type == "qwen4_exp"` AND a jang_config (embedded key or
+    /// sidecar file). Shared by the layout advisory and the family-scoped
+    /// MTP depth default — one definition of "Flash-Next JANG", not two.
+    public static func isFlashNextJANGBundle(
         bundleDirectory: URL,
         fileManager: FileManager = .default
-    ) -> MTPLayoutAdvisory? {
+    ) -> Bool {
         let configURL = bundleDirectory.appendingPathComponent("config.json")
         guard let configData = try? Data(contentsOf: configURL),
             let config = (try? JSONSerialization.jsonObject(with: configData))
                 as? [String: Any],
             (config["model_type"] as? String) == "qwen4_exp"
-        else { return nil }
-
-        // Family gate: qwen4_exp AND a jang_config — embedded or sidecar.
+        else { return false }
         let jangSidecar = bundleDirectory.appendingPathComponent("jang_config.json")
-        guard config["jang_config"] != nil
+        return config["jang_config"] != nil
             || fileManager.fileExists(atPath: jangSidecar.path)
+    }
+
+    public static func evaluate(
+        bundleDirectory: URL,
+        fileManager: FileManager = .default
+    ) -> MTPLayoutAdvisory? {
+        guard isFlashNextJANGBundle(bundleDirectory: bundleDirectory, fileManager: fileManager)
         else { return nil }
 
         var findings: [Finding] = []
