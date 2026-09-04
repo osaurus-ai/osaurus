@@ -123,15 +123,6 @@ public final class ChatLayoutTour: ObservableObject {
     @Published private(set) var cardRevealPending = false
     private var cardRevealTimer: Timer?
 
-    /// Seconds left before Next unlocks on the current stop: a short hold so
-    /// the card is read before it can be clicked away. Stops already waited
-    /// through unlock immediately when revisited via Back; the action-driven
-    /// stop has no Next. Same common-mode timer reasoning as the reveal.
-    @Published private(set) var secondsUntilNext = 0
-    private var unlockedSteps: Set<Int> = []
-    private var countdownTimer: Timer?
-    private static let readingDelay = 3
-
     let stops = ChatTourStop.all
 
     private var overlayWindow: NSWindow?
@@ -192,9 +183,7 @@ public final class ChatLayoutTour: ObservableObject {
         withAnimation(state.theme.animationQuick()) { state.showSidebar = true }
         windowId = targetId
         stepIndex = 0
-        unlockedSteps = []
         presentOverlay(for: targetId)
-        beginCountdownIfNeeded()
     }
 
     func next() {
@@ -204,8 +193,7 @@ public final class ChatLayoutTour: ObservableObject {
         cardRevealPending = false
         if stepIndex + 1 < stops.count {
             stepIndex += 1
-            beginCountdownIfNeeded()
-        } else {
+            } else {
             finish(markCompleted: true)
         }
     }
@@ -216,42 +204,10 @@ public final class ChatLayoutTour: ObservableObject {
         cardRevealTimer?.invalidate()
         cardRevealPending = false
         stepIndex -= 1
-        beginCountdownIfNeeded()
     }
 
     func skip() {
         finish(markCompleted: true)
-    }
-
-    private func beginCountdownIfNeeded() {
-        countdownTimer?.invalidate()
-        countdownTimer = nil
-        let step = stepIndex
-        guard let stop = currentStop, !stop.requiresAction, !unlockedSteps.contains(step) else {
-            secondsUntilNext = 0
-            return
-        }
-        secondsUntilNext = Self.readingDelay
-        // The timer is only ever touched through `countdownTimer` (main-actor
-        // state), never via the closure's non-Sendable parameter.
-        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                guard self.stepIndex == step else {
-                    self.countdownTimer?.invalidate()
-                    self.countdownTimer = nil
-                    return
-                }
-                self.secondsUntilNext = max(0, self.secondsUntilNext - 1)
-                if self.secondsUntilNext == 0 {
-                    self.unlockedSteps.insert(step)
-                    self.countdownTimer?.invalidate()
-                    self.countdownTimer = nil
-                }
-            }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        countdownTimer = timer
     }
 
     /// Action-driven stop: completes the moment the pointer reaches the
@@ -357,6 +313,9 @@ public final class ChatLayoutTour: ObservableObject {
         blur.blendingMode = .behindWindow
         blur.material = .hudWindow
         blur.state = .active
+        // Partial opacity softens the blur so the layout underneath stays
+        // recognisable; the card's shadow carries the focus instead.
+        blur.alphaValue = 0.6
         blur.autoresizingMask = [.width, .height]
         let host = NSHostingView(rootView: ChatTourOverlayView(tour: self, windowId: id))
         host.frame = blur.bounds
@@ -425,9 +384,6 @@ public final class ChatLayoutTour: ObservableObject {
         cardRevealTimer?.invalidate()
         cardRevealTimer = nil
         cardRevealPending = false
-        countdownTimer?.invalidate()
-        countdownTimer = nil
-        secondsUntilNext = 0
         currentCutout = nil
         windowObservers.forEach { NotificationCenter.default.removeObserver($0) }
         windowObservers = []
@@ -684,28 +640,17 @@ struct ChatTourOverlayView: View {
                     .overlay(Capsule().stroke(theme.accentColor.opacity(0.35), lineWidth: 1))
                     .modifier(TourShimmer())
                 } else {
-                    let locked = tour.secondsUntilNext > 0
                     let isLast = tour.stepIndex + 1 == tour.stops.count
                     Button { tour.next() } label: {
-                        HStack(spacing: 5) {
-                            Text(isLast ? "Done" : "Next", bundle: .module)
-                            if locked {
-                                // Live countdown while the button is held.
-                                Text(verbatim: "(\(tour.secondsUntilNext))")
-                                    .monospacedDigit()
-                                    .opacity(0.8)
-                            }
-                        }
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 5)
-                        .background(Capsule().fill(theme.accentColor.opacity(locked ? 0.45 : 1)))
+                        Text(isLast ? "Done" : "Next", bundle: .module)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .background(Capsule().fill(theme.accentColor))
                     }
                     .buttonStyle(.plain)
-                    .disabled(locked)
                     .pointingHandCursor()
-                    .animation(.easeOut(duration: 0.15), value: locked)
                 }
             }
             .padding(.top, 2)
@@ -719,7 +664,9 @@ struct ChatTourOverlayView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(theme.cardBorder, lineWidth: 1)
         )
-        .shadow(color: theme.shadowColor.opacity(0.35), radius: 24, y: 8)
+        // Lifted well off the blurred backdrop.
+        .shadow(color: Color.black.opacity(0.28), radius: 30, y: 14)
+        .shadow(color: Color.black.opacity(0.12), radius: 6, y: 2)
     }
 }
 
