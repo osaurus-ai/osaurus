@@ -124,6 +124,15 @@ public final class ChatLayoutTour: ObservableObject {
     @Published private(set) var cardRevealPending = false
     private var cardRevealTimer: Timer?
 
+    /// Seconds left before Next unlocks on the current stop: a short hold so
+    /// the card is read before it can be clicked away. Stops already waited
+    /// through unlock immediately when revisited via Back; the action-driven
+    /// stop has no Next. Same common-mode timer reasoning as the reveal.
+    @Published private(set) var secondsUntilNext = 0
+    private var unlockedSteps: Set<Int> = []
+    private var countdownTimer: Timer?
+    private static let readingDelay = 3
+
     let stops = ChatTourStop.all
 
     private var overlayWindow: NSWindow?
@@ -188,7 +197,9 @@ public final class ChatLayoutTour: ObservableObject {
         withAnimation(state.theme.animationQuick()) { state.showSidebar = true }
         windowId = targetId
         stepIndex = 0
+        unlockedSteps = []
         presentOverlay(for: targetId)
+        beginCountdownIfNeeded()
     }
 
     func next() {
@@ -198,6 +209,7 @@ public final class ChatLayoutTour: ObservableObject {
         cardRevealPending = false
         if stepIndex + 1 < stops.count {
             stepIndex += 1
+            beginCountdownIfNeeded()
         } else {
             finish(markCompleted: true)
         }
@@ -209,10 +221,35 @@ public final class ChatLayoutTour: ObservableObject {
         cardRevealTimer?.invalidate()
         cardRevealPending = false
         stepIndex -= 1
+        beginCountdownIfNeeded()
     }
 
     func skip() {
         finish(markCompleted: true)
+    }
+
+    private func beginCountdownIfNeeded() {
+        countdownTimer?.invalidate()
+        countdownTimer = nil
+        let step = stepIndex
+        guard let stop = currentStop, !stop.requiresAction, !unlockedSteps.contains(step) else {
+            secondsUntilNext = 0
+            return
+        }
+        secondsUntilNext = Self.readingDelay
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self, self.stepIndex == step else { timer.invalidate(); return }
+                self.secondsUntilNext = max(0, self.secondsUntilNext - 1)
+                if self.secondsUntilNext == 0 {
+                    self.unlockedSteps.insert(step)
+                    timer.invalidate()
+                    self.countdownTimer = nil
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        countdownTimer = timer
     }
 
     /// Action-driven stop: completes the moment the pointer reaches the
@@ -386,6 +423,9 @@ public final class ChatLayoutTour: ObservableObject {
         cardRevealTimer?.invalidate()
         cardRevealTimer = nil
         cardRevealPending = false
+        countdownTimer?.invalidate()
+        countdownTimer = nil
+        secondsUntilNext = 0
         currentCutout = nil
         windowObservers.forEach { NotificationCenter.default.removeObserver($0) }
         windowObservers = []
@@ -469,14 +509,6 @@ struct ChatTourOverlayView: View {
     @ObservedObject var tour: ChatLayoutTour
     let windowId: UUID
 
-    /// Seconds left before Next unlocks on the current stop. A short hold
-    /// so the card is actually read before it can be clicked away; the
-    /// action-driven stop has no Next and skips the countdown.
-    @State private var secondsUntilNext = 0
-    /// Stops whose countdown already ran; revisiting one via Back unlocks
-    /// Next immediately.
-    @State private var unlockedSteps: Set<Int> = []
-    private static let readingDelay = 3
 
     private var theme: ThemeProtocol {
         ChatWindowManager.shared.windowState(id: windowId)?.theme ?? ThemeManager.shared.currentTheme
@@ -538,20 +570,6 @@ struct ChatTourOverlayView: View {
             .onAppear { tour.updateBlurMask(cutout: appKitCutout) }
             .onChange(of: appKitCutout) { _, cutout in tour.updateBlurMask(cutout: cutout) }
             .onChange(of: size) { _, _ in tour.updateBlurMask(cutout: appKitCutout) }
-            .task(id: tour.stepIndex) {
-                let step = tour.stepIndex
-                guard let stop = tour.currentStop, !stop.requiresAction, !unlockedSteps.contains(step) else {
-                    secondsUntilNext = 0
-                    return
-                }
-                secondsUntilNext = Self.readingDelay
-                while secondsUntilNext > 0 {
-                    try? await Task.sleep(nanoseconds: 1_000_000_000)
-                    guard !Task.isCancelled else { return }
-                    secondsUntilNext -= 1
-                }
-                unlockedSteps.insert(step)
-            }
         }
         .environment(\.theme, theme)
     }
@@ -664,14 +682,14 @@ struct ChatTourOverlayView: View {
                     .overlay(Capsule().stroke(theme.accentColor.opacity(0.35), lineWidth: 1))
                     .modifier(TourShimmer())
                 } else {
-                    let locked = secondsUntilNext > 0
+                    let locked = tour.secondsUntilNext > 0
                     let isLast = tour.stepIndex + 1 == tour.stops.count
                     Button { tour.next() } label: {
                         HStack(spacing: 5) {
                             Text(isLast ? "Done" : "Next", bundle: .module)
                             if locked {
                                 // Live countdown while the button is held.
-                                Text(verbatim: "(\(secondsUntilNext))")
+                                Text(verbatim: "(\(tour.secondsUntilNext))")
                                     .monospacedDigit()
                                     .opacity(0.8)
                             }
