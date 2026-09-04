@@ -5469,6 +5469,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // per-request instance is correct — there is no prior listing to
             // survive. Provides within-request dedupe + post-listing nudge.
             let taskState = AgentTaskState()
+            // Dynamic-tool classification for the same-name run advisory: a
+            // value snapshot because the registry is MainActor-bound and this
+            // handler drives the loop nonisolated.
+            let dynamicToolNames = await MainActor.run {
+                ToolRegistry.shared.dynamicToolNameSnapshot()
+            }
+            taskState.dynamicToolClassifier = { dynamicToolNames.contains($0) }
 
             // KV-cache-aware history compaction: shared window resolution +
             // reservations via `AgentLoopBudget` (parity with the plugin

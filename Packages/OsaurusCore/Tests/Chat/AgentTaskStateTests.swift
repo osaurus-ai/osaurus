@@ -1575,4 +1575,241 @@ struct AgentTaskStateTests {
 
         #expect(state.nextStepBias() == nil)
     }
+
+    // MARK: - Knowledge tools
+
+    /// The knowledge trio participates in dedupe replay like the workspace
+    /// tools: an identical re-issue replays the exact prior envelope instead
+    /// of re-executing (observed live: identical knowledge steps re-executed
+    /// at ~14s each on an 8B with zero dedupe).
+    @Test func knowledge_identicalSearchReadAndListAreHeld() {
+        let state = AgentTaskState()
+
+        let searchArgs = #"{"query":"deployment runbook"}"#
+        let searchEnv = ToolEnvelope.success(
+            tool: "search_knowledge", text: "Found 2 knowledge excerpt(s)")
+        state.record(name: "search_knowledge", argsJSON: searchArgs, result: searchEnv)
+        #expect(AgentTaskState.isReplayEligible(name: "search_knowledge"))
+        #expect(state.heldResult(name: "search_knowledge", argsJSON: searchArgs) == searchEnv)
+
+        let readArgs = #"{"path":"usage/how-to-deploy.md"}"#
+        let readEnv = ToolEnvelope.success(
+            tool: "read_knowledge", text: "# How to deploy\n...")
+        state.record(name: "read_knowledge", argsJSON: readArgs, result: readEnv)
+        #expect(state.heldResult(name: "read_knowledge", argsJSON: readArgs) == readEnv)
+
+        let listArgs = #"{"collection":"ops"}"#
+        let listEnv = ToolEnvelope.success(
+            tool: "list_knowledge", text: "Found 3 knowledge document(s)")
+        state.record(name: "list_knowledge", argsJSON: listArgs, result: listEnv)
+        #expect(state.heldResult(name: "list_knowledge", argsJSON: listArgs) == listEnv)
+
+        // A different query is a different call — never held.
+        #expect(
+            state.heldResult(
+                name: "search_knowledge", argsJSON: #"{"query":"alerts"}"#) == nil)
+    }
+
+    /// `read_knowledge` not_found is deterministic on an unchanged store: the
+    /// held error replays (with the escalation notice) instead of re-reading.
+    @Test func knowledge_readNotFoundHeldErrorReplays() {
+        let state = AgentTaskState()
+        let args = #"{"path":"usage/missing.md"}"#
+        let err = ToolEnvelope.failure(
+            kind: .notFound,
+            message: "No knowledge document at `usage/missing.md`.",
+            tool: "read_knowledge"
+        )
+        state.record(name: "read_knowledge", argsJSON: args, result: err)
+        #expect(state.heldResult(name: "read_knowledge", argsJSON: args) == err)
+        #expect(state.lastReplayNotice?.contains("read_knowledge") == true)
+        // A different document path is a different call — not held.
+        #expect(state.heldResult(name: "read_knowledge", argsJSON: #"{"path":"other.md"}"#) == nil)
+    }
+
+    /// A knowledge write invalidates knowledge SEARCH/LIST wholesale (their
+    /// results span many documents) and the held read/error of each written
+    /// path — while a fresh read of an untouched document stays held.
+    @Test func knowledge_writeInvalidatesSearchListAndWrittenReads() {
+        let state = AgentTaskState()
+        let searchArgs = #"{"query":"deploy"}"#
+        let listArgs = #"{"collection":"ops"}"#
+        let readArgs = #"{"path":"usage/how-to-deploy.md"}"#
+        let otherReadArgs = #"{"path":"reference/alerts.md"}"#
+        state.record(
+            name: "search_knowledge", argsJSON: searchArgs,
+            result: ToolEnvelope.success(tool: "search_knowledge", text: "excerpts"))
+        state.record(
+            name: "list_knowledge", argsJSON: listArgs,
+            result: ToolEnvelope.success(tool: "list_knowledge", text: "documents"))
+        state.record(
+            name: "read_knowledge", argsJSON: readArgs,
+            result: ToolEnvelope.success(tool: "read_knowledge", text: "old content"))
+        state.record(
+            name: "read_knowledge", argsJSON: otherReadArgs,
+            result: ToolEnvelope.success(tool: "read_knowledge", text: "alerts"))
+
+        // Batch write shape: `documents[].path`, no top-level `path`.
+        state.record(
+            name: "write_knowledge",
+            argsJSON:
+                #"{"documents":[{"path":"usage/how-to-deploy.md","content":"new content"}]}"#,
+            result: ToolEnvelope.success(tool: "write_knowledge", text: "written")
+        )
+
+        #expect(
+            state.heldResult(name: "search_knowledge", argsJSON: searchArgs) == nil,
+            "a knowledge write must stale knowledge search results")
+        #expect(
+            state.heldResult(name: "list_knowledge", argsJSON: listArgs) == nil,
+            "a knowledge write must stale knowledge listings")
+        #expect(
+            state.heldResult(name: "read_knowledge", argsJSON: readArgs) == nil,
+            "the verify-read of a written document must re-execute")
+        #expect(
+            state.heldResult(name: "read_knowledge", argsJSON: otherReadArgs) != nil,
+            "a read of an untouched document stays fresh — invalidation is per path")
+    }
+
+    /// `write_knowledge` creating the missing document clears the held
+    /// not_found so the identical read re-executes (and can now succeed).
+    @Test func knowledge_writeClearsHeldNotFoundForWrittenPath() {
+        let state = AgentTaskState()
+        let args = #"{"path":"usage/new.md"}"#
+        let err = ToolEnvelope.failure(
+            kind: .notFound,
+            message: "No knowledge document at `usage/new.md`.",
+            tool: "read_knowledge"
+        )
+        state.record(name: "read_knowledge", argsJSON: args, result: err)
+        #expect(state.heldResult(name: "read_knowledge", argsJSON: args) == err)
+
+        state.record(
+            name: "write_knowledge",
+            argsJSON: #"{"documents":[{"path":"usage/new.md","content":"doc body"}]}"#,
+            result: ToolEnvelope.success(tool: "write_knowledge", text: "written")
+        )
+        #expect(
+            state.heldResult(name: "read_knowledge", argsJSON: args) == nil,
+            "the write may have created the document — the read must re-execute")
+    }
+
+    // MARK: - Dynamic-tool same-name run
+
+    /// Four consecutive calls to one DYNAMIC (MCP/plugin) tool with varying
+    /// arguments stage the advisory; three do not. Mirrors the observed
+    /// Raptor 8B loop on `underwriting_underwriter_activity`.
+    @Test func dynamicRun_fourVariedCallsAdviseThreeDoNot() {
+        let state = AgentTaskState()
+        state.dynamicToolClassifier = { $0 == "underwriting_underwriter_activity" }
+        for n in 1 ... 3 {
+            state.record(
+                name: "underwriting_underwriter_activity",
+                argsJSON: #"{"query":"variation \#(n)"}"#,
+                result: ToolEnvelope.success(
+                    tool: "underwriting_underwriter_activity", text: "rows")
+            )
+            #expect(state.nextStepBias() == nil, "call \(n) is still legitimate querying")
+        }
+        state.record(
+            name: "underwriting_underwriter_activity",
+            argsJSON: #"{"query":"variation 4"}"#,
+            result: ToolEnvelope.success(
+                tool: "underwriting_underwriter_activity", text: "rows")
+        )
+        let bias = state.nextStepBias() ?? ""
+        #expect(bias.contains("underwriting_underwriter_activity"))
+        #expect(bias.contains("varying arguments"))
+    }
+
+    /// Any interleaved different tool resets the run — alternating tools are
+    /// work, consecutive varied calls to ONE dynamic name are the signal.
+    @Test func dynamicRun_interleavedToolResets() {
+        let state = AgentTaskState()
+        state.dynamicToolClassifier = { $0 == "underwriting_underwriter_activity" }
+        for n in 1 ... 3 {
+            state.record(
+                name: "underwriting_underwriter_activity",
+                argsJSON: #"{"query":"variation \#(n)"}"#,
+                result: ToolEnvelope.success(
+                    tool: "underwriting_underwriter_activity", text: "rows")
+            )
+        }
+        state.record(
+            name: "file_read",
+            argsJSON: #"{"path":"notes.md"}"#,
+            result: fileContentEnvelope(path: "notes.md")
+        )
+        state.record(
+            name: "underwriting_underwriter_activity",
+            argsJSON: #"{"query":"variation 4"}"#,
+            result: ToolEnvelope.success(
+                tool: "underwriting_underwriter_activity", text: "rows")
+        )
+        #expect(state.nextStepBias() == nil, "the interleaved read reset the same-name run")
+    }
+
+    /// An identical-args repeat past `repeatedCallThreshold` gets the
+    /// (stronger) identical-args notice, never both nudges for one call —
+    /// the identical-args check returns first in `nextStepBias`.
+    @Test func dynamicRun_identicalArgsDuplicateDoesNotDoubleNudge() {
+        let state = AgentTaskState()
+        state.dynamicToolClassifier = { $0 == "underwriting_underwriter_activity" }
+        let args = #"{"query":"open underwriting items"}"#
+        for _ in 1 ... 4 {
+            state.record(
+                name: "underwriting_underwriter_activity",
+                argsJSON: args,
+                result: ToolEnvelope.success(
+                    tool: "underwriting_underwriter_activity", text: "rows")
+            )
+        }
+        let bias = state.nextStepBias() ?? ""
+        #expect(bias.contains("identical arguments"))
+        #expect(!bias.contains("varying arguments"))
+    }
+
+    /// A NON-dynamic unknown tool never triggers the dynamic run — the
+    /// default classifier treats every name as non-dynamic, so un-wired
+    /// surfaces keep their exact prior behavior.
+    @Test func dynamicRun_nonDynamicUnknownToolNeverTriggers() {
+        let state = AgentTaskState()
+        for n in 1 ... 5 {
+            state.record(
+                name: "some_unclassified_tool",
+                argsJSON: #"{"query":"variation \#(n)"}"#,
+                result: ToolEnvelope.success(tool: "some_unclassified_tool", text: "ok")
+            )
+        }
+        #expect(state.nextStepBias() == nil)
+    }
+
+    // MARK: - Repeat count
+
+    /// Display accessor for the "×N" badge: 1 for the first execution, 2 for
+    /// the identical re-issue (replays count — the transcript shows the call
+    /// either way), and reset by `beginMessage` like the rest of the
+    /// within-message tracking.
+    @Test func repeatCount_countsIdenticalCallsAndResetsPerMessage() {
+        let state = AgentTaskState()
+        let args = #"{"path":"config.json"}"#
+        let env = fileContentEnvelope(path: "config.json")
+
+        #expect(state.repeatCount(name: "file_read", argsJSON: args) == 0)
+        state.record(name: "file_read", argsJSON: args, result: env)
+        #expect(state.repeatCount(name: "file_read", argsJSON: args) == 1)
+        state.record(name: "file_read", argsJSON: args, result: env)
+        #expect(state.repeatCount(name: "file_read", argsJSON: args) == 2)
+        // Key-order-insensitive, like the dedupe signature.
+        #expect(
+            state.repeatCount(
+                name: "file_read", argsJSON: #"{ "path" : "config.json" }"#) == 2)
+        // Different args are a different signature.
+        #expect(state.repeatCount(name: "file_read", argsJSON: #"{"path":"other"}"#) == 0)
+
+        state.beginMessage()
+        #expect(state.repeatCount(name: "file_read", argsJSON: args) == 0)
+        state.record(name: "file_read", argsJSON: args, result: env)
+        #expect(state.repeatCount(name: "file_read", argsJSON: args) == 1)
+    }
 }

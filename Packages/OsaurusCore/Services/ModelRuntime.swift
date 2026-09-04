@@ -260,6 +260,84 @@ public actor ModelRuntime {
         let diskL2MaxGB: Double
     }
 
+    /// By-WEIGHT MTP capability for a model that is still loading, so the MTP
+    /// detector + depth controls appear immediately instead of only after
+    /// warmup resolves (`cachedModelSummaries`).
+    ///
+    /// `bundleHasMTP` is intentionally NOT derived from config.json: configs
+    /// lie — Qwen3.8-Flash-Next JANG_1L ships no `mtp` config field, and a 27B
+    /// bundle wrote 31 `mtp.*` tensors its index.json omitted.
+    /// `MTPBundleInspector.inspect` reads the safetensors index UNIONED with
+    /// shard headers, so the signal is the actual weights.
+    ///
+    /// `isTargetMTPFamily` scopes the controls to the two model families these
+    /// controls are for — Qwen 3.8 Flash Next (`qwen4_exp`) and Qwen3.8-27B
+    /// (`qwen3_5`). This IS read from config (`model_type`), which is reliable
+    /// for architecture (unlike the `mtp` presence field). Other MTP-carrying
+    /// families (Ornith `qwen3_5_moe`, GLM `glm5_next`) are excluded.
+    struct LoadingModelMTPStatus: Sendable, Equatable {
+        let name: String
+        let bundleHasMTP: Bool
+        let isTargetMTPFamily: Bool
+        /// The bundle's tuning artifact blocks MTP (`blocked` or
+        /// `manual_blocked`). Surfaced so the EARLY depth controls never offer
+        /// depths the engine will refuse — the resident-summary blocked set
+        /// only covers loaded models, so without this the whole warmup window
+        /// would show a lying control.
+        let isBlocked: Bool
+        let measuredFamilyAutoDepth: Int?
+        let statusLine: String
+    }
+
+    /// Model families whose native-MTP depth controls we surface: Qwen 3.8
+    /// Flash Next and Qwen3.8-27B. Kept here so the settings + chat surfaces
+    /// gate identically.
+    nonisolated static let mtpControlModelTypes: Set<String> = ["qwen4_exp", "qwen3_5"]
+
+    /// Names of models with an in-flight load (weights not yet resident). Cheap
+    /// and actor-isolated; the weight inspection runs off-actor via
+    /// ``inspectLoadingModelMTP(name:)`` so a heavy load never blocks it.
+    func loadingModelNames() -> [String] {
+        Array(loadingTasks.keys)
+    }
+
+    /// By-weight MTP inspection for one model id. `nonisolated` + file-only I/O
+    /// (config + safetensors headers, no weight load), so a caller can run it on
+    /// a background task while a load holds the actor. Returns `nil` if the
+    /// bundle can't be located or inspected. A non-MTP bundle correctly returns
+    /// `bundleHasMTP == false`; a non-target family returns
+    /// `isTargetMTPFamily == false` — no false positives on other families.
+    nonisolated static func inspectLoadingModelMTP(name: String) -> LoadingModelMTPStatus? {
+        guard let dir = findLocalDirectory(forModelId: name),
+            let status = try? MTPBundleInspector.inspect(modelDirectory: dir)
+        else { return nil }
+        return LoadingModelMTPStatus(
+            name: name,
+            bundleHasMTP: status.bundleHasMTP,
+            isTargetMTPFamily: modelTypeIsMTPControlTarget(directory: dir),
+            isBlocked: status.isExplicitlyBlocked
+                || status.nativeMTPTuning?.manualBlocked == true,
+            measuredFamilyAutoDepth: status.measuredFamilyAutoDepth,
+            statusLine: status.statusLine)
+    }
+
+    /// Reads `config.json`'s `model_type` (top-level or nested `text_config`)
+    /// and returns whether it is one of the Flash-Next / 27B families the MTP
+    /// controls target. Architecture in config is reliable; only the `mtp`
+    /// presence flag is not.
+    nonisolated static func modelTypeIsMTPControlTarget(directory: URL) -> Bool {
+        let configURL = directory.appendingPathComponent("config.json")
+        guard let data = try? Data(contentsOf: configURL),
+            let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return false }
+        var types: Set<String> = []
+        if let top = object["model_type"] as? String { types.insert(top) }
+        if let text = (object["text_config"] as? [String: Any])?["model_type"] as? String {
+            types.insert(text)
+        }
+        return !types.isDisjoint(with: mtpControlModelTypes)
+    }
+
     struct LiveVoiceAudioPreencodeResult: Sendable, Equatable {
         enum Status: String, Sendable {
             case stored
@@ -5284,6 +5362,9 @@ public actor ModelRuntime {
             modelName: modelName,
             trace: trace,
             suppressProgressUI: parameters.suppressProgressUI,
+            // Background housekeeping (follow-up suggestions, titles) must not
+            // stomp the user's turn in the speculative-decoding readout.
+            recordMTPLastRun: parameters.loadIntent == .interactive,
             onConsumerCancellation: {
                 // Cancel this exact generation wrapper, not every request
                 // using the same model. The wrapper drains the direct vmlx

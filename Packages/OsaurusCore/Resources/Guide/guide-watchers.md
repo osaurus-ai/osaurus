@@ -11,7 +11,7 @@ Watchers are event-driven automation: while schedules run on a timer, a watcher 
 ## Creating a watcher
 
 - Management (⌘⇧M) → Watchers → Create Watcher: name, watched folder (Browse), instructions, and the custom agent that handles the task. Every watcher needs a custom agent — the built-in Default agent cannot run watchers.
-- Or ask the default Osaurus assistant — it can create, update, pause/resume, and delete watchers (`osaurus_watcher`), creating a custom agent first if you don't have one. Folders it adds by path get standard file access; use Browse in the UI if a folder needs a security-scoped grant.
+- Or ask the default Osaurus assistant — it can create, update, pause/resume, and delete watchers through the declarative `osaurus_config` tool, creating a custom agent first if you don't have one. Folders it adds by path get standard file access; use Browse in the UI if a folder needs a security-scoped grant.
 - Options: **Recursive** monitors subdirectories (off by default); **Responsiveness** sets the debounce window.
 
 ## Responsiveness

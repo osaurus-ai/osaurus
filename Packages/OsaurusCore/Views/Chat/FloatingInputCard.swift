@@ -2467,6 +2467,31 @@ extension FloatingInputCard {
                     Self.statusIndicatesNativeMTPHead($0.nativeMTPStatus)
                 }
                 .map { Self.mtpIdentity($0.name) })
+            // Early, by-WEIGHT capability for models still LOADING, so the
+            // depth row appears during warmup instead of minutes later.
+            // Weight-based (configs lie: JANG_1L has no `mtp` field; a 27B
+            // index omitted its mtp.* tensors) and family-gated to the
+            // Flash-Next/27B targets — other families are untouched. File-only
+            // inspection, run off-main.
+            let loadingNames = await ModelRuntime.shared.loadingModelNames()
+            if !loadingNames.isEmpty {
+                let early: [ModelRuntime.LoadingModelMTPStatus] = await Task.detached {
+                    loadingNames.compactMap { name in
+                        guard
+                            let status = ModelRuntime.inspectLoadingModelMTP(name: name),
+                            status.bundleHasMTP, status.isTargetMTPFamily
+                        else { return nil }
+                        return status
+                    }
+                }.value
+                nativeMTPCapableModels.formUnion(early.map { Self.mtpIdentity($0.name) })
+                // A blocked tuning artifact must gate the EARLY window too —
+                // the resident-summary blocked set only covers loaded models,
+                // so without this the whole warmup would show depth segments
+                // the engine will refuse.
+                nativeMTPManuallyBlockedModels.formUnion(
+                    early.filter(\.isBlocked).map { Self.mtpIdentity($0.name) })
+            }
             let residentIdentities = Set(summaries.map { Self.mtpIdentity($0.name) })
             nativeMTPManuallyBlockedModels.subtract(residentIdentities)
             nativeMTPManuallyBlockedModels.formUnion(
@@ -8847,7 +8872,14 @@ private struct FloatingVoiceButton: View {
         // `SpeechService.autoLoadIfNeeded` at launch) would otherwise
         // freeze the button and swallow the tap that needs to surface
         // either the system mic prompt or the denied alert.
-        let micAuthorized = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        // Read the service's published mirror rather than
+        // `AVCaptureDevice.authorizationStatus` directly: the direct call is
+        // a synchronous TCC daemon round-trip, and this getter runs on every
+        // body evaluation. The mirror is seeded at launch, re-checked on app
+        // activation, and updated by the request path, so it can only lag
+        // across an in-Settings toggle while the app stays frontmost — the
+        // same staleness every other voice surface already accepts.
+        let micAuthorized = speechService.microphonePermissionGranted
         return Group {
             if speechService.isLoadingModel && micAuthorized {
                 // Original disabled-spinner state — only when mic is

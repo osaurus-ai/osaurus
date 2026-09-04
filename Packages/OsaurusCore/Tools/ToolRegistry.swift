@@ -899,6 +899,39 @@ public final class ToolRegistry: ObservableObject {
         // `tool/` handling in CapabilityTools.resolve.
         let name = resolvedRegisteredName(for: rawName)
 
+        // Hallucinated fetch tools get steered, not dead-ended. Models trained
+        // on other harnesses call `web_fetch` / `fetch_url` / `open_url` as if
+        // they were universal — observed live: a Raptor research run burned its
+        // entire turn on `web_fetch` (a tool that has never existed in osaurus)
+        // and produced zero page reads. The general no-"did you mean" rule
+        // exists because naming other tools teaches models to invent siblings;
+        // it does not apply here, because the steering target is only named
+        // when THIS request already exposes it — the model is being pointed at
+        // a tool sitting in its own schema, not at a rumor. Guarded to names
+        // with no real registration so a plugin/MCP tool that legitimately
+        // registers one of these names always wins — and a user-installed
+        // plugin GROUP that happens to share an alias name (`plugin/fetch`)
+        // keeps its own load rescue instead of being steered away from the
+        // capability the user deliberately installed.
+        if toolsByName[name] == nil, Self.hallucinatedFetchToolNames.contains(name.lowercased()),
+            toolsByName["search_and_extract"] != nil,
+            ChatExecutionContext.toolExecutionScope?.permits("search_and_extract") == true,
+            groupIdCallRescueEnvelope(for: name) == nil
+        {
+            ToolRegistryLogger.registry.notice(
+                "steering hallucinated fetch tool '\(name, privacy: .public)' to search_and_extract"
+            )
+            return ToolErrorEnvelope(
+                kind: .toolNotFound,
+                reason:
+                    "There is no '\(name)' tool. To fetch a web page, call search_and_extract "
+                    + "with {\"urls\": [\"<url>\"]} — it fetches the pages and returns their "
+                    + "readable content. To find sources first, call web_search.",
+                toolName: name,
+                retryable: true
+            ).toJSONString()
+        }
+
         // A tool this request never exposed must not run, however convincingly the model asks
         // for it.
         //
@@ -936,6 +969,29 @@ public final class ToolRegistry: ObservableObject {
             let loadableCodes: Set<ToolAvailabilityReasonCode> = [
                 .available, .alreadyLoaded, .loadableViaCapabilitiesLoad,
             ]
+            // Workspace file/shell tools FIRST, before the loadable-hint: they
+            // are runtime-managed, so on any process where a folder was ever
+            // mounted (or a sandbox agent exists) `availability` reports them
+            // `.alreadyLoaded` and the loadable branch below would steer the
+            // model into `capabilities {"ids":["tool/file_write"]}` — a load
+            // the dynamic gates then refuse opaquely. Their one actionable
+            // next step is user-facing (attach a folder), never a loader
+            // round-trip; keyed on the NAME so the answer is identical
+            // whether or not the tools happen to be registered right now.
+            // The refusal stands — no execution boundary moves. Naming the
+            // Folder chip leaks nothing: it is public UX.
+            if Self.coreWorkspaceToolNames.contains(name) {
+                return ToolErrorEnvelope(
+                    kind: .toolNotFound,
+                    reason:
+                        "\(name) needs a workspace attached to THIS chat and there is none. "
+                        + "Ask the user to attach a folder via the Folder chip (or enable "
+                        + "Autonomous execution). Until then, deliver file content with "
+                        + "share_artifact and say why.",
+                    toolName: name,
+                    retryable: false
+                ).toJSONString()
+            }
             let toolAvailability = availability(forTool: name, agentAllowedNames: agentAllowed)
             // The default agent's capabilities_load is gated to the configure
             // write tools, so the hint would only steer it into a rejected
@@ -1588,6 +1644,29 @@ public final class ToolRegistry: ObservableObject {
     /// names so two providers with the same sanitized prefix can't collide.
     func registeredToolNames() -> [String] {
         Array(toolsByName.keys)
+    }
+
+    /// True when `name` is a registered DYNAMIC tool (plugin/MCP/dynamic
+    /// native) — i.e. a name `capabilities` can legitimately load as
+    /// `tool/<name>`. Matches `listDynamicTools`' classification exactly:
+    /// built-in AND runtime-managed tools are excluded — neither is a
+    /// loadable id, so rescuing a bare `file_write`/`shell_run` into
+    /// `tool/<name>` would only route the caller into the dynamic-load
+    /// gates' opaque refusals instead of the workspace guidance.
+    func isDynamicRegisteredTool(named name: String) -> Bool {
+        toolsByName[name] != nil
+            && !builtInToolNames.contains(name)
+            && !runtimeManagedToolNames.contains(name)
+    }
+
+    /// Immutable snapshot of every name `isDynamicRegisteredTool` currently
+    /// classifies as dynamic. Exists for `AgentTaskState.dynamicToolClassifier`:
+    /// the registry is MainActor-bound while HTTP/plugin drive the loop
+    /// nonisolated, so the loop gets a value-type snapshot instead of a live
+    /// registry call. The classifier is advisory-only, so a tool registered
+    /// mid-run is merely missed until the next snapshot — never a wrong block.
+    func dynamicToolNameSnapshot() -> Set<String> {
+        Set(toolsByName.keys.filter { isDynamicRegisteredTool(named: $0) })
     }
 
     /// O(1) single-tool lookup as a `ToolEntry`. Prefer this over
@@ -2418,6 +2497,23 @@ public final class ToolRegistry: ObservableObject {
         "capabilities", "capabilities_discover", "capabilities_load",
     ]
 
+    /// Fetch-tool names models import from other harnesses (Claude Code's
+    /// WebFetch, LangChain requests_get, the reference MCP fetch server, …).
+    /// None have ever existed in osaurus; calls to them are steered to
+    /// `search_and_extract` when this request exposes it (see `execute`).
+    /// Lowercase; matched case-insensitively. Only consulted for names with
+    /// NO real registration, so a plugin/MCP tool legitimately claiming one
+    /// of these always wins. Deliberately excludes browser-intent names
+    /// (`browse`, `open_url`) — steering "log in and click" intent to a
+    /// read-only extractor points AWAY from a `browser_use` sitting in the
+    /// schema — and shell-intent names (`curl`), whose POST/API shapes
+    /// extraction cannot serve.
+    static let hallucinatedFetchToolNames: Set<String> = [
+        "web_fetch", "webfetch", "fetch", "fetch_url", "fetch_page",
+        "fetch_webpage", "http_get", "get_url", "get_webpage", "read_url",
+        "read_webpage", "visit_page", "load_url", "url_fetch",
+    ]
+
     /// Built-in tools that are authoritatively gated per-agent and must never
     /// surface through `capabilities_discover`. Unlike the lean-by-default
     /// built-in gates (render_chart, speak, search_memory, the scheduler trio,
@@ -2430,6 +2526,13 @@ public final class ToolRegistry: ObservableObject {
     static let nonDiscoverableBuiltInToolNames: Set<String> = [
         ComputerUseTool.toolName,
         BrowserUseTool.toolName,
+        // Same authoritative per-agent contract as the pair above: the
+        // composer injects these only when the owning agent flag is on and
+        // strips them otherwise, with no capabilities_load carve-out.
+        // Discovering them on an agent with the flag off produced a
+        // discover→load dead loop ("gated built-in and cannot be enabled").
+        "spawn_agent", "spawn_model", "spawn_batch",
+        "applescript", "mac_query",
     ]
 
     /// Always-loaded tool specs: built-in + runtime-managed tools.

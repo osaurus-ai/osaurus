@@ -13,6 +13,11 @@ struct LiveActivitySection: View {
     @State private var snapshot: BatchDiagnosticsSnapshot?
     @State private var effectiveGeneration:
         [String: MLXBatchAdapter.EffectiveGenerationSettings] = [:]
+    /// What the adaptive MTP controller ACTUALLY settled on last turn, per
+    /// model. Completion-time, so it explains the common surprise — asking for
+    /// depth 3 and getting depth 1 because acceptance collapsed — that the
+    /// load-scoped MTP section (a request, not a result) cannot show.
+    @State private var lastMTP: [String: MTPStatsSummary] = [:]
     @State private var inferenceActivities: [InferenceActivitySnapshot] = []
     @State private var refreshTimer: Timer?
     @Environment(\.theme) private var theme
@@ -33,6 +38,11 @@ struct LiveActivitySection: View {
             if !effectiveGeneration.isEmpty {
                 SettingsDivider()
                 effectiveSamplerReadout
+            }
+
+            if !lastMTP.isEmpty {
+                SettingsDivider()
+                mtpRuntimeReadout
             }
         }
         .onAppear { start() }
@@ -121,6 +131,72 @@ struct LiveActivitySection: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// What speculative decoding did on the last real turn, per model.
+    ///
+    /// The MTP Mode picker and depth field are a REQUEST; the adaptive
+    /// controller downshifts depth on the fly when draft acceptance drops
+    /// (depth 3 → 2 below 0.60, → 1 below 0.50), and on prose depth-3 drafts
+    /// are accepted only a few percent of the time — so "auto" or a requested
+    /// depth 3 legitimately RUNS at depth 1–2. Without this line that correct
+    /// behaviour looks like the control is ignored. Shown per model, populated
+    /// only for turns that actually ran native MTP.
+    private var mtpRuntimeReadout: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(L("Speculative decoding last run"))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+
+            ForEach(lastMTP.keys.sorted(), id: \.self) { model in
+                if let stats = lastMTP[model] {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model)
+                            .font(.system(size: 11, weight: .medium))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text(Self.describeMTP(stats))
+                            .font(.system(size: 11).monospacedDigit())
+                            .foregroundColor(theme.tertiaryText)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    static func describeMTP(_ stats: MTPStatsSummary) -> String {
+        var parts: [String] = []
+        // Requested depth vs the depth adaptive control actually held. The
+        // arrow is the whole point: it names the undershoot instead of hiding
+        // it, so a depth-3 request that ran at 1 reads as a decision, not a bug.
+        if stats.depth == stats.activeDepth {
+            parts.append("depth \(stats.activeDepth)")
+        } else {
+            parts.append("depth \(stats.depth) → \(stats.activeDepth)")
+        }
+        if stats.adaptiveDownshifts > 0 {
+            parts.append(
+                "\(stats.adaptiveDownshifts) downshift"
+                    + (stats.adaptiveDownshifts == 1 ? "" : "s"))
+        }
+        // How much speculation actually paid, in wall-clock terms: tokens
+        // committed per verify cycle. 1.0 is break-even (no better than plain
+        // decode), depth+1 is the ceiling. This is the artifact-free number —
+        // NOT accepted/(accepted+rejected), which reads high at depth ≥ 2
+        // because rejects count once per cycle. A low value here IS why a deep
+        // request downshifted.
+        parts.append(String(format: "%.1f tok/verify", stats.avgCommittedPerVerify))
+        if stats.arFallbackTokens > 0 {
+            parts.append("AR fallback \(stats.arFallbackTokens) tok")
+        }
+        // The controller's own machine reason, when it bailed to AR decode.
+        if let reason = stats.adaptiveFallbackReason, !reason.isEmpty {
+            parts.append(reason)
+        }
+        return parts.joined(separator: " · ")
+    }
+
     static func describe(
         _ effective: MLXBatchAdapter.EffectiveGenerationSettings
     ) -> String {
@@ -191,6 +267,7 @@ struct LiveActivitySection: View {
             snapshot = await MLXBatchAdapter.snapshotDiagnostics()
             effectiveGeneration =
                 await MLXBatchAdapter.lastEffectiveGenerationSettingsSnapshot()
+            lastMTP = await MLXBatchAdapter.lastMTPStatsSnapshot()
             await refreshActivities()
         }
     }

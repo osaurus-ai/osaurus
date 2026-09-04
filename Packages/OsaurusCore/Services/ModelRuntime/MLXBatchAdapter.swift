@@ -72,6 +72,21 @@ struct MLXBatchAdapter {
         await Registry.shared.lastEffectiveGenerationSettingsSnapshot()
     }
 
+    /// Record the native-MTP runtime stats for the just-finished real turn,
+    /// keyed by model. Completion-time (unlike `EffectiveGenerationSettings`,
+    /// which is submit-time) so it can show what the ADAPTIVE controller
+    /// actually settled on — e.g. a request that asked for depth 3 but ran
+    /// depth 1 because acceptance collapsed. Called only for turns that
+    /// produced native-MTP tokens; every other decode path leaves the readout
+    /// unchanged.
+    static func recordLastMTPStats(modelName: String, stats: MTPStatsSummary) async {
+        await Registry.shared.recordLastMTPStats(modelName: modelName, stats: stats)
+    }
+
+    static func lastMTPStatsSnapshot() async -> [String: MTPStatsSummary] {
+        await Registry.shared.lastMTPStatsSnapshot()
+    }
+
     /// Result handed back to `ModelRuntime`. The `Generation` stream is
     /// consumed by `GenerationEventMapper`, which translates the upstream
     /// events into `ModelRuntimeEvent`. The producer task exists so callers
@@ -418,6 +433,11 @@ struct MLXBatchAdapter {
         private let coalescer = TaskCoalescer<BatchEngine>()
         private var nativeMTPWarmModels: Set<String> = []
         private var lastEffectiveGenerationSettings: [String: EffectiveGenerationSettings] = [:]
+        /// Last native-MTP runtime stats per model, captured at completion.
+        /// Populated only for turns the native-MTP iterator produced, so a
+        /// non-MTP family never appears here and the readout for an MTP model
+        /// reflects its most recent speculative turn.
+        private var lastMTPStats: [String: MTPStatsSummary] = [:]
         /// Counters from engines and cache coordinators that have left the
         /// live resident set. Before this accumulator, switching model A to B
         /// made process-level diagnostics decrease because A simply vanished
@@ -540,6 +560,14 @@ struct MLXBatchAdapter {
 
         func lastEffectiveGenerationSettingsSnapshot() -> [String: EffectiveGenerationSettings] {
             lastEffectiveGenerationSettings
+        }
+
+        func recordLastMTPStats(modelName: String, stats: MTPStatsSummary) {
+            lastMTPStats[modelName] = stats
+        }
+
+        func lastMTPStatsSnapshot() -> [String: MTPStatsSummary] {
+            lastMTPStats
         }
 
         func turboQuantCacheTransitionsSnapshot() async

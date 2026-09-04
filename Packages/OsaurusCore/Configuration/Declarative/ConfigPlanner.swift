@@ -1954,10 +1954,39 @@ enum ConfigPlanner {
                 }
             } else {
                 let path = (entry.path.map { ($0 as NSString).expandingTildeInPath }) ?? "?"
+                // Same-path advisory: a model that thinks its last create
+                // "didn't work" retries under a variant name ("Voice Memos
+                // Watcher" next to "Voice Memo Watcher") — observed live,
+                // yielding two near-identical watchers on one folder. The
+                // create still proceeds (different-name creations are
+                // legitimate and never refused); the plan just names the
+                // existing watcher so an accidental duplicate becomes an
+                // update-by-that-name instead. Carried in `changes`, NOT in
+                // `risks`: risks are the high-risk escalation channel (forced
+                // approval; HTTP apply 409s without confirm_high_risk), which
+                // would have turned this advisory into exactly the refusal it
+                // promises not to be. Comparison is case-insensitive on a
+                // standardized path so trivial spelling/symlink variants
+                // still match; misses are only ever a lost hint.
+                var changes = ["watch \(path) with agent `\(entry.agent ?? "?")`"]
+                let normalizedNew = URL(fileURLWithPath: path)
+                    .standardizedFileURL.path.lowercased()
+                if let duplicate = existing.first(where: { candidate in
+                    guard let existingPath = candidate.watchPath else { return false }
+                    let normalizedExisting = URL(fileURLWithPath: existingPath)
+                        .standardizedFileURL.path.lowercased()
+                    return normalizedExisting == normalizedNew
+                        && candidate.name.lowercased() != entry.name.lowercased()
+                }) {
+                    changes.append(
+                        "note: watcher `\(duplicate.name)` already watches this path — if you "
+                            + "meant to change it, reuse that exact name to update it instead "
+                            + "of creating a duplicate.")
+                }
                 actions.append(
                     ConfigPlanAction(
                         section: "watchers", target: entry.name, kind: .create,
-                        changes: ["watch \(path) with agent `\(entry.agent ?? "?")`"]))
+                        changes: changes))
             }
         }
 

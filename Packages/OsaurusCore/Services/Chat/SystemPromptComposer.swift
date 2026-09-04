@@ -767,7 +767,19 @@ public struct SystemPromptComposer: Sendable {
         trace: TTFTTrace?
     ) -> String? {
         let schemaNames = Set(tools.map(\.function.name))
-        guard snapshot.toolMode == .auto, !executionMode.usesHostFolderTools, !effectiveToolsOff,
+        // No `usesHostFolderTools` condition here. PR #2300 excluded folder
+        // mode with the one-line rationale "host-folder agents retain their
+        // workspace-only prompt" — but this guard doesn't trim folder-redundant
+        // entries, it deletes the ENTIRE manifest, MCP and plugin ids included.
+        // A custom agent set up for "research the web and save files to my
+        // folder" — folder attached, MCP servers connected — composed a prompt
+        // with zero mention that any of its capabilities existed; the model's
+        // only route was a blind `capabilities` search it had no reason to
+        // issue with the right terms (reported live: agents "can't find"
+        // connected Exa/fetch MCP tools). The `capabilities` gateway is
+        // already in the folder-mode schema and loads work in folder mode;
+        // the model just was never told what to load.
+        guard snapshot.toolMode == .auto, !effectiveToolsOff,
             let capabilityNames = capabilityToolNames(inSchema: schemaNames),
             schemaNames.contains(capabilityNames.load)
         else { return nil }
@@ -1045,9 +1057,11 @@ public struct SystemPromptComposer: Sendable {
             // Keep the lean custom-agent contract: expose only the frozen
             // enabled-capabilities manifest needed to use assigned plugins.
             // Rich grounding/nudge/model-family guidance remains off this
-            // path, and host-folder agents retain their workspace-only prompt.
+            // path. Folder mode is deliberately NOT excluded — the workspace
+            // prompt stays lean, but a folder-attached agent still needs to
+            // be told its MCP/plugin/skill capabilities exist (see the guard
+            // rationale in `resolveEnabledManifest`).
             if snapshot.agentId != Agent.defaultId,
-                !executionMode.usesHostFolderTools,
                 !effectiveToolsOff,
                 let capabilityNames,
                 let manifestSection = toolset.enabledManifest,
@@ -1959,8 +1973,13 @@ public struct SystemPromptComposer: Sendable {
     /// are the path for discovering and upgrading every other capability, so
     /// their argument contracts must stay explicit even while the rest of the
     /// always-loaded surface ships as a compact schema skeleton.
+    /// `capabilities` was missing from this list from the day the unified
+    /// gateway replaced the legacy pair: custom agents saw it skeletonized to
+    /// "Search for or load optional capabilities." with the `ids`/`query`
+    /// property prose stripped — including the load-bearing "IDs are values,
+    /// never callable function names" rule.
     private static let fullBootstrapToolNames: Set<String> = [
-        "capabilities_discover", "capabilities_load",
+        "capabilities", "capabilities_discover", "capabilities_load",
     ]
 
     /// Loop tools whose ARGUMENT constraints must survive the bootstrap:
@@ -2726,15 +2745,17 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
-        // A chart assembled from live web data needs both halves of the web
-        // pipeline in the same turn: discovery (`web_search`) and retrieval
-        // (`search_and_extract`). Keeping extraction dynamic for ordinary
-        // chat still preserves the lean baseline, while the explicit Charts
-        // + Web capability combination is a strong signal that retrieval is
-        // required. Expose the real tool contract up front so small local
-        // models do not get trapped rephrasing discovery queries while trying
-        // to guess the capabilities-load transition.
-        if !isManual, snapshot.renderChartEnabled, snapshot.webSearchEnabled {
+        // Web search enabled means BOTH halves of the web pipeline are in the
+        // schema from turn 1: discovery (`web_search`) and retrieval
+        // (`search_and_extract`). Retrieval used to stay dynamic outside the
+        // Charts+Web combination to keep the baseline lean, and that gap is
+        // exactly where models fell apart in practice: with only `web_search`
+        // visible they either rephrased the same discovery query in a loop or
+        // hallucinated a fetch tool (`web_fetch`) that has never existed —
+        // observed live as a Raptor research run producing zero page reads.
+        // The discovery→retrieval transition advertised inside `web_search`
+        // results must be callable the moment those results arrive.
+        if !isManual, snapshot.webSearchEnabled {
             add(
                 ToolRegistry.shared.specs(forTools: ["search_and_extract"]),
                 replacingExisting: true

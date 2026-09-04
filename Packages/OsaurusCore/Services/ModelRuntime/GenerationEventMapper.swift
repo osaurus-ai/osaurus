@@ -42,6 +42,13 @@ enum GenerationEventMapper {
         modelName: String = "",
         trace: TTFTTrace? = nil,
         suppressProgressUI: Bool = false,
+        /// Whether this generation's completion-time MTP stats should become
+        /// the model's "Speculative decoding last run" readout. Callers pass
+        /// false for housekeeping generations (`loadIntent == .background`:
+        /// follow-up suggestions, chat titles, distillation) — those run
+        /// seconds after the user's real turn and would silently overwrite
+        /// the exact adaptive-downshift readout the panel exists to show.
+        recordMTPLastRun: Bool = true,
         onConsumerCancellation: @escaping @Sendable () -> Void = {},
         /// Fired exactly once, at the FIRST real output event (chunk,
         /// reasoning, tool call, or tool-call progress). This is the
@@ -105,6 +112,19 @@ enum GenerationEventMapper {
                     terminalInfoAt = CFAbsoluteTimeGetCurrent()
                     finalTokenCount = info.generationTokenCount
                     logCompletionInfo(info)
+                    let mtp = Self.mtpSummary(from: info)
+                    // Park the ADAPTIVE result where a Settings poll can read it.
+                    // Completion-time, so it shows what the controller settled on
+                    // (e.g. asked depth 3, ran depth 1 on low acceptance) rather
+                    // than the load-time request. Only real interactive turns that
+                    // actually ran native MTP — warm-up prefills, background
+                    // housekeeping (follow-ups/titles), and every non-MTP decode
+                    // path leave the readout untouched. Proven live: without the
+                    // background gate, the follow-up-suggestions turn overwrote a
+                    // depth 3→1 downshift readout within seconds.
+                    if recordMTPLastRun, !suppressProgressUI, let mtp {
+                        Task { await MLXBatchAdapter.recordLastMTPStats(modelName: modelName, stats: mtp) }
+                    }
                     continuation.yield(
                         .completionInfo(
                             tokenCount: info.generationTokenCount,
@@ -112,7 +132,7 @@ enum GenerationEventMapper {
                             unclosedReasoning: info.unclosedReasoning,
                             stopReason: Self.openAIStopReason(from: info.stopReason),
                             promptTokensPerSecond: info.promptTokensPerSecond,
-                            mtp: Self.mtpSummary(from: info)
+                            mtp: mtp
                         )
                     )
                     // `.info` is vmlx's authoritative logical completion.
@@ -307,7 +327,8 @@ enum GenerationEventMapper {
             rejectedTokens: mtp.rejectedTokens,
             arFallbackTokens: mtp.arFallbackTokens,
             adaptiveDownshifts: mtp.adaptiveDownshifts,
-            adaptiveFallbackReason: mtp.adaptiveFallbackReason
+            adaptiveFallbackReason: mtp.adaptiveFallbackReason,
+            avgCommittedPerVerify: mtp.avgCommittedPerVerify
         )
     }
 

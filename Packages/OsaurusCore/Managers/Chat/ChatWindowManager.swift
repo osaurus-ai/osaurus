@@ -289,7 +289,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             }
         guard let targetId, let state = windowStates[targetId] else { return false }
         showWindow(id: targetId)
-        state.startNewChat()
+        state.startNewChatInCurrentProject()
         return true
     }
 
@@ -1240,7 +1240,7 @@ private struct ChatToolbarActionContent: View {
             //     HeaderActionButton(
             //         icon: "plus",
             //         help: "New chat",
-            //         action: { windowState.startNewChat() }
+            //         action: { windowState.startNewChatInCurrentProject() }
             //     )
             // }
         }

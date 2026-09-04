@@ -1545,6 +1545,13 @@ final class PluginHostContext: @unchecked Sendable {
             // Per-invocation harness state (plugin completions are one-shot
             // across requests). Provides within-run dedupe + post-listing nudge.
             let taskState = AgentTaskState()
+            // Dynamic-tool classification for the same-name run advisory: a
+            // value snapshot because the registry is MainActor-bound and the
+            // plugin host drives the loop nonisolated.
+            let dynamicToolNames = await MainActor.run {
+                ToolRegistry.shared.dynamicToolNameSnapshot()
+            }
+            taskState.dynamicToolClassifier = { dynamicToolNames.contains($0) }
             // Run-scoped sticky compaction: trims stay monotonic across this
             // completion's iterations (KV-prefix-stable transcript).
             let compactionWatermark = CompactionWatermark()
@@ -1887,6 +1894,13 @@ final class PluginHostContext: @unchecked Sendable {
             // Per-invocation harness state (plugin completions are one-shot
             // across requests). Provides within-run dedupe + post-listing nudge.
             let taskState = AgentTaskState()
+            // Dynamic-tool classification for the same-name run advisory: a
+            // value snapshot because the registry is MainActor-bound and the
+            // plugin host drives the loop nonisolated.
+            let dynamicToolNames = await MainActor.run {
+                ToolRegistry.shared.dynamicToolNameSnapshot()
+            }
+            taskState.dynamicToolClassifier = { dynamicToolNames.contains($0) }
             // Run-scoped sticky compaction: trims stay monotonic across this
             // stream's iterations (KV-prefix-stable transcript).
             let compactionWatermark = CompactionWatermark()

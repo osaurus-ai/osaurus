@@ -64,7 +64,11 @@ extension EvalRunner {
         // full-surface pins these cases carry would measure the wrong
         // thing. SKIP with the resolved class — same semantics as the
         // agent_loop tiny gate.
-        let contextWindow = ContextSizeResolver.resolve(modelId: modelId)
+        // `composeModel` pins the census to a stable window class so a
+        // floors-gated case can't skip (and pass vacuously) on a tiny run
+        // model. No model loads either way.
+        let composeModelId = exp.composeModel ?? modelId
+        let contextWindow = ContextSizeResolver.resolve(modelId: composeModelId)
         if contextWindow.sizeClass.disablesTools {
             return .terminal(
                 id: testCase.id,
@@ -97,10 +101,44 @@ extension EvalRunner {
         defer { try? FileManager.default.removeItem(at: workspace) }
 
         var evalAgentId: UUID?
+        // `enableTools` fixture parity with the agent-loop runner: install a
+        // temp agent whose grant names the fixture tools (plus the eval-only
+        // dynamic/grouped probes when named), so a case can pin the
+        // enabled-capabilities MANIFEST composition. This is the lane that
+        // pins the folder-mode manifest regression: without a granted
+        // dynamic tool the ≥1-tool manifest gate makes the section
+        // legitimately absent, and the case would pass vacuously.
+        let enabledToolFixtures = testCase.fixtures.enableTools ?? []
+        let requestsDynamicLoadProbe = enabledToolFixtures.contains(
+            EvalHostBootstrap.dynamicLoadProbeToolName
+        )
+        let requestsGroupedLoadProbe = enabledToolFixtures.contains(
+            EvalHostBootstrap.groupedLoadProbeToolName
+        )
         if let caps = testCase.fixtures.agentCapabilities, caps.requestsAnyCapability {
             evalAgentId = installEvalAgent(caps)
+        } else if !enabledToolFixtures.isEmpty {
+            evalAgentId = installEvalAgent(testCase.fixtures.agentCapabilities)
+        }
+        if let evalAgentId, !enabledToolFixtures.isEmpty {
+            if requestsDynamicLoadProbe {
+                EvalHostBootstrap.registerDynamicLoadProbe()
+            }
+            if requestsGroupedLoadProbe {
+                EvalHostBootstrap.registerGroupedLoadProbe()
+            }
+            prepareAgentLoopEnabledToolFixtures(
+                enabledToolFixtures,
+                agentId: evalAgentId
+            )
         }
         defer {
+            if requestsDynamicLoadProbe {
+                EvalHostBootstrap.unregisterDynamicLoadProbe()
+            }
+            if requestsGroupedLoadProbe {
+                EvalHostBootstrap.unregisterGroupedLoadProbe()
+            }
             if let evalAgentId { removeEvalAgent(evalAgentId) }
         }
 
@@ -115,7 +153,7 @@ extension EvalRunner {
             let warm = await PromptSurfaceEvaluator.census(
                 workspace: workspace,
                 agentId: evalAgentId,
-                model: modelId,
+                model: composeModelId,
                 experiment: nil
             )
             if warm.promptHash == warmHash { break }
@@ -129,7 +167,7 @@ extension EvalRunner {
         let baseline = await PromptSurfaceEvaluator.census(
             workspace: workspace,
             agentId: evalAgentId,
-            model: modelId,
+            model: composeModelId,
             experiment: nil
         )
         let census: PromptSurfaceCensus
@@ -137,7 +175,7 @@ extension EvalRunner {
             census = await PromptSurfaceEvaluator.census(
                 workspace: workspace,
                 agentId: evalAgentId,
-                model: modelId,
+                model: composeModelId,
                 experiment: profile.experiment
             )
         } else {
@@ -214,7 +252,7 @@ extension EvalRunner {
             let second = await PromptSurfaceEvaluator.census(
                 workspace: workspace,
                 agentId: evalAgentId,
-                model: modelId,
+                model: composeModelId,
                 experiment: exp.profile?.experiment
             )
             score.check(

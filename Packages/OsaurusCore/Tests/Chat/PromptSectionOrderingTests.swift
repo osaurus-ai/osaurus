@@ -259,6 +259,13 @@ struct PromptSectionOrderingTests {
                 autonomousExec: AutonomousExecConfig(enabled: false)
             )
             AgentManager.shared.add(agent)
+            // Folder mode now composes the enabled-capabilities manifest again
+            // (the PR #2300 regression fix). This test pins SECTION ORDER, not
+            // manifest policy, so pin the manifest deterministically ABSENT
+            // with an explicit empty grant — a nil (legacy) grant would make
+            // the section list depend on whatever dynamic tools parallel test
+            // suites happen to have registered at compose time.
+            AgentManager.shared.updateEnabledToolNames([], for: agent.id)
             let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
                 .appendingPathComponent("osaurus-folder-order-\(UUID().uuidString)")
             try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)

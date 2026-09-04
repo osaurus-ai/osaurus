@@ -3,6 +3,56 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.24.6</title>
+            <pubDate>Fri, 04 Sep 2026 05:38:34 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.24.6</sparkle:version>
+            <sparkle:shortVersionString>0.24.6</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.24.6/Osaurus-0.24.6.dmg" length="74688099" type="application/octet-stream" sparkle:edSignature="dsvAc05bDflPqNTY0Rz2fE2B3FKrHHOt+HNQBRWB7Rmo6djYMGCN4F2HaECdKT6ihCH9qJwvG51tdxi6UoRwCg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Live Activity: show what the adaptive MTP controller actually ran last turn (#2624) by @jjang-ai
+- MTP detector + depth buttons appear during warmup, by weight, Flash-Next/27B only (#2620) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- Capability grounding: folder-mode agents get their manifest back; gateway honors its own contract (#2626) by @jjang-ai
+- fixed main thread hangs (#2619) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.24.5...0.24.6
+]]></description>
+        </item>
+        <item>
+            <title>0.24.5</title>
+            <pubDate>Thu, 03 Sep 2026 20:29:32 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.24.5</sparkle:version>
+            <sparkle:shortVersionString>0.24.5</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.24.5/Osaurus-0.24.5.dmg" length="74647524" type="application/octet-stream" sparkle:edSignature="YSR+SRHdJ7+vwXa6So0gejeIjEOqCZWq3juGNSbZcL4hwYv7tVEbCEcGltp1ty6V470zkmz41YuMMW9/PGl4DQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🚀 Features
+
+- added keyboard shortcuts for sidebar toggle and agent cycling (#2617) by @RaajeevChandran
+- added project folder support (#2611) by @RaajeevChandran
+- added clickable knowledge document links in chat (#2610) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- FDA probe: require the real SQLite header, not merely a non-throwing read (#2613) (#2616) by @jjang-ai
+- Repin vmlx-swift to 97676e19: qwen4\_exp UAF + constrained-Mac wired-limit + docs-leak fixes (#2615) by @jjang-ai
+- keep the main window hidden on login item and cli launches (#2614) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.24.4...0.24.5
+]]></description>
+        </item>
+        <item>
             <title>0.24.4</title>
             <pubDate>Wed, 02 Sep 2026 20:23:11 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

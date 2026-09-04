@@ -131,7 +131,12 @@ struct CapabilitiesToolTests {
         #expect(fn["name"] as? String == "capabilities")
         #expect(properties["query"] != nil)
         #expect(properties["ids"] != nil)
-        #expect(properties["list"] == nil)
+        // `list`/`page` are the enabled-list pagination the bare-call result
+        // advertises. They used to be undeclared, so the harness's own
+        // "Next page" hint failed strict preflight — an agent with >40
+        // enabled capability lines could never see page 2.
+        #expect(properties["list"] != nil)
+        #expect(properties["page"] != nil)
         #expect(tool.description.contains("capability IDs for the `ids` argument"))
         #expect(tool.description.contains("never callable function names"))
         #expect(tool.description.contains("use `query` only when no exact available ID fits"))
@@ -193,6 +198,23 @@ struct CapabilitiesToolTests {
         #expect(!result.contains("capabilities_load"))
         #expect(!result.contains("capabilities_discover"))
         #expect(loaded.map(\.function.name) == [dynamic.name])
+    }
+
+    @Test func advertisedPaginationHintIsACallableContract() async throws {
+        // The bare-call result says `Next page: {"list": "enabled", "page": N}`.
+        // That exact shape must execute — it used to fail the strict
+        // additionalProperties preflight because `list`/`page` were
+        // undeclared, so the harness's own hint taught an invalid call and
+        // an agent with >40 enabled capability lines could never see page 2.
+        // Routed through the registry so the schema preflight actually runs.
+        let result = try await ToolRegistry.shared.execute(
+            name: "capabilities",
+            argumentsJSON: #"{"list": "enabled", "page": 1}"#
+        )
+        #expect(!ToolEnvelope.isError(result))
+        #expect(
+            result.contains("Enabled capabilities")
+                || result.contains("No capabilities are enabled"))
     }
 }
 
@@ -595,6 +617,40 @@ struct CapabilitiesLoadToolTests {
         #expect(!serialized.contains("plugin/calendar"))
         #expect(!serialized.contains("tool/sandbox_exec"))
         #expect(!serialized.contains("skill/plot-data"))
+    }
+
+    @Test @MainActor
+    func bareToolNameIdIsRescuedToItsToolPrefixedForm() async throws {
+        // `{"ids": ["Exa_search"]}` — the bare name of a tool the model just
+        // saw — used to be a hard "Invalid ID format". The registry already
+        // rescues the reverse shape (a `tool/`-prefixed FUNCTION call), so a
+        // bare id matching a registered dynamic tool now resolves to
+        // `tool/<name>` and proceeds through the normal load gates.
+        let dynamic = CapabilityPolicyFixtureTool(
+            name: "bare_id_rescue_\(UUID().uuidString.prefix(8))",
+            description: "Bare-id rescue fixture"
+        )
+        ToolRegistry.shared.registerPluginTool(dynamic)
+        ToolRegistry.shared.setEnabled(true, for: dynamic.name)
+        defer { ToolRegistry.shared.unregister(names: [dynamic.name]) }
+
+        let buffer = CapabilityLoadBuffer()
+        let result = try await CapabilityLoadBuffer.$overrideForTests.withValue(buffer) {
+            try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+                try await CapabilitiesLoadTool().execute(
+                    argumentsJSON: "{\"ids\":[\"\(dynamic.name)\"]}"
+                )
+            }
+        }
+        #expect(!result.contains("Invalid ID format"))
+        #expect(!ToolEnvelope.isError(result))
+
+        // An unknown bare name keeps the explicit format error — guessing a
+        // prefix would only move the failure downstream.
+        let unknown = try await CapabilitiesLoadTool().execute(
+            argumentsJSON: "{\"ids\":[\"zz_never_registered_anywhere\"]}"
+        )
+        #expect(unknown.contains("Invalid ID format"))
     }
 
     @Test func emptyIdsFallsBackToTheEnabledList() async throws {

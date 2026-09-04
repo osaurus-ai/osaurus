@@ -41,6 +41,20 @@ nonisolated(unsafe) private var currentHighlightrTheme: String = "atom-one-dark"
 private let defaultDarkHighlightTheme = "atom-one-dark"
 private let defaultLightHighlightTheme = "atom-one-light"
 
+/// Kick the shared Highlightr's lazy initialization — which evaluates
+/// highlight.js inside a fresh JSContext, tens-to-hundreds of ms plus any
+/// JavaScriptCore GC pause — on a background thread, so the first code block
+/// a table cell configures doesn't pay it on main. Safe to race real use:
+/// the `let` global initializes exactly once and every touch is serialized
+/// by `highlightrLock`.
+func prewarmHighlightrOffMain() {
+    DispatchQueue.global(qos: .utility).async {
+        highlightrLock.lock()
+        _ = sharedHighlightr
+        highlightrLock.unlock()
+    }
+}
+
 /// Returns the available Highlightr theme names (cached after first call).
 nonisolated(unsafe) private var cachedAvailableThemes: [String]?
 func availableHighlightrThemes() -> [String] {

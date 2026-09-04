@@ -112634,35 +112634,35 @@
         }
       }
     },
-    "Make ⌘+N start a new chat in the frontmost chat window, like the sidebar's New Chat button. New Window moves to ⇧+⌘+N, matching other chat apps. Turn off to keep ⌘+N opening a new window.": {
+    "Make ⌘+N start a new chat in the frontmost chat window, staying in the current project if there is one. New Window moves to ⇧+⌘+N, matching other chat apps. Turn off to keep ⌘+N opening a new window.": {
       "localizations": {
         "de": {
           "stringUnit": {
-            "state": "translated",
+            "state": "needs_review",
             "value": "⌘+N startet einen neuen Chat im vordersten Chat-Fenster, wie die Schaltfläche „Neuer Chat“ in der Seitenleiste. „Neues Fenster“ wechselt zu ⇧+⌘+N, wie in anderen Chat-Apps. Deaktivieren, damit ⌘+N weiterhin ein neues Fenster öffnet."
           }
         },
         "ko": {
           "stringUnit": {
-            "state": "translated",
+            "state": "needs_review",
             "value": "사이드바의 새 채팅 버튼처럼 ⌘+N이 가장 앞에 있는 채팅 창에서 새 채팅을 시작하도록 합니다. 새 창은 다른 채팅 앱과 같이 ⇧+⌘+N으로 이동합니다. 끄면 ⌘+N이 계속 새 창을 엽니다."
           }
         },
         "ru": {
           "stringUnit": {
-            "state": "translated",
+            "state": "needs_review",
             "value": "⌘+N начинает новый чат в переднем окне чата, как кнопка «Новый чат» на боковой панели. «Новое окно» переходит на ⇧+⌘+N, как в других чат-приложениях. Выключите, чтобы ⌘+N по-прежнему открывал новое окно."
           }
         },
         "zh-Hans": {
           "stringUnit": {
-            "state": "translated",
+            "state": "needs_review",
             "value": "让 ⌘+N 在最前面的聊天窗口开始新聊天，与侧边栏的新聊天按钮相同。新窗口改为 ⇧+⌘+N，与其他聊天应用一致。关闭后 ⌘+N 仍打开新窗口。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
-            "state": "translated",
+            "state": "needs_review",
             "value": "讓 ⌘+N 在最前面的聊天視窗開始新聊天，與側邊欄的新聊天按鈕相同。新視窗改為 ⇧+⌘+N，與其他聊天應用程式一致。關閉後 ⌘+N 仍會開啟新視窗。"
           }
         }
@@ -196667,6 +196667,41 @@
           "stringUnit": {
             "state": "translated",
             "value": "推測解碼"
+          }
+        }
+      }
+    },
+    "Speculative decoding last run": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spekulative Dekodierung – letzter Lauf"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "마지막 추측 디코딩 실행"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Последний запуск спекулятивного декодирования"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上次推测解码运行"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上次推測解碼執行"
           }
         }
       }

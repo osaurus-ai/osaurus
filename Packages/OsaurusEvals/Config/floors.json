@@ -1,6 +1,7 @@
 {
   "_comment": "General floors for `osaurus-evals run --fail-on-floor` (the generalization of the old recall_floors.json, which now lives under `caseFloors`). Two gates: (1) `suitePassRates` \u2014 per-suite minimum pass rate over scoreable rows (passed / (passed+failed+errored); skipped rows are excluded). Keys are suite DIRECTORY names; suites not listed are unaffected, so the flag is safe to pass on every run. The listed suites are the deterministic token-free lanes where any failure is a code regression, never model flake \u2014 hence 1.0. (2) `caseFloors` \u2014 per-case matched-name recall floors, currently capability_search only. Keys are case `id` strings and must match the fixture id exactly; `minMatches` is the per-lane recall floor (the gate sums matched names across the tools/methods/skills lanes), and a floored case's `maxAccepted` (read from its fixture) is also enforced. A caseFloors domain is skipped when the running suite contains no cases of that domain (so the gate composes with the suite gate on every suite), but WITHIN a suite of that domain a missing floored id still breaches \u2014 the typo guard stands. See the git history of Config/recall_floors.json for the capability_search promotion notes (W3 retrieval, 2026-06-19 sweep).",
   "suitePassRates": {
+    "CapabilityGrounding": 1.0,
     "Schema": 1.0,
     "ToolEnvelope": 1.0,
     "PrefixHash": 1.0,

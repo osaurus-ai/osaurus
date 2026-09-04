@@ -48,7 +48,13 @@ struct WebSearchToolTests {
         let description = WebSearchTool().description
         #expect(description.contains("does not fetch page bodies"))
         #expect(description.contains("search_and_extract"))
-        #expect(description.contains("tool/search_and_extract"))
+        // The old contract routed through `capabilities_load tool/…` when
+        // retrieval wasn't loaded. `search_and_extract` is now composed into
+        // the schema whenever web search is enabled, so the description must
+        // name the direct transition — a load detour here would send models
+        // to a loader for a tool already in their schema.
+        #expect(!description.contains("capabilities_load"))
+        #expect(description.contains("IS the fetch tool"))
     }
 
     @Test func searchAndExtractContractProvidesPageContent() {
@@ -316,7 +322,11 @@ struct WebSearchToolTests {
         )
         let names = Set(tools.map { $0.function.name })
         #expect(names.contains("web_search"))
-        #expect(!names.contains("search_and_extract"))
+        // Retrieval rides along with discovery now: web-enabled agents get
+        // `search_and_extract` on turn 1 instead of a capabilities_load
+        // round-trip. The old expectation pinned the lean baseline that left
+        // models looping `web_search` rephrases or hallucinating `web_fetch`.
+        #expect(names.contains("search_and_extract"))
     }
 
     @Test func chartAndWebExposeRetrievalOnTheFirstTurn() {

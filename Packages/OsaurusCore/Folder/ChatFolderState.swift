@@ -11,6 +11,9 @@
 
 import AppKit
 import Foundation
+import os.log
+
+private let folderLog = Logger(subsystem: "ai.osaurus", category: "FolderState")
 
 /// Session-scoped working-folder state. Replaces the old process-wide
 /// `FolderContextService.currentContext` singleton state so concurrent chats
@@ -228,13 +231,35 @@ public final class ChatFolderState: ObservableObject {
         guard let bookmarkData else {
             // Path-only restore: a dispatch (e.g. an orchestrator-created
             // Watcher) can carry a plain folder path with no picker bookmark.
-            // On a build with filesystem access the path is directly readable;
-            // where the OS withholds access, `buildContext` fails and we fall
-            // through to nil (the Watchers tab then prompts to re-pick, which
-            // mints a bookmark). No security scope to start/stop for a plain
-            // path, so `securityScopedURL` stays nil.
+            // No security scope to start/stop for a plain path, so
+            // `securityScopedURL` stays nil.
+            //
+            // Readability is checked HERE because `buildContext` cannot fail:
+            // (Scope note: `isReadableFile` is access(2)/POSIX bits; a
+            // TCC-managed folder can still pass it and fail only at
+            // open/readdir, so this catches missing/deleted/POSIX-unreadable
+            // dirs — the TCC costume may need a deeper probe if observed.)
+            // an unreadable, TCC-denied, or deleted directory yields a
+            // plausible context with an EMPTY tree, and the run then reports
+            // "the monitored folder is empty" over a folder that has files —
+            // the live Watcher failure, recurring in a new costume for every
+            // protected location. (An earlier comment claimed buildContext
+            // fails and we fall through to nil; that fallback was
+            // unreachable.) Returning nil is honest: the caller can then say
+            // the folder could not be read instead of running over a lie.
             guard let path, !path.isEmpty else { return nil }
             let url = URL(fileURLWithPath: path, isDirectory: true)
+            var isDirectory: ObjCBool = false
+            let exists = FileManager.default.fileExists(
+                atPath: url.path, isDirectory: &isDirectory)
+            guard exists, isDirectory.boolValue,
+                FileManager.default.isReadableFile(atPath: url.path)
+            else {
+                folderLog.error(
+                    "path-only restore: '\(url.path, privacy: .public)' is missing, not a directory, or unreadable (TCC?) — returning nil instead of an empty-tree context"
+                )
+                return nil
+            }
             let built = await FolderContextService.shared.buildContext(from: url)
             guard generation == myGeneration else { return nil }
             lastKnownPath = url.standardizedFileURL.path

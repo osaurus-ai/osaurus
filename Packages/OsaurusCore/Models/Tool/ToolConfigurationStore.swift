@@ -45,8 +45,9 @@ enum ToolConfigurationStore {
 
     /// Synchronously drain any pending background write. Call from
     /// `applicationWillTerminate` before `_exit` so a toggle made moments before
-    /// quitting still lands on disk.
-    static func flushPendingWrites(timeout: TimeInterval = 1.5) {
+    /// quitting still lands on disk. `nonisolated` so the quit path can drain
+    /// all stores concurrently off main; the coordinator is internally locked.
+    nonisolated static func flushPendingWrites(timeout: TimeInterval = 1.5) {
         writeCoordinator.flushSync(timeout: timeout)
     }
 
@@ -58,7 +59,7 @@ enum ToolConfigurationStore {
     }
 
     /// Serial, coalescing background writer for `tools.json`.
-    private static let writeCoordinator = WriteCoordinator()
+    nonisolated private static let writeCoordinator = WriteCoordinator()
 
     private final class WriteCoordinator: @unchecked Sendable {
         private let queue = DispatchQueue(label: "com.osaurus.toolconfig.write", qos: .utility)

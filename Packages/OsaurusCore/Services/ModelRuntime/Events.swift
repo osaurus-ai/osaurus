@@ -87,4 +87,21 @@ struct MTPStatsSummary: Sendable, Equatable {
     let adaptiveDownshifts: Int
     /// Why the adaptive controller fell back to AR decode, or nil.
     let adaptiveFallbackReason: String?
+    /// Average tokens committed per verify cycle over the speculative output
+    /// (`speculativeOutputTokens / verifyCalls`). This is the honest,
+    /// artifact-free measure of how much speculation actually paid: 1.0 means
+    /// each verify committed a single token (no better than plain autoregressive
+    /// decode), and depth+1 is the ceiling. It is NOT reconstructible from the
+    /// accepted/rejected counters — `rejectedTokens` increments at most once per
+    /// cycle, so `accepted/(accepted+rejected)` reads high at depth ≥ 2 and does
+    /// NOT match the ratio the adaptive controller downshifts on. `avgAcceptProbability`
+    /// is deliberately not carried: native MTP forces greedy sampling, under which
+    /// it is always 0.
+    ///
+    /// Defaulted because the compact streaming wire (`StreamingStatsHint`,
+    /// positional) does not carry it: a summary reconstructed from the wire in
+    /// `ModelService` gets 0, which is harmless — the wire feeds ChatView, which
+    /// ignores `mtp` entirely. The Live Activity readout reads the mapper's full
+    /// `GenerateCompletionInfo.nativeMTPStats`, so it always has the real value.
+    var avgCommittedPerVerify: Double = 0
 }

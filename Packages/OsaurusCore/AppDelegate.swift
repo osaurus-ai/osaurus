@@ -743,12 +743,27 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     // Skip speculative warming in that state and let the first
                     // real open pay its own (unavoidable) cost instead.
                     guard !Self.isUnderResourcePressure else { return }
+                    // Highlightr's first touch evaluates highlight.js in a
+                    // JSContext; warm it on a background thread now so the
+                    // first code block a chat cell renders doesn't pay the
+                    // engine boot on main.
+                    prewarmHighlightrOffMain()
+                    // Same for the agent-secret account memo: the chat-preview
+                    // compose reads it synchronously, and headless composers
+                    // (HTTP, subagents, channels) never run the ChatView
+                    // prewarm, so seed it here for the whole process.
+                    AgentSecretsKeychain.prewarmAccounts()
                     self?.prewarmManagementWindow()
                     // Warm ChatView's (deep, slow-to-realize) generic metadata too,
                     // spaced out so the two heavy SwiftUI realizations don't stack
                     // into a single main-thread stall during the launch settle.
                     try? await Task.sleep(for: .seconds(1.0))
                     guard !Self.isUnderResourcePressure else { return }
+                    // Warm the sessions manager's first read through the
+                    // database queue off the main actor before the ChatView
+                    // prewarm makes it the first toucher of
+                    // `ChatSessionsManager.shared` on main.
+                    await ChatSessionsManager.prewarmShared()
                     ChatWindowManager.shared.prewarmChatView()
                     // And the menu-bar popover content, so the first click on
                     // the status item doesn't pay the panel's first realization.
@@ -1489,33 +1504,50 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         BrowserSessionManager.shared.shutdownAll()
         SharedConfigurationService.shared.remove()
         SharedConfigurationService.shared.flushPendingWork()
-        // Tool enable/policy changes persist via a background serial writer to
-        // keep the UI snappy; drain it here so a toggle made right before quit
-        // isn't lost when `_exit` skips the pending write.
-        ToolConfigurationStore.flushPendingWrites()
-
-        // Same for the Computer Use autonomy policy (its own coalescing writer).
-        ComputerUsePolicyStore.flushPendingWrites()
-
-        // Same for the sandbox and agent-delegation stores.
-        SandboxConfigurationStore.flushPendingWrites()
-        SubagentConfigurationStore.flushPendingWrites()
-
-        // Provider/tool configuration files (remote.json, mcp.json, …) persist
-        // through ConfigDiskWriter's background queue, and credentials persist
-        // through the Keychain serial write queue. Drain both, bounded, so a
-        // provider added or edited right before quit survives relaunch —
-        // otherwise `_exit` below drops the pending write and the provider
-        // comes back disabled or credential-less.
-        ConfigDiskWriter.flushPendingWrites()
-        Keychain.flushPendingWrites()
-
-        // Aptabase batches analytics in an in-memory queue and normally drains
-        // it from its own `willTerminate` observer — but that flush is async and
-        // the `_exit(0)` below skips it. Kick a final bounded, best-effort send
-        // so the last session's events have a chance to leave first. No-op unless
-        // telemetry is live and consented, so most quits pay nothing here.
-        TelemetryService.shared.flushForQuit()
+        // Drain the background writers so edits made right before quit aren't
+        // lost when `_exit` skips their pending writes: the coalescing config
+        // stores (tools / Computer Use policy / sandbox / delegation), the
+        // provider/tool files behind ConfigDiskWriter, and the Keychain serial
+        // write queue. Each drain is individually bounded, but they used to
+        // run back to back on the main thread — up to ~13s of serial waits on
+        // a slow disk, well past the app-hang watchdog. Fan them out and wait
+        // once: every flush blocks on its own queue's semaphore, so they
+        // drain concurrently and the quit pays only the slowest one, capped
+        // by the group deadline below.
+        //
+        // Aptabase rides along: it batches analytics in memory and its own
+        // `willTerminate` flush is async, which `_exit(0)` would skip.
+        // `prepareQuitFlush` reads the consent gates on main and hands back the
+        // blocking send-and-wait for a worker thread while the group waits.
+        //
+        // Budgets: the two 3.0s-default drains (Keychain, ConfigDiskWriter)
+        // get an explicit sub-cap so they can finish inside the group deadline
+        // — a slow securityd write that lands at 2.4s must still be honored,
+        // not cut off by `_exit`. The deadline itself stays under the 3.0s
+        // app-hang watchdog so a timed-out flush isn't filed as a hang. No-op unless telemetry is consented.
+        let flushGroup = DispatchGroup()
+        let flushWorkers = DispatchQueue.global(qos: .userInitiated)
+        var flushes: [@Sendable () -> Void] = [
+            { ToolConfigurationStore.flushPendingWrites() },
+            { ComputerUsePolicyStore.flushPendingWrites() },
+            { SandboxConfigurationStore.flushPendingWrites() },
+            { SubagentConfigurationStore.flushPendingWrites() },
+            { ConfigDiskWriter.flushPendingWrites(timeout: 2.5) },
+            { Keychain.flushPendingWrites(timeout: 2.5) },
+        ]
+        if let telemetryFlush = TelemetryService.shared.prepareQuitFlush() {
+            flushes.append(telemetryFlush)
+        }
+        for flush in flushes {
+            flushGroup.enter()
+            flushWorkers.async {
+                flush()
+                flushGroup.leave()
+            }
+        }
+        if flushGroup.wait(timeout: .now() + 2.8) == .timedOut {
+            NSLog("Osaurus quit flush timed out; exiting with writes possibly pending")
+        }
 
         // Hard-exit without running `atexit`/C++ static destructors.
         // AppKit's `terminate:` would otherwise call `exit()`, which runs
@@ -1614,13 +1646,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         serverController.$serverHealth
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.updateStatusItemAndMenu()
+                self?.scheduleStatusItemUpdate()
             }
             .store(in: &cancellables)
         serverController.$isRunning
             .receive(on: RunLoop.main)
             .sink { [weak self] isRunning in
-                self?.updateStatusItemAndMenu()
+                self?.scheduleStatusItemUpdate()
                 if isRunning {
                     self?.completeFirstSuccessfulServerStart()
                 }
@@ -1629,14 +1661,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         serverController.$configuration
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.updateStatusItemAndMenu()
+                self?.scheduleStatusItemUpdate()
             }
             .store(in: &cancellables)
 
         serverController.$activeRequestCount
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.updateStatusItemAndMenu()
+                self?.scheduleStatusItemUpdate()
             }
             .store(in: &cancellables)
 
@@ -1644,7 +1676,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         VADService.shared.$state
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.updateStatusItemAndMenu()
+                self?.scheduleStatusItemUpdate()
             }
             .store(in: &cancellables)
 
@@ -1686,6 +1718,25 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 await PluginManager.shared.ensurePromptCatalogReady()
             }
             PluginRepositoryService.shared.startBackgroundRefresh()
+        }
+    }
+
+    /// Coalesces the status-item refresh to one pass per runloop turn. Five
+    /// publishers funnel into it, and `$activeRequestCount` alone can fire
+    /// several times in a single turn under request churn — each pass detaches
+    /// the menu, re-sets the button image, and rebuilds the tooltip, which is
+    /// enough WindowServer traffic to stall main when the machine is already
+    /// slow. The flag resets before the update runs, so a publish that lands
+    /// during the update still schedules a fresh pass and no state is missed.
+    private var statusItemUpdateScheduled = false
+
+    private func scheduleStatusItemUpdate() {
+        guard !statusItemUpdateScheduled else { return }
+        statusItemUpdateScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.statusItemUpdateScheduled = false
+            self.updateStatusItemAndMenu()
         }
     }
 

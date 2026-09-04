@@ -398,6 +398,16 @@ enum AgentSubagentRunner {
             }
         )
 
+        // Per-run harness state, with dynamic-tool classification for the
+        // same-name run advisory — subagents run MCP/plugin tools too. A
+        // value snapshot because the registry is MainActor-bound and this
+        // runner drives the loop nonisolated.
+        let taskState = AgentTaskState()
+        let dynamicToolNames = await MainActor.run {
+            ToolRegistry.shared.dynamicToolNameSnapshot()
+        }
+        taskState.dynamicToolClassifier = { dynamicToolNames.contains($0) }
+
         do {
             let runResult = try await AgentToolLoop.run(
                 policy: AgentLoopPolicy(
@@ -405,7 +415,7 @@ enum AgentSubagentRunner {
                     stopOnToolRejection: stopOnToolRejection,
                     dedupeNoticeEnabled: false
                 ),
-                state: AgentTaskState(),
+                state: taskState,
                 hooks: hooks
             )
             return AgentSubagentRunResult(

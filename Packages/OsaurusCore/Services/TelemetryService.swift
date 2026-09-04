@@ -98,19 +98,19 @@ public final class TelemetryService {
         started = true
     }
 
-    /// Best-effort synchronous flush for the quit path. Aptabase's send queue
-    /// is in-memory only (no disk persistence), and the app now hard-exits with
-    /// `_exit(0)`, which skips the SDK's own `willTerminate` flush. Kick a final
-    /// send and hold the main thread a bounded window so the in-flight URLSession
-    /// request — which runs off-main — has a chance to leave before the process
-    /// dies. This stays best-effort: the SDK's public `flush()` is fire-and-forget
-    /// with no completion handle, so we can't confirm delivery, only give it room.
-    /// No-ops (and costs nothing on quit) unless telemetry actually started and
-    /// the user granted consent, so keyless/disabled/undecided builds never block.
-    public func flushForQuit(timeout: TimeInterval = 0.6) {
-        guard started, isEnabled else { return }
-        Aptabase.shared.flush()
-        Thread.sleep(forTimeInterval: timeout)
+    /// Best-effort flush for the quit path. Aptabase's send queue is
+    /// in-memory only (no disk persistence), and the app hard-exits with
+    /// `_exit(0)`, which skips the SDK's own `willTerminate` flush. Reads the
+    /// main-actor gates here (the caller is on main) and returns the blocking
+    /// send-and-wait as a closure the fan-out can run on a worker thread, so
+    /// the hold no longer parks the main thread. `nil` when telemetry never
+    /// started or lacks consent — those quits pay nothing.
+    public func prepareQuitFlush(timeout: TimeInterval = 0.6) -> (@Sendable () -> Void)? {
+        guard started, isEnabled else { return nil }
+        return {
+            Aptabase.shared.flush()
+            Thread.sleep(forTimeInterval: timeout)
+        }
     }
 
     // MARK: - Consent
