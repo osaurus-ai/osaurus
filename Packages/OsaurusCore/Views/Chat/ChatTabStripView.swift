@@ -575,8 +575,12 @@ private struct ChatTabItemView: View {
             if isActive {
                 // The full Chrome tab silhouette, flush with the strip's
                 // baseline so it reads as rising out of the content below.
+                // The feet flare OUTSIDE the slot (negative inset) so the
+                // body spans the full tab width like the inactive cards and
+                // the curves overlap the neighbours' gaps, as in Chrome.
                 ChromeTabShape(topRadius: 8, footRadius: Self.footRadius)
                     .fill(theme.tertiaryBackground.opacity(theme.isDark ? 0.95 : 0.85))
+                    .padding(.horizontal, -Self.footRadius)
             } else {
                 // Inactive tabs sit "behind" the active one (Chrome's 3D
                 // read): a faint inset rounded rect at rest, brightening on
@@ -594,7 +598,8 @@ private struct ChatTabItemView: View {
         }
         .contentShape(Rectangle())
         .offset(x: dragOffset)
-        .zIndex(isDragging ? 1 : 0)
+        // Active above its neighbours so its flared feet draw over them.
+        .zIndex(isDragging ? 2 : (isActive ? 1 : 0))
         .onTapGesture(perform: onSelect)
         // A short travel threshold keeps plain clicks as taps; beyond it
         // the press becomes a reorder drag.
