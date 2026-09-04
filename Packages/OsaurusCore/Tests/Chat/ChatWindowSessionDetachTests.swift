@@ -193,20 +193,23 @@ struct ChatWindowSessionDetachTests {
 
     // MARK: Reopening a running chat
 
-    @Test func loadSession_ofLiveRun_reattachesSameSessionInstance() async throws {
+    /// Reopening a chat that is still running in ANOTHER tab focuses that
+    /// tab: the exact live instance is shown again, never a stale disk copy
+    /// loaded into a second session.
+    @Test func loadSession_ofLiveRun_focusesItsTab() async throws {
         try await ChatHistoryTestStorage.run {
             let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
             let running = try await startStream(in: window, prompt: "still working", delayMs: 800)
 
-            // Detach: the window moves to a new chat while the run continues.
+            // New chat: the run keeps its tab while a fresh tab takes over.
             window.startNewChat()
             let runningId = try #require(running.sessionId)
-            let task = try #require(mgr.liveTask(forSessionId: runningId))
+            #expect(window.session !== running)
             #expect(running.isStreaming)
+            let runningTabId = try #require(window.tabs.first { $0.session === running }?.id)
 
-            // Reopen the running chat from the sidebar: the EXACT live
-            // instance is re-attached — not a stale disk copy — and the
-            // window is bound to the task (view attachment, not ownership).
+            // Reopen the running chat (e.g. from history): its tab is
+            // selected and the live instance is back on screen.
             let reopenData = ChatSessionData(
                 id: runningId,
                 title: running.title,
@@ -218,15 +221,16 @@ struct ChatWindowSessionDetachTests {
             )
             window.loadSession(reopenData)
 
-            #expect(window.session === running, "reopening a live chat must attach the in-memory session")
-            #expect(mgr.taskId(forWindowId: window.windowId) == task.id)
+            #expect(window.session === running, "reopening a live chat must show the in-memory session")
+            #expect(window.activeTabId == runningTabId)
+            #expect(window.tabs.count == 2, "no duplicate tab for a chat that is already open")
             #expect(running.windowState === window)
+            #expect(mgr.liveTask(forSessionId: runningId) == nil, "tab-owned run: no registry task")
 
-            // Subsequent deltas keep landing in the re-attached session.
+            // Subsequent deltas keep landing in the same session.
             try await waitUntil { !running.isStreaming }
             #expect(window.session.turns.contains { $0.role == .assistant && $0.content.contains("background answer") })
 
-            mgr.finalizeTask(task.id)
             window.cleanup()
         }
     }
