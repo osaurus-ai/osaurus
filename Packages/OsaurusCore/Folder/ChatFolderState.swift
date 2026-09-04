@@ -235,6 +235,10 @@ public final class ChatFolderState: ObservableObject {
             // `securityScopedURL` stays nil.
             //
             // Readability is checked HERE because `buildContext` cannot fail:
+            // (Scope note: `isReadableFile` is access(2)/POSIX bits; a
+            // TCC-managed folder can still pass it and fail only at
+            // open/readdir, so this catches missing/deleted/POSIX-unreadable
+            // dirs — the TCC costume may need a deeper probe if observed.)
             // an unreadable, TCC-denied, or deleted directory yields a
             // plausible context with an EMPTY tree, and the run then reports
             // "the monitored folder is empty" over a folder that has files —

@@ -594,7 +594,12 @@ public final class WatcherManager {
                         fingerprint.diff(from: known)
                     }.value
                     changeCount = diff.totalCount
-                    changedPaths = Array(diff.added.union(diff.modified).union(diff.removed))
+                    // Removed paths are marked so the model is never invited
+                    // to `file_read` a file that no longer exists and then
+                    // narrate a spurious missing-file problem.
+                    changedPaths =
+                        (Array(diff.added.union(diff.modified))
+                            + diff.removed.map { "\($0) (removed)" })
                         .sorted()
                 } else {
                     changeCount = fingerprint.entries.count
@@ -614,6 +619,7 @@ public final class WatcherManager {
                 let prompt = self.buildDispatchPrompt(
                     for: watcher,
                     iteration: iteration,
+                    resolvedWatchPath: watchPath,
                     changedPaths: changedPaths
                 )
 
@@ -719,6 +725,19 @@ public final class WatcherManager {
     /// bounded so a bulk copy of thousands of files cannot flood the prompt.
     static let dispatchPromptChangedPathCap = 20
 
+    /// One changed-path line for the dispatch prompt. Filenames are
+    /// untrusted external input (watched folders are commonly fed by other
+    /// programs and people): APFS names may legally contain newlines and
+    /// other control characters, which could otherwise terminate the list
+    /// format and read as injected instructions. Control characters are
+    /// stripped and the name is backtick-quoted as data.
+    static func promptLine(forChangedPath path: String) -> String {
+        let cleaned = String(path.unicodeScalars.map { scalar in
+            CharacterSet.controlCharacters.contains(scalar) ? " " : Character(scalar)
+        })
+        return "- `\(cleaned)`\n"
+    }
+
     /// Build the dispatch prompt. The AI gets the full directory tree via
     /// FolderContext when the folder is set — but the prompt must still NAME
     /// the watched folder and the changed files. Live failure without the
@@ -728,21 +747,31 @@ public final class WatcherManager {
     /// real watched folder held the files. The changed-path list also makes
     /// the Watchers guide's "receives the recently changed files" promise
     /// true — it wasn't, before this.
+    ///
+    /// `resolvedWatchPath` is the RESOLVED path from the dispatch site (a
+    /// bookmark-only GUI watcher has `watcher.watchPath == nil`; interpolating
+    /// the optional shipped `Optional("…")` — or a literal "nil" — into the
+    /// anchor, caught in audit).
     /// Internal (not private) so the prompt-anchoring contract is unit-testable.
     func buildDispatchPrompt(
         for watcher: Watcher,
         iteration: Int = 1,
+        resolvedWatchPath: String? = nil,
         changedPaths: [String] = []
     ) -> String {
         var prompt = watcher.instructions
 
-        prompt +=
-            "\n\nWatched folder (work HERE, not in any other directory): \(watcher.watchPath)\n"
+        if let anchor = resolvedWatchPath ?? watcher.watchPath, !anchor.isEmpty {
+            prompt +=
+                "\n\nWatched folder (work HERE, not in any other directory): \(anchor)\n"
+        } else {
+            prompt += "\n"
+        }
         if !changedPaths.isEmpty {
             let shown = changedPaths.prefix(Self.dispatchPromptChangedPathCap)
             prompt += "Changed since the last check:\n"
             for path in shown {
-                prompt += "- \(path)\n"
+                prompt += Self.promptLine(forChangedPath: path)
             }
             let overflow = changedPaths.count - shown.count
             if overflow > 0 {

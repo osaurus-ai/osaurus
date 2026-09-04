@@ -506,14 +506,27 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         // implies another call. Observed live: an 8B orchestrator re-created
         // a just-created Watcher under variant names, twice, after a clean
         // apply. Name what landed and say stop.
+        //
+        // Gated on needsAction being empty as well: `status` stays "applied"
+        // when a change merely needs the user to finish a step in Settings
+        // (credentials), and a DONE-and-stop instruction there would tell the
+        // model to bury exactly the step the notes surface. That case gets a
+        // truthful next_step naming the outstanding user step instead.
         if status == "applied" {
             let landed = results.map { "\($0.section)[\($0.target)]" }
                 .joined(separator: ", ")
-            result["next_step"] =
-                "DONE — all changes landed"
-                + (landed.isEmpty ? "" : " (\(landed))")
-                + ". Report this to the user and stop. Do not plan or apply again "
-                + "unless the user asks for something different."
+            if needsAction.isEmpty {
+                result["next_step"] =
+                    "DONE — all changes landed"
+                    + (landed.isEmpty ? "" : " (\(landed))")
+                    + ". Report this to the user and stop. Do not plan or apply again "
+                    + "unless the user asks for something different."
+            } else {
+                result["next_step"] =
+                    "Changes landed, but \(needsAction.count) of them need the user to "
+                    + "finish a step in Settings (see notes). Tell the user exactly which "
+                    + "step remains, then stop — do not plan or apply again."
+            }
         }
         return ToolEnvelope.success(tool: name, result: result)
     }
