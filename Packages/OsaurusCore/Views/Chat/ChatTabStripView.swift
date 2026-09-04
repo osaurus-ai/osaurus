@@ -229,6 +229,13 @@ struct ChatTabStripView: View {
                     dragOffset: draggingTabId == tab.id ? dragOffset : 0,
                     onSelect: { windowState.selectTab(id: tab.id) },
                     onClose: { windowState.closeTab(id: tab.id) },
+                    onOpenProject: {
+                        windowState.selectTab(id: tab.id)
+                        NotificationCenter.default.post(
+                            name: .chatToolbarBackToProject,
+                            object: nil,
+                            userInfo: ["windowId": windowState.windowId])
+                    },
                     onDragChanged: { translation in
                         handleDragChanged(tab.id, translation: translation)
                     },
@@ -365,6 +372,8 @@ private struct ChatTabItemView: View {
     let dragOffset: CGFloat
     let onSelect: () -> Void
     let onClose: () -> Void
+    /// Open the project this tab's chat belongs to (folder glyph).
+    let onOpenProject: () -> Void
     /// Horizontal translation since the press (≥ minimum distance).
     let onDragChanged: (CGFloat) -> Void
     let onDragEnded: () -> Void
@@ -374,6 +383,7 @@ private struct ChatTabItemView: View {
     /// Live activity for this tab's session — drives the avatar's spinning
     /// ring, the same signal the sidebar rows use.
     @ObservedObject private var activityMonitor = SessionActivityMonitor.shared
+    @ObservedObject private var projectManager = ProjectManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
 
     /// The feet of the active tab's shape; content is inset past them.
@@ -416,6 +426,21 @@ private struct ChatTabItemView: View {
             // drawn as an overlay and otherwise bleeds into the title gap
             // whenever it appears (and the title would shift with it).
             .frame(width: TabActivityRing.diameter, height: TabActivityRing.diameter)
+
+            // Project membership: a folder glyph ahead of the title, which
+            // doubles as the "back to project" control (the pill this replaces
+            // lived in the title bar and collided with the strip).
+            if let project = projectManager.project(for: session.projectId) {
+                Button(action: onOpenProject) {
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
+                        .frame(width: 14, height: 14)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(Text(L("Open project \"\(project.name)\"")))
+            }
 
             Text(title)
                 .font(.system(size: 11.5, weight: .regular))
