@@ -482,9 +482,6 @@ private struct ChatTabItemView: View {
                 .onEnded { _ in onDragEnded() }
         )
         .onHover(perform: onHover)
-        // Inactive tabs are links to elsewhere, so they get the hand
-        // cursor; the active tab is the current page and keeps the arrow.
-        .modifier(InactiveTabCursor(isActive: isActive))
         .animation(.easeOut(duration: 0.1), value: isHovered)
     }
 }
@@ -733,18 +730,3 @@ private struct ChromeCloseButtonStyle: ButtonStyle {
     }
 }
 
-/// Hand cursor for inactive tabs only. Wrapping the conditional in a
-/// modifier keeps the view tree's identity stable when a tab flips between
-/// active and inactive (the cursor modifier's push/pop stays balanced).
-private struct InactiveTabCursor: ViewModifier {
-    let isActive: Bool
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if isActive {
-            content
-        } else {
-            content.pointingHandCursor()
-        }
-    }
-}
