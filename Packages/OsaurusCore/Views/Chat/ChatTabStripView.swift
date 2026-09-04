@@ -1,4 +1,4 @@
-//
+                            || isProminent(shown[index - 1].id)//
 //  ChatTabStripView.swift
 //  osaurus
 //
@@ -186,22 +186,51 @@ struct ChatTabStripView: View {
     /// separators + "+" button) always fits inside `stripWidth`.
     private var maxTabWidth: CGFloat {
         guard let stripWidth else { return 260 }
-        let count = CGFloat(max(windowState.tabs.count, 1))
-        let plusButtonReserve: CGFloat = 32
-        let separators = count - 1
-        let available = stripWidth - plusButtonReserve - separators
-        // No hard floor: a floor that exceeds available/count makes the
-        // row's minimum grow past the strip with many tabs, overflowing the
-        // toolbar item — AppKit then folds the whole bar into the overflow
-        // menu (the "disappears on small windows" bug). Cramped tabs beat
-        // no tabs.
-        return min(260, max(2, available / count))
+        let count = CGFloat(max(visibleTabs.count, 1))
+        let available = stripWidth - Self.plusButtonReserve - (count - 1)
+            - (hiddenTabs.isEmpty ? 0 : Self.overflowButtonReserve)
+        // Floor at the compact chip: below it a tab is unreadable, so tabs
+        // that would push under the floor drop into the overflow menu
+        // instead (see `visibleTabs`) — the row never exceeds the strip.
+        return min(260, max(Self.minTabWidth, available / count))
+    }
+
+    /// Narrowest chip: avatar only, no title (Chrome's pinned-tab size).
+    static let minTabWidth: CGFloat = 44
+    private static let plusButtonReserve: CGFloat = 26
+    private static let overflowButtonReserve: CGFloat = 30
+
+    /// How many tabs fit at the floor width, keeping the active tab visible.
+    /// While unmeasured every tab is visible (the first layout pass).
+    private var visibleTabs: [ChatTab] {
+        let tabs = windowState.tabs
+        guard let stripWidth else { return tabs }
+        let fitsAll = stripWidth - Self.plusButtonReserve - CGFloat(tabs.count - 1)
+            >= CGFloat(tabs.count) * Self.minTabWidth
+        if fitsAll { return tabs }
+        let budget = stripWidth - Self.plusButtonReserve - Self.overflowButtonReserve
+        let capacity = max(1, Int(budget / (Self.minTabWidth + 1)))
+        var shown = Array(tabs.prefix(capacity))
+        // The active tab always stays in the strip: swap it in for the last
+        // visible slot when it would otherwise be folded away.
+        if let active = tabs.first(where: { $0.id == windowState.activeTabId }),
+            !shown.contains(where: { $0.id == active.id })
+        {
+            shown[shown.count - 1] = active
+        }
+        return shown
+    }
+
+    private var hiddenTabs: [ChatTab] {
+        let visibleIds = Set(visibleTabs.map(\.id))
+        return windowState.tabs.filter { !visibleIds.contains($0.id) }
     }
 
 
     private func tabsRow() -> some View {
         HStack(spacing: 0) {
-            ForEach(Array(windowState.tabs.enumerated()), id: \.element.id) { index, tab in
+            let shown = visibleTabs
+            ForEach(Array(shown.enumerated()), id: \.element.id) { index, tab in
                 // Hairline divider between adjacent tabs, suppressed
                 // when either neighbor is active or hovered (their
                 // background shape already provides the edge).
@@ -240,6 +269,11 @@ struct ChatTabStripView: View {
                         }
                     }
                 )
+            }
+
+            if !hiddenTabs.isEmpty {
+                overflowButton
+                    .padding(.leading, 2)
             }
 
             newTabButton
@@ -316,6 +350,40 @@ struct ChatTabStripView: View {
             .frame(width: 1, height: 14)
     }
 
+    /// Tabs that don't fit at the floor width, as a native menu (Chrome's
+    /// tab-search chevron). Picking one selects it, which swaps it into the
+    /// strip in place of the last visible tab.
+    private var overflowButton: some View {
+        Button(action: presentOverflowTabs) {
+            HStack(spacing: 2) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                Text(verbatim: "\(hiddenTabs.count)")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .foregroundColor(windowState.theme.secondaryText)
+            .frame(width: 28, height: 20)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(ChromeHoverCircleButtonStyle(theme: windowState.theme))
+        .help(Text(LocalizedStringKey("More Tabs"), bundle: .module))
+    }
+
+    private func presentOverflowTabs() {
+        let menu = NSMenu()
+        for tab in hiddenTabs {
+            let item = NSMenuItem(
+                title: tab.session.title.isEmpty ? L("New Chat") : tab.session.title,
+                action: #selector(TabMenuTarget.select(_:)), keyEquivalent: "")
+            let target = TabMenuTarget { [windowState] in windowState.selectTab(id: tab.id) }
+            item.target = target
+            item.representedObject = target  // keeps the target alive with the item
+            menu.addItem(item)
+        }
+        let origin = NSEvent.mouseLocation
+        menu.popUp(positioning: nil, at: NSPoint(x: origin.x - 8, y: origin.y - 16), in: nil)
+    }
+
     private var newTabButton: some View {
         Button(action: { windowState.newTab() }) {
             Image(systemName: "plus")
@@ -386,6 +454,11 @@ private struct ChatTabItemView: View {
         session.turns.isEmpty ? L("New Chat") : session.title
     }
 
+    /// Below this width the title is dropped (avatar + × only).
+    private var isNarrow: Bool { width < 110 }
+    /// The floor chip: avatar only, centred; × replaces the avatar on hover.
+    private var isCompact: Bool { width < 72 }
+
     private var agent: Agent {
         agentManager.agent(for: session.agentId ?? Agent.defaultId) ?? .default
     }
@@ -394,8 +467,12 @@ private struct ChatTabItemView: View {
         session.sessionId.flatMap { activityMonitor.statuses[$0] }
     }
 
-    var body: some View {
+    private var chipContent: some View {
         HStack(spacing: 6) {
+            if isCompact, canClose, isHovered {
+                // No room for both: the × takes the avatar's slot on hover.
+                closeButton
+            } else {
             AgentAvatarView(
                 mascotId: agent.avatar,
                 name: agent.displayName,
@@ -418,11 +495,12 @@ private struct ChatTabItemView: View {
             // drawn as an overlay and otherwise bleeds into the title gap
             // whenever it appears (and the title would shift with it).
             .frame(width: TabActivityRing.diameter, height: TabActivityRing.diameter)
+            }
 
             // Project membership: a folder glyph ahead of the title, which
             // doubles as the "back to project" control (the pill this replaces
             // lived in the title bar and collided with the strip).
-            if let project = projectManager.project(for: session.projectId) {
+            if !isNarrow, let project = projectManager.project(for: session.projectId) {
                 Button(action: onOpenProject) {
                     Image(systemName: "folder.fill")
                         .font(.system(size: 9.5, weight: .semibold))
@@ -434,6 +512,7 @@ private struct ChatTabItemView: View {
                 .help(Text(verbatim: project.name))
             }
 
+            if !isNarrow {
             Text(title)
                 .font(.system(size: 11.5, weight: .regular))
                 // Optical centring: the label's x-height sits a hair above
@@ -443,32 +522,34 @@ private struct ChatTabItemView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
-            if canClose {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(isActive ? theme.primaryText : theme.secondaryText)
-                        .frame(width: 15, height: 15)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(ChromeCloseButtonStyle(theme: theme))
-                // Chrome keeps the active tab's × always; inactive tabs
-                // reveal it on hover.
-                .opacity(isActive || isHovered ? 1 : 0)
-                .help(Text(LocalizedStringKey("Close Tab"), bundle: .module))
+            if canClose, !isCompact {
+                closeButton
             }
         }
-        // Inset content past the active shape's feet so text never sits on
-        // the curved corners. The leading inset is trimmed by the ring's
-        // reserved halo so the AVATAR (not its invisible ring frame) sits
-        // the same distance from the edge as the close button does.
-        .padding(.leading, Self.footRadius + 14 - (TabActivityRing.diameter - Self.avatarDiameter) / 2)
-        // Inactive tabs: the hover highlight is inset 2pt from the chip and
-        // the × glyph sits inside its 15pt hit circle, so it reads further
-        // from the edge than the avatar; pull it 4pt closer. The active
-        // tab's full silhouette keeps the symmetric inset.
-        .padding(.trailing, Self.footRadius + (isActive ? 14 : 10))
+        .frame(maxWidth: .infinity, alignment: isCompact ? .center : .leading)
+        .padding(.leading, isCompact ? 0 : Self.footRadius + 14 - (TabActivityRing.diameter - Self.avatarDiameter) / 2)
+        .padding(.trailing, isCompact ? 0 : Self.footRadius + (isActive ? 14 : 10))
+    }
+
+    private var closeButton: some View {
+        Button(action: onClose) {
+            Image(systemName: "xmark")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundColor(isActive ? theme.primaryText : theme.secondaryText)
+                .frame(width: 15, height: 15)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(ChromeCloseButtonStyle(theme: theme))
+        // Chrome keeps the active tab's × always; inactive tabs
+        // reveal it on hover.
+        .opacity(isActive || isHovered ? 1 : 0)
+        .help(Text(LocalizedStringKey("Close Tab"), bundle: .module))
+    }
+
+    var body: some View {
+        chipContent
         .frame(width: width)
         .frame(maxHeight: .infinity)
         .background(alignment: .bottom) {
@@ -691,3 +772,10 @@ private struct ChromeCloseButtonStyle: ButtonStyle {
     }
 }
 
+
+/// Closure target for the overflow-tabs menu items.
+private final class TabMenuTarget: NSObject {
+    private let handler: () -> Void
+    init(_ handler: @escaping () -> Void) { self.handler = handler }
+    @objc func select(_ sender: Any?) { handler() }
+}
