@@ -40947,40 +40947,6 @@
         }
       }
     },
-    "Chat history moved out of the sidebar into this menu.\n\nSee History lists every conversation for the selected agent, with search, import, and the same actions as before." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Der Chat-Verlauf ist aus der Seitenleiste in dieses Menü umgezogen.\n\n„Verlauf anzeigen“ listet alle Unterhaltungen des ausgewählten Agenten, mit Suche, Import und denselben Aktionen wie zuvor."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "채팅 기록이 사이드바에서 이 메뉴로 이동했습니다.\n\n기록 보기에는 선택된 에이전트의 모든 대화가 검색, 가져오기 및 이전과 동일한 작업과 함께 표시됩니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "История чатов переехала из боковой панели в это меню.\n\n«Показать историю» перечисляет все беседы выбранного агента с поиском, импортом и теми же действиями, что и раньше."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "聊天历史从侧边栏移到了此菜单。\n\n“查看历史”会列出所选智能体的所有对话，并保留搜索、导入和之前的全部操作。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "聊天歷史從側邊欄移到了此選單。\n\n「查看歷史」會列出所選智能體的所有對話，並保留搜尋、匯入和之前的全部操作。"
-          }
-        }
-      }
-    },
     "Chat Layout Tour" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -95059,40 +95025,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "衰減、去重、強制運行之間的小時間隔"
-          }
-        }
-      }
-    },
-    "Hover the ⋯ button to open the menu" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Fahre über die ⋯-Schaltfläche, um das Menü zu öffnen"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "⋯ 버튼 위에 마우스를 올려 메뉴를 여세요"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Наведите курсор на кнопку ⋯, чтобы открыть меню"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "将鼠标悬停在 ⋯ 按钮上以打开菜单"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "將滑鼠懸停在 ⋯ 按鈕上以開啟選單"
           }
         }
       }
@@ -149424,40 +149356,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "釘選視窗"
-          }
-        }
-      }
-    },
-    "Pin Window and Settings moved too" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Fenster anheften und Einstellungen sind auch umgezogen"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "창 고정과 설정도 이동했습니다"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Закрепить окно и настройки тоже переехали"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "固定窗口和设置也移到了这里"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "釘選視窗和設定也移到了這裡"
           }
         }
       }
@@ -211170,40 +211068,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "所屬插件已禁用。"
-          }
-        }
-      }
-    },
-    "The pin and settings buttons now live under the same menu as history.\n\nThat keeps the title bar clear for your tabs." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Die Schaltflächen zum Anheften und für die Einstellungen befinden sich jetzt im selben Menü wie der Verlauf.\n\nSo bleibt die Titelleiste frei für deine Tabs."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "고정 및 설정 버튼은 이제 기록과 같은 메뉴에 있습니다.\n\n덕분에 제목 표시줄을 탭을 위해 비워 둘 수 있습니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Кнопки закрепления и настроек теперь находятся в том же меню, что и история.\n\nТак заголовок окна остаётся свободным для вкладок."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "固定和设置按钮现在与历史位于同一个菜单中。\n\n这样标题栏就能为你的标签页留出空间。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "釘選和設定按鈕現在與歷史位於同一個選單中。\n\n這樣標題列就能為你的分頁留出空間。"
           }
         }
       }
