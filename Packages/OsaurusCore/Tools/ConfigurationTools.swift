@@ -150,8 +150,9 @@ enum ConfigurationReadNextStep {
     static let statusHint =
         hint(hasShape: false)
         + " Settings sections (memory, default_agent, tools, delegation) "
-        + "are document sections, not inspect scopes — read their current values with "
-        + "osaurus_config {action: 'export', sections: [...]}. "
+        + "are document sections: read one with osaurus_inspect {action: 'describe', "
+        + "scope: '<section>'} (or osaurus_config {action: 'export', sections: [...]}), "
+        + "and change it with osaurus_config {action: 'apply', yaml: ...}. "
         + "Server runtime, chat behavior, and app settings are managed in the Settings UI, "
         + "not with these tools. "
         + "For questions about what Osaurus is or how a feature works, read the matching "
@@ -355,8 +356,9 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                 "description": .string(
                     "Configuration scope. Required for list and describe. memory, "
                         + "default_agent, active_agent, tools, and delegation are settings "
-                        + "document sections — reading one routes you to osaurus_config "
-                        + "export. server, chat, and app are Settings-UI-only."),
+                        + "document sections — list/describe returns the section's current "
+                        + "values (change them with osaurus_config apply). server, chat, and "
+                        + "app are Settings-UI-only."),
             ]),
             "id": .object([
                 "type": .string("string"),
