@@ -84,6 +84,7 @@ struct ChatSessionSidebar: View {
     /// The row a ⇧-click range extends from. Set on every plain or ⌘ click.
     @State private var selectionAnchorId: UUID?
     @State private var searchQuery: String = ""
+    @State private var isFooterHovered = false
     @State private var sourceFilter: SourceFilter = .all
     @State private var hoveredFilter: SourceFilter?
     /// Top-level sidebar lens: the flat chat list or the project browser.
@@ -253,9 +254,11 @@ struct ChatSessionSidebar: View {
                 // pending the next iteration of this idea.
                 agentListView
             }
+
+            // Settings lives at the foot of the sidebar (moved out of the
+            // title bar so it stays tabs + chat controls).
+            sidebarFooter
         }
-        // Tour spotlight anchor (invisible; reports the sidebar's frame).
-        .background(TourAnchorMarker(anchor: .sidebar))
         // Adopting a new agent (via the dropdown's switchAgent or the
         // sidebar's loadSession) is a context change — wipe per-window
         // filter state so the new agent starts on "All" with an empty
@@ -740,6 +743,38 @@ struct ChatSessionSidebar: View {
             ),
             scope: scope
         )
+    }
+
+    // MARK: - Footer
+
+    private var sidebarFooter: some View {
+        Button {
+            AppDelegate.shared?.showManagementWindow(initialTab: nil)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 13, weight: .medium))
+                Text("Settings", bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+                Spacer()
+            }
+            .foregroundColor(theme.secondaryText)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(SidebarRowBackground(isSelected: false, isHovered: isFooterHovered))
+            .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .onHover { hovering in
+            withAnimation(theme.springAnimation(responseMultiplier: 0.8)) { isFooterHovered = hovering }
+        }
+        .localizedHelp("Settings")
+        // Tour spotlight anchor (invisible; reports the row's frame).
+        .background(TourAnchorMarker(anchor: .sidebarSettings))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
     }
 
     // MARK: - Header

@@ -3,7 +3,8 @@
 //  osaurus
 //
 //  Coachmark tour for the agent-first chat layout: spotlights the live UI
-//  (sidebar, tab strip, overflow menu) with a short callout per stop so
+//  (sidebar, tab strip, history and pin buttons, settings) with a short
+//  callout per stop so
 //  users updating from the old layout learn that nothing was removed, only
 //  moved. Self-contained: its own once-per-user gate, its own auto-trigger
 //  when a chat window first appears, and a Help-menu replay. Independent of
@@ -25,9 +26,11 @@ import SwiftUI
 public enum ChatTourAnchor: String, Sendable {
     /// The Agents | Projects lens switcher at the top of the sidebar.
     case sidebarLensBar
-    case sidebar
     case tabStrip
-    case overflowMenu
+    case historyButton
+    case pinButton
+    /// The Settings row at the foot of the sidebar.
+    case sidebarSettings
 }
 
 struct ChatTourShortcut: Hashable {
@@ -42,15 +45,10 @@ struct ChatTourStop: Identifiable {
     let body: String
     /// Keyboard shortcuts listed under the body, one per row.
     var shortcuts: [ChatTourShortcut] = []
-    /// Action-driven stop: no Next button; it completes when the user
-    /// performs the spotlighted action (see `ChatLayoutTour.noteAction`).
-    var requiresAction: Bool = false
-    /// Hint shown instead of Next while an action is awaited.
-    var actionHint: String? = nil
 }
 
 extension ChatTourStop {
-    /// The four stops, in order. Copy leads with "moved / still here" so the
+    /// The five stops, in order. Copy leads with "moved / still here" so the
     /// message is reassurance, not a feature pitch.
     @MainActor static var all: [ChatTourStop] {
         [
@@ -78,20 +76,26 @@ extension ChatTourStop {
             ),
             ChatTourStop(
                 id: "history",
-                anchor: .overflowMenu,
+                anchor: .historyButton,
                 title: L("Your chats didn’t go anywhere"),
                 body: L(
-                    "Chat history moved out of the sidebar into this menu.\n\nSee History lists every conversation for the selected agent, with search, import, and the same actions as before."
-                ),
-                requiresAction: true,
-                actionHint: L("Hover the ⋯ button to open the menu")
+                    "Chat history moved out of the sidebar to this button.\n\nIt lists every conversation for the selected agent, with search, import, and the same actions as before."
+                )
             ),
             ChatTourStop(
-                id: "menu",
-                anchor: .overflowMenu,
-                title: L("Pin Window and Settings moved too"),
+                id: "pin",
+                anchor: .pinButton,
+                title: L("Pin the window from here"),
                 body: L(
-                    "The pin and settings buttons now live under the same menu as history.\n\nThat keeps the title bar clear for your tabs."
+                    "Keep this chat floating above your other windows.\n\nClick again to unpin it."
+                )
+            ),
+            ChatTourStop(
+                id: "settings",
+                anchor: .sidebarSettings,
+                title: L("Settings moved to the sidebar"),
+                body: L(
+                    "The settings button now sits at the bottom of the sidebar.\n\nEverything inside it is unchanged."
                 )
             ),
         ]
@@ -112,25 +116,12 @@ public final class ChatLayoutTour: ObservableObject {
     @Published private(set) var stepIndex: Int = 0
     /// Latest reported frame per anchor, per window (window coordinates).
     @Published private(set) var anchors: [UUID: [ChatTourAnchor: CGRect]] = [:]
-    /// Height of the overflow menu while it is open, so the last stop's
-    /// card can sit BELOW the menu instead of behind it. Reset per step.
-    @Published private(set) var overflowMenuHeight: CGFloat = 0
-    /// True while the next card is being held back after an action-driven
-    /// stop completes, so it doesn't snap in the instant the pointer reaches
-    /// the button. Driven by a run-loop timer in common modes: the overflow
-    /// menu's tracking loop would starve a main-actor `Task.sleep` until the
-    /// menu closed.
-    @Published private(set) var cardRevealPending = false
-    private var cardRevealTimer: Timer?
 
     let stops = ChatTourStop.all
 
     private var overlayWindow: NSWindow?
     private var overlayHost: NSHostingView<ChatTourOverlayView>?
     private var blurView: NSVisualEffectView?
-    /// Current spotlight in window coordinates, for the pass-through check.
-    private var currentCutout: CGRect?
-    private var passThroughTimer: Timer?
     private var windowObservers: [NSObjectProtocol] = []
     private var escapeMonitor: Any?
     private var didAutoCheckThisLaunch = false
@@ -188,9 +179,6 @@ public final class ChatLayoutTour: ObservableObject {
 
     func next() {
         guard isActive else { return }
-        overflowMenuHeight = 0
-        cardRevealTimer?.invalidate()
-        cardRevealPending = false
         if stepIndex + 1 < stops.count {
             stepIndex += 1
             } else {
@@ -200,9 +188,6 @@ public final class ChatLayoutTour: ObservableObject {
 
     func back() {
         guard isActive, stepIndex > 0 else { return }
-        overflowMenuHeight = 0
-        cardRevealTimer?.invalidate()
-        cardRevealPending = false
         stepIndex -= 1
     }
 
@@ -210,41 +195,11 @@ public final class ChatLayoutTour: ObservableObject {
         finish(markCompleted: true)
     }
 
-    /// Action-driven stop: completes the moment the pointer reaches the
-    /// overflow button (the hover that opens its menu), so the card is gone
-    /// by the time the menu appears.
-    func noteOverflowHovered() {
-        guard let stop = currentStop, stop.requiresAction, stop.anchor == .overflowMenu else { return }
-        next()
-        cardRevealPending = true
-        cardRevealTimer?.invalidate()
-        let timer = Timer(timeInterval: 1.0, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                withAnimation(.easeOut(duration: 0.35)) { self.cardRevealPending = false }
-            }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        cardRevealTimer = timer
-    }
-
-    /// Called just before the overflow menu pops up (its size is known then).
-    func noteOverflowMenuWillOpen(height: CGFloat) {
-        guard isActive else { return }
-        overflowMenuHeight = height
-    }
-
-    func noteOverflowMenuDidClose() {
-        guard isActive else { return }
-        overflowMenuHeight = 0
-    }
-
     /// Blur everything behind the overlay except the spotlight. The blur is
     /// an `NSVisualEffectView` (behind-window) whose mask clears the cutout;
     /// the cleared region is fully transparent, so hover and clicks there
     /// reach the chat window (which the action-driven stop relies on).
     func updateBlurMask(cutout: CGRect?) {
-        currentCutout = cutout
         guard let blurView, let overlayWindow else { return }
         let size = overlayWindow.frame.size
         guard size.width > 0, size.height > 0 else { return }
@@ -345,29 +300,11 @@ public final class ChatLayoutTour: ObservableObject {
                 MainActor.assumeIsolated { self?.finish(markCompleted: false) }
             },
         ]
-        // Mouse pass-through: an overlay window swallows events even where
-        // it is transparent, so while the cursor sits inside the spotlight
-        // the whole overlay steps aside (`ignoresMouseEvents`) and the real
-        // control underneath gets the hover/click — the action-driven stop
-        // depends on it. Polled: mouse-moved events aren't delivered to a
-        // window that ignores them, so a monitor can't see the cursor leave.
-        passThroughTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.updatePassThrough() }
-        }
         // Esc skips, wherever keyboard focus is.
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53 else { return event }
             MainActor.assumeIsolated { self?.skip() }
             return nil
-        }
-    }
-
-    private func updatePassThrough() {
-        guard let overlayWindow, let cutout = currentCutout else { return }
-        let screenCutout = cutout.offsetBy(dx: overlayWindow.frame.minX, dy: overlayWindow.frame.minY)
-        let inside = screenCutout.contains(NSEvent.mouseLocation)
-        if overlayWindow.ignoresMouseEvents != inside {
-            overlayWindow.ignoresMouseEvents = inside
         }
     }
 
@@ -379,12 +316,6 @@ public final class ChatLayoutTour: ObservableObject {
     }
 
     private func dismissOverlay() {
-        passThroughTimer?.invalidate()
-        passThroughTimer = nil
-        cardRevealTimer?.invalidate()
-        cardRevealTimer = nil
-        cardRevealPending = false
-        currentCutout = nil
         windowObservers.forEach { NotificationCenter.default.removeObserver($0) }
         windowObservers = []
         if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
@@ -517,9 +448,7 @@ struct ChatTourOverlayView: View {
                     card(for: stop)
                         .frame(width: Self.cardWidth)
                         .fixedSize(horizontal: false, vertical: true)
-                        .opacity(tour.cardRevealPending ? 0 : 1)
-                        .allowsHitTesting(!tour.cardRevealPending)
-                        .offset(cardOffset(spotlight: spotlight, in: size, clearance: tour.overflowMenuHeight))
+                        .offset(cardOffset(spotlight: spotlight, in: size))
                 }
             }
             .frame(width: size.width, height: size.height)
@@ -559,11 +488,9 @@ struct ChatTourOverlayView: View {
     /// Place the card under the spotlight when there is room, else above,
     /// clamped inside the window horizontally. With no anchor (not laid out
     /// yet or hidden) the card sits centred.
-    private func cardOffset(spotlight: CGRect?, in size: CGSize, clearance: CGFloat = 0) -> CGSize {
+    private func cardOffset(spotlight: CGRect?, in size: CGSize) -> CGSize {
         let cardHeight: CGFloat = 240
-        // `clearance`: an open menu hanging under the anchor; the card drops
-        // below it (menus pop up ~16pt under the pointer, hence the slack).
-        let gap: CGFloat = 12 + (clearance > 0 ? clearance + 16 : 0)
+        let gap: CGFloat = 12
         guard let s = spotlight else {
             return CGSize(width: (size.width - Self.cardWidth) / 2, height: (size.height - cardHeight) / 2)
         }
@@ -624,23 +551,7 @@ struct ChatTourOverlayView: View {
                     .buttonStyle(.plain)
                     .pointingHandCursor()
                 }
-                if stop.requiresAction {
-                    // Action-driven: the user performs the spotlighted action
-                    // to move on; the hint replaces Next.
-                    HStack(spacing: 5) {
-                        Image(systemName: "hand.point.up.left")
-                            .font(.system(size: 11, weight: .medium))
-                        Text(verbatim: stop.actionHint ?? "")
-                            .font(.system(size: 11.5, weight: .medium))
-                    }
-                    .foregroundColor(theme.accentColor)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(theme.accentColor.opacity(0.14)))
-                    .overlay(Capsule().stroke(theme.accentColor.opacity(0.35), lineWidth: 1))
-                    .modifier(TourShimmer())
-                } else {
-                    let isLast = tour.stepIndex + 1 == tour.stops.count
+                let isLast = tour.stepIndex + 1 == tour.stops.count
                     Button { tour.next() } label: {
                         Text(isLast ? "Done" : "Next", bundle: .module)
                             .font(.system(size: 12, weight: .semibold))
@@ -651,7 +562,6 @@ struct ChatTourOverlayView: View {
                     }
                     .buttonStyle(.plain)
                     .pointingHandCursor()
-                }
             }
             .padding(.top, 2)
         }
@@ -677,37 +587,4 @@ struct ChatTourOverlayView: View {
 private final class TourOverlayWindow: NSWindow {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
-}
-
-/// A soft highlight that sweeps across the view on a loop, to draw the eye
-/// to the one control the user has to act on. Static under Reduce Motion.
-private struct TourShimmer: ViewModifier {
-    @State private var phase: CGFloat = -1
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func body(content: Content) -> some View {
-        content
-            .overlay {
-                if !reduceMotion {
-                    GeometryReader { proxy in
-                        let w = proxy.size.width
-                        LinearGradient(
-                            colors: [.clear, Color.white.opacity(0.35), .clear],
-                            startPoint: .leading, endPoint: .trailing
-                        )
-                        .frame(width: w * 0.6)
-                        .offset(x: phase * w)
-                        .blendMode(.plusLighter)
-                    }
-                    .clipShape(Capsule())
-                    .allowsHitTesting(false)
-                }
-            }
-            .onAppear {
-                guard !reduceMotion else { return }
-                withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) {
-                    phase = 1.2
-                }
-            }
-    }
 }

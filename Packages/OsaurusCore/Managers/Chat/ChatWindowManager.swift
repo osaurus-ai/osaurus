@@ -1314,94 +1314,34 @@ private struct ChatToolbarChangesButton: View {
 private struct ChatToolbarTrailingView: View {
     @ObservedObject var windowState: ChatWindowState
 
-    // Team layout: ONE chevron opening an overflow menu (See History, Pin
-    // Window, Settings) instead of a row of buttons, so the title bar is
-    // tabs + minimal chrome. History and pin are chat-only; the project
-    // page keeps just Settings.
+    // Two chat-only buttons: History (the conversation list, as a dialog)
+    // and Pin Window. Settings moved to the bottom of the sidebar. Both
+    // hide on the project page, which has no chat to list or pin.
     var body: some View {
-        // A real `HeaderActionButton` (Liquid Glass circle like every other
-        // toolbar button) that pops an AppKit menu — a SwiftUI `Menu` label
-        // doesn't get the interactive glass treatment.
-        HeaderActionButton(
-            icon: windowState.isWindowPinned ? "ellipsis.circle.fill" : "ellipsis",
-            help: "More",
-            action: { presentOverflowMenu() }
-        )
-        // Tour spotlight anchor (invisible; reports the button's frame).
-        .background(TourAnchorMarker(anchor: .overflowMenu))
-        .environment(\.theme, windowState.theme)
-        // Open on hover (after a short dwell so brushing past the button
-        // doesn't pop it); click still works as a fallback.
-        .onHover { hovering in
-            hoverTask?.cancel()
-            guard hovering else { return }
-            // Layout tour: reaching this button completes its action step.
-            ChatLayoutTour.shared.noteOverflowHovered()
-            hoverTask = Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 120_000_000)
-                guard !Task.isCancelled, !isMenuOpen else { return }
-                presentOverflowMenu()
+        HStack(spacing: 8) {
+            if !windowState.isProjectPageVisible {
+                HeaderActionButton(
+                    icon: "clock.arrow.circlepath",
+                    help: "History",
+                    action: { ChatHistoryDialog.present(for: windowState) }
+                )
+                // Tour spotlight anchor (invisible; reports the button's frame).
+                .background(TourAnchorMarker(anchor: .historyButton))
+
+                HeaderActionButton(
+                    icon: windowState.isWindowPinned ? "pin.fill" : "pin",
+                    help: windowState.isWindowPinned ? "Unpin Window" : "Pin Window",
+                    action: {
+                        windowState.isWindowPinned.toggle()
+                        ChatWindowManager.shared.setWindowPinned(
+                            id: windowState.windowId, pinned: windowState.isWindowPinned)
+                    }
+                )
+                .background(TourAnchorMarker(anchor: .pinButton))
             }
         }
+        .environment(\.theme, windowState.theme)
     }
-
-    @State private var hoverTask: Task<Void, Never>?
-    @State private var isMenuOpen = false
-
-    private func presentOverflowMenu() {
-        guard !isMenuOpen else { return }
-        isMenuOpen = true
-        defer { isMenuOpen = false }
-        let menu = NSMenu()
-        if !windowState.isProjectPageVisible {
-            menu.addItem(
-                ChatToolbarMenuItem(
-                    title: L("See History"),
-                    symbol: "clock.arrow.circlepath"
-                ) { [windowState] in
-                    ChatHistoryDialog.present(for: windowState)
-                })
-            menu.addItem(
-                ChatToolbarMenuItem(
-                    title: windowState.isWindowPinned ? L("Unpin Window") : L("Pin Window"),
-                    symbol: windowState.isWindowPinned ? "pin.fill" : "pin"
-                ) { [windowState] in
-                    windowState.isWindowPinned.toggle()
-                    ChatWindowManager.shared.setWindowPinned(
-                        id: windowState.windowId, pinned: windowState.isWindowPinned)
-                })
-            menu.addItem(.separator())
-        }
-        menu.addItem(
-            ChatToolbarMenuItem(title: L("Settings"), symbol: "gearshape") {
-                AppDelegate.shared?.showManagementWindow(initialTab: nil)
-            })
-        // Anchor just under the button (the pointer is over it). `popUp`
-        // runs its own tracking loop and returns when the menu closes.
-        let origin = NSEvent.mouseLocation
-        // Layout tour: let its card clear the menu we are about to show.
-        ChatLayoutTour.shared.noteOverflowMenuWillOpen(height: menu.size.height)
-        menu.popUp(positioning: nil, at: NSPoint(x: origin.x - 8, y: origin.y - 16), in: nil)
-        // `popUp` returns once the menu has closed.
-        ChatLayoutTour.shared.noteOverflowMenuDidClose()
-    }
-}
-
-/// `NSMenuItem` with a closure action and an SF Symbol image, for the
-/// toolbar overflow menu.
-private final class ChatToolbarMenuItem: NSMenuItem {
-    private let handler: () -> Void
-
-    init(title: String, symbol: String, handler: @escaping () -> Void) {
-        self.handler = handler
-        super.init(title: title, action: #selector(fire), keyEquivalent: "")
-        self.target = self
-        self.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-    }
-
-    required init(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    @objc private func fire() { handler() }
 }
 
 // MARK: - Window Delegate
