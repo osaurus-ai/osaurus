@@ -126,6 +126,21 @@ struct KnowledgeToolsTests {
         let other = collection("Runbooks")
         #expect(KnowledgeToolScope.match(collectionName: "knowledge", in: [named, other]) == .one(named))
         #expect(KnowledgeToolScope.match(collectionName: "RUNBOOKS", in: [named, other]) == .one(other))
+
+        // The broad aliases (`docs`, `project`, `vault`, `library`) are
+        // plausible real collection names. Exact name is rule 1 and the alias
+        // rule 2, so a collection literally called "Docs" or "Project" is
+        // addressed, never widened to "all granted". Pinned here so a future
+        // reordering cannot silently change the precedence.
+        for name in ["Docs", "Project", "Vault", "Library"] {
+            let real = collection(name)
+            let sibling = collection("Runbooks")
+            #expect(
+                KnowledgeToolScope.match(collectionName: name.lowercased(), in: [real, sibling]) == .one(real),
+                "'\(name)' is a granted collection: exact name must beat the generic alias")
+            #expect(KnowledgeToolScope.match(collectionName: name, in: [sibling]) == .all,
+                "'\(name)' with no such collection granted is still the generic alias")
+        }
     }
 
     @Test
