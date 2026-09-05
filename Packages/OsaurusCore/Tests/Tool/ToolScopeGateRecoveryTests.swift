@@ -388,4 +388,50 @@ struct ToolScopeGateRecoveryTests {
             #expect(!result.contains("callable NOW"), "registered=\(registered)")
         }
     }
+
+    /// `web_fetch_exa` is the Exa plugin's `exa_search_web_fetch_exa` with
+    /// the plugin prefix dropped (Ornith, 2026-09-05). When that one tool is
+    /// exposed to the request, the model is pointed at its real name; when
+    /// two candidates are exposed, nothing is guessed.
+    @Test
+    func prefixDroppedPluginToolName_isSteeredToTheUniqueExposedTool() async throws {
+        let exa = ScopeProbeTool(name: "exa_search_web_fetch_exa")
+        ToolRegistry.shared.registerPluginTool(exa)
+        ToolRegistry.shared.setEnabled(true, for: exa.name)
+        defer {
+            ToolRegistry.shared.setEnabled(false, for: exa.name)
+            ToolRegistry.shared.unregister(names: [exa.name])
+        }
+        let spec = ToolRegistry.shared.specs(forTools: [exa.name])
+        let scope = ToolExecutionScope(exposed: spec)
+        let result = try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+            try await ToolRegistry.shared.execute(name: "web_fetch_exa", argumentsJSON: #"{"urls":["https://x"]}"#)
+        }
+        #expect(exa.executions == 0, "steering names the tool; it must not run it")
+        let parsed = try envelope(result)
+        #expect(parsed?["kind"] as? String == "tool_not_found")
+        #expect((parsed?["message"] as? String ?? "").contains("exa_search_web_fetch_exa"))
+
+        // Not exposed to this request: no steer to it (falls through to the
+        // generic fetch-intent handling / refusal).
+        let unexposed = try await ChatExecutionContext.$toolExecutionScope.withValue(ToolExecutionScope(exposed: [])) {
+            try await ToolRegistry.shared.execute(name: "web_fetch_exa", argumentsJSON: "{}")
+        }
+        #expect(!(try envelope(unexposed)?["message"] as? String ?? "").contains("exa_search_web_fetch_exa"))
+
+        // Two exposed candidates: ambiguous, no guess.
+        let other = ScopeProbeTool(name: "other_plugin_web_fetch_exa")
+        ToolRegistry.shared.registerPluginTool(other)
+        ToolRegistry.shared.setEnabled(true, for: other.name)
+        defer {
+            ToolRegistry.shared.setEnabled(false, for: other.name)
+            ToolRegistry.shared.unregister(names: [other.name])
+        }
+        let both = ToolExecutionScope(exposed: ToolRegistry.shared.specs(forTools: [exa.name, other.name]))
+        let ambiguous = try await ChatExecutionContext.$toolExecutionScope.withValue(both) {
+            try await ToolRegistry.shared.execute(name: "web_fetch_exa", argumentsJSON: "{}")
+        }
+        let msg = try envelope(ambiguous)?["message"] as? String ?? ""
+        #expect(!msg.contains("exa_search_web_fetch_exa") && !msg.contains("other_plugin_web_fetch_exa"))
+    }
 }

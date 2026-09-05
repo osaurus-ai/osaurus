@@ -921,6 +921,26 @@ public final class ToolRegistry: ObservableObject {
         // plugin GROUP that happens to share an alias name (`plugin/fetch`)
         // keeps its own load rescue instead of being steered away from the
         // capability the user deliberately installed.
+        // A prefix-dropped plugin tool name: the Exa plugin registers
+        // `exa_search_web_fetch_exa`; the model (Ornith, 2026-09-05 report)
+        // called `web_fetch_exa`. When exactly ONE tool exposed to THIS
+        // request ends in `_<name>`, point the model at that real name — the
+        // tool it was shown, not a guess. Ambiguity (two candidates) falls
+        // through to the generic handling; nothing is executed here.
+        if toolsByName[name] == nil, let intended = uniqueExposedSuffixMatch(for: name) {
+            ToolRegistryLogger.registry.notice(
+                "steering prefix-dropped tool '\(name, privacy: .public)' to '\(intended, privacy: .public)'"
+            )
+            return ToolErrorEnvelope(
+                kind: .toolNotFound,
+                reason:
+                    "There is no '\(name)' tool. The tool you mean is named '\(intended)' — "
+                    + "call it with that exact name and the same arguments.",
+                toolName: name,
+                retryable: true
+            ).toJSONString()
+        }
+
         if toolsByName[name] == nil, Self.isHallucinatedFetchToolName(name),
             toolsByName["search_and_extract"] != nil,
             ChatExecutionContext.toolExecutionScope?.permits("search_and_extract") == true,
@@ -2526,6 +2546,20 @@ public final class ToolRegistry: ObservableObject {
     /// read-only extractor points AWAY from a `browser_use` sitting in the
     /// schema — and shell-intent names (`curl`), whose POST/API shapes
     /// extraction cannot serve.
+    /// The single registered tool, exposed to the current request, whose
+    /// name is `<group>_<name>` for the unregistered `name` the model used;
+    /// nil when there is none or more than one.
+    func uniqueExposedSuffixMatch(for name: String) -> String? {
+        let lower = name.lowercased()
+        guard lower.count >= 6 else { return nil }
+        let scope = ChatExecutionContext.toolExecutionScope
+        let candidates = toolsByName.keys.filter { registered in
+            registered.lowercased().hasSuffix("_" + lower)
+                && (scope?.permits(registered) ?? false)
+        }
+        return candidates.count == 1 ? candidates[0] : nil
+    }
+
     static let hallucinatedFetchToolNames: Set<String> = [
         "web_fetch", "webfetch", "fetch", "fetch_url", "fetch_page",
         "fetch_webpage", "http_get", "get_url", "get_webpage", "read_url",
