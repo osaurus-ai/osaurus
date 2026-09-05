@@ -275,7 +275,12 @@ struct MLXBatchAdapter {
     static func shouldRecordAsLastEffectiveGeneration(
         _ generation: GenerationParameters
     ) -> Bool {
-        !generation.warmupPrefill
+        // Auxiliary generations (follow-up suggestions at 0.4/256, titles at
+        // 0.2/96, compaction…) run right after the user's turn and used to
+        // overwrite the row: the Live Activity readout then showed
+        // "temp 0.4 · max 256" for a chat turn that actually ran the bundle's
+        // 0.7 / 16384 (observed live 2026-09-05). Same rule as the warm-up.
+        !generation.warmupPrefill && !generation.auxiliaryCacheIntent
     }
 
     static func effectiveDraftStrategy(

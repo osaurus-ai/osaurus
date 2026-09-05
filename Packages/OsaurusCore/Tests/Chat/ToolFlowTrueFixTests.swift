@@ -212,4 +212,14 @@ struct ToolFlowTrueFixTests {
         #expect(SearchAndExtractTool.droppedURLsWarning(bounded.dropped).contains("2 not fetched"))
         #expect(SearchAndExtractTool.boundedDirectURLs(["https://a", "https://a"]).dropped.isEmpty)
     }
+
+    // MARK: 9. the sampler readout describes the user's turn, not the follow-ups
+
+    @Test func samplerReadoutIgnoresAuxiliaryGenerations() {
+        let followUps = GenerationParameters(
+            temperature: 0.4, maxTokens: 256, maxTokensExplicit: true, auxiliaryCacheIntent: true)
+        let userTurn = GenerationParameters(temperature: nil, maxTokens: 256, maxTokensExplicit: false)
+        #expect(!MLXBatchAdapter.shouldRecordAsLastEffectiveGeneration(followUps))
+        #expect(MLXBatchAdapter.shouldRecordAsLastEffectiveGeneration(userTurn))
+    }
 }
