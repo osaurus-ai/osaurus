@@ -4,8 +4,7 @@
 //
 //  Coachmark tour for the agent-first chat layout: spotlights the live UI
 //  (sidebar, tab strip, history and pin buttons, settings) with a short
-//  callout per stop so
-//  users updating from the old layout learn that nothing was removed, only
+//  callout per stop so users updating from the old layout learn that nothing was removed, only
 //  moved. Self-contained: its own once-per-user gate, its own auto-trigger
 //  when a chat window first appears, and a Help-menu replay. Independent of
 //  the What's New carousel.
@@ -181,7 +180,7 @@ public final class ChatLayoutTour: ObservableObject {
         guard isActive else { return }
         if stepIndex + 1 < stops.count {
             stepIndex += 1
-            } else {
+        } else {
             finish(markCompleted: true)
         }
     }
