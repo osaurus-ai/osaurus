@@ -708,6 +708,28 @@ public struct ContextBudgetManager: Sendable {
         return min(msgCount, messages.count)
     }
 
+    /// The paging / truncation line of a text result, if it has one: the last
+    /// line mentioning `next_offset` or `truncated`, read from the envelope's
+    /// `result.text` when the content is a JSON envelope, else from the raw
+    /// text. Nil when the result was complete.
+    static func pagingTrailer(in content: String) -> String? {
+        let text: String
+        if ToolEnvelope.isSuccess(content),
+            let payload = ToolEnvelope.successPayload(content) as? [String: Any],
+            let inner = payload["text"] as? String
+        {
+            text = inner
+        } else {
+            text = content
+        }
+        let line = text.components(separatedBy: .newlines).last(where: {
+            $0.contains("next_offset") || $0.localizedCaseInsensitiveContains("truncated")
+        })
+        guard let line else { return nil }
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        return trimmed.count > 240 ? String(trimmed.prefix(240)) : trimmed
+    }
+
     /// Creates a short summary of a tool result for context compression
     static func summarizeToolResult(_ content: String, toolCallId: String?) -> String {
         let lineCount = content.components(separatedBy: .newlines).count
@@ -798,9 +820,15 @@ public struct ContextBudgetManager: Sendable {
             // git_diff result
             return "[Compressed: git diff, \(lineCount) lines, \(charCount) chars; \(refetchSteer)]"
         } else if charCount > 200 {
-            // Generic large result
+            // Generic large result. A text envelope that pages (list_knowledge:
+            // "Found 350 … in total; showing 1–100" + "[total=350, returned=100,
+            // next_offset=100 …]") keeps its paging / truncation line: the
+            // preview kept the total but dropped the continuation instruction,
+            // so a model recalling the compressed line later had no way to
+            // page (audit 2026-09-05).
             let preview = String(content.prefix(150)).replacingOccurrences(of: "\n", with: " ")
-            return "[Compressed: \(charCount) chars — \(preview)...; \(refetchSteer)]"
+            let trailer = Self.pagingTrailer(in: content).map { " — \($0)" } ?? ""
+            return "[Compressed: \(charCount) chars — \(preview)...\(trailer); \(refetchSteer)]"
         }
 
         // Small results are kept as-is

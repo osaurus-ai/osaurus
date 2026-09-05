@@ -921,7 +921,7 @@ public final class ToolRegistry: ObservableObject {
         // plugin GROUP that happens to share an alias name (`plugin/fetch`)
         // keeps its own load rescue instead of being steered away from the
         // capability the user deliberately installed.
-        if toolsByName[name] == nil, Self.hallucinatedFetchToolNames.contains(name.lowercased()),
+        if toolsByName[name] == nil, Self.isHallucinatedFetchToolName(name),
             toolsByName["search_and_extract"] != nil,
             ChatExecutionContext.toolExecutionScope?.permits("search_and_extract") == true,
             groupIdCallRescueEnvelope(for: name) == nil
@@ -2531,6 +2531,19 @@ public final class ToolRegistry: ObservableObject {
         "fetch_webpage", "http_get", "get_url", "get_webpage", "read_url",
         "read_webpage", "visit_page", "load_url", "url_fetch",
     ]
+
+    /// The exact set above plus the provider-suffixed shapes models invent
+    /// from other stacks (`web_fetch_exa` — the name in the Ornith research
+    /// report — `fetch_url_firecrawl`, `webfetch_tavily`): any unregistered
+    /// name that starts with `web_fetch`/`webfetch`/`fetch_` or ends with
+    /// `_fetch` is a fetch intent. Still consulted only for names with no
+    /// real registration.
+    static func isHallucinatedFetchToolName(_ name: String) -> Bool {
+        let lower = name.lowercased()
+        if hallucinatedFetchToolNames.contains(lower) { return true }
+        return lower.hasPrefix("web_fetch") || lower.hasPrefix("webfetch") || lower.hasPrefix("fetch_")
+            || lower.hasSuffix("_fetch")
+    }
 
     /// Built-in tools that are authoritatively gated per-agent and must never
     /// surface through `capabilities_discover`. Unlike the lean-by-default

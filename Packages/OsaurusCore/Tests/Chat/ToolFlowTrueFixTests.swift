@@ -222,4 +222,30 @@ struct ToolFlowTrueFixTests {
         #expect(!MLXBatchAdapter.shouldRecordAsLastEffectiveGeneration(followUps))
         #expect(MLXBatchAdapter.shouldRecordAsLastEffectiveGeneration(userTurn))
     }
+
+    // MARK: 10. list_knowledge paging survives compression; invented fetch names with a provider suffix are steered
+
+    @Test func compressedKnowledgeListingKeepsNextOffset() {
+        let body = (0..<100).map { "- note-\($0).md — title \($0)" }.joined(separator: "\n")
+        let text = "Found 350 knowledge document(s) in total; showing 1–100 (offset 0):\n\n" + body
+            + "\n\n[total=350, returned=100, next_offset=100 — 250 more document(s). Call list_knowledge again with `offset: 100` (and the same `limit`/filters) to continue, or narrow with `type`, `tag`, or `collection`.]"
+        let envelope = ToolEnvelope.success(tool: "list_knowledge", text: text)
+        let summary = ContextBudgetManager.summarizeToolResult(envelope, toolCallId: nil)
+        #expect(summary.contains("in total"))
+        #expect(summary.contains("next_offset=100"))
+        #expect(!summary.contains("note-57.md"))
+        // A complete listing carries no trailer.
+        let complete = ToolEnvelope.success(tool: "list_knowledge", text: "Found 3 knowledge document(s):\n\n" + String(repeating: "- a.md — t\n", count: 40))
+        #expect(!ContextBudgetManager.summarizeToolResult(complete, toolCallId: nil).contains("next_offset"))
+    }
+
+    @MainActor
+    @Test func providerSuffixedFetchNamesAreRecognised() {
+        for name in ["web_fetch_exa", "WebFetch_Tavily", "fetch_url_firecrawl", "exa_fetch", "web_fetch"] {
+            #expect(ToolRegistry.isHallucinatedFetchToolName(name), Comment(rawValue: name))
+        }
+        for name in ["search_and_extract", "file_read", "browse", "open_url", "curl", "prefetch_cache"] {
+            #expect(!ToolRegistry.isHallucinatedFetchToolName(name), Comment(rawValue: name))
+        }
+    }
 }
