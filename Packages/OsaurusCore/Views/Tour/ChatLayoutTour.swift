@@ -449,8 +449,8 @@ struct ChatTourOverlayView: View {
             .frame(width: size.width, height: size.height)
             // Critically damped: the spotlight should glide to the next anchor, not
             // overshoot and bounce back off it.
-            .animation(.smooth(duration: 0.4), value: tour.stepIndex)
-            .animation(.smooth(duration: 0.4), value: spotlight)
+            .animation(.snappy(duration: 0.25, extraBounce: 0), value: tour.stepIndex)
+            .animation(.snappy(duration: 0.25, extraBounce: 0), value: spotlight)
             .onAppear { tour.updateBlurMask(cutout: appKitCutout) }
             .onChange(of: appKitCutout) { _, cutout in tour.updateBlurMask(cutout: cutout) }
             .onChange(of: size) { _, _ in tour.updateBlurMask(cutout: appKitCutout) }
