@@ -159,6 +159,8 @@ enum ChatSessionImportCoordinator {
             let outcome: ParseOutcome =
                 await Task.detached(priority: .userInitiated) {
                     var outcome = ParseOutcome()
+                    var indexFiles: [String] = []
+                    var indexError: Error?
                     for url in urls {
                         onProgress(L("Reading \(url.lastPathComponent)…"))
                         do {
@@ -167,10 +169,24 @@ enum ChatSessionImportCoordinator {
                                 data: data, onProgress: onProgress)
                             outcome.conversations.append(contentsOf: result.conversations)
                             outcome.unreadable += result.unreadable
+                        } catch let error as ChatSessionImporter.ImportError
+                            where error.isClaudeExportIndex
+                        {
+                            indexFiles.append(url.lastPathComponent)
+                            if indexError == nil { indexError = error }
                         } catch {
                             outcome.failedFiles.append(url.lastPathComponent)
                             if outcome.firstError == nil { outcome.firstError = error }
                         }
+                    }
+                    // Claude's export index picked together with its batch
+                    // zips is the whole export selected at once, not a
+                    // mistake: nothing in the index was lost, so it doesn't
+                    // count as a failed file. Alone it is the mistake the
+                    // dedicated error explains, so it is surfaced then.
+                    if outcome.conversations.isEmpty {
+                        outcome.failedFiles.append(contentsOf: indexFiles)
+                        if outcome.firstError == nil { outcome.firstError = indexError }
                     }
                     return outcome
                 }.value

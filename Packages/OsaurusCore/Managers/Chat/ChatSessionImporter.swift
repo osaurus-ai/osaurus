@@ -47,6 +47,11 @@ public enum ChatSessionImporter {
         case claudeExportIndex(files: [String])
         case noConversations
 
+        public var isClaudeExportIndex: Bool {
+            if case .claudeExportIndex = self { return true }
+            return false
+        }
+
         public var errorDescription: String? {
             switch self {
             case .invalidJSON:
