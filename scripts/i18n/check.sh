@@ -11,5 +11,8 @@ python3 "$PY" --catalog "$ROOT/App/osaurus/InfoPlist.xcstrings" --required-local
 python3 "$ROOT/scripts/i18n/check-swift-catalog-keys.py" \
     --catalog "$ROOT/Packages/OsaurusCore/Resources/Localizable.xcstrings" \
     --swift-root "$ROOT/Packages/OsaurusCore"
+python3 "$ROOT/scripts/i18n/check-swift-localizing-params.py" \
+    --catalog "$ROOT/Packages/OsaurusCore/Resources/Localizable.xcstrings" \
+    --swift-root "$ROOT/Packages/OsaurusCore"
 
 bash "$ROOT/scripts/i18n/lint-swift-literals.sh"
