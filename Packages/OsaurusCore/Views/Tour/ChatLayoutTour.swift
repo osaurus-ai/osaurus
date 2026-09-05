@@ -447,8 +447,10 @@ struct ChatTourOverlayView: View {
                 }
             }
             .frame(width: size.width, height: size.height)
-            .animation(theme.springAnimation(responseMultiplier: 0.9), value: tour.stepIndex)
-            .animation(theme.springAnimation(responseMultiplier: 0.9), value: spotlight)
+            // Critically damped: the spotlight should glide to the next anchor, not
+            // overshoot and bounce back off it.
+            .animation(.smooth(duration: 0.4), value: tour.stepIndex)
+            .animation(.smooth(duration: 0.4), value: spotlight)
             .onAppear { tour.updateBlurMask(cutout: appKitCutout) }
             .onChange(of: appKitCutout) { _, cutout in tour.updateBlurMask(cutout: cutout) }
             .onChange(of: size) { _, _ in tour.updateBlurMask(cutout: appKitCutout) }
