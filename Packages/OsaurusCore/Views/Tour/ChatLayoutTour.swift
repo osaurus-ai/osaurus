@@ -194,7 +194,6 @@ public final class ChatLayoutTour: ObservableObject {
     /// drift apart the way a SwiftUI tween next to a snapping mask did.
     @Published private(set) var displayedCutout: CGRect?
     private var morphTimer: Timer?
-    var morphInFlight: Bool { morphTimer != nil }
     private static let morphDuration: TimeInterval = 0.25
 
     /// Move the spotlight to `target`: instantly (first layout, resize, or
@@ -504,10 +503,10 @@ struct ChatTourOverlayView: View {
             .onAppear { tour.setSpotlight(targetCutout, animated: false) }
             // Step change: morph. Anchor re-measure or window resize: snap,
             // so the spotlight never lags a live resize.
-            .onChange(of: tour.stepIndex) { _, _ in tour.setSpotlight(targetCutout, animated: true) }
-            .onChange(of: targetCutout) { _, new in
-                if tour.morphInFlight { return }
-                tour.setSpotlight(new, animated: false)
+            // One handler for both triggers so their relative order can't
+            // matter: a step change morphs, anything else snaps.
+            .onChange(of: SpotlightKey(step: tour.stepIndex, target: targetCutout)) { old, new in
+                tour.setSpotlight(new.target, animated: new.step != old.step)
             }
             .onChange(of: size) { _, _ in tour.setSpotlight(targetCutout, animated: false) }
         }
@@ -641,4 +640,11 @@ struct ChatTourOverlayView: View {
 private final class TourOverlayWindow: NSWindow {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+}
+
+/// Change key for the spotlight: which stop is showing and where its anchor
+/// currently is.
+private struct SpotlightKey: Equatable {
+    let step: Int
+    let target: CGRect?
 }
