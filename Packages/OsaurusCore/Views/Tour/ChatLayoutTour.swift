@@ -187,7 +187,7 @@ public final class ChatLayoutTour: ObservableObject {
     /// the overlay fades out, relocates while invisible, and fades back in.
     private var isTransitioning = false
 
-    private func transition(_ change: @escaping () -> Void) {
+    private func transition(_ change: @escaping @MainActor () -> Void) {
         guard let overlayWindow, !isTransitioning else { change(); return }
         isTransitioning = true
         NSAnimationContext.runAnimationGroup({ ctx in
