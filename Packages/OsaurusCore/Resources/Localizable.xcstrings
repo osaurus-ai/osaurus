@@ -239734,6 +239734,176 @@
           }
         }
       }
+    },
+    "Chat history moved out of the sidebar to this button.\n\nIt lists every conversation for the selected agent, with search, import, and the same actions as before.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Chat-Verlauf ist aus der Seitenleiste zu dieser Schaltfläche umgezogen.\n\nSie listet alle Unterhaltungen des ausgewählten Agenten, mit Suche, Import und denselben Aktionen wie zuvor."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "채팅 기록이 사이드바에서 이 버튼으로 이동했습니다.\n\n선택된 에이전트의 모든 대화가 검색, 가져오기 및 이전과 동일한 작업과 함께 표시됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "История чатов переехала из боковой панели на эту кнопку.\n\nОна перечисляет все беседы выбранного агента с поиском, импортом и теми же действиями, что и раньше."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "聊天历史从侧边栏移到了此按钮。\n\n它会列出所选智能体的所有对话，并保留搜索、导入和之前的全部操作。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "聊天歷史從側邊欄移到了此按鈕。\n\n它會列出所選智能體的所有對話，並保留搜尋、匯入和之前的全部操作。"
+          }
+        }
+      }
+    },
+    "Keep this chat floating above your other windows.\n\nClick again to unpin it.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lass diesen Chat über deinen anderen Fenstern schweben.\n\nKlicke erneut, um ihn zu lösen."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 채팅을 다른 창 위에 띄워 둘 수 있습니다.\n\n다시 클릭하면 고정이 해제됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Держите этот чат поверх остальных окон.\n\nНажмите ещё раз, чтобы открепить."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "让此聊天浮动在其他窗口之上。\n\n再次点击即可取消固定。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "讓此聊天浮動在其他視窗之上。\n\n再次點按即可取消釘選。"
+          }
+        }
+      }
+    },
+    "Pin the window from here": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fenster hier anheften"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "여기에서 창 고정"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Закрепите окно отсюда"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在这里固定窗口"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在這裡釘選視窗"
+          }
+        }
+      }
+    },
+    "Settings moved to the sidebar": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Einstellungen sind in die Seitenleiste umgezogen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설정이 사이드바로 이동했습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Настройки переехали в боковую панель"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置移到了侧边栏"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定移到了側邊欄"
+          }
+        }
+      }
+    },
+    "The settings button now sits at the bottom of the sidebar.\n\nEverything inside it is unchanged.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Einstellungen-Schaltfläche sitzt jetzt unten in der Seitenleiste.\n\nAlles darin ist unverändert."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설정 버튼은 이제 사이드바 하단에 있습니다.\n\n안의 내용은 그대로입니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кнопка настроек теперь находится внизу боковой панели.\n\nВсё внутри осталось прежним."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置按钮现在位于侧边栏底部。\n\n里面的内容没有变化。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定按鈕現在位於側邊欄底部。\n\n裡面的內容沒有變化。"
+          }
+        }
+      }
     }
   },
   "version" : "1.1"
