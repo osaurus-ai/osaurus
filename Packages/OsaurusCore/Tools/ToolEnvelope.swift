@@ -165,7 +165,9 @@ public enum ToolEnvelope {
     public static let truncatedListingWarning =
         "Listing truncated; entries are incomplete. To find a specific file by name, call "
         + "`file_search` with `target:\"files\"` and a token from the name — do not conclude a "
-        + "file is absent from this partial list."
+        + "file is absent from this partial list. To enumerate or count every file, call "
+        + "`file_search` with `target:\"files\"`, `pattern:\"*\"`, `max_results:500` and page with "
+        + "`offset` (the result reports `total` and `next_offset`)."
 
     /// Build a filename-search success envelope: the same structured,
     /// actionable `entries[]` shape as `listing` (so the model copies a
@@ -179,15 +181,24 @@ public enum ToolEnvelope {
         query: String,
         entries: [[String: Any]],
         truncated: Bool,
-        warnings: [String]? = nil
+        warnings: [String]? = nil,
+        total: Int? = nil,
+        offset: Int? = nil,
+        nextOffset: Int? = nil
     ) -> String {
-        let result: [String: Any] = [
+        var result: [String: Any] = [
             "kind": "search",
             "query": query,
             "entries": entries,
             "match_count": entries.count,
             "truncated": truncated,
         ]
+        // Paging contract (files mode): `total` matches under the walk,
+        // this page's `offset`, and `next_offset` when more remain — the
+        // same total/returned/next_offset shape `list_knowledge` reports.
+        if let total { result["total"] = total }
+        if let offset { result["offset"] = offset }
+        if let nextOffset { result["next_offset"] = nextOffset }
         return success(tool: tool, result: result, warnings: warnings)
     }
 

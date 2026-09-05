@@ -293,6 +293,60 @@ struct KnowledgeDatabaseTests {
 
     /// SQLCipher's in-memory open is plaintext and should always work;
     /// treat a failure as an environment problem, not a test failure.
+    /// Paging must cover every row exactly once, including a last page that
+    /// does not divide evenly by the page size (7 rows, pages of 3).
+    @Test func listDocumentsPagesWithOffsetAndCountAgrees() throws {
+        let db = makeDBOrSkip()
+        guard let db else { return }
+        for i in 0..<7 {
+            try seedDocument(
+                db, collectionId: "c1", relPath: "n\(i).md",
+                docType: i % 2 == 0 ? "guide" : "note",
+                tagsCSV: i < 5 ? "ops" : "misc",
+                chunks: [("", "body \(i)")]
+            )
+        }
+        #expect(try db.countDocuments(collectionIds: ["c1"]) == 7)
+        #expect(try db.countDocuments(collectionIds: ["c1", "absent"]) == 7)
+        #expect(try db.countDocuments(collectionIds: ["absent"]) == 0)
+        #expect(try db.countDocuments(collectionIds: []) == 0)
+
+        var seen: [String] = []
+        var offset = 0
+        while true {
+            let page = try db.listDocuments(collectionIds: ["c1"], limit: 3, offset: offset)
+            if page.isEmpty { break }
+            seen += page.map(\.relPath)
+            offset += page.count
+        }
+        #expect(seen == ["n0.md", "n1.md", "n2.md", "n3.md", "n4.md", "n5.md", "n6.md"])
+        #expect(offset == 7)
+        // Past the end: empty, not an error.
+        #expect(try db.listDocuments(collectionIds: ["c1"], limit: 3, offset: 7).isEmpty)
+        // A negative offset is treated as 0.
+        #expect(try db.listDocuments(collectionIds: ["c1"], limit: 3, offset: -4).count == 3)
+    }
+
+    /// The total honours the same type/tag filters as the page.
+    @Test func countDocumentsHonoursFilters() throws {
+        let db = makeDBOrSkip()
+        guard let db else { return }
+        for i in 0..<7 {
+            try seedDocument(
+                db, collectionId: "c1", relPath: "n\(i).md",
+                docType: i % 2 == 0 ? "guide" : "note",
+                tagsCSV: i < 5 ? "ops" : "misc",
+                chunks: [("", "body \(i)")]
+            )
+        }
+        #expect(try db.countDocuments(collectionIds: ["c1"], docType: "guide") == 4)
+        #expect(try db.countDocuments(collectionIds: ["c1"], docType: "GUIDE") == 4)
+        #expect(try db.countDocuments(collectionIds: ["c1"], tag: "ops") == 5)
+        #expect(try db.countDocuments(collectionIds: ["c1"], docType: "note", tag: "ops") == 2)
+        let page = try db.listDocuments(collectionIds: ["c1"], docType: "note", tag: "ops", limit: 1, offset: 1)
+        #expect(page.map(\.relPath) == ["n3.md"])
+    }
+
     private func makeDBOrSkip() -> KnowledgeDatabase? {
         do {
             return try makeDB()

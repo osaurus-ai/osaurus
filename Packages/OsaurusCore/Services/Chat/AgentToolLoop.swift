@@ -2133,6 +2133,12 @@ enum AgentToolLoop {
         // notices tool-calling turns have staged (bounded).
         var hasGroundedFileWrite = false
         var ungroundedFileClaimNotices = 0
+        // Knowledge grounding (`GroundedKnowledgeClaimCheck`): whether any
+        // knowledge read SUCCEEDED this run, and the most recent knowledge
+        // read that FAILED (tool + envelope). A final answer that describes
+        // the collection after only failures gets the factual notice.
+        var hasGroundedKnowledgeRead = false
+        var lastFailedKnowledgeRead: (tool: String, result: String)? = nil
         // Consecutive announce-only turns (visible "let me…" preamble, no
         // call). Reset by any productive turn, for the same reason.
         var consecutiveAnnouncedToolCalls = 0
@@ -2325,6 +2331,39 @@ enum AgentToolLoop {
                             + "no file-writing tool succeeded this run"
                     )
                     replaceStateNotice(GroundedFileSideEffectCheck.ungroundedFileClaimNotice)
+                    await prepareRetry()
+                    iteration -= 1
+                    continue
+                }
+                // Knowledge grounding on a final answer ("the vault contains
+                // 20 documents" when the only knowledge call this run was an
+                // `invalid_args` rejection): same bounded notice-and-
+                // regenerate channel. The notice repeats the granted
+                // collection names the failed envelope already listed, so
+                // the corrected turn can retry with the right `collection`
+                // — or say plainly that the collection could not be read.
+                if let assistantVisibleText = hooks.assistantVisibleText,
+                    let prepareRetry = hooks.prepareGroundedClaimRetry,
+                    !hasGroundedKnowledgeRead,
+                    let failed = lastFailedKnowledgeRead,
+                    groundedClaimRetries < Self.maxGroundedClaimRetries,
+                    let visibleText = await assistantVisibleText(),
+                    GroundedKnowledgeClaimCheck.containsCollectionContentClaim(visibleText)
+                {
+                    groundedClaimRetries += 1
+                    print(
+                        "[Osaurus] Ungrounded knowledge-content claim in final answer "
+                            + "(retry \(groundedClaimRetries)/\(Self.maxGroundedClaimRetries)); "
+                            + "\(failed.tool) failed and no knowledge read succeeded this run"
+                    )
+                    replaceStateNotice(
+                        GroundedKnowledgeClaimCheck.ungroundedKnowledgeClaimNotice(
+                            tool: failed.tool,
+                            grantedNames: GroundedKnowledgeClaimCheck.grantedCollectionNames(
+                                inFailure: failed.result
+                            )
+                        )
+                    )
                     await prepareRetry()
                     iteration -= 1
                     continue
@@ -3083,6 +3122,23 @@ enum AgentToolLoop {
                     })
                 {
                     hasGroundedFileWrite = true
+                }
+                // Knowledge grounding bookkeeping: one successful knowledge
+                // read grounds every later content claim; otherwise remember
+                // the latest failed read so the final-answer check can quote
+                // the granted names its envelope carries.
+                for outcome in outcomes {
+                    if GroundedKnowledgeClaimCheck.isGroundedKnowledgeOutcome(
+                        toolName: outcome.invocation.toolName,
+                        result: outcome.result
+                    ) {
+                        hasGroundedKnowledgeRead = true
+                    } else if GroundedKnowledgeClaimCheck.isFailedKnowledgeOutcome(
+                        toolName: outcome.invocation.toolName,
+                        result: outcome.result
+                    ) {
+                        lastFailedKnowledgeRead = (outcome.invocation.toolName, outcome.result)
+                    }
                 }
                 // Advisory, never a stop: the model narrated a file write
                 // ("appended to the file") in a message whose tool calls

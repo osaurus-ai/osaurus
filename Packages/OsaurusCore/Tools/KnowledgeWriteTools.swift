@@ -109,7 +109,7 @@ final class WriteKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePre
 
     func approvalPreview(argumentsJSON: String) async -> KnowledgeWritePreview? {
         guard let args = Self.parsedArguments(argumentsJSON) else { return nil }
-        guard case .granted(let collections) = await KnowledgeToolScope.resolve(
+        guard case .granted(let collections, _) = await KnowledgeToolScope.resolve(
             tool: name,
             collectionName: args["collection"] as? String
         ),
@@ -143,7 +143,7 @@ final class WriteKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePre
             tool: name,
             collectionName: args["collection"] as? String
         )
-        guard case .granted(let collections) = scope else {
+        guard case .granted(let collections, _) = scope else {
             if case .failure(let envelope) = scope { return envelope }
             return ""
         }
@@ -454,7 +454,7 @@ final class DeleteKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePr
 
     func approvalPreview(argumentsJSON: String) async -> KnowledgeWritePreview? {
         guard let args = WriteKnowledgeTool.parsedArguments(argumentsJSON) else { return nil }
-        guard case .granted(let collections) = await KnowledgeToolScope.resolve(
+        guard case .granted(let collections, _) = await KnowledgeToolScope.resolve(
             tool: name,
             collectionName: args["collection"] as? String
         ),
@@ -497,7 +497,7 @@ final class DeleteKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePr
             tool: name,
             collectionName: args["collection"] as? String
         )
-        guard case .granted(let collections) = scope else {
+        guard case .granted(let collections, _) = scope else {
             if case .failure(let envelope) = scope { return envelope }
             return ""
         }
@@ -748,7 +748,7 @@ final class EditKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePrev
             let path = (args["path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
             !path.isEmpty
         else { return nil }
-        guard case .granted(let collections) = await KnowledgeToolScope.resolve(
+        guard case .granted(let collections, _) = await KnowledgeToolScope.resolve(
             tool: name,
             collectionName: args["collection"] as? String
         ),
@@ -835,7 +835,7 @@ final class EditKnowledgeTool: OsaurusTool, PermissionedTool, KnowledgeWritePrev
 
         let scope = await KnowledgeToolScope.resolve(
             tool: name, collectionName: args["collection"] as? String)
-        guard case .granted(let collections) = scope else {
+        guard case .granted(let collections, _) = scope else {
             if case .failure(let envelope) = scope { return envelope }
             return ""
         }

@@ -25,7 +25,10 @@ enum KnowledgeToolScope {
     /// Outcome of resolving the calling agent's grant scope: either the
     /// granted collections or a ready-to-return failure envelope.
     enum Resolution {
-        case granted([KnowledgeCollection])
+        /// `note` is set when the `collection` argument resolved through an
+        /// alias rather than an exact name, so the tool can tell the model
+        /// what it actually searched.
+        case granted([KnowledgeCollection], note: String? = nil)
         case failure(envelope: String)
     }
 
@@ -80,19 +83,107 @@ enum KnowledgeToolScope {
         }
 
         let trimmed = collectionName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let match = granted.first(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) {
-            return .granted([match])
-        }
-        let names = granted.map(\.name).joined(separator: ", ")
-        return .failure(
-            envelope: ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "Unknown collection `\(trimmed)`. Granted collections: \(names).",
-                field: "collection",
-                expected: "one of the agent's granted collection names",
-                tool: tool
+        switch match(collectionName: trimmed, in: granted) {
+        case .all:
+            let names = granted.map(\.name).joined(separator: ", ")
+            return .granted(
+                granted,
+                note: "`collection: \(trimmed)` is not a collection name; searched all granted "
+                    + "collections instead (\(names))."
             )
-        )
+        case .one(let collection):
+            if collection.name.caseInsensitiveCompare(trimmed) == .orderedSame {
+                return .granted([collection])
+            }
+            return .granted(
+                [collection],
+                note: "`collection: \(trimmed)` resolved to the granted collection "
+                    + "`\(collection.name)`; use that exact name in later calls."
+            )
+        case .unmatched:
+            let names = granted.map(\.name).joined(separator: ", ")
+            return .failure(
+                envelope: ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "Unknown collection `\(trimmed)`. Granted collections: \(names).",
+                    field: "collection",
+                    expected: "one of the agent's granted collection names",
+                    tool: tool
+                )
+            )
+        }
+    }
+
+    /// How a `collection` argument resolved against the granted set.
+    enum CollectionMatch: Equatable {
+        /// A generic alias that means "the knowledge I was granted" — all
+        /// granted collections, exactly as omitting the argument would.
+        case all
+        case one(KnowledgeCollection)
+        case unmatched
+    }
+
+    /// Names a model uses for "the knowledge base" when it has not read the
+    /// collection's display name off the manifest. Observed live (0.24.7,
+    /// Discord): an agent with one granted collection, "Obsidian Vault",
+    /// called `list_knowledge {"collection":"knowledge","limit":"20"}` —
+    /// `knowledge` is the tool-name stem and the prompt section heading, so
+    /// it is the obvious guess. Rejecting it gave the model an error it
+    /// answered around with invented counts. None of these can name a real
+    /// collection more specifically than "everything I was granted", so
+    /// treating them as the omitted argument never widens access: the grant
+    /// list computed in `resolve` stays the boundary.
+    static let genericCollectionAliases: Set<String> = [
+        "knowledge", "knowledge_base", "knowledge-base", "knowledgebase", "knowledge base",
+        "kb", "default", "all", "*", "any", "collection", "collections", "granted",
+        "project", "docs", "documents", "vault", "library",
+    ]
+
+    /// Pure resolution of a `collection` argument against the granted
+    /// collections, most specific rule first:
+    ///
+    /// 1. Exact display-name match (case-insensitive) — the documented form.
+    /// 2. A generic alias (`knowledge`, `default`, …) — all granted.
+    /// 3. Punctuation/whitespace-insensitive match (`obsidian_vault`,
+    ///    `ObsidianVault` → "Obsidian Vault"): models routinely snake-case a
+    ///    display name they read off the manifest.
+    /// 4. Exactly one collection whose name contains the argument, or vice
+    ///    versa (`vault notes` → "Obsidian Vault"), when that is unambiguous.
+    /// 5. Exactly one collection granted at all — whatever the model called
+    ///    it, this is the only thing it can mean.
+    ///
+    /// Only rule 1 can ever be the answer when several grants tie, so an
+    /// ambiguous name still fails and the failure envelope lists the names.
+    static func match(
+        collectionName: String,
+        in granted: [KnowledgeCollection]
+    ) -> CollectionMatch {
+        let trimmed = collectionName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .all }
+        if let exact = granted.first(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+            return .one(exact)
+        }
+        if genericCollectionAliases.contains(trimmed.lowercased()) {
+            return .all
+        }
+        let wanted = normalizedCollectionKey(trimmed)
+        if !wanted.isEmpty {
+            let normalized = granted.filter { normalizedCollectionKey($0.name) == wanted }
+            if normalized.count == 1 { return .one(normalized[0]) }
+            let partial = granted.filter {
+                let key = normalizedCollectionKey($0.name)
+                return !key.isEmpty && (key.contains(wanted) || wanted.contains(key))
+            }
+            if partial.count == 1 { return .one(partial[0]) }
+        }
+        if granted.count == 1 { return .one(granted[0]) }
+        return .unmatched
+    }
+
+    /// Lowercased alphanumerics only, so `Obsidian Vault`, `obsidian_vault`,
+    /// `obsidian-vault` and `ObsidianVault` all key the same.
+    static func normalizedCollectionKey(_ name: String) -> String {
+        String(name.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) })
     }
 
     /// Collection display names keyed by id string, for result formatting.
@@ -212,7 +303,7 @@ final class SearchKnowledgeTool: OsaurusTool, @unchecked Sendable {
             tool: name,
             collectionName: args["collection"] as? String
         )
-        guard case .granted(let collections) = scope else {
+        guard case .granted(let collections, let aliasNote) = scope else {
             KnowledgeDebugLog.log("search_knowledge", "scope resolution failed/rejected; returning")
             if case .failure(let envelope) = scope { return envelope }
             return ""
@@ -276,7 +367,8 @@ final class SearchKnowledgeTool: OsaurusTool, @unchecked Sendable {
             }
             return ToolEnvelope.success(
                 tool: name,
-                text: "No knowledge documents match '\(query)'\(scopeNote)."
+                text: "No knowledge documents match '\(query)'\(scopeNote).",
+                warnings: aliasNote.map { [$0] }
             )
         }
 
@@ -292,7 +384,7 @@ final class SearchKnowledgeTool: OsaurusTool, @unchecked Sendable {
             out += "\(preview)\(hit.content.count > 400 ? "…" : "")\n\n"
         }
         out += "Use read_knowledge with a document path for full content."
-        return ToolEnvelope.success(tool: name, text: out)
+        return ToolEnvelope.success(tool: name, text: out, warnings: aliasNote.map { [$0] })
     }
 }
 
@@ -370,7 +462,7 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
             tool: name,
             collectionName: args["collection"] as? String
         )
-        guard case .granted(let collections) = scope else {
+        guard case .granted(let collections, let aliasNote) = scope else {
             if case .failure(let envelope) = scope { return envelope }
             return ""
         }
@@ -537,7 +629,7 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
         if truncated {
             out += "\n\n[Truncated at \(Self.maxContentChars) characters — use `section` to read a specific part.]"
         }
-        return ToolEnvelope.success(tool: name, text: out)
+        return ToolEnvelope.success(tool: name, text: out, warnings: aliasNote.map { [$0] })
     }
 }
 
@@ -568,13 +660,47 @@ final class ListKnowledgeTool: OsaurusTool, @unchecked Sendable {
             ]),
             "limit": .object([
                 "type": .string("integer"),
-                "description": .string("Maximum documents to return (default 50, max 200)."),
+                "description": .string(
+                    "Maximum documents to return per call (default \(ListKnowledgeTool.defaultLimit), "
+                        + "max \(ListKnowledgeTool.maxLimit)). The result reports the TOTAL matching "
+                        + "count and a `next_offset` when more remain."
+                ),
+            ]),
+            "offset": .object([
+                "type": .string("integer"),
+                "description": .string(
+                    "Skip this many documents (default 0). Pass the previous result's "
+                        + "`next_offset` to page through a listing larger than `limit`."
+                ),
             ]),
         ]),
         "required": .array([]),
     ])
 
-    /// Cancellation audit: one capped (`limit` ≤ 200) SQLite listing over the
+    /// Default page size. Raised from 50: a model asked to summarise a
+    /// collection needs the whole listing, and at ~80 characters a row 100
+    /// entries is ~8KB (~2K tokens) — well under the registry's 100K-char
+    /// universal cap, and the same order as one `file_read`. Larger
+    /// collections page via `offset`.
+    static let defaultLimit = 100
+    /// Hard per-call ceiling, matching `ToolOutputCaps.searchMaxResults`
+    /// (`file_search`). Rows past it are reachable through `offset`, never
+    /// silently dropped.
+    static let maxLimit = ToolOutputCaps.searchMaxResults
+
+    /// Effective page size for a raw `limit` argument: coerced from a
+    /// numeric string (quantized models send `"20"`), defaulted, clamped.
+    static func effectiveLimit(_ raw: Any?) -> Int {
+        max(1, min(maxLimit, ArgumentCoercion.int(raw) ?? defaultLimit))
+    }
+
+    /// Effective start row for a raw `offset` argument: coerced, default 0,
+    /// never negative.
+    static func effectiveOffset(_ raw: Any?) -> Int {
+        max(0, ArgumentCoercion.int(raw) ?? 0)
+    }
+
+    /// Cancellation audit: one capped (`limit` ≤ `maxLimit`) SQLite listing over the
     /// granted collections — no network, no external processes, no detached
     /// work; the body terminates promptly and drains trivially.
     var canExposeToSpawnedOperation: Bool { true }
@@ -593,7 +719,7 @@ final class ListKnowledgeTool: OsaurusTool, @unchecked Sendable {
             tool: name,
             collectionName: args["collection"] as? String
         )
-        guard case .granted(let collections) = scope else {
+        guard case .granted(let collections, let aliasNote) = scope else {
             if case .failure(let envelope) = scope { return envelope }
             return ""
         }
@@ -601,15 +727,39 @@ final class ListKnowledgeTool: OsaurusTool, @unchecked Sendable {
 
         let docType = (args["type"] as? String)?.trimmingCharacters(in: .whitespaces)
         let tag = (args["tag"] as? String)?.trimmingCharacters(in: .whitespaces)
-        let limit = max(1, min(200, ArgumentCoercion.int(args["limit"]) ?? 50))
+        let limit = Self.effectiveLimit(args["limit"])
+        let offset = Self.effectiveOffset(args["offset"])
+        let collectionIds = collections.map { $0.id.uuidString }
+        let effectiveType = (docType?.isEmpty == false) ? docType : nil
+        let effectiveTag = (tag?.isEmpty == false) ? tag : nil
 
+        // Total BEFORE the page, so a capped page can still state how many
+        // documents exist (the old "[Listing capped at N]" footer gave the
+        // model no total and no way to fetch the rest, so a summary of a
+        // 300-note vault silently became a summary of its first 50 rows).
+        let total =
+            (try? KnowledgeDatabase.shared.countDocuments(
+                collectionIds: collectionIds,
+                docType: effectiveType,
+                tag: effectiveTag
+            )) ?? 0
         let documents =
             (try? KnowledgeDatabase.shared.listDocuments(
-                collectionIds: collections.map { $0.id.uuidString },
-                docType: (docType?.isEmpty == false) ? docType : nil,
-                tag: (tag?.isEmpty == false) ? tag : nil,
-                limit: limit
+                collectionIds: collectionIds,
+                docType: effectiveType,
+                tag: effectiveTag,
+                limit: limit,
+                offset: offset
             )) ?? []
+
+        if documents.isEmpty, offset > 0, total > 0 {
+            return ToolEnvelope.success(
+                tool: name,
+                text: "No documents at offset \(offset): the listing has \(total) document(s) "
+                    + "in total (offsets 0–\(total - 1)). Re-issue with a smaller `offset`.",
+                warnings: aliasNote.map { [$0] }
+            )
+        }
 
         if documents.isEmpty {
             // The old text blamed indexing unconditionally. That is a lie in
@@ -626,7 +776,8 @@ final class ListKnowledgeTool: OsaurusTool, @unchecked Sendable {
                 return ToolEnvelope.success(
                     tool: name,
                     text: "No knowledge documents listed yet\(scopeNote) — this collection is still "
-                        + "indexing, so its contents are incomplete. Retry in a moment."
+                        + "indexing, so its contents are incomplete. Retry in a moment.",
+                    warnings: aliasNote.map { [$0] }
                 )
             }
             let hasFilter = (docType?.isEmpty == false) || (tag?.isEmpty == false)
@@ -637,7 +788,8 @@ final class ListKnowledgeTool: OsaurusTool, @unchecked Sendable {
                 return ToolEnvelope.success(
                     tool: name,
                     text: "No knowledge documents match \(facets.joined(separator: " and "))"
-                        + "\(scopeNote). Other documents may exist; list without the filter to see them."
+                        + "\(scopeNote). Other documents may exist; list without the filter to see them.",
+                    warnings: aliasNote.map { [$0] }
                 )
             }
             let subject =
@@ -650,12 +802,13 @@ final class ListKnowledgeTool: OsaurusTool, @unchecked Sendable {
                 // route forward is what invented `<agent home>/knowledge/`.
                 text: "\(subject) — no documents at all. This is not an indexing delay, so "
                     + "waiting will not change it. Add documents with `write_knowledge`; writing "
-                    + "files to a path never puts them in a collection."
+                    + "files to a path never puts them in a collection.",
+                warnings: aliasNote.map { [$0] }
             )
         }
 
         let nameById = KnowledgeToolScope.namesById(collections)
-        var out = "Found \(documents.count) knowledge document(s):\n\n"
+        var out = Self.listingHeader(total: total, returned: documents.count, offset: offset) + "\n\n"
         var currentCollection = ""
         for document in documents {
             let collectionName = nameById[document.collectionId] ?? document.collectionId
@@ -674,9 +827,34 @@ final class ListKnowledgeTool: OsaurusTool, @unchecked Sendable {
             if !facets.isEmpty { out += " (\(facets.joined(separator: "; ")))" }
             out += "\n"
         }
-        if documents.count == limit {
-            out += "\n[Listing capped at \(limit) — narrow with `type`, `tag`, or `collection`.]"
+        if let footer = Self.listingFooter(
+            total: total, returned: documents.count, offset: offset, limit: limit
+        ) {
+            out += "\n" + footer
         }
-        return ToolEnvelope.success(tool: name, text: out)
+        return ToolEnvelope.success(tool: name, text: out, warnings: aliasNote.map { [$0] })
+    }
+
+    /// "Found 312 knowledge document(s); showing 1–100" — the total is
+    /// stated up front so a model summarising the collection never mistakes
+    /// one page for the whole.
+    static func listingHeader(total: Int, returned: Int, offset: Int) -> String {
+        guard total > returned || offset > 0 else {
+            return "Found \(total) knowledge document(s):"
+        }
+        let first = offset + 1
+        let last = offset + returned
+        return "Found \(total) knowledge document(s) in total; showing \(first)–\(last) (offset \(offset)):"
+    }
+
+    /// Paging footer, or nil when the page held everything. Names the exact
+    /// `offset` for the next call so the model can page without arithmetic.
+    static func listingFooter(total: Int, returned: Int, offset: Int, limit: Int) -> String? {
+        let next = offset + returned
+        guard next < total else { return nil }
+        let remaining = total - next
+        return "[total=\(total), returned=\(returned), next_offset=\(next) — \(remaining) more document(s). "
+            + "Call list_knowledge again with `offset: \(next)` (and the same `limit`/filters) to continue, "
+            + "or narrow with `type`, `tag`, or `collection`.]"
     }
 }

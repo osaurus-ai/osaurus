@@ -101,7 +101,7 @@ At runtime `AgentManager.effectiveKnowledgeCollections(for:)` intersects the age
 
 - **`search_knowledge`** — `query` (required), optional `collection`, `tags` (ANY-match), `top_k` (default 5, max 25). Returns ranked excerpts. Over-fetches when a tag filter is applied so filtering doesn't starve results.
 - **`read_knowledge`** — `path` (required), optional `collection`, optional `section` (heading substring). Re-reads from **disk**, not the index, so the model always sees current bytes. Path is confined (no `..`, absolute, or `~` escapes). Content over 24,000 chars is truncated with a note.
-- **`list_knowledge`** — optional `collection`, `type`, `tag`, `limit` (default 50, max 200). Ordered by collection then path.
+- **`list_knowledge`** — optional `collection`, `type`, `tag`, `limit` (default 100, max 500), `offset` (default 0). Ordered by collection then path. The result states the total matching count; when a page is smaller than the total it ends with `[total=N, returned=M, next_offset=K …]` so the model can page with `offset: K`. `collection` accepts the display name (case-insensitive), a punctuation-insensitive form (`obsidian_vault`), an unambiguous partial name, a generic alias (`knowledge`, `default`, `all` → every granted collection), or any name at all when exactly one collection is granted; the result carries a warning naming what was actually searched.
 
 ### Curation tools
 

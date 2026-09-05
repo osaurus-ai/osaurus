@@ -45,6 +45,19 @@ public struct FolderContext: Sendable {
     /// so the UI can hint at installable/relevant plugins for the folder.
     public let detectedFileExtensions: Set<String>
 
+    /// Files the rendered `tree` accounts for (listed by name or folded into
+    /// an extension-group summary) versus the visible files under the root.
+    /// The tree walk stops at `FileTreeOptions.maxFiles` (300), so a folder
+    /// of 350 notes renders 300 and a footer — and a model that counts or
+    /// summarises from the tree alone silently reports 300 (observed live,
+    /// 0.24.7: Raptor 0.5 with the Folder chip). `0`/`0` means unknown
+    /// (contexts built by hand); see `treeTruncated`.
+    public let treeShownFiles: Int
+    public let treeTotalFiles: Int
+
+    /// True when the tree omits files the folder actually holds.
+    public var treeTruncated: Bool { treeTotalFiles > treeShownFiles }
+
     public init(
         rootPath: URL,
         projectType: ProjectType,
@@ -53,7 +66,9 @@ public struct FolderContext: Sendable {
         gitStatus: String?,
         isGitRepo: Bool,
         contextFiles: String? = nil,
-        detectedFileExtensions: Set<String> = []
+        detectedFileExtensions: Set<String> = [],
+        treeShownFiles: Int = 0,
+        treeTotalFiles: Int = 0
     ) {
         self.rootPath = rootPath
         self.projectType = projectType
@@ -63,6 +78,8 @@ public struct FolderContext: Sendable {
         self.isGitRepo = isGitRepo
         self.contextFiles = contextFiles
         self.detectedFileExtensions = detectedFileExtensions
+        self.treeShownFiles = treeShownFiles
+        self.treeTotalFiles = treeTotalFiles
     }
 }
 
