@@ -167,6 +167,12 @@ public final class AgentTaskState {
         "read_knowledge", "osaurus_inspect", "osaurus_help",
     ]
 
+    /// The configuration reads whose held rejections a configuration write
+    /// invalidates (see `record`).
+    private static let configurationReadTools: Set<String> = ["osaurus_inspect", "osaurus_help"]
+    /// The configuration writes that can change what those reads return.
+    private static let configurationWriteTools: Set<String> = ["osaurus_config"]
+
     /// Read-like tools that can explicitly classify a failure as
     /// non-retryable for the exact same arguments. `search_and_extract` uses
     /// this for challenge/blocked/empty pages: immediately repeating the same
@@ -612,6 +618,20 @@ public final class AgentTaskState {
             heldErrorReplays.removeAll(keepingCapacity: true)
             transientFailureExecutions.removeAll(keepingCapacity: true)
             successfulEditSnapshots.removeAll(keepingCapacity: true)
+        }
+
+        // A configuration write (`osaurus_config apply` / any declarative
+        // mutation) can create the agent, MCP server, schedule… that a held
+        // `osaurus_inspect` "no <scope> matched" rejection complained about,
+        // so every held inspect/help error is dropped after one: the
+        // identical read must re-execute against the new state. Reads that
+        // failed for a reason the write cannot change (a junk scope) simply
+        // fail again once, which is cheap.
+        if Self.configurationWriteTools.contains(name), ToolEnvelope.isSuccess(result) {
+            for key in heldErrors.keys where Self.configurationReadTools.contains(key.name) {
+                heldErrors[key] = nil
+                heldErrorReplays[key] = nil
+            }
         }
 
         // A write/edit invalidates any fresh read of the same path so the

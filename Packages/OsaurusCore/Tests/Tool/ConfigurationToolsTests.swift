@@ -219,6 +219,32 @@ struct ConfigurationReadScopeTests {
         #expect(envelope.contains("memory"))
     }
 
+
+    /// The exact rejected calls from the build #13 loop, through the real
+    /// `execute` dispatch (not the helper): a junk scope still teaches, and
+    /// the scope that rejection offers now reads instead of contradicting it.
+    @Test
+    func originalLoopArguments_throughDispatch() async throws {
+        let tool = OsaurusInspectTool()
+        // Configuration tools run only under the Default agent's context.
+        try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+            let junk = try await tool.execute(
+                argumentsJSON: #"{"action":"describe","id":"00000000-0000-0000-0000-000000000001","scope":"user_profile"}"#)
+            #expect(!ToolEnvelope.isSuccess(junk))
+            #expect(junk.contains("scope"))
+
+            let section = try await tool.execute(
+                argumentsJSON: #"{"action":"describe","id":"00000000-0000-0000-0000-000000000001","scope":"default_agent"}"#)
+            #expect(ToolEnvelope.isSuccess(section), Comment(rawValue: String(section.prefix(240))))
+            let payload = try #require(ToolEnvelope.successPayload(section) as? [String: Any])
+            #expect(payload["kind"] as? String == "document_section")
+            #expect((payload["yaml"] as? String)?.contains("default_agent") == true)
+
+            let listed = try await tool.execute(argumentsJSON: #"{"action":"list","scope":"memory"}"#)
+            #expect(ToolEnvelope.isSuccess(listed), Comment(rawValue: String(listed.prefix(240))))
+        }
+    }
+
     /// The scope enum advertises the document sections; naming one must read
     /// it, not bounce between "must be one of … default_agent …" and "not an
     /// inspect scope" (the 29-call loop on build #13).

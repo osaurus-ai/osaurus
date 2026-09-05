@@ -248,4 +248,30 @@ struct ToolFlowTrueFixTests {
             #expect(!ToolRegistry.isHallucinatedFetchToolName(name), Comment(rawValue: name))
         }
     }
+
+    // MARK: 11. a held inspect rejection is dropped once configuration is written
+
+    @Test func heldInspectRejectionIsInvalidatedByAConfigWrite() {
+        let state = AgentTaskState()
+        state.beginMessage()
+        let args = #"{"action":"describe","scope":"agents","id":"Todoist"}"#
+        let missing = ToolEnvelope.failure(
+            kind: .invalidArgs,
+            message: "No `agents` matched `Todoist` (by id or exact name).", field: "id", tool: "osaurus_inspect")
+        state.record(name: "osaurus_inspect", argsJSON: args, result: missing)
+        // Deterministic rejection: held and replayed while nothing changed.
+        #expect(state.heldResult(name: "osaurus_inspect", argsJSON: args) == missing)
+        // osaurus_config apply creates the agent → the identical read must re-execute.
+        state.record(
+            name: "osaurus_config", argsJSON: #"{"action":"apply","yaml":"agents:\n  Todoist: {}"}"#,
+            result: ToolEnvelope.success(tool: "osaurus_config", text: "Applied 1 change."))
+        #expect(state.heldResult(name: "osaurus_inspect", argsJSON: args) == nil,
+            "a configuration write must invalidate the held inspect rejection")
+        // A FAILED write changes nothing and keeps the hold.
+        state.record(name: "osaurus_inspect", argsJSON: args, result: missing)
+        state.record(
+            name: "osaurus_config", argsJSON: #"{"action":"apply","yaml":"bad"}"#,
+            result: ToolEnvelope.failure(kind: .invalidArgs, message: "bad yaml", tool: "osaurus_config"))
+        #expect(state.heldResult(name: "osaurus_inspect", argsJSON: args) == missing)
+    }
 }
