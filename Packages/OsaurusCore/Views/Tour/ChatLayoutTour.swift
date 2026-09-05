@@ -170,7 +170,7 @@ public final class ChatLayoutTour: ObservableObject {
     func next() {
         guard isActive else { return }
         if stepIndex + 1 < stops.count {
-            stepIndex += 1
+            transition { self.stepIndex += 1 }
         } else {
             finish(markCompleted: true)
         }
@@ -178,7 +178,34 @@ public final class ChatLayoutTour: ObservableObject {
 
     func back() {
         guard isActive, stepIndex > 0 else { return }
-        stepIndex -= 1
+        transition { self.stepIndex -= 1 }
+    }
+
+    /// Crossfade the whole overlay through a step change. The spotlight's
+    /// SwiftUI cutout and the AppKit blur mask can't be tweened in lockstep,
+    /// so instead of sliding (where the two layers drift apart for a beat)
+    /// the overlay fades out, relocates while invisible, and fades back in.
+    private var isTransitioning = false
+
+    private func transition(_ change: @escaping () -> Void) {
+        guard let overlayWindow, !isTransitioning else { change(); return }
+        isTransitioning = true
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.12
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            overlayWindow.animator().alphaValue = 0
+        }, completionHandler: {
+            MainActor.assumeIsolated {
+                change()
+                NSAnimationContext.runAnimationGroup({ ctx in
+                    ctx.duration = 0.18
+                    ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                    overlayWindow.animator().alphaValue = 1
+                }, completionHandler: {
+                    MainActor.assumeIsolated { self.isTransitioning = false }
+                })
+            }
+        })
     }
 
     func skip() {
@@ -449,8 +476,7 @@ struct ChatTourOverlayView: View {
             .frame(width: size.width, height: size.height)
             // Critically damped: the spotlight should glide to the next anchor, not
             // overshoot and bounce back off it.
-            .animation(.snappy(duration: 0.25, extraBounce: 0), value: tour.stepIndex)
-            .animation(.snappy(duration: 0.25, extraBounce: 0), value: spotlight)
+            .transaction { $0.animation = nil }
             .onAppear { tour.updateBlurMask(cutout: appKitCutout) }
             .onChange(of: appKitCutout) { _, cutout in tour.updateBlurMask(cutout: cutout) }
             .onChange(of: size) { _, _ in tour.updateBlurMask(cutout: appKitCutout) }
