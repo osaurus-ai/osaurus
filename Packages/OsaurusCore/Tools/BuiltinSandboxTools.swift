@@ -404,6 +404,15 @@ public enum CombinedFileRoute: Sendable {
 
 /// Classify a `file_*` path argument for combined-mode routing.
 public func combinedFileRoute(path: String) -> CombinedFileRoute {
+    // A folder supplied by a background dispatch (Watcher / schedule /
+    // plugin) is the run's only filesystem. Never divert a `/workspace/...`
+    // request into the VM here: the host tool then rejects the absolute
+    // path with its "relative to the working directory" envelope, which
+    // steers the model back to the watched folder instead of handing it the
+    // agent's sandbox home to report on.
+    if ChatExecutionContext.hostFolderIsDispatchTarget {
+        return .host
+    }
     // In VM mode there is no host root at all, so relative paths naturally
     // resolve against the sandbox cwd. The old `/workspace` discriminator is
     // retained only for compatibility callers that still publish both roots.

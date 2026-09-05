@@ -1307,6 +1307,12 @@ public final class ToolRegistry: ObservableObject {
     /// active. The five public workspace tools use it as their backend router.
     private var combinedSandboxReadBridge: SandboxReadBridge? {
         guard toolsByName.keys.contains("sandbox_exec") else { return nil }
+        // A dispatched host-folder run (Watcher / schedule / plugin folder)
+        // has exactly one filesystem — the folder it was pointed at. The
+        // autonomous agent's `sandbox_exec` stays registered process-wide,
+        // so without this gate the bridge was bound in `.hostFolder` mode
+        // and `/workspace/...` reads were answered from the VM.
+        guard !ChatExecutionContext.hostFolderIsDispatchTarget else { return nil }
         // The process-wide tool objects can be refreshed by another agent
         // between turns. A request TaskLocal is authoritative and keeps
         // concurrent/non-active sessions routed to their own Linux user.

@@ -4481,17 +4481,49 @@ final class ChatSession: ObservableObject {
         if autonomous {
             await SandboxToolRegistrar.shared.registerTools(for: agentId)
         }
-        // A folder that a background dispatch supplied (Watcher / schedule /
-        // plugin folder_bookmark) is an explicit target with no interactive
-        // sandbox toggle, so it wins over the agent's default sandbox —
-        // otherwise the pure-VM agent can't see its own target files.
-        // Interactive folders keep sandbox priority.
-        return ToolRegistry.shared.resolveExecutionMode(
-            folderContext: activeFolderContext(for: agentId),
+        return resolveExecutionModeForSend(
+            agentId: agentId,
             autonomousEnabled: autonomous,
-            allowHostFolderWrites: config?.allowHostFolderWrites == true,
+            allowHostFolderWrites: config?.allowHostFolderWrites == true
+        )
+    }
+
+    /// The pure resolution step of `prepareChatExecutionMode` (no sandbox
+    /// provisioning side effects), so the dispatch-folder contract is
+    /// unit-testable. A folder that a background dispatch supplied (Watcher
+    /// / schedule / plugin folder_bookmark) is an explicit target with no
+    /// interactive sandbox toggle, so it wins over the agent's default
+    /// sandbox — otherwise the pure-VM agent can't see its own target files.
+    /// Interactive folders keep sandbox priority.
+    func resolveExecutionModeForSend(
+        agentId: UUID,
+        autonomousEnabled: Bool,
+        allowHostFolderWrites: Bool = false
+    ) -> ExecutionMode {
+        ToolRegistry.shared.resolveExecutionMode(
+            folderContext: activeFolderContext(for: agentId),
+            autonomousEnabled: autonomousEnabled,
+            allowHostFolderWrites: allowHostFolderWrites,
             preferHostFolder: folderContextFromDispatchBookmark
         )
+    }
+
+    /// The folder root bound as `ChatExecutionContext.currentFolderRoot` for
+    /// one turn. A selected folder is suspended while VM execution is
+    /// enabled — EXCEPT when a background dispatch supplied it: that folder
+    /// wins over the sandbox, exactly as it does in
+    /// `resolveExecutionModeForSend` (`preferHostFolder`). Without the
+    /// exception the two disagree: the execution mode exposes the host file
+    /// tools, but the root binding stays nil, so every folder tool returns
+    /// "no working folder is selected" (the Voice Memo Watcher failure).
+    /// Pure so the contract is unit-testable.
+    static func turnFolderRoot(
+        sandboxEnabled: Bool,
+        folderFromDispatch: Bool,
+        folderRoot: URL?
+    ) -> URL? {
+        let suspendFolderForSandbox = sandboxEnabled && !folderFromDispatch
+        return suspendFolderForSandbox ? nil : folderRoot
     }
 
     // MARK: - Private Helpers
@@ -5928,12 +5960,20 @@ final class ChatSession: ObservableObject {
             // failure after the user turns sandbox off). Interactive sessions
             // keep the suspension — the user toggles sandbox off to use a
             // folder there.
-            let suspendFolderForSandbox =
-                sandboxEnabled && !self.folderContextFromDispatchBookmark
-            let turnFolderRoot =
-                suspendFolderForSandbox
-                ? nil : self.activeFolderContext(for: turnAgentId)?.rootPath
+            let turnFolderRoot = Self.turnFolderRoot(
+                sandboxEnabled: sandboxEnabled,
+                folderFromDispatch: self.folderContextFromDispatchBookmark,
+                folderRoot: self.activeFolderContext(for: turnAgentId)?.rootPath
+            )
+            // A dispatched folder is the run's ONLY filesystem: mark it so the
+            // file tools never answer a `/workspace/...` path from the VM
+            // (the autonomous agent's sandbox stays registered process-wide,
+            // so the bridge would otherwise still be bound in host-folder
+            // mode). Interactive chats never set this.
+            let folderIsDispatchTarget =
+                self.folderContextFromDispatchBookmark && turnFolderRoot != nil
             await ChatExecutionContext.$currentFolderRoot.withValue(turnFolderRoot) { [self] in
+            await ChatExecutionContext.$hostFolderIsDispatchTarget.withValue(folderIsDispatchTarget) { [self] in
             // Typed run provenance for the whole turn. The session's own
             // persisted `source` is authoritative here (a dispatched
             // schedule/watcher/self-schedule run re-binds the same value the
@@ -7946,6 +7986,7 @@ final class ChatSession: ObservableObject {
             }  // ChatExecutionContext.$currentAgentId.withValue
             }  // ChatExecutionContext.$currentChatSessionBox.withValue
             }  // ChatExecutionContext.$currentSessionSource.withValue
+            }  // ChatExecutionContext.$hostFolderIsDispatchTarget.withValue
             }  // ChatExecutionContext.$currentFolderRoot.withValue
         }
     }
