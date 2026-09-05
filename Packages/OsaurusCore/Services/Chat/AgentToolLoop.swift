@@ -542,6 +542,16 @@ struct AgentLoopHooks {
     /// nil opts the surface out; a nil return skips the check for that turn.
     var assistantVisibleText: (() async -> String?)?
 
+    /// The tool names this request is authorized to EXECUTE right now —
+    /// chat binds it to `ToolExecutionScope.authorizedNames` (the scope
+    /// grows with same-run `capabilities` activations, so this is a closure,
+    /// not a snapshot). The driver uses it for two advisory-only jobs:
+    /// folding a hallucinated punctuation variant of an authorized name
+    /// (`osaurus_help!!`) back onto the real tool before execution, and
+    /// listing the authorized names in the `tool_not_found` notice. Nil on
+    /// surfaces that publish no scope — both behaviours then stay off.
+    var authorizedToolNames: (() -> Set<String>)?
+
     init(
         isCancelled: @escaping () async -> Bool = { false },
         buildMessages: @escaping (_ notices: [String]) async -> AgentLoopIterationInput,
@@ -566,7 +576,8 @@ struct AgentLoopHooks {
         emitToolRejectionText: ((_ text: String) async -> Void)? = nil,
         finalVisibleText: (() async -> String?)? = nil,
         prepareGroundedClaimRetry: (() async -> Void)? = nil,
-        assistantVisibleText: (() async -> String?)? = nil
+        assistantVisibleText: (() async -> String?)? = nil,
+        authorizedToolNames: (() -> Set<String>)? = nil
     ) {
         self.isCancelled = isCancelled
         self.buildMessages = buildMessages
@@ -585,6 +596,7 @@ struct AgentLoopHooks {
         self.finalVisibleText = finalVisibleText
         self.prepareGroundedClaimRetry = prepareGroundedClaimRetry
         self.assistantVisibleText = assistantVisibleText
+        self.authorizedToolNames = authorizedToolNames
     }
 }
 
@@ -1838,6 +1850,31 @@ enum AgentToolLoop {
     /// Explicit user denials and policy/security refusals stop immediately.
     /// Repeating an identical failing call also stops, preventing a correction
     /// loop from spinning on the same envelope.
+    /// `invocations` with each tool name replaced by its canonical form
+    /// (`AgentTaskState.canonicalToolName`) when — and only when — the
+    /// emitted name is NOT authorized but the canonical one IS. Everything
+    /// else is returned untouched, including every call when the surface
+    /// publishes no scope (`authorizedToolNames == nil`).
+    static func canonicalizedInvocations(
+        _ invocations: [ServiceToolInvocation],
+        authorizedToolNames: Set<String>?
+    ) -> [ServiceToolInvocation] {
+        guard let authorized = authorizedToolNames else { return invocations }
+        return invocations.map { invocation in
+            let raw = invocation.toolName
+            guard !authorized.contains(raw) else { return invocation }
+            let canonical = AgentTaskState.canonicalToolName(raw)
+            guard canonical != raw, authorized.contains(canonical) else { return invocation }
+            print("[Osaurus][Loop] canonicalized tool name raw=\(raw) -> \(canonical)")
+            return ServiceToolInvocation(
+                toolName: canonical,
+                jsonArguments: invocation.jsonArguments,
+                toolCallId: invocation.toolCallId,
+                geminiThoughtSignature: invocation.geminiThoughtSignature
+            )
+        }
+    }
+
     static func shouldStopAfterToolOutcome(_ outcome: AgentLoopToolOutcome) -> Bool {
         guard outcome.wasError || ToolEnvelope.isError(outcome.result) else { return false }
         if outcome.wasDeduped { return true }
@@ -2039,6 +2076,11 @@ enum AgentToolLoop {
         isolation: isolated (any Actor)? = #isolation
     ) async throws -> RunResult {
         var iteration = 0
+        // The `tool_not_found` notice lists what the request may execute;
+        // the surface's scope is the only source of that truth.
+        if let authorizedToolNames = hooks.authorizedToolNames {
+            state.authorizedToolNamesProvider = authorizedToolNames
+        }
         // Staged-notice slots, mirroring the historical chat locals
         // (`pendingBudgetNotice` / `pendingStateNotice`). The state slot
         // holds an ORDERED, de-duplicated list rather than a single string:
@@ -2450,7 +2492,17 @@ enum AgentToolLoop {
                     iterations: iteration
                 )
 
-            case .toolCalls(let invocations):
+            case .toolCalls(let emittedInvocations):
+                // Fold hallucinated punctuation around an AUTHORIZED name
+                // (`osaurus_help!!`) back onto the real tool before anything
+                // materialises or executes. A name whose canonical form is
+                // not in scope is left exactly as emitted, so the registry's
+                // `tool_not_found` still answers it — decoration never
+                // reaches a withheld tool.
+                let invocations = Self.canonicalizedInvocations(
+                    emittedInvocations,
+                    authorizedToolNames: hooks.authorizedToolNames?()
+                )
                 // A productive turn — reset the empty-turn and announce-only
                 // recovery budgets so a later unrelated stall gets its own
                 // fresh allowance.

@@ -559,6 +559,24 @@ final class ChatSession: ObservableObject {
     /// HTTP/plugin path share one cache. Keyed by `sessionId.uuidString`.
     private var sessionStateKey: (UUID) -> String { { $0.uuidString } }
 
+    /// Prompt/scope agreement tripwire (advisory, never a block): the
+    /// Orchestrator addendum tells the model to ALWAYS call `osaurus_help` /
+    /// `osaurus_inspect` / `osaurus_config`; if this turn's schema does not
+    /// expose one of them the scope refuses it with `tool_not_found` and the
+    /// model has been set up to loop (seen live after an agent-chip switch
+    /// before the agent joined the session fingerprint). Logged so a live
+    /// proof can see the disagreement. Only the Default agent carries the
+    /// addendum, so other agents are skipped.
+    static func logOrchestratorScopeDisagreement(agentId: UUID, scope: ToolExecutionScope) {
+        guard agentId == Agent.defaultId else { return }
+        let missing = DefaultAgentSystemPromptBuilder.missingRequiredToolNames(
+            exposed: scope.authorizedNames
+        )
+        guard !missing.isEmpty else { return }
+        let names = missing.sorted().joined(separator: ", ")
+        debugLog("[Tools] orchestrator addendum requires tools the scope refuses: \(names)")
+    }
+
     // MARK: - Agent Loop State (Chat-as-Agent)
 
     /// The agent's current todo for this chat, mirrored from
@@ -6062,9 +6080,15 @@ final class ChatSession: ObservableObject {
                                         let liveToolMode = AgentManager.shared.effectiveToolSelectionMode(
                                             for: effectiveAgentId
                                         )
+                    // The agent id is part of the fingerprint: the baseline
+                    // schema is per-agent, so switching the agent chip must
+                    // re-freeze the always-loaded snapshot for the new agent
+                    // (otherwise the Orchestrator inherits a custom agent's
+                    // frozen list without `osaurus_help` / `osaurus_config`).
                     let liveFingerprint = SessionToolState.fingerprint(
                         executionMode: executionMode,
-                        toolMode: liveToolMode
+                        toolMode: liveToolMode,
+                        agentId: effectiveAgentId
                     )
                     let cachedSession: SessionToolState?
                     if let sid = sessionId {
@@ -6253,6 +6277,9 @@ final class ChatSession: ObservableObject {
                     // whole run: `capabilities_load` legitimately GROWS this set mid-run while
                     // `toolSpecs` stays frozen, so an immutable snapshot would kill that feature.
                     let toolScope = ToolExecutionScope(exposed: toolSpecs)
+                    if !isRemoteAgentTarget {
+                        Self.logOrchestratorScopeDisagreement(agentId: effectiveAgentId, scope: toolScope)
+                    }
 
                     // Persist the always-loaded snapshot back onto the session
                     // so the next send freezes the schema against tools that
@@ -7068,7 +7095,7 @@ final class ChatSession: ObservableObject {
                     // lives in `AgentToolLoop`. These hooks carry everything
                     // the chat surface owns: turn history, streaming UI,
                     // TaskLocal scoping, and the agent-loop intercepts.
-                    let loopHooks = AgentLoopHooks(
+                    var loopHooks = AgentLoopHooks(
                         isCancelled: { !self.isRunActive(runId) },
                         buildMessages: { notices in
                             // Mid-run steering: a text-only message queued
@@ -7683,6 +7710,12 @@ final class ChatSession: ObservableObject {
                             assistantTurn.content
                         }
                     )
+                    // What this run may execute, read live: the driver folds
+                    // `osaurus_help!!` onto `osaurus_help` only when the
+                    // canonical name is in scope, and lists these names in the
+                    // `tool_not_found` notice. Assigned after construction so
+                    // the hooks literal above stays type-checkable.
+                    loopHooks.authorizedToolNames = { toolScope.authorizedNames }
 
                     let runResult = try await AgentToolLoop.run(
                         policy: AgentLoopPolicy(
