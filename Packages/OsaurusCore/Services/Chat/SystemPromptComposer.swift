@@ -2791,8 +2791,20 @@ public struct SystemPromptComposer: Sendable {
         //   - In auto mode, a tool pulled in via `additionalToolNames`
         //     (a `capabilities_load`) survives — a deliberate "I want this"
         //     signal. The gate only trims the default baseline, not picks.
-        if !isManual {
-            let keep = additionalToolNames
+        // Manual mode used to skip this block entirely ("the user curates the
+        // list"), but the picker only lets the user tick DYNAMIC tools —
+        // built-ins are always-loaded rows — so the grant toggles (Web
+        // Search, Charts, Speak, Memory, DB, Scheduling, Knowledge) were the
+        // only way to turn a built-in off, and in manual mode they did
+        // nothing: Web Search OFF still exposed `web_search` /
+        // `search_and_extract`. The strips now run in both modes; explicit
+        // picks (a session `capabilities_load`, or a ticked manual name)
+        // stay exempt as the deliberate "I want this" signal.
+        do {
+            var keep = additionalToolNames
+            if isManual, let manualNames = snapshot.manualToolNames {
+                keep.formUnion(manualNames)
+            }
             if !snapshot.dbEnabled {
                 for name in agentDBToolNames where !keep.contains(name) {
                     byName.removeValue(forKey: name)
@@ -2909,6 +2921,14 @@ public struct SystemPromptComposer: Sendable {
         if snapshot.agentId == Agent.defaultId {
             var allowed = ToolRegistry.orchestratorAllowedToolNames
                 .union(additionalToolNames)
+            // Settings → Orchestrator stores a manual list too, and until now
+            // nothing read it: ticking a plugin tool for the Orchestrator was
+            // inert (its specs were added at the top of resolveTools, then
+            // filtered out by this allowlist). A ticked name is the same
+            // explicit pick a session load is.
+            if isManual, let manualNames = snapshot.manualToolNames {
+                allowed.formUnion(manualNames)
+            }
             // Spawn UX: the main/default chat may call the delegation tools
             // (image / spawn) that survived the per-agent strip above — i.e. the
             // ones `visibleDelegation` resolved on for the Default agent (spawn

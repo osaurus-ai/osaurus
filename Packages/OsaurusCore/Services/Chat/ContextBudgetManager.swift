@@ -737,7 +737,22 @@ public struct ContextBudgetManager: Sendable {
         {
             let count = payload["match_count"] as? Int ?? (payload["entries"] as? [Any])?.count ?? 0
             let query = payload["query"] as? String ?? ""
-            return "[Compressed: \(count) file match(es) for '\(query)']"
+            // A capped page must stay a capped page after compression: the
+            // model reads this line turns later and, without `total` /
+            // `next_offset` / `truncated`, restates the page size as the
+            // whole folder ("there are 50 files"). Same signal the listing
+            // branch above preserves.
+            var note = ""
+            if let total = payload["total"] as? Int, total != count {
+                note += " — page of \(total) total"
+                if let next = payload["next_offset"] as? Int {
+                    note += ", next_offset \(next); not the full set"
+                }
+            }
+            if payload["truncated"] as? Bool == true {
+                note += " (truncated; narrow the path or pattern)"
+            }
+            return "[Compressed: \(count) file match(es) for '\(query)'\(note)]"
         }
 
         // Compressed summaries carry ZERO semantic content; without an
@@ -766,9 +781,15 @@ public struct ContextBudgetManager: Sendable {
             return
                 "[Compressed: file content, \(lineCount) lines, \(charCount) chars — \(firstLine); \(refetchSteer)]"
         } else if content.hasPrefix("Found ") && content.contains("match") {
-            // file_search result
-            let firstLine = content.components(separatedBy: .newlines).first ?? ""
-            return "[Compressed: \(firstLine); \(refetchSteer)]"
+            // file_search content result. Keep the truncation / paging
+            // trailer (`(Results truncated at N.)`, `[returned=… next_offset=…]`)
+            // so a capped page is not recalled as the complete match set.
+            let lines = content.components(separatedBy: .newlines)
+            let firstLine = lines.first ?? ""
+            let trailer = lines.last(where: {
+                $0.contains("truncated") || $0.contains("next_offset")
+            }).map { " \($0.trimmingCharacters(in: .whitespaces))" } ?? ""
+            return "[Compressed: \(firstLine)\(trailer); \(refetchSteer)]"
         } else if content.hasPrefix("Exit code:") {
             // shell_run result
             let exitLine = content.components(separatedBy: .newlines).first ?? "Exit code: unknown"

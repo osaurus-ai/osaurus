@@ -186,6 +186,17 @@ enum KnowledgeToolScope {
         String(name.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) })
     }
 
+    /// The "collection is still indexing — retry" reply. This is a transient
+    /// `unavailable` FAILURE (`retryable: true`), not a success: the agent
+    /// loop replays an identical read-like SUCCESS verbatim until a knowledge
+    /// write (#2632), so as a success the model's retry never re-ran the tool
+    /// and the finished index was never seen — it concluded the collection
+    /// was empty. `unavailable` is not a held error kind, so the retry
+    /// executes again and sees the index once it completes.
+    static func stillIndexingEnvelope(tool: String, message: String) -> String {
+        ToolEnvelope.failure(kind: .unavailable, message: message, tool: tool, retryable: true)
+    }
+
     /// Collection display names keyed by id string, for result formatting.
     static func namesById(_ collections: [KnowledgeCollection]) -> [String: String] {
         var names: [String: String] = [:]
@@ -359,9 +370,9 @@ final class SearchKnowledgeTool: OsaurusTool, @unchecked Sendable {
                 collections.contains { KnowledgeManager.shared.indexingCollectionIds.contains($0.id) }
             }
             if indexing {
-                return ToolEnvelope.success(
+                return KnowledgeToolScope.stillIndexingEnvelope(
                     tool: name,
-                    text: "No matches for '\(query)' yet\(scopeNote) — this collection is still "
+                    message: "No matches for '\(query)' yet\(scopeNote) — this collection is still "
                         + "indexing, so its content is not fully searchable. Retry in a moment."
                 )
             }
@@ -774,11 +785,11 @@ final class ListKnowledgeTool: OsaurusTool, @unchecked Sendable {
                 collections.contains { KnowledgeManager.shared.indexingCollectionIds.contains($0.id) }
             }
             if indexing {
-                return ToolEnvelope.success(
+                return KnowledgeToolScope.stillIndexingEnvelope(
                     tool: name,
-                    text: "No knowledge documents listed yet\(scopeNote) — this collection is still "
-                        + "indexing, so its contents are incomplete. Retry in a moment.",
-                    warnings: aliasNote.map { [$0] }
+                    message: "No knowledge documents listed yet\(scopeNote) — this collection is still "
+                        + "indexing, so its contents are incomplete. Retry in a moment."
+                        + (aliasNote.map { " \($0)" } ?? "")
                 )
             }
             let hasFilter = (docType?.isEmpty == false) || (tag?.isEmpty == false)

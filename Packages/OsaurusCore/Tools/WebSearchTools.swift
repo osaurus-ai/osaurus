@@ -403,10 +403,8 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
         if let urls = args["urls"] as? [Any] {
             directURLs.append(contentsOf: urls.compactMap(WebSearchArgs.optionalTrimmedString))
         }
-        var seenURLs: Set<String> = []
-        directURLs = Array(
-            directURLs.filter { seenURLs.insert($0).inserted }.prefix(5)
-        )
+        let bounded = Self.boundedDirectURLs(directURLs)
+        directURLs = bounded.kept
 
         let query = WebSearchArgs.optionalTrimmedString(args["query"])
         guard !directURLs.isEmpty || query != nil else {
@@ -461,7 +459,14 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
             if !hostedTexts.isEmpty {
                 payload["extract_source"] = "premium"
             }
-            return Self.extractionEnvelope(payload: payload)
+            if !bounded.dropped.isEmpty {
+                payload["dropped_urls"] = bounded.dropped
+            }
+            return Self.extractionEnvelope(
+                payload: payload,
+                warnings: bounded.dropped.isEmpty
+                    ? nil
+                    : [Self.droppedURLsWarning(bounded.dropped)])
         }
 
         var warnings: [String] = []
@@ -531,6 +536,23 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
     /// metadata. Challenge/content-policy failures are non-retryable as-is;
     /// transport failures remain retryable so a transient outage is not
     /// mislabeled as a permanent source contract.
+    /// At most this many direct URLs are fetched in one call.
+    static let maxDirectURLs = 5
+
+    /// De-duplicate and bound the direct URL list, returning what was kept
+    /// AND what was dropped: a silent `prefix(5)` had the model report
+    /// "pages 6 and 7 returned nothing" for URLs that were never fetched.
+    static func boundedDirectURLs(_ urls: [String]) -> (kept: [String], dropped: [String]) {
+        var seen: Set<String> = []
+        let unique = urls.filter { seen.insert($0).inserted }
+        return (Array(unique.prefix(maxDirectURLs)), Array(unique.dropFirst(maxDirectURLs)))
+    }
+
+    static func droppedURLsWarning(_ dropped: [String]) -> String {
+        "Only the first \(maxDirectURLs) URLs were fetched; \(dropped.count) not fetched "
+            + "(see `dropped_urls`) — call again with those to fetch them."
+    }
+
     static func extractionEnvelope(
         payload rawPayload: [String: Any],
         warnings: [String]? = nil
