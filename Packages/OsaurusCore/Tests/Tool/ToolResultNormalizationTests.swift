@@ -137,4 +137,19 @@ struct ToolResultNormalizationTests {
         )
         #expect(EnvelopeAssertions.failureKind(envelope) == "execution_error")
     }
+
+    /// The cap guards a token budget; multi-byte text must not slip a 3×
+    /// larger payload through by having fewer Swift characters. 100,000
+    /// CJK characters (~300 KB) are truncated; the ASCII path is unchanged.
+    @Test func oversizedMultiByteResultIsCappedByBytes() {
+        let cjk = String(repeating: "漢字テスト文章", count: 15_000)  // 105,000 chars, ~315 KB
+        #expect(cjk.count > ToolOutputCaps.universalResult)
+        let normalized = ToolRegistry.normalizeToolResult(cjk, tool: "mcp_thing")
+        let payload = ToolEnvelope.successPayload(normalized) as? [String: Any]
+        #expect(payload?["truncated"] as? Bool == true)
+        let ascii = String(repeating: "a", count: ToolOutputCaps.universalResult)
+        #expect(!ToolRegistry.normalizeToolResult(ascii, tool: "mcp_thing").contains("\"truncated\":true"))
+        let smallCjk = String(repeating: "漢字", count: 10_000)  // 20,000 chars, 60 KB: under the cap
+        #expect(!ToolRegistry.normalizeToolResult(smallCjk, tool: "mcp_thing").contains("\"truncated\":true"))
+    }
 }

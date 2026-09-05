@@ -31,6 +31,27 @@ private final class ScopeProbeTool: OsaurusTool, @unchecked Sendable {
     }
 }
 
+/// A probe with an object schema, so the steer hint can be checked for the
+/// target tool's own argument names.
+private final class SchemaProbeTool: OsaurusTool, @unchecked Sendable {
+    let name: String
+    let description = "Test-only schema probe."
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "properties": .object([
+            "urls": .object(["type": .string("array")]),
+            "maxCharacters": .object(["type": .string("number")]),
+        ]),
+        "required": .array([.string("urls")]),
+    ])
+    private(set) var executions = 0
+    init(name: String) { self.name = name }
+    func execute(argumentsJSON: String) async throws -> String {
+        executions += 1
+        return ToolEnvelope.success(tool: name, text: "ran")
+    }
+}
+
 @Suite(.serialized)
 @MainActor
 struct ToolScopeGateRecoveryTests {
@@ -395,7 +416,7 @@ struct ToolScopeGateRecoveryTests {
     /// two candidates are exposed, nothing is guessed.
     @Test
     func prefixDroppedPluginToolName_isSteeredToTheUniqueExposedTool() async throws {
-        let exa = ScopeProbeTool(name: "exa_search_web_fetch_exa")
+        let exa = SchemaProbeTool(name: "exa_search_web_fetch_exa")
         ToolRegistry.shared.registerPluginTool(exa)
         ToolRegistry.shared.setEnabled(true, for: exa.name)
         defer {
@@ -411,6 +432,11 @@ struct ToolScopeGateRecoveryTests {
         let parsed = try envelope(result)
         #expect(parsed?["kind"] as? String == "tool_not_found")
         #expect((parsed?["message"] as? String ?? "").contains("exa_search_web_fetch_exa"))
+        // The hint must not tell the model to reuse the invented tool's
+        // arguments; a tool with a schema gets its own argument names.
+        let steerMessage = parsed?["message"] as? String ?? ""
+        #expect(steerMessage.contains("same arguments") == false)
+        #expect(steerMessage.contains("required: urls"), "the hint names the target tool's own arguments")
 
         // Not exposed to this request: no steer to it (falls through to the
         // generic fetch-intent handling / refusal).

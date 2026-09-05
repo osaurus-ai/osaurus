@@ -935,7 +935,7 @@ public final class ToolRegistry: ObservableObject {
                 kind: .toolNotFound,
                 reason:
                     "There is no '\(name)' tool. The tool you mean is named '\(intended)' — "
-                    + "call it with that exact name and the same arguments.",
+                    + "call it with that exact name\(schemaHint(for: intended)).",
                 toolName: name,
                 retryable: true
             ).toJSONString()
@@ -1533,17 +1533,24 @@ public final class ToolRegistry: ObservableObject {
         // `ToolOutputCompressor`.
         let payload = ToolOutputCompressor.compact(raw)
 
+        // The cap protects a TOKEN budget (~25K tokens), and tokens track
+        // UTF-8 bytes far better than Swift characters: a 100,000-character
+        // CJK/emoji-heavy payload is ~300 KB and ~3× the tokens of ASCII.
+        // Measure in bytes; slice in characters at the proportional length so
+        // ASCII payloads behave exactly as before (bytes == characters).
         let cap = ToolOutputCaps.universalResult
         let isEnvelope = ToolEnvelope.isSuccess(payload) || ToolEnvelope.isError(payload)
+        let byteCount = payload.utf8.count
 
-        if payload.count <= cap {
+        if byteCount <= cap {
             return isEnvelope ? payload : ToolEnvelope.success(tool: tool, text: payload)
         }
+        let characterCap = max(1, Int(Double(cap) * Double(payload.count) / Double(byteCount)))
 
         // Head-biased: at the registry backstop the front of an oversized
         // payload is what identifies it (the recovery hint rides in the
         // envelope, not the marker).
-        let truncatedContent = HeadTailTruncation.apply(payload, cap: cap, headFraction: 2.0 / 3.0)
+        let truncatedContent = HeadTailTruncation.apply(payload, cap: characterCap, headFraction: 2.0 / 3.0)
         let hint =
             "Output exceeded the per-call cap and was truncated (head and tail kept). "
             + "Re-run with narrower arguments — filters, `max_results`, line ranges, or "
@@ -2558,6 +2565,28 @@ public final class ToolRegistry: ObservableObject {
                 && (scope?.permits(registered) ?? false)
         }
         return candidates.count == 1 ? candidates[0] : nil
+    }
+
+    /// " and its own arguments: required <a, b>; optional <c>" for the
+    /// steered-to tool, so the model does not carry the invented tool's
+    /// argument shape over (following "same arguments" got an invalid_args
+    /// rejection in the independent audit). Empty when the tool declares no
+    /// object schema.
+    func schemaHint(for registeredName: String) -> String {
+        guard let tool = toolsByName[registeredName],
+            case .object(let root)? = tool.parameters,
+            case .object(let props)? = root["properties"]
+        else { return "" }
+        var required: [String] = []
+        if case .array(let req)? = root["required"] {
+            required = req.compactMap { if case .string(let r) = $0 { return r } else { return nil } }
+        }
+        let optional = props.keys.filter { !required.contains($0) }.sorted()
+        var parts: [String] = []
+        if !required.isEmpty { parts.append("required: \(required.sorted().joined(separator: ", "))") }
+        if !optional.isEmpty { parts.append("optional: \(optional.joined(separator: ", "))") }
+        guard !parts.isEmpty else { return "" }
+        return " and its own arguments (\(parts.joined(separator: "; ")))"
     }
 
     static let hallucinatedFetchToolNames: Set<String> = [
