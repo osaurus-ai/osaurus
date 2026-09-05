@@ -210,11 +210,35 @@ struct ConfigurationReadScopeTests {
 
     @Test
     func unknownScope_documentSection_redirectsToExportApply() {
+        // The bare failure text still teaches the export/apply pair (it is
+        // what a caller sees when the section read itself cannot run).
         let envelope = OsaurusInspectTool.unknownScopeFailure(scope: "memory", tool: "osaurus_inspect")
         #expect(envelope.contains("DOCUMENT SECTION"))
         #expect(envelope.contains("export"))
         #expect(envelope.contains("apply"))
         #expect(envelope.contains("memory"))
+    }
+
+    /// The scope enum advertises the document sections; naming one must read
+    /// it, not bounce between "must be one of … default_agent …" and "not an
+    /// inspect scope" (the 29-call loop on build #13).
+    @Test
+    func documentSectionScope_readsTheSection() async throws {
+        for scope in ["default_agent", "memory", "tools"] {
+            let envelope = try #require(
+                await OsaurusInspectTool.documentSectionRead(scope: scope, tool: "osaurus_inspect"),
+                "\(scope) must resolve to a section read")
+            #expect(ToolEnvelope.isSuccess(envelope), "\(scope): \(envelope.prefix(200))")
+            let payload = try #require(ToolEnvelope.successPayload(envelope) as? [String: Any])
+            #expect(payload["kind"] as? String == "document_section")
+            #expect(payload["scope"] as? String == scope)
+            #expect((payload["yaml"] as? String)?.contains(scope) == true)
+        }
+        // Not a section: no read, the caller falls through to the failure.
+        #expect(await OsaurusInspectTool.documentSectionRead(scope: "user_profile", tool: "osaurus_inspect") == nil)
+        for removed in ["server", "chat", "app"] {
+            #expect(await OsaurusInspectTool.documentSectionRead(scope: removed, tool: "osaurus_inspect") == nil)
+        }
     }
 
     @Test

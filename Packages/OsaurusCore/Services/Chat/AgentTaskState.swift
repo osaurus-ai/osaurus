@@ -157,9 +157,14 @@ public final class AgentTaskState {
     /// `read_knowledge` qualifies because its `not_found` for the same
     /// document path is deterministic on an unchanged store; a knowledge
     /// write to that path clears the held error via the shared write rules.
+    /// `osaurus_inspect` / `osaurus_help` qualify too: an `invalid_args`
+    /// rejection for the same scope/arguments is a pure function of the
+    /// call (observed live: 31 identical `osaurus_inspect` executions in one
+    /// turn, each re-run for nothing). Replaying the held rejection costs no
+    /// execution; it does not, by itself, stop a model that ignores it.
     private static let deterministicErrorTools: Set<String> = [
         "file_read", "file_search", "file_edit", "capabilities_load",
-        "read_knowledge",
+        "read_knowledge", "osaurus_inspect", "osaurus_help",
     ]
 
     /// Read-like tools that can explicitly classify a failure as
