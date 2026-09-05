@@ -5761,6 +5761,48 @@ public actor ModelRuntime {
         return settings.memorySafety.mode.cacheStorePolicy
     }
 
+    /// Repetition-penalty lookback when no multiplicative penalty is in
+    /// effect. vmlx does not install the processor in that case, so the value
+    /// is inert; it is kept at the engine's standard 20 for parity.
+    nonisolated static let repetitionContextSizeWithoutPenalty = 20
+
+    /// Repetition-penalty lookback when an effective penalty > 1.0 is set
+    /// (bundle `repetition_penalty`, server Sampling Default, or request).
+    ///
+    /// vmlx applies the HF-style penalty over a ring of the last N generated
+    /// tokens, so a repeat unit longer than N is never penalised at all.
+    /// Raptor-v0.5-8B-A1B-JANG_6M (bundle penalty 1.05, no presence /
+    /// frequency penalty) repeated a ~25-token sentence ("Roster — Wana UW is
+    /// the only one with no activity this window (last action Aug 31,
+    /// 2026).") five times verbatim after four tool steps: every token of the
+    /// sentence had already scrolled out of the 20-token ring by the time it
+    /// came round again. 64 covers a long sentence or a short paragraph.
+    ///
+    /// Deliberately small (<= 128): a long lookback over-penalises tokens that
+    /// legitimately recur inside one turn — turn-boundary / role sentinels,
+    /// code punctuation, table pipes and separators — and degrades structured
+    /// output. This is the multiplicative penalty's window only; it is never a
+    /// presence/frequency default and installs nothing when no penalty is set.
+    nonisolated static let repetitionContextSizeWithPenalty = 64
+
+    /// Pick the repetition lookback for a resolved penalty. An explicit
+    /// `override` (a caller/bundle/request that names the window) always
+    /// wins; otherwise a penalty > 1.0 widens the window to
+    /// `repetitionContextSizeWithPenalty`, and no penalty keeps the inert
+    /// standard `repetitionContextSizeWithoutPenalty`.
+    nonisolated static func resolveRepetitionContextSize(
+        repetitionPenalty: Float?,
+        override: Int? = nil
+    ) -> Int {
+        if let override, override > 0 {
+            return override
+        }
+        if let repetitionPenalty, repetitionPenalty > 1.0 {
+            return repetitionContextSizeWithPenalty
+        }
+        return repetitionContextSizeWithoutPenalty
+    }
+
     nonisolated static func makeGenerateParameters(
         temperature: Float,
         maxTokens: Int,
@@ -5775,7 +5817,8 @@ public actor ModelRuntime {
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
         enableCompiledBatchDecode: Bool = true,
         prefillStepSize: Int? = nil,
-        modelName: String? = nil
+        modelName: String? = nil,
+        repetitionContextSize: Int? = nil
     ) -> MLXLMCommon.GenerateParameters {
         // Laguna no longer needs a forced repetition penalty: the prior 1.15 /
         // ctx-256 default was masking a vmlx YaRN `_mscale` bug (pinned to 1.0,
@@ -5783,9 +5826,12 @@ public actor ModelRuntime {
         // bug. Both are fixed in the engine, so rep=1.0 and rep=1.15 now produce
         // identical coherent output. Drop the laguna special-case — it also drove
         // a TokenRing index-out-of-range crash on longer prompts at ctx 256. A
-        // caller-supplied penalty still applies; default is the standard 20 window.
+        // caller-supplied penalty still applies.
         let resolvedRepetitionPenalty = repetitionPenalty
-        let resolvedRepetitionContextSize = 20
+        let resolvedRepetitionContextSize = resolveRepetitionContextSize(
+            repetitionPenalty: resolvedRepetitionPenalty,
+            override: repetitionContextSize
+        )
         var params = MLXLMCommon.GenerateParameters(
             maxTokens: maxTokens,
             enableCompiledBatchDecode: enableCompiledBatchDecode,
