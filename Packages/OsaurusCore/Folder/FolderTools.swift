@@ -2802,12 +2802,25 @@ struct FileSearchTool: OsaurusTool {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        let patternReq = requireString(
-            args,
-            "pattern",
-            expected: "search text (case-insensitive substring, e.g. `TODO`)",
-            tool: name
-        )
+        let target = (args["target"] as? String)?.lowercased() ?? "content"
+        // Files mode with an empty pattern means "every file" — the exact
+        // call Raptor makes at temperature 0 to enumerate a folder
+        // (`{"pattern":"","target":"files"}`, live 2026-09-04). Rejecting it
+        // as invalid_args produced a retry loop that the breaker ended with
+        // no answer; a content search still needs real search text.
+        let patternReq: ArgumentRequirement<String>
+        if target == "files", let raw = args["pattern"] as? String,
+            raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            patternReq = .value("*")
+        } else {
+            patternReq = requireString(
+                args,
+                "pattern",
+                expected: "search text (case-insensitive substring, e.g. `TODO`)",
+                tool: name
+            )
+        }
         guard case .value(let pattern) = patternReq else {
             return patternReq.failureEnvelope ?? ""
         }
@@ -2818,7 +2831,6 @@ struct FileSearchTool: OsaurusTool {
         // over a big tree is a one-call context bomb.
         let maxResults = min(max(coerceInt(args["max_results"]) ?? 50, 1), ToolOutputCaps.searchMaxResults)
         let offset = max(0, coerceInt(args["offset"]) ?? 0)
-        let target = (args["target"] as? String)?.lowercased() ?? "content"
 
         // Combined mode: an absolute `/workspace/...` path is the Linux
         // sandbox — search it via the sandbox bridge (content or files).

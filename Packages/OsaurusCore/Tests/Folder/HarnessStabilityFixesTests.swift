@@ -487,7 +487,9 @@ struct HarnessStabilityFixesTests {
         #expect(ToolEnvelope.isSuccess(result))
         let text = EnvelopeAssertions.successText(result) ?? ""
         #expect(text.contains("Found 5 match(es)"))
-        #expect(warnings(result).contains(where: { $0.contains("truncated at 5") }))
+        // The cap is reported as a paging note (returned / next_offset), the
+        // same contract files mode and list_knowledge use.
+        #expect(warnings(result).contains(where: { $0.contains("returned=5") && $0.contains("next_offset=5") }))
     }
 
     // MARK: - 5. shell_run idle-timeout clamp

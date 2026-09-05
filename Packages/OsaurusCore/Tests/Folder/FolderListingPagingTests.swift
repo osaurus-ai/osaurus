@@ -104,6 +104,35 @@ struct FolderListingPagingTests {
         #expect(warnings.contains { $0.contains("past the last match") })
     }
 
+    /// `{"pattern":"","target":"files"}` is how Raptor enumerates a folder at
+    /// temperature 0 (live, build #11): files mode treats an empty pattern as
+    /// `*` instead of rejecting it into an invalid_args retry loop. Content
+    /// mode keeps requiring search text.
+    @MainActor
+    @Test func filesModeEmptyPatternEnumeratesEveryFile() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try seedNotes(under: root)
+
+        let tool = FileSearchTool(rootPath: root)
+        let page = try payload(
+            try await tool.execute(argumentsJSON: #"{"pattern":"","target":"files","max_results":300}"#))
+        #expect(page["match_count"] as? Int == 300)
+        #expect(page["total"] as? Int == 350)
+        #expect(page["next_offset"] as? Int == 300)
+
+        let whitespace = try payload(
+            try await tool.execute(argumentsJSON: #"{"pattern":"  ","target":"files","max_results":10}"#))
+        #expect(whitespace["match_count"] as? Int == 10)
+        #expect(whitespace["total"] as? Int == 350)
+
+        let content = try await tool.execute(argumentsJSON: #"{"pattern":"","target":"content"}"#)
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: Data(content.utf8)) as? [String: Any])
+        #expect(object["ok"] as? Bool == false)
+        #expect(object["kind"] as? String == "invalid_args")
+    }
+
     /// A folder small enough to list in full states nothing about
     /// truncation.
     @MainActor
