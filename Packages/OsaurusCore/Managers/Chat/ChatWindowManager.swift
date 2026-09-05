@@ -1337,7 +1337,6 @@ private struct ChatToolbarTrailingView: View {
                             id: windowState.windowId, pinned: windowState.isWindowPinned)
                     }
                 )
-                .background(TourAnchorMarker(anchor: .pinButton))
             }
         }
         .environment(\.theme, windowState.theme)

@@ -27,7 +27,6 @@ public enum ChatTourAnchor: String, Sendable {
     case sidebarLensBar
     case tabStrip
     case historyButton
-    case pinButton
     /// The Settings row at the foot of the sidebar.
     case sidebarSettings
 }
@@ -47,7 +46,7 @@ struct ChatTourStop: Identifiable {
 }
 
 extension ChatTourStop {
-    /// The five stops, in order. Copy leads with "moved / still here" so the
+    /// The four stops, in order. Copy leads with "moved / still here" so the
     /// message is reassurance, not a feature pitch.
     @MainActor static var all: [ChatTourStop] {
         [
@@ -79,14 +78,6 @@ extension ChatTourStop {
                 title: L("Your chats didn’t go anywhere"),
                 body: L(
                     "Chat history moved out of the sidebar to this button.\n\nIt lists every conversation for the selected agent, with search, import, and the same actions as before."
-                )
-            ),
-            ChatTourStop(
-                id: "pin",
-                anchor: .pinButton,
-                title: L("Pin the window from here"),
-                body: L(
-                    "Keep this chat floating above your other windows.\n\nClick again to unpin it."
                 )
             ),
             ChatTourStop(
@@ -397,6 +388,10 @@ struct ChatTourOverlayView: View {
     @ObservedObject var tour: ChatLayoutTour
     let windowId: UUID
 
+    /// Measured card size, so placement above an anchor uses the real
+    /// height instead of a guess (a short card floated far above its target).
+    @State private var cardSize: CGSize = .zero
+
 
     private var theme: ThemeProtocol {
         ChatWindowManager.shared.windowState(id: windowId)?.theme ?? ThemeManager.shared.currentTheme
@@ -447,6 +442,7 @@ struct ChatTourOverlayView: View {
                     card(for: stop)
                         .frame(width: Self.cardWidth)
                         .fixedSize(horizontal: false, vertical: true)
+                        .onGeometryChange(for: CGSize.self) { $0.size } action: { cardSize = $0 }
                         .offset(cardOffset(spotlight: spotlight, in: size))
                 }
             }
@@ -488,7 +484,8 @@ struct ChatTourOverlayView: View {
     /// clamped inside the window horizontally. With no anchor (not laid out
     /// yet or hidden) the card sits centred.
     private func cardOffset(spotlight: CGRect?, in size: CGSize) -> CGSize {
-        let cardHeight: CGFloat = 240
+        // Fall back to a typical height until the first measurement lands.
+        let cardHeight: CGFloat = cardSize.height > 0 ? cardSize.height : 200
         let gap: CGFloat = 12
         guard let s = spotlight else {
             return CGSize(width: (size.width - Self.cardWidth) / 2, height: (size.height - cardHeight) / 2)
