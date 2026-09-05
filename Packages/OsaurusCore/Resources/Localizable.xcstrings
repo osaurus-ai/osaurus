@@ -188564,36 +188564,104 @@
         }
       }
     },
-    "Settings → Privacy → Export data. The download link arrives by email as a zip file.": {
+    "Settings → Privacy → Export data. The download link arrives by email. Large accounts are split into several batch zip files plus an index JSON: import each batch zip, not the index.": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Einstellungen → Datenschutz → Daten exportieren. Der Download-Link kommt per E-Mail als Zip-Datei."
+            "value": "Einstellungen → Datenschutz → Daten exportieren. Der Download-Link kommt per E-Mail. Große Konten werden in mehrere Batch-Zip-Dateien plus eine Index-JSON aufgeteilt: Importiere jede Batch-Zip-Datei, nicht den Index."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "설정 → 개인정보 보호 → 데이터 내보내기. 다운로드 링크가 zip 파일로 이메일로 전송됩니다."
+            "value": "설정 → 개인정보 보호 → 데이터 내보내기. 다운로드 링크가 이메일로 전송됩니다. 큰 계정은 여러 개의 배치 zip 파일과 인덱스 JSON으로 나뉩니다. 인덱스가 아닌 각 배치 zip 파일을 가져오세요."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Настройки → Конфиденциальность → Экспорт данных. Ссылка для скачивания придёт по электронной почте в виде zip-файла."
+            "value": "Настройки → Конфиденциальность → Экспорт данных. Ссылка для скачивания придёт по электронной почте. Большие аккаунты разбиваются на несколько zip-файлов (батчей) и индексный JSON: импортируйте каждый zip-батч, а не индекс."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "设置 → 隐私 → 导出数据。下载链接将以 zip 文件形式通过电子邮件发送。"
+            "value": "设置 → 隐私 → 导出数据。下载链接将通过电子邮件发送。数据量大的账户会被拆分为多个批次 zip 文件和一个索引 JSON：请导入每个批次 zip 文件，而不是索引。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "設定 → 隱私 → 導出資料。下載連結將以 zip 檔案形式透過電子郵件傳送。"
+            "value": "設定 → 隱私 → 導出資料。下載連結將透過電子郵件傳送。資料量大的帳戶會被拆分為多個批次 zip 檔案和一個索引 JSON：請匯入每個批次 zip 檔案，而不是索引。"
+          }
+        }
+      }
+    },
+    "This file is the index of a Claude export, not the conversations. Claude splits large exports into batch zip files and lists them here. Import each batch zip directly, no need to unzip. If you only received this file, download each link under export_url first.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diese Datei ist der Index eines Claude-Exports, nicht die Unterhaltungen. Claude teilt große Exporte in Batch-Zip-Dateien auf und listet sie hier auf. Importiere jede Batch-Zip-Datei direkt, ohne sie zu entpacken. Wenn du nur diese Datei erhalten hast, lade zuerst jeden Link unter export_url herunter."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 파일은 Claude 내보내기의 인덱스이며 대화가 아닙니다. Claude는 큰 내보내기를 배치 zip 파일로 나누고 여기에 목록을 기록합니다. 압축을 풀 필요 없이 각 배치 zip 파일을 직접 가져오세요. 이 파일만 받았다면 먼저 export_url 아래의 각 링크를 다운로드하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Этот файл — индекс экспорта Claude, а не сами разговоры. Claude разбивает большие экспорты на zip-файлы (батчи) и перечисляет их здесь. Импортируйте каждый zip-батч напрямую, распаковывать не нужно. Если вы получили только этот файл, сначала скачайте каждую ссылку из export_url."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此文件是 Claude 导出的索引，而不是对话内容。Claude 会将大型导出拆分为多个批次 zip 文件并在此列出。请直接导入每个批次 zip 文件，无需解压。如果你只收到了此文件，请先下载 export_url 下的每个链接。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此檔案是 Claude 匯出的索引，而不是對話內容。Claude 會將大型匯出拆分為多個批次 zip 檔案並在此列出。請直接匯入每個批次 zip 檔案，無需解壓。如果你只收到了此檔案，請先下載 export_url 下的每個連結。"
+          }
+        }
+      }
+    },
+    "Batch files listed in the index:": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Im Index aufgeführte Batch-Dateien:"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "인덱스에 나열된 배치 파일:"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Файлы батчей, перечисленные в индексе:"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "索引中列出的批次文件："
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "索引中列出的批次檔案："
           }
         }
       }
