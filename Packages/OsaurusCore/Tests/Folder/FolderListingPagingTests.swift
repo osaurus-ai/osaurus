@@ -133,6 +133,44 @@ struct FolderListingPagingTests {
         #expect(object["kind"] as? String == "invalid_args")
     }
 
+    /// Default (content) mode with a glob: page 1 falls back to files mode
+    /// and advertises `next_offset: 50`; re-issuing exactly that call with
+    /// `offset: 50` must land on files page 2 — not on a content-mode
+    /// "earlier pages held every match" overrun (live build #12: Raptor
+    /// repeated that call twenty times).
+    @MainActor
+    @Test func contentModeGlobPagesInFilesModeOnEveryPage() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try seedNotes(under: root)
+        let tool = FileSearchTool(rootPath: root)
+
+        let first = try payload(try await tool.execute(argumentsJSON: #"{"path":".","pattern":"*"}"#))
+        #expect(first["kind"] as? String == "search")
+        #expect(first["match_count"] as? Int == 50)
+        #expect(first["total"] as? Int == 350)
+        #expect(first["next_offset"] as? Int == 50)
+
+        let second = try payload(
+            try await tool.execute(argumentsJSON: #"{"path":".","pattern":"*","offset":"50"}"#))
+        #expect(second["kind"] as? String == "search")
+        #expect(second["match_count"] as? Int == 50)
+        #expect(second["offset"] as? Int == 50)
+        #expect(second["next_offset"] as? Int == 100)
+        #expect(Set(paths(first)).isDisjoint(with: paths(second)))
+
+        // Past the end in content mode with a files fallback: an explicit
+        // overrun steer, still files-mode shaped.
+        let overrun = try await tool.execute(argumentsJSON: #"{"path":".","pattern":"*","offset":350}"#)
+        let object = try #require(try JSONSerialization.jsonObject(with: Data(overrun.utf8)) as? [String: Any])
+        let warnings = try #require(object["warnings"] as? [String])
+        #expect(warnings.contains { $0.contains("past the last match") })
+
+        // Real content text past its last page keeps the content overrun message.
+        let content = try await tool.execute(argumentsJSON: #"{"pattern":"note 0-1","offset":500}"#)
+        #expect(content.contains("earlier pages held every match"))
+    }
+
     /// A folder small enough to list in full states nothing about
     /// truncation.
     @MainActor

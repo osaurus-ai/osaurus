@@ -2985,38 +2985,39 @@ struct FileSearchTool: OsaurusTool {
         }
 
         if results.isEmpty {
+            // Mode correction (deterministic, no NL parsing): a content search
+            // that finds nothing is the classic "wanted files, grepped bodies"
+            // mistake. Run the files-mode search AT THE SAME OFFSET; if that
+            // query has matches, answer in files mode so the reasonable-but-
+            // wrong `target` succeeds at the model's actual intent — on every
+            // page, not just the first. Live (build #12): Raptor's page 1 of
+            // `pattern:"*"` fell back to files (total 350, next_offset 50),
+            // it re-issued exactly as told with `offset: 50`, and the old
+            // offset-guard below answered "the earlier pages held every
+            // match" — twenty identical times. Only fires on empty content,
+            // so it never overrides a real content hit.
+            let fallback = try searchFilesByName(
+                root: searchURL, query: pattern, maxResults: maxResults, offset: offset)
+            if !fallback.entries.isEmpty || (offset > 0 && fallback.total > 0) {
+                let corrected = FileSearchOutcome(
+                    entries: fallback.entries,
+                    matchedQuery: fallback.matchedQuery,
+                    truncated: fallback.truncated,
+                    note: fallback.entries.isEmpty
+                        ? fallback.note
+                        : "(no content matches for '\(pattern)'; showing files named like '\(fallback.matchedQuery)')",
+                    total: fallback.total,
+                    offset: fallback.offset
+                )
+                return filesSearchEnvelope(originalQuery: pattern, found: corrected)
+            }
             // Paging overrun: an `offset` past the last match is not "no
-            // matches" and must not trigger mode correction.
+            // matches".
             if offset > 0 {
                 return ToolEnvelope.success(
                     tool: name,
                     text: "No content matches for '\(pattern)' at offset \(offset) — the earlier "
                         + "pages held every match. Re-issue with a smaller `offset` (or 0)."
-                )
-            }
-            // Mode correction (deterministic, no NL parsing): a content search
-            // that finds nothing is the classic "wanted files, grepped bodies"
-            // mistake. Run the files-mode search; if it finds candidates,
-            // return them so the reasonable-but-wrong `target` succeeds at the
-            // model's actual intent. Only fires on empty content, so it never
-            // overrides a real content hit.
-            let fallback = try searchFilesByName(
-                root: searchURL, query: pattern, maxResults: maxResults, offset: 0)
-            if !fallback.entries.isEmpty {
-                let note =
-                    "(no content matches for '\(pattern)'; showing files named like '\(fallback.matchedQuery)')"
-                var warnings = [note]
-                if let paging = Self.filesPagingNote(fallback) { warnings.append(paging) }
-                if fallback.truncated { warnings.append(Self.searchBudgetWarning) }
-                return ToolEnvelope.search(
-                    tool: name,
-                    query: fallback.matchedQuery,
-                    entries: fallback.entries,
-                    truncated: fallback.truncated,
-                    warnings: warnings,
-                    total: fallback.total,
-                    offset: fallback.offset,
-                    nextOffset: fallback.nextOffset
                 )
             }
             let skippedNote = Self.skippedFilesNote(skippedFiles)
