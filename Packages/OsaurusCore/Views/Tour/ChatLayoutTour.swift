@@ -170,7 +170,7 @@ public final class ChatLayoutTour: ObservableObject {
     func next() {
         guard isActive else { return }
         if stepIndex + 1 < stops.count {
-            transition { self.stepIndex += 1 }
+            stepIndex += 1
         } else {
             finish(markCompleted: true)
         }
@@ -178,45 +178,61 @@ public final class ChatLayoutTour: ObservableObject {
 
     func back() {
         guard isActive, stepIndex > 0 else { return }
-        transition { self.stepIndex -= 1 }
-    }
-
-    /// Crossfade the whole overlay through a step change. The spotlight's
-    /// SwiftUI cutout and the AppKit blur mask can't be tweened in lockstep,
-    /// so instead of sliding (where the two layers drift apart for a beat)
-    /// the overlay fades out, relocates while invisible, and fades back in.
-    private var isTransitioning = false
-
-    private func transition(_ change: @escaping @MainActor () -> Void) {
-        guard let overlayWindow, !isTransitioning else { change(); return }
-        isTransitioning = true
-        NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.12
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            overlayWindow.animator().alphaValue = 0
-        }, completionHandler: {
-            MainActor.assumeIsolated {
-                change()
-                NSAnimationContext.runAnimationGroup({ ctx in
-                    ctx.duration = 0.18
-                    ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                    overlayWindow.animator().alphaValue = 1
-                }, completionHandler: {
-                    MainActor.assumeIsolated { self.isTransitioning = false }
-                })
-            }
-        })
+        stepIndex -= 1
     }
 
     func skip() {
         finish(markCompleted: true)
     }
 
+    // MARK: Spotlight morph
+
+    /// The spotlight rect currently ON SCREEN, in window coordinates. Both
+    /// layers (the SwiftUI scrim/outline and the AppKit blur mask) render
+    /// this exact rect, and the morph between stops is interpolated here,
+    /// one frame at a time on a common-mode timer, so the two can never
+    /// drift apart the way a SwiftUI tween next to a snapping mask did.
+    @Published private(set) var displayedCutout: CGRect?
+    private var morphTimer: Timer?
+    var morphInFlight: Bool { morphTimer != nil }
+    private static let morphDuration: TimeInterval = 0.25
+
+    /// Move the spotlight to `target`: instantly (first layout, resize, or
+    /// when there was no spotlight before) or as a short ease-out morph.
+    func setSpotlight(_ target: CGRect?, animated: Bool) {
+        morphTimer?.invalidate()
+        morphTimer = nil
+        guard animated, let from = displayedCutout, let to = target, from != to else {
+            displayedCutout = target
+            updateBlurMask(cutout: target)
+            return
+        }
+        let start = Date()
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let t = min(1, Date().timeIntervalSince(start) / Self.morphDuration)
+                let e = 1 - pow(1 - t, 3)  // ease-out cubic, no overshoot
+                let rect = CGRect(
+                    x: from.minX + (to.minX - from.minX) * e,
+                    y: from.minY + (to.minY - from.minY) * e,
+                    width: from.width + (to.width - from.width) * e,
+                    height: from.height + (to.height - from.height) * e)
+                self.displayedCutout = rect
+                self.updateBlurMask(cutout: rect)
+                if t >= 1 {
+                    self.morphTimer?.invalidate()
+                    self.morphTimer = nil
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        morphTimer = timer
+    }
+
     /// Blur everything behind the overlay except the spotlight. The blur is
-    /// an `NSVisualEffectView` (behind-window) whose mask clears the cutout;
-    /// the cleared region is fully transparent, so hover and clicks there
-    /// reach the chat window (which the action-driven stop relies on).
-    func updateBlurMask(cutout: CGRect?) {
+    /// an `NSVisualEffectView` (behind-window) whose mask clears the cutout.
+    private func updateBlurMask(cutout: CGRect?) {
         guard let blurView, let overlayWindow else { return }
         let size = overlayWindow.frame.size
         guard size.width > 0, size.height > 0 else { return }
@@ -333,6 +349,9 @@ public final class ChatLayoutTour: ObservableObject {
     }
 
     private func dismissOverlay() {
+        morphTimer?.invalidate()
+        morphTimer = nil
+        displayedCutout = nil
         windowObservers.forEach { NotificationCenter.default.removeObserver($0) }
         windowObservers = []
         if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
@@ -450,10 +469,15 @@ struct ChatTourOverlayView: View {
             // Window coords are bottom-left; SwiftUI is top-left.
             // AppKit (bottom-left) cutout for the blur mask, SwiftUI (top-left)
             // for the scrim and card.
-            let appKitCutout: CGRect? = stop.flatMap { s in
+            let targetCutout: CGRect? = stop.flatMap { s in
                 tour.frame(of: s.anchor).map { Self.calibrated($0, for: s.anchor) }
             }
-            let spotlight: CGRect? = appKitCutout.map { f in
+            // What is drawn is the controller's interpolated rect, shared
+            // with the blur mask; the target only tells it where to go.
+            let spotlight: CGRect? = tour.displayedCutout.map { f in
+                CGRect(x: f.minX, y: size.height - f.maxY, width: f.width, height: f.height)
+            }
+            let cardTarget: CGRect? = targetCutout.map { f in
                 CGRect(x: f.minX, y: size.height - f.maxY, width: f.width, height: f.height)
             }
             ZStack(alignment: .topLeading) {
@@ -470,16 +494,22 @@ struct ChatTourOverlayView: View {
                         .frame(width: Self.cardWidth)
                         .fixedSize(horizontal: false, vertical: true)
                         .onGeometryChange(for: CGSize.self) { $0.size } action: { cardSize = $0 }
-                        .offset(cardOffset(spotlight: spotlight, in: size))
+                        // The card heads straight for the destination on the same
+                        // clock as the morph.
+                        .offset(cardOffset(spotlight: cardTarget, in: size))
+                        .animation(.easeOut(duration: 0.25), value: tour.stepIndex)
                 }
             }
             .frame(width: size.width, height: size.height)
-            // Critically damped: the spotlight should glide to the next anchor, not
-            // overshoot and bounce back off it.
-            .transaction { $0.animation = nil }
-            .onAppear { tour.updateBlurMask(cutout: appKitCutout) }
-            .onChange(of: appKitCutout) { _, cutout in tour.updateBlurMask(cutout: cutout) }
-            .onChange(of: size) { _, _ in tour.updateBlurMask(cutout: appKitCutout) }
+            .onAppear { tour.setSpotlight(targetCutout, animated: false) }
+            // Step change: morph. Anchor re-measure or window resize: snap,
+            // so the spotlight never lags a live resize.
+            .onChange(of: tour.stepIndex) { _, _ in tour.setSpotlight(targetCutout, animated: true) }
+            .onChange(of: targetCutout) { _, new in
+                if tour.morphInFlight { return }
+                tour.setSpotlight(new, animated: false)
+            }
+            .onChange(of: size) { _, _ in tour.setSpotlight(targetCutout, animated: false) }
         }
         .environment(\.theme, theme)
     }
