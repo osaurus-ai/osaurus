@@ -531,11 +531,16 @@ internal func sandboxBridgeSearch(
     path: String,
     target: String,
     filePattern: String?,
-    maxResults: Int
+    maxResults: Int,
+    offset: Int = 0
 ) async throws -> String {
+    // The sandbox search has no offset of its own: ask it for the page's
+    // end plus one (so "more remain" is knowable without a full count) and
+    // page the returned lines here, exactly like the host route.
+    let requested = min(max(offset, 0) + max(maxResults, 1) + 1, ToolOutputCaps.searchMaxResults)
     var args: [String: Any] = [
         "path": path,
-        "max_results": max(maxResults, 1),
+        "max_results": requested,
     ]
     if target == "files" {
         args["target"] = "files"
@@ -550,12 +555,51 @@ internal func sandboxBridgeSearch(
     }
     let raw = try await SandboxSearchFilesTool(agentName: bridge.agentName, home: bridge.home)
         .execute(argumentsJSON: encodeBridgeArgs(args))
-    return normalizedFileEnvelope(
-        raw,
-        tool: "file_search",
-        payloadKey: "matches",
-        emptyText: "No matches found for '\(pattern)'"
-    )
+    guard !ToolEnvelope.isError(raw) else { return relabelToolEnvelope(raw, tool: "file_search") }
+    let matches = (ToolEnvelope.successPayload(raw) as? [String: Any])?["matches"] as? String ?? ""
+    let page = pageSandboxMatches(matches, offset: max(offset, 0), maxResults: max(maxResults, 1))
+    let text = page.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        ? (page.offsetPastEnd
+            ? "No matches at offset \(offset): the sandbox search returned \(page.available) match(es) (offsets 0–\(max(page.available - 1, 0))). Re-issue with a smaller `offset`."
+            : "No matches found for '\(pattern)'")
+        : page.text
+    return ToolEnvelope.success(tool: "file_search", text: text, warnings: page.footer.map { [$0] })
+}
+
+/// One page of a sandbox `matches` text (one match per line), paged the way
+/// the host `file_search` pages: drop the first `offset` lines, keep
+/// `maxResults`, and describe the remainder with the host's footer so the
+/// model re-issues with `offset: next_offset`. Pure and testable.
+internal struct SandboxMatchesPage: Equatable {
+    let text: String
+    let returned: Int
+    let available: Int
+    let nextOffset: Int?
+    let offsetPastEnd: Bool
+    var footer: String? {
+        guard let nextOffset else { return nil }
+        return "[returned=\(returned), offset=\(nextOffset - returned), next_offset=\(nextOffset) — more matches exist. "
+            + "Call file_search again with `offset: \(nextOffset)` (same pattern/path/max_results) to continue, "
+            + "or narrow with `path` / `file_pattern`.]"
+    }
+}
+
+internal func pageSandboxMatches(_ matches: String, offset: Int, maxResults: Int) -> SandboxMatchesPage {
+    let lines = matches.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+    guard offset < lines.count else {
+        return SandboxMatchesPage(text: "", returned: 0, available: lines.count, nextOffset: nil, offsetPastEnd: !lines.isEmpty)
+    }
+    let end = min(offset + maxResults, lines.count)
+    let page = Array(lines[offset..<end])
+    let more = lines.count > end
+    var text = page.joined(separator: "\n")
+    let next = more ? end : nil
+    if let next {
+        text += "\n\n[returned=\(page.count), offset=\(offset), next_offset=\(next) — more matches exist. "
+            + "Call file_search again with `offset: \(next)` (same pattern/path/max_results) to continue, "
+            + "or narrow with `path` / `file_pattern`.]"
+    }
+    return SandboxMatchesPage(text: text, returned: page.count, available: lines.count, nextOffset: next, offsetPastEnd: false)
 }
 
 /// Write or edit a sandbox file for a WRITABLE-combined-mode

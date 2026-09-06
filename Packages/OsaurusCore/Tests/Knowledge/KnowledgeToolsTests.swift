@@ -266,4 +266,17 @@ struct KnowledgeToolsTests {
         // Exact tag match, not substring.
         #expect(!KnowledgeToolScope.matchesTags("wordpress", filter: ["word"]))
     }
+    // MARK: - list_knowledge paging offset
+
+    /// `offset: 2147483648` used to reach `sqlite3_bind_int` as `Int32(offset)` and
+    /// terminate the process ("Not enough bits"). The tool clamps at Int32.max and
+    /// the binding itself is clamping, so a giant offset is an empty page, not a crash.
+    @Test
+    func listOffsetPastInt32IsClampedNotCrashing() {
+        #expect(ListKnowledgeTool.effectiveOffset(2_147_483_648) == Int(Int32.max))
+        #expect(ListKnowledgeTool.effectiveOffset(Int.max) == Int(Int32.max))
+        #expect(ListKnowledgeTool.effectiveOffset(-5) == 0)
+        #expect(ListKnowledgeTool.effectiveOffset("12") == 12)
+        #expect(ListKnowledgeTool.effectiveOffset(nil) == 0)
+    }
 }

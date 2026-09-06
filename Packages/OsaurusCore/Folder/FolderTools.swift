@@ -2843,7 +2843,8 @@ struct FileSearchTool: OsaurusTool {
                 path: searchPath,
                 target: target,
                 filePattern: filePattern,
-                maxResults: maxResults
+                maxResults: maxResults,
+                offset: offset
             )
         }
 

@@ -683,8 +683,8 @@ public final class KnowledgeDatabase: @unchecked Sendable {
             readOnly: true,
             bind: { stmt in
                 filter.bind(stmt)
-                sqlite3_bind_int(stmt, Int32(limitIndex), Int32(limit))
-                sqlite3_bind_int(stmt, Int32(offsetIndex), Int32(max(0, offset)))
+                sqlite3_bind_int(stmt, Int32(limitIndex), Int32(clamping: max(0, limit)))
+                sqlite3_bind_int(stmt, Int32(offsetIndex), Int32(clamping: max(0, offset)))
             },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {

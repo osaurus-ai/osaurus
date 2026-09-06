@@ -695,9 +695,10 @@ final class ListKnowledgeTool: OsaurusTool, @unchecked Sendable {
     }
 
     /// Effective start row for a raw `offset` argument: coerced, default 0,
-    /// never negative.
+    /// never negative, never past what the SQLite OFFSET binding can carry
+    /// (`Int32.max`; a larger value used to narrow with "Not enough bits").
     static func effectiveOffset(_ raw: Any?) -> Int {
-        max(0, ArgumentCoercion.int(raw) ?? 0)
+        min(max(0, ArgumentCoercion.int(raw) ?? 0), Int(Int32.max))
     }
 
     /// Cancellation audit: one capped (`limit` ≤ `maxLimit`) SQLite listing over the
