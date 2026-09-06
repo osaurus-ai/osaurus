@@ -1559,6 +1559,14 @@ public final class ToolRegistry: ObservableObject {
             characterCap = max(1, Int(Double(characterCap) * Double(cap) / Double(truncatedContent.utf8.count)))
             truncatedContent = HeadTailTruncation.apply(payload, cap: characterCap, headFraction: 2.0 / 3.0)
         }
+        // Character slicing cannot bound bytes when a single grapheme is
+        // larger than the budget (one base letter plus tens of thousands of
+        // combining marks is ONE Character), or when the pass limit ran out:
+        // the byte-exact cut is the guarantee, the loop above only the
+        // grapheme-friendly first choice.
+        if truncatedContent.utf8.count > cap {
+            truncatedContent = HeadTailTruncation.applyByteExact(payload, byteCap: cap, headFraction: 2.0 / 3.0)
+        }
         let hint =
             "Output exceeded the per-call cap and was truncated (head and tail kept). "
             + "Re-run with narrower arguments — filters, `max_results`, line ranges, or "
