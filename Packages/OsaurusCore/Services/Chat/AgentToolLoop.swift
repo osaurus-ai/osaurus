@@ -356,11 +356,23 @@ enum AgentLoopModelStep {
     /// "? " boundary. `nil` when the line is a single sentence (the line rule
     /// already judged it).
     private static func closingSentence(of line: String) -> String? {
+        // A boundary is a terminator followed by whitespace OR directly by
+        // an uppercase letter: announce-only retries stream into the same
+        // bubble with no separator ("…to my document.I'll append…", run
+        // 130916 R2), and a split only on ". " left the whole 250-character
+        // tail as one "sentence", so the third announcement was accepted
+        // as the final answer.
         var cut: String.Index? = nil
-        for boundary in [". ", "! ", "? "] {
-            if let range = line.range(of: boundary, options: .backwards) {
-                if cut == nil || range.upperBound > cut! { cut = range.upperBound }
+        var index = line.startIndex
+        while index < line.endIndex {
+            let ch = line[index]
+            if ch == "." || ch == "!" || ch == "?" {
+                let next = line.index(after: index)
+                if next < line.endIndex, line[next].isWhitespace || line[next].isUppercase {
+                    cut = next
+                }
             }
+            index = line.index(after: index)
         }
         guard let cut else { return nil }
         let tail = line[cut...].trimmingCharacters(in: .whitespacesAndNewlines)

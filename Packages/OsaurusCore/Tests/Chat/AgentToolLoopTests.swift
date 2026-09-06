@@ -746,6 +746,8 @@ struct AgentToolLoopTests {
             "I have four solid sources. Let me get one more specifically on the cocoa/chocolate clinical study to complete the picture.",
             // 128 characters, above the old 120-character bound (run 121436 R1).
             "I'll search for more accessible sources with the scientific data, including the 71% inhibition figure and peer-reviewed studies.",
+            // Three retries streamed into one bubble with no separator (run 130916 R2).
+            "I have gathered comprehensive information from six sources. Let me now append the additional content from the apollo247.com source to my document.I'll append the extracted text from the apollo247.com source to my document.I'll append the extracted text from the apollo247.com source to my document.",
         ]
         for text in endings {
             #expect(AgentLoopModelStep.isAnnounceOnly(text), "must be recovered: \(text)")
@@ -768,6 +770,8 @@ struct AgentToolLoopTests {
             "Done. I'll be here if you need more.",
             "The file is written and verified. I will wait for your review before continuing.",
             "That page is blocked everywhere I tried. I'll need a different source from you to go further.",
+            // Decimal points and abbreviations are not sentence boundaries: no uppercase after them.
+            "The inhibition was 63.5% in the 2009 trial (Hotz et al. 2009). Let me know if you want the table.",
         ]
         for text in signOffs {
             #expect(!AgentLoopModelStep.isAnnounceOnly(text), "must stay final: \(text)")
