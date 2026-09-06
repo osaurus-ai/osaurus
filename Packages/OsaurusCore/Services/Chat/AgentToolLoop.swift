@@ -324,9 +324,13 @@ enum AgentLoopModelStep {
         // more accessible sources with the scientific data, including the
         // 71% inhibition figure and peer-reviewed studies.") closed an Ornith
         // turn as a final answer on 2026-09-06 (run 121436 R1).
+        // The sign-off exclusions apply to the line rule as well: "I'll be
+        // honest: the evidence is mixed…" is an answer, not a promise (caught
+        // by the cross-family control on 2026-09-06).
         let lowered = last.lowercased()
         if last.count <= Self.announcementLengthBound,
-            Self.announcementPrefixes.contains(where: { lowered.hasPrefix($0) })
+            Self.announcementPrefixes.contains(where: { lowered.hasPrefix($0) }),
+            !Self.closingSignOffPrefixes.contains(where: { lowered.hasPrefix($0) })
         {
             return true
         }
