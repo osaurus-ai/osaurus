@@ -280,6 +280,68 @@ struct ToolScopeGateRecoveryTests {
     }
 
     @Test
+    func announcedToolCallRecovery_classifiesByTheSameRulesAsTheGate() async throws {
+        // The announce-only nudge must say the same thing the gate would:
+        // workspace tools are "attach a folder" by NAME whether or not they
+        // are registered; an enabled dynamic tool the turn never exposed is
+        // loadable; a globally disabled one is left unnamed; an exposed tool
+        // is neither.
+        let loadable = ScopeProbeTool(name: "test_recovery_loadable_probe")
+        let withheld = ScopeProbeTool(name: "test_recovery_withheld_probe")
+        let exposedTool = ScopeProbeTool(name: "test_recovery_exposed_probe")
+        for tool in [loadable, withheld, exposedTool] { ToolRegistry.shared.register(tool) }
+        ToolRegistry.shared.setEnabled(true, for: loadable.name)
+        ToolRegistry.shared.setEnabled(false, for: withheld.name)
+        ToolRegistry.shared.setEnabled(true, for: exposedTool.name)
+        defer {
+            for tool in [loadable, withheld, exposedTool] {
+                ToolRegistry.shared.setEnabled(false, for: tool.name)
+                ToolRegistry.shared.unregister(names: [tool.name])
+            }
+        }
+        let customAgent = UUID()
+
+        for registered in [false, true] {
+            if registered {
+                FolderToolManager.shared.ensureFolderToolsRegistered()
+            } else {
+                FolderToolManager.shared._unregisterAllForTesting()
+            }
+            defer { if registered { FolderToolManager.shared._unregisterAllForTesting() } }
+
+            let scope = ToolExecutionScope(exposed: [])
+            scope.activate([exposedTool.name, "capabilities"])
+            let recovery = ToolRegistry.shared.announcedToolCallRecovery(
+                exposed: scope.authorizedNames,
+                agentId: customAgent,
+                loaderPermitted: { scope.permits($0) }
+            )
+            #expect(recovery.exposed.contains(exposedTool.name), "registered=\(registered)")
+            #expect(recovery.workspaceBlocked == ToolRegistry.coreWorkspaceToolNames, "registered=\(registered)")
+            #expect(recovery.loadable.contains(loadable.name), "registered=\(registered)")
+            #expect(!recovery.loadable.contains(withheld.name), "registered=\(registered)")
+            #expect(!recovery.loadable.contains(exposedTool.name), "registered=\(registered)")
+            #expect(recovery.loadable.isDisjoint(with: ToolRegistry.coreWorkspaceToolNames), "registered=\(registered)")
+            #expect(recovery.loaderName == "capabilities")
+        }
+
+        // A chat with a folder attached exposes the workspace tools: nothing
+        // is workspace-blocked and file_write is simply callable now.
+        let folderScope = ToolExecutionScope(exposed: [])
+        folderScope.activate(Array(ToolRegistry.coreWorkspaceToolNames))
+        let withFolder = ToolRegistry.shared.announcedToolCallRecovery(
+            exposed: folderScope.authorizedNames, agentId: customAgent, loaderPermitted: { _ in false })
+        #expect(withFolder.workspaceBlocked.isEmpty)
+        #expect(withFolder.exposed.contains("file_write"))
+        #expect(withFolder.loaderName == "capabilities")
+
+        // The default agent's load gate admits only configure-write tools.
+        let defaultAgent = ToolRegistry.shared.announcedToolCallRecovery(
+            exposed: [], agentId: Agent.defaultId, loaderPermitted: { _ in false })
+        #expect(!defaultAgent.loadable.contains(loadable.name))
+    }
+
+    @Test
     func scopeActivationMakesTheToolExecutable() async throws {
         let tool = ScopeProbeTool(name: "test_scope_gate_activated_probe")
         ToolRegistry.shared.register(tool)

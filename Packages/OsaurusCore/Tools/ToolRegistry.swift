@@ -2296,6 +2296,49 @@ public final class ToolRegistry: ObservableObject {
         "sandbox_plugin_register",
     ]
 
+    /// Classifies every registered tool the model cannot call as-is, for the
+    /// announce-only recovery notice. Same rules as the `tool_not_found`
+    /// envelope in `execute`, so the notice never promises a load the gate
+    /// would refuse: workspace file/shell tools are keyed on the NAME (they
+    /// need a folder attached to this chat, never a loader round-trip); a
+    /// tool is "loadable" only when `availability` reads as loadable AND the
+    /// default agent's configure-write gate allows it; everything else
+    /// (globally disabled, outside the agent's grant, permission-blocked) is
+    /// left unnamed, exactly as the envelope leaves it opaque.
+    func announcedToolCallRecovery(
+        exposed: Set<String>,
+        agentId: UUID?,
+        loaderPermitted: (String) -> Bool
+    ) -> AgentToolLoop.AnnouncedToolCallRecovery {
+        var recovery = AgentToolLoop.AnnouncedToolCallRecovery(exposed: exposed)
+        recovery.workspaceBlocked = Self.coreWorkspaceToolNames.subtracting(exposed)
+        recovery.loaderName =
+            loaderPermitted("capabilities")
+            ? "capabilities"
+            : (loaderPermitted("capabilities_load") ? "capabilities_load" : "capabilities")
+        let agentAllowed: Set<String>? = agentId.flatMap {
+            AgentManager.shared.effectiveEnabledToolNames(for: $0).map(Set.init)
+        }
+        let loadableCodes: Set<ToolAvailabilityReasonCode> = [
+            .available, .alreadyLoaded, .loadableViaCapabilitiesLoad,
+        ]
+        for name in toolsByName.keys
+        where !exposed.contains(name) && !Self.coreWorkspaceToolNames.contains(name) {
+            let isDeferredDefaultConfigureWrite =
+                agentId == Agent.defaultId && Self.configureWriteToolNames.contains(name)
+            let isNonLoadableBuiltIn = builtInToolNames.contains(name) && !isDeferredDefaultConfigureWrite
+            let loadGateAllows =
+                !isNonLoadableBuiltIn
+                && (agentId != Agent.defaultId || Self.configureWriteToolNames.contains(name))
+            guard loadGateAllows else { continue }
+            let toolAvailability = availability(forTool: name, agentAllowedNames: agentAllowed)
+            if loadableCodes.isSuperset(of: toolAvailability.reasonCodes) {
+                recovery.loadable.insert(name)
+            }
+        }
+        return recovery
+    }
+
     static let coreWorkspaceToolNames: Set<String> = [
         "file_read", "file_search", "file_write", "file_edit", "shell_run",
     ]

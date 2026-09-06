@@ -591,6 +591,13 @@ struct AgentLoopHooks {
     /// surfaces that publish no scope — both behaviours then stay off.
     var authorizedToolNames: (() -> Set<String>)?
 
+    /// What the announce-only nudge may say about tools the model cannot
+    /// call right now (see `AnnouncedToolCallRecovery`). Chat binds it to the
+    /// registry's classification of every registered tool against the live
+    /// scope; nil keeps the bare nudge. Assigned after construction like
+    /// `authorizedToolNames`.
+    var announcedToolCallRecovery: (() -> AgentToolLoop.AnnouncedToolCallRecovery?)?
+
     init(
         isCancelled: @escaping () async -> Bool = { false },
         buildMessages: @escaping (_ notices: [String]) async -> AgentLoopIterationInput,
@@ -1225,20 +1232,57 @@ enum AgentToolLoop {
         + "No file was written and no command executed. Emit the tool call itself now, as a real call — "
         + "do not describe it, narrate it, or claim it already ran."
 
-    /// The announce-only nudge, naming the tools that actually exist in this
-    /// chat. Ornith research run (2026-09-06, current main): the Web
-    /// Researcher agent had no file tool in its schema (no folder granted), so
-    /// "Let me write the markdown file to the host files folder" could never
-    /// become a call — the bare nudge told the model to "emit the tool call
-    /// itself now" for a tool it did not have, twice, and the run ended on
-    /// the same announcement. With the list, an action that needs an absent
-    /// tool is told to be reported as impossible instead of re-announced.
-    static func announcedToolCallNotice(availableTools: Set<String>?) -> String {
-        guard let names = availableTools, !names.isEmpty else { return announcedToolCallNotice }
-        return announcedToolCallNotice
-            + " The tools you can call in this chat are: " + names.sorted().joined(separator: ", ") + "."
-            + " If what you described needs a tool that is not in that list (for example writing a file when no file tool is listed), "
-            + "do not announce it again — say plainly that you cannot do it in this chat and give the user the result you have."
+    /// What the announce-only nudge may truthfully say about tools the model
+    /// cannot call right now. Three buckets, because they call for three
+    /// different next steps and the wrong one either wastes a retry (asking
+    /// the model to emit a call it has no schema for) or lies (telling it a
+    /// legitimately loadable tool is impossible):
+    /// - `exposed`: callable now, as-is.
+    /// - `loadable`: registered, and `loaderName` would actually grant it
+    ///   (same gate as the registry's `tool_not_found` hint).
+    /// - `workspaceBlocked`: the file/shell tools that need a workspace
+    ///   attached to THIS chat; no loader helps, only the user can.
+    struct AnnouncedToolCallRecovery: Equatable, Sendable {
+        var exposed: Set<String> = []
+        var loadable: Set<String> = []
+        var loaderName: String = "capabilities"
+        var workspaceBlocked: Set<String> = []
+
+        var isEmpty: Bool { exposed.isEmpty && loadable.isEmpty && workspaceBlocked.isEmpty }
+    }
+
+    /// The announce-only nudge, naming what the model can do about the tool
+    /// it described. Ornith research run (2026-09-06, current main): the Web
+    /// Researcher agent had no file tool in its schema (no folder attached to
+    /// the chat), so "Let me write the markdown file to the host files
+    /// folder" could never become a call — the bare nudge told the model to
+    /// "emit the tool call itself now" for a tool it did not have, twice, and
+    /// the run ended on the same announcement. The classified notice tells it
+    /// which described actions are callable, which are one load away, and
+    /// which need the user to attach a folder; only the last is "impossible
+    /// in this chat".
+    static func announcedToolCallNotice(recovery: AnnouncedToolCallRecovery?) -> String {
+        guard let recovery, !recovery.isEmpty else { return announcedToolCallNotice }
+        var text = announcedToolCallNotice
+        if !recovery.exposed.isEmpty {
+            text += " The tools you can call right now in this chat are: "
+                + recovery.exposed.sorted().joined(separator: ", ") + "."
+        }
+        if !recovery.loadable.isEmpty {
+            text += " These tools exist but are not loaded yet; call \(recovery.loaderName) with ids "
+                + "[\"tool/<name>\"] first, then emit the call: "
+                + recovery.loadable.sorted().joined(separator: ", ") + "."
+        }
+        if !recovery.workspaceBlocked.isEmpty {
+            text += " " + recovery.workspaceBlocked.sorted().joined(separator: ", ")
+                + " need a workspace attached to THIS chat and there is none, so no call can write, read or run "
+                + "files here; do not announce that again. Tell the user to attach a folder via the Folder chip "
+                + "(or enable Autonomous execution) and give them the content directly in your answer"
+                + (recovery.exposed.contains("share_artifact") ? " (share_artifact can carry it)." : ".")
+        }
+        text += " If what you described needs a tool in none of these groups, say plainly that you cannot do it "
+            + "in this chat and give the user the result you have."
+        return text
     }
 
     /// How many times a run will push back on "shall I continue?" before
@@ -2520,7 +2564,7 @@ enum AgentToolLoop {
                 totalAnnouncedToolCallRetries += 1
                 if consecutiveAnnouncedToolCalls <= Self.maxAnnouncedToolCallRetries {
                     replaceStateNotice(
-                        Self.announcedToolCallNotice(availableTools: hooks.authorizedToolNames?()))
+                        Self.announcedToolCallNotice(recovery: hooks.announcedToolCallRecovery?()))
                     // Not charged against the tool-iteration budget.
                     iteration -= 1
                     continue

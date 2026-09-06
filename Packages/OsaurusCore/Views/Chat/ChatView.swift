@@ -6860,6 +6860,7 @@ final class ChatSession: ObservableObject {
                         if let violation = forcedToolGate.violationEnvelope(calledTool: inv.toolName) {
                             return AgentLoopToolExecution(result: violation)
                         }
+                        let toolStartedAt = Date()
                         do {
                             // Never print a direct secret-set value to the
                             // process log. Execution below still receives the
@@ -6894,7 +6895,6 @@ final class ChatSession: ObservableObject {
                             // `currentAgentId` is already pinned by the
                             // outer turn-level binding; we only need to
                             // layer per-tool-call session/turn/call ids.
-                            let toolStartedAt = Date()
                             let resultText = try await ChatExecutionContext.$toolExecutionScope
                                 .withValue(toolScope) {
                                     try await ChatExecutionContext.$currentSessionId.withValue(
@@ -6939,6 +6939,9 @@ final class ChatSession: ObservableObject {
                             // run (remaining calls in the batch are skipped). Turn persistence
                             // happens in `onBatchComplete`, in slot order.
                             let rejectionMessage = ToolEnvelope.fromError(error, tool: inv.toolName)
+                            let failedAfterMs = Int(Date().timeIntervalSince(toolStartedAt) * 1000)
+                            let failureKind: String = (error is CancellationError) ? "cancelled" : String(describing: type(of: error))
+                            print("[Osaurus][Tool] Elapsed: \(inv.toolName) \(failedAfterMs) ms (threw: \(failureKind))")
                             // A spawn that threw (failed/cancelled/over-budget)
                             // may still have deposited artifacts its worker
                             // shared before dying — surface them anyway.
@@ -7798,6 +7801,16 @@ final class ChatSession: ObservableObject {
                     // `tool_not_found` notice. Assigned after construction so
                     // the hooks literal above stays type-checkable.
                     loopHooks.authorizedToolNames = { toolScope.authorizedNames }
+                    // The announce-only nudge classifies the rest of the
+                    // registry against the same live scope: callable now,
+                    // one load away, or blocked until a folder is attached.
+                    loopHooks.announcedToolCallRecovery = {
+                        ToolRegistry.shared.announcedToolCallRecovery(
+                            exposed: toolScope.authorizedNames,
+                            agentId: effectiveAgentId,
+                            loaderPermitted: { toolScope.permits($0) }
+                        )
+                    }
 
                     let runResult = try await AgentToolLoop.run(
                         policy: AgentLoopPolicy(

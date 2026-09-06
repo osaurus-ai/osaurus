@@ -3135,21 +3135,42 @@ struct CompactionWatermarkIdentityTests {
     /// call, and the bare nudge told the model to emit that call anyway. The
     /// nudge names the tools that exist and says what to do when the needed
     /// one is absent. Fails before the change (the notice never named a tool).
-    @MainActor @Test func announceOnlyNoticeNamesTheToolsThatExistInThisChat() async throws {
+    @MainActor @Test func announceOnlyNoticeClassifiesExposedLoadableAndWorkspaceBlockedTools() async throws {
         let surface = ScriptedLoopSurface(steps: [.announcedToolCall, .finalResponse])
         var hooks = surface.makeHooks()
-        hooks.authorizedToolNames = { ["web_search", "search_and_extract", "get_current_time"] }
+        hooks.announcedToolCallRecovery = {
+            AgentToolLoop.AnnouncedToolCallRecovery(
+                exposed: ["web_search", "search_and_extract", "share_artifact"],
+                loadable: ["get_current_time"],
+                loaderName: "capabilities",
+                workspaceBlocked: ["file_write", "file_read"]
+            )
+        }
         _ = try await AgentToolLoop.run(policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
         let notice = surface.builtNotices.flatMap { $0 }.first { $0.contains("described a tool call but did not actually emit one") }
         let text = try #require(notice)
-        #expect(text.contains("get_current_time, search_and_extract, web_search"))
-        #expect(text.contains("say plainly that you cannot do it in this chat"))
+        #expect(text.contains("call right now in this chat are: search_and_extract, share_artifact, web_search."))
+        #expect(text.contains("not loaded yet; call capabilities with ids [\"tool/<name>\"] first, then emit the call: get_current_time."))
+        #expect(text.contains("file_read, file_write need a workspace attached to THIS chat and there is none"))
+        #expect(text.contains("attach a folder via the Folder chip"))
+        #expect(text.contains("(share_artifact can carry it)."))
+        #expect(!text.contains("get_current_time need a workspace"))
 
-        // Without a tool list the notice is the bare nudge (no fabricated list).
+        // Without a classification the notice is the bare nudge (no fabricated list).
         let bare = ScriptedLoopSurface(steps: [.announcedToolCall, .finalResponse])
         _ = try await AgentToolLoop.run(policy: chatPolicy(), state: AgentTaskState(), hooks: bare.makeHooks())
         let bareNotice = try #require(bare.builtNotices.flatMap { $0 }.first { $0.contains("described a tool call") })
-        #expect(!bareNotice.contains("The tools you can call in this chat are"))
-        #expect(AgentToolLoop.announcedToolCallNotice(availableTools: []) == AgentToolLoop.announcedToolCallNotice)
+        #expect(!bareNotice.contains("call right now in this chat"))
+        #expect(!bareNotice.contains("need a workspace attached"))
+        #expect(AgentToolLoop.announcedToolCallNotice(recovery: .init()) == AgentToolLoop.announcedToolCallNotice)
+
+        // Nothing blocked, nothing loadable: only the exposed list and the generic tail.
+        let onlyExposed = AgentToolLoop.announcedToolCallNotice(
+            recovery: .init(exposed: ["web_search"]))
+        #expect(onlyExposed.contains("call right now in this chat are: web_search."))
+        #expect(!onlyExposed.contains("not loaded yet"))
+        #expect(!onlyExposed.contains("need a workspace attached"))
+        #expect(onlyExposed.contains("say plainly that you cannot do it in this chat"))
     }
+
 }
