@@ -256,7 +256,18 @@ final class ChatWindowState: ObservableObject {
         self.session.agentId = agentId
         self.session.applyInitialModelSelection()
         if let data = sessionData {
-            self.session.load(from: data)
+            // The sidebar and the history panel hold METADATA rows
+            // (`ChatSessionStore.loadAll` → `loadAllMetadata`, turns: []).
+            // "Open in New Window" handed that row straight here, so the
+            // new window showed an empty transcript, the next send went to
+            // the model with no history, and the incremental save then
+            // deleted every stored turn the window never had (2026-09-06:
+            // a 50-turn research session reopened from History became 2
+            // turns). Hydrate from disk exactly as the in-place open does
+            // (`loadSession(_:)` below); fall back to the given data only
+            // when the row is not on disk (a brand-new, unsaved session).
+            let resolved = data.turns.isEmpty ? (ChatSessionStore.load(id: data.id) ?? data) : data
+            self.session.load(from: resolved)
         }
         self.session.onSessionChanged = { [weak self] in
             self?.refreshSessionsDebounced()
