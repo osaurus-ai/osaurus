@@ -319,9 +319,14 @@ struct DeclaredReasoningEffortTests {
         let stamped = try String(contentsOf: url, encoding: .utf8)
         #expect(DeclaredReasoningEffort.parseJangDeclaration(data: Data(stamped.utf8))?.historyReasoningOmitted == true)
         #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: dir) == false)
-        // Missing file / missing directory: false, no throw.
+        // Missing file / missing directory: false, no throw — and NOT memoised:
+        // once the file appears, the same id is stamped on the next call.
         RaptorHistoryReasoningStamp.resetForTests()
-        #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: dir.appendingPathComponent("nope")) == false)
+        let late = dir.appendingPathComponent("late")
+        #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: late) == false)
         #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: nil) == false)
+        try FileManager.default.createDirectory(at: late, withIntermediateDirectories: true)
+        try #"{ "reasoning": { "supported": true } }"#.write(to: late.appendingPathComponent("jang_config.json"), atomically: true, encoding: .utf8)
+        #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: late))
     }
 }

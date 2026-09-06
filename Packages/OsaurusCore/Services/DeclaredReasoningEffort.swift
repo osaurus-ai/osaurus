@@ -178,6 +178,13 @@ enum DeclaredReasoningEffort {
         guard let dir = LocalReasoningCapability.localDirectory(forModelId: modelId) else {
             return nil
         }
+        // Raptor only: the first request's history is rendered from this
+        // declaration before the runtime ever loads the weights, so the
+        // one-time stamp must happen here as well (idempotent, non-throwing;
+        // see RaptorHistoryReasoningStamp).
+        if RaptorHistoryReasoningStamp.appliesTo(modelId: modelId) {
+            RaptorHistoryReasoningStamp.stampIfNeeded(modelId: modelId, directory: dir)
+        }
         if let data = LocalReasoningCapability.readSmallConfigFile(
             dir.appendingPathComponent("jang_config.json")),
             let declared = parseJangDeclaration(data: data)

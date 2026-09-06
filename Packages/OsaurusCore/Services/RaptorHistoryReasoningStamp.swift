@@ -66,22 +66,41 @@ enum RaptorHistoryReasoningStamp {
         guard appliesTo(modelId: modelId), let directory else { return false }
         let key = modelId.lowercased()
         lock.lock()
-        let alreadyChecked = !checkedThisProcess.insert(key).inserted
+        let alreadyChecked = checkedThisProcess.contains(key)
         lock.unlock()
         if alreadyChecked { return false }
 
+        // The memo is set only once the file is known to carry the key
+        // (already stamped, or stamped now). A missing/unreadable/unwritable
+        // file is NOT memoised, so a later load (volume mounted, permissions
+        // fixed) gets another cheap try.
         let url = directory.appendingPathComponent("jang_config.json")
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return false }
-        guard let rewritten = stamped(text) else { return false }  // already stamped or unexpected shape
+        guard let rewritten = stamped(text) else {
+            if Self.carriesKey(text) { markChecked(key) }
+            return false
+        }
         do {
             try rewritten.write(to: url, atomically: true, encoding: .utf8)
         } catch {
             print("[Osaurus][RaptorStamp] could not stamp \(url.path): \(error.localizedDescription)")
             return false
         }
+        markChecked(key)
         print("[Osaurus][RaptorStamp] history_reasoning=omit stamped into \(url.path)")
         DeclaredReasoningEffort.invalidate()
         return true
+    }
+
+    private static func markChecked(_ key: String) {
+        lock.lock(); checkedThisProcess.insert(key); lock.unlock()
+    }
+
+    private static func carriesKey(_ text: String) -> Bool {
+        guard let data = text.data(using: .utf8),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return (root["reasoning"] as? [String: Any])?["history_reasoning"] != nil
     }
 
     /// Test hook: forget the per-process memo.
