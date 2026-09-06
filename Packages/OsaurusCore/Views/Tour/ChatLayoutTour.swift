@@ -221,6 +221,20 @@ public final class ChatLayoutTour: ObservableObject {
 
     func clear(anchor: ChatTourAnchor, in window: NSWindow) {
         guard let id = ChatWindowManager.shared.windowId(for: window) else { return }
+        clear(anchor: anchor, windowId: id)
+    }
+
+    /// Id-keyed variants for callers that must not hold the window: the
+    /// anchor marker resolves the id synchronously while the window is still
+    /// valid and defers only the id (see `MarkerView`).
+    func report(anchor: ChatTourAnchor, frame: CGRect, windowId id: UUID) {
+        var perWindow = anchors[id] ?? [:]
+        if let existing = perWindow[anchor], existing.equalTo(frame) { return }
+        perWindow[anchor] = frame
+        anchors[id] = perWindow
+    }
+
+    func clear(anchor: ChatTourAnchor, windowId id: UUID) {
         anchors[id]?[anchor] = nil
     }
 
@@ -341,24 +355,37 @@ struct TourAnchorMarker: NSViewRepresentable {
             report()
         }
 
+        /// The chat window id of `window`, resolved NOW. Never hand the
+        /// window itself to a deferred block: `viewWillMove(toWindow: nil)`
+        /// runs while the panel is deallocating (content-view teardown), and
+        /// a block that captured it strongly released a freed `ChatPanel`
+        /// from its dispose helper — the window-close crash reproduced on
+        /// 2026-09-06 (9 reports, NSZombie: "-[…ChatPanel release]: message
+        /// sent to deallocated instance"). The lookup compares identity
+        /// only and retains nothing.
+        private func currentWindowId() -> UUID? {
+            guard let window else { return nil }
+            return MainActor.assumeIsolated { ChatWindowManager.shared.windowId(for: window) }
+        }
+
         override func viewWillMove(toWindow newWindow: NSWindow?) {
-            if newWindow == nil, let window {
+            if newWindow == nil, let id = currentWindowId() {
                 let anchor = self.anchor
                 DispatchQueue.main.async {
-                    ChatLayoutTour.shared.clear(anchor: anchor, in: window)
+                    ChatLayoutTour.shared.clear(anchor: anchor, windowId: id)
                 }
             }
             super.viewWillMove(toWindow: newWindow)
         }
 
         private func report() {
-            guard let window, bounds.width > 0, bounds.height > 0 else { return }
+            guard window != nil, bounds.width > 0, bounds.height > 0, let id = currentWindowId() else { return }
             let frame = convert(bounds, to: nil)
             let anchor = self.anchor
             // Defer: `layout` runs mid-layout-pass; publishing state from
-            // inside it re-enters SwiftUI.
+            // inside it re-enters SwiftUI. Only the id crosses the boundary.
             DispatchQueue.main.async {
-                ChatLayoutTour.shared.report(anchor: anchor, frame: frame, in: window)
+                ChatLayoutTour.shared.report(anchor: anchor, frame: frame, windowId: id)
             }
         }
     }

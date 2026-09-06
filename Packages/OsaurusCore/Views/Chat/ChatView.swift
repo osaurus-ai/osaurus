@@ -7848,8 +7848,15 @@ final class ChatSession: ObservableObject {
                         // that ended this way left NULL, indistinguishable
                         // from a run still working). Never "cancelled" — the
                         // stop path keeps its own marker for that.
-                        if assistantTurn.terminalStopReason == nil {
-                            assistantTurn.terminalStopReason = "tool_rejected"
+                        // `assistantTurn` may already be the fresh, empty
+                        // placeholder the batch path swaps in after a tool
+                        // result (run 070139 stamped a blank row); stamp the
+                        // turn that actually closed on the rejection — the
+                        // last assistant turn with content or a call.
+                        if let closing = turns.last(where: {
+                            $0.role == .assistant && !Self.isEmptyAssistantPlaceholder($0)
+                        }), closing.terminalStopReason == nil {
+                            closing.terminalStopReason = "tool_rejected"
                         }
                     }
 
