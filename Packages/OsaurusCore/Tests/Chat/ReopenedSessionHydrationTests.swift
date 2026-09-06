@@ -45,6 +45,20 @@ struct ReopenedSessionHydrationTests {
             #expect(state.session.turns.count == 4, "the reopened window must carry the stored transcript")
             #expect(state.session.turns.last?.content == "The file is written.")
 
+            // Follow-up in the reopened window, then save: every original
+            // turn (id AND content) must still be on disk, plus the new ones.
+            // On main the save deleted the 4 stored turns (the window had
+            // none) and left only the follow-up pair.
+            let originalIds = stored.turns.map(\.id)
+            state.session.turns.append(ChatTurn(role: .user, content: "Did you write the markdown file?"))
+            state.session.turns.append(ChatTurn(role: .assistant, content: "Yes, at report.md."))
+            state.session.save()
+            let reloaded = try #require(ChatSessionStore.load(id: stored.id))
+            #expect(reloaded.turns.count == 6, "4 stored + 2 new turns")
+            #expect(Array(reloaded.turns.prefix(4).map(\.id)) == originalIds, "original turn ids preserved in order")
+            #expect(reloaded.turns.prefix(4).map(\.content) == stored.turns.map(\.content))
+            #expect(reloaded.turns.last?.content == "Yes, at report.md.")
+
             // A brand-new, never-saved session keeps the data it was given.
             let fresh = ChatSessionData(
                 id: UUID(), title: "New Chat", createdAt: Date(), updatedAt: Date(),
