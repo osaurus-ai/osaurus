@@ -68,6 +68,37 @@ enum RaptorHistoryReasoningStamp {
         return nil
     }
 
+    /// generation_config.json companion: the app treats
+    /// `default_chat_template_kwargs.enable_thinking` as the publisher's
+    /// declared serving default (the HF-honoured key) and, for agent/tool
+    /// requests, forces thinking OFF when a bundle declares none
+    /// (`AgentReasoningPolicy`). Raptor declares its default only in
+    /// jang_config (`reasoning.default: "on"`), so every agent request on a
+    /// fresh install ran thinking-off against the bundle's contract. Insert
+    /// the declaration (top-level key, formatting preserved, re-parsed and
+    /// byte-compared before writing, idempotent).
+    static func stampedGenerationConfig(_ text: String) -> String? {
+        guard let data = text.data(using: .utf8),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            root["default_chat_template_kwargs"] == nil,
+            let open = text.firstIndex(of: "{")
+        else { return nil }
+        let afterOpen = text.index(after: open)
+        let rest = text[afterOpen...]
+        let objectIsEmpty = rest.first(where: { !$0.isWhitespace }) == "}"
+        let indent = text[afterOpen...].prefix { $0 == "\n" || $0 == " " || $0 == "\t" }.split(separator: "\n").last.map(String.init) ?? "  "
+        let insertion = "\n\(indent)\"default_chat_template_kwargs\": { \"enable_thinking\": true }" + (objectIsEmpty ? "" : ",")
+        var out = text
+        out.insert(contentsOf: insertion, at: afterOpen)
+        guard let outData = out.data(using: .utf8),
+            var outRoot = try? JSONSerialization.jsonObject(with: outData) as? [String: Any],
+            (outRoot["default_chat_template_kwargs"] as? [String: Any])?["enable_thinking"] as? Bool == true
+        else { return nil }
+        outRoot["default_chat_template_kwargs"] = nil
+        guard NSDictionary(dictionary: outRoot).isEqual(to: root) else { return nil }
+        return out
+    }
+
     private static let lock = NSLock()
     nonisolated(unsafe) private static var checkedThisProcess: Set<String> = []  // guarded by `lock`
 
@@ -102,7 +133,10 @@ enum RaptorHistoryReasoningStamp {
             return false
         }
         guard let rewritten = stamped(text) else {
-            if Self.carriesKey(text) { markChecked(key) }
+            if Self.carriesKey(text) {
+                markChecked(key)
+                stampGenerationConfigIfNeeded(in: directory)
+            }
             return false
         }
         do {
@@ -114,6 +148,28 @@ enum RaptorHistoryReasoningStamp {
         markChecked(key)
         print("[Osaurus][RaptorStamp] history_reasoning=omit stamped into \(url.path)")
         DeclaredReasoningEffort.invalidate()
+        stampGenerationConfigIfNeeded(in: directory)
+        return true
+    }
+
+    /// Companion stamp on generation_config.json (see `stampedGenerationConfig`).
+    /// Never throws; a missing/unreadable/unwritable file is logged and skipped.
+    @discardableResult
+    static func stampGenerationConfigIfNeeded(in directory: URL) -> Bool {
+        let url = directory.appendingPathComponent("generation_config.json")
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+            let size = attributes[.size] as? NSNumber, size.intValue <= maxConfigBytes,
+            let text = try? String(contentsOf: url, encoding: .utf8),
+            let rewritten = stampedGenerationConfig(text)
+        else { return false }
+        do {
+            try rewritten.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            print("[Osaurus][RaptorStamp] could not stamp \(url.path): \(error.localizedDescription)")
+            return false
+        }
+        print("[Osaurus][RaptorStamp] default_chat_template_kwargs.enable_thinking=true stamped into \(url.path)")
+        LocalReasoningCapability.invalidate()
         return true
     }
 

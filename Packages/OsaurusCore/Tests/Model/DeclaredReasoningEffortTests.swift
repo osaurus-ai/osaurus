@@ -355,4 +355,42 @@ struct DeclaredReasoningEffortTests {
         #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: moved))
         #expect(try String(contentsOf: moved.appendingPathComponent("jang_config.json"), encoding: .utf8).contains("history_reasoning"))
     }
+    /// The app honours `generation_config.default_chat_template_kwargs.enable_thinking`
+    /// as the publisher's declared thinking default; Raptor only declared it in
+    /// jang_config, so agent/tool requests on a fresh install ran thinking-off.
+    /// The companion stamp inserts the declaration, textually, verified, once.
+    @Test("Raptor generation_config stamp declares enable_thinking=true once, preserving everything else")
+    func raptorGenerationConfigStamp() throws {
+        let original = """
+            {
+              "do_sample": true,
+              "temperature": 0.7,
+              "top_p": 0.95,
+              "repetition_penalty": 1.05,
+              "eos_token_id": 156895
+            }
+            """
+        let stamped = try #require(RaptorHistoryReasoningStamp.stampedGenerationConfig(original))
+        let root = try #require(try JSONSerialization.jsonObject(with: Data(stamped.utf8)) as? [String: Any])
+        #expect((root["default_chat_template_kwargs"] as? [String: Any])?["enable_thinking"] as? Bool == true)
+        #expect(root["temperature"] as? Double == 0.7)
+        #expect(root["eos_token_id"] as? Int == 156895)
+        #expect(stamped.contains("\"do_sample\": true"))
+        #expect(RaptorHistoryReasoningStamp.stampedGenerationConfig(stamped) == nil)  // idempotent
+        #expect(RaptorHistoryReasoningStamp.stampedGenerationConfig(#"{"default_chat_template_kwargs": {"enable_thinking": false}}"#) == nil)  // an explicit declaration is never overridden
+        let empty = try #require(RaptorHistoryReasoningStamp.stampedGenerationConfig("{}"))
+        #expect(((try JSONSerialization.jsonObject(with: Data(empty.utf8)) as? [String: Any])?["default_chat_template_kwargs"] as? [String: Any])?["enable_thinking"] as? Bool == true)
+
+        // On disk: stampIfNeeded on a Raptor dir also stamps generation_config; a fresh
+        // LocalReasoningCapability detect then reports the declared default.
+        RaptorHistoryReasoningStamp.resetForTests()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("raptor-gc-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try #"{ "reasoning": { "supported": true, "default": "on" } }"#.write(to: dir.appendingPathComponent("jang_config.json"), atomically: true, encoding: .utf8)
+        try original.write(to: dir.appendingPathComponent("generation_config.json"), atomically: true, encoding: .utf8)
+        #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: dir))
+        let gc = try String(contentsOf: dir.appendingPathComponent("generation_config.json"), encoding: .utf8)
+        #expect(gc.contains("default_chat_template_kwargs"))
+    }
 }
