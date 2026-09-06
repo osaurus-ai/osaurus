@@ -256,4 +256,15 @@ struct DeclaredReasoningEffortTests {
         let undeclared = dispatchContext(effort: "medium", preserveThinking: false, declaration: nil)
         #expect(undeclared["preserve_thinking"] == nil)
     }
+    @Test("history_reasoning: omit is parsed; absent means keep")
+    func historyReasoningOmitParses() {
+        let omit = """
+            { "reasoning": { "supported": true, "history_reasoning": "omit" } }
+            """
+        #expect(DeclaredReasoningEffort.parseJangDeclaration(data: Data(omit.utf8))?.historyReasoningOmitted == true)
+        let keep = """
+            { "reasoning": { "supported": true, "preserve_thinking_supported": true } }
+            """
+        #expect(DeclaredReasoningEffort.parseJangDeclaration(data: Data(keep.utf8))?.historyReasoningOmitted == false)
+    }
 }

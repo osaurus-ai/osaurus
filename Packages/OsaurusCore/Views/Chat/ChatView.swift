@@ -2211,7 +2211,8 @@ final class ChatSession: ObservableObject {
     static func modelVisibleAssistantMessage(
         _ turn: ChatTurn,
         isLastTurn: Bool,
-        excludedFromRequest: Bool = false
+        excludedFromRequest: Bool = false,
+        includeReasoning: Bool = true
     ) -> ChatMessage? {
         if excludedFromRequest || turn.modelContextExcluded { return nil }
         if isLastTurn,
@@ -2233,7 +2234,7 @@ final class ChatSession: ObservableObject {
             content: turn.contentIsBlank ? nil : turn.content,
             tool_calls: turn.toolCalls,
             tool_call_id: nil,
-            reasoning_content: turn.thinkingIsBlank ? nil : turn.thinking,
+            reasoning_content: (includeReasoning && !turn.thinkingIsBlank) ? turn.thinking : nil,
             reasoning_item_id: turn.reasoningItemId,
             reasoning_encrypted: turn.reasoningEncrypted,
             responses_output_items: turn.responsesOutputItems.isEmpty
@@ -6470,7 +6471,9 @@ final class ChatSession: ObservableObject {
                         case .assistant:
                             return Self.modelVisibleAssistantMessage(
                                 t,
-                                isLastTurn: isLastTurn
+                                isLastTurn: isLastTurn,
+                                includeReasoning: !DeclaredReasoningEffort.historyReasoningOmitted(
+                                    forModelId: turnModelId)
                             )
                         case .tool:
                             return ChatMessage(

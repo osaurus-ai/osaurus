@@ -65,6 +65,14 @@ enum DeclaredReasoningEffort {
     struct Declaration: Equatable, Sendable {
         let control: Control?
         let preserveThinking: PreserveThinking?
+        /// `reasoning.history_reasoning: "omit"` — the bundle asks the app not
+        /// to send `reasoning_content` for historical assistant turns (every
+        /// turn before the one being generated, including this turn's earlier
+        /// tool-call cycles). Stamped for models that copy their own prior
+        /// `<think>` verbatim once one identical turn exists (Raptor v0.5:
+        /// 4/5, 5/5, 4/5 re-issue with history thinking kept vs 0/5, 1/5,
+        /// 0/5 without). Absent or any other value: unchanged behaviour.
+        var historyReasoningOmitted: Bool = false
     }
 
     // MARK: - Cached per-model resolution
@@ -123,6 +131,13 @@ enum DeclaredReasoningEffort {
 
     static func preserveThinking(forModelId modelId: String) -> PreserveThinking? {
         declaration(forModelId: modelId)?.preserveThinking
+    }
+
+    /// Whether historical assistant turns are sent WITHOUT `reasoning_content`
+    /// for this model (see `Declaration.historyReasoningOmitted`).
+    static func historyReasoningOmitted(forModelId modelId: String?) -> Bool {
+        guard let modelId, !modelId.isEmpty else { return false }
+        return declaration(forModelId: modelId)?.historyReasoningOmitted ?? false
     }
 
     /// Off-main resolution for a main-thread cold miss, deduped per key.
@@ -190,8 +205,14 @@ enum DeclaredReasoningEffort {
         guard let reasoning else { return nil }
         return Declaration(
             control: parseControl(reasoning),
-            preserveThinking: parsePreserveThinking(reasoning)
+            preserveThinking: parsePreserveThinking(reasoning),
+            historyReasoningOmitted: parseHistoryReasoningOmitted(reasoning)
         )
+    }
+
+    private static func parseHistoryReasoningOmitted(_ reasoning: [String: Any]) -> Bool {
+        guard let raw = reasoning["history_reasoning"] as? String else { return false }
+        return raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "omit"
     }
 
     /// A declared transport we don't recognize means we cannot deliver the
