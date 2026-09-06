@@ -274,4 +274,59 @@ struct ToolFlowTrueFixTests {
             result: ToolEnvelope.failure(kind: .invalidArgs, message: "bad yaml", tool: "osaurus_config"))
         #expect(state.heldResult(name: "osaurus_inspect", argsJSON: args) == missing)
     }
+    /// Ornith (build-10 OBSIDIAN run): a stdio MCP document carrying `auth: none`
+    /// is rejected by the planner before anything is written, and the identical
+    /// document was re-executed nine times. A pre-execution validation
+    /// rejection of `osaurus_config` is a pure function of the call, so it is
+    /// held and replayed like an inspect rejection; a successful write drops
+    /// it (later validation may depend on the new state); an execution error
+    /// is never held.
+    @Test func heldConfigValidationRejectionIsReplayedUntilAWriteSucceeds() {
+        let state = AgentTaskState()
+        state.beginMessage()
+        let args = #"{"action":"apply","yaml":"mcp:\n  obsidian:\n    transport: stdio\n    auth: none"}"#
+        let rejected = ToolEnvelope.failure(
+            kind: .invalidArgs,
+            message: "`url`, `auth` and `token_ref` apply to the http transport only.", field: "auth",
+            tool: "osaurus_config")
+        state.record(name: "osaurus_config", argsJSON: args, result: rejected)
+        #expect(state.heldResult(name: "osaurus_config", argsJSON: args) == rejected)
+        // A different, successful write changes the state → the hold is dropped.
+        state.record(
+            name: "osaurus_config", argsJSON: #"{"action":"apply","yaml":"mcp:\n  obsidian:\n    transport: stdio"}"#,
+            result: ToolEnvelope.success(tool: "osaurus_config", text: "Applied 1 change."))
+        #expect(state.heldResult(name: "osaurus_config", argsJSON: args) == nil)
+        // An execution error (approval timed out, write failed) is not deterministic and is not held.
+        let failed = ToolEnvelope.failure(kind: .executionError, message: "approval timed out", tool: "osaurus_config")
+        state.record(name: "osaurus_config", argsJSON: args, result: failed)
+        #expect(state.heldResult(name: "osaurus_config", argsJSON: args) == nil)
+    }
+
+    /// Ornith (build-10 RESEARCH run) ended two turns with `stop`, no call, on a
+    /// status line whose CLOSING SENTENCE announced the next fetch. The line
+    /// rule only looked at the line's first words. The closing-sentence rule
+    /// catches the first-person action phrase; a sign-off ("Let me know …")
+    /// and an ordinary answer stay final.
+    @Test func closingSentenceAnnouncementIsNotAFinalAnswer() {
+        func classify(_ text: String) -> AgentLoopModelStep {
+            AgentLoopModelStep.classifyTerminal(
+                contentIsBlank: false, thinkingIsBlank: true, stopReason: "stop",
+                requiresVisibleFinalResponse: true, toolsWereOffered: true, content: text)
+        }
+        let ornith1 = "The Wellkr site blocks retrieval. Let me try the Verywell Health iron-supplements article and the Quantum Cacao source for mechanism details."
+        guard case .announcedToolCall = classify(ornith1) else {
+            Issue.record("a closing 'Let me try …' sentence announces a call that was never emitted"); return
+        }
+        guard case .finalResponse = classify("Iron absorption is reduced by cocoa polyphenols. Let me know if you want the sources.") else {
+            Issue.record("'Let me know' is a sign-off, not an announced call"); return
+        }
+        guard case .finalResponse = classify("Here is the summary you asked for. It covers absorption and dosage.") else {
+            Issue.record("an ordinary two-sentence answer is final"); return
+        }
+        // Documented gap: "Now the Quantum Cacao source …" has no first-person
+        // action opener and remains a final answer.
+        guard case .finalResponse = classify("Now the Quantum Cacao source for the mechanism details on cocoa polyphenols.") else {
+            Issue.record("unchanged: no first-person opener"); return
+        }
+    }
 }

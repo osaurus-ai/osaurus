@@ -308,10 +308,49 @@ enum AgentLoopModelStep {
         // "Let me check the result" / "I'll write these now" as the whole
         // closing line, with no answer after it. Bounded length keeps this
         // from matching a long sentence that merely opens with "I'll".
-        guard last.count <= 120 else { return false }
         let lowered = last.lowercased()
-        return Self.announcementPrefixes.contains { lowered.hasPrefix($0) }
+        if last.count <= 120, Self.announcementPrefixes.contains(where: { lowered.hasPrefix($0) }) {
+            return true
+        }
+
+        // The same announcement as the closing SENTENCE of a status line:
+        // "The Wellkr site blocks retrieval. Let me try the Verywell Health
+        // article and the Quantum Cacao source." ended an Ornith research run
+        // with `stop` and no call. Narrower than the line rule: only
+        // first-person action phrases (try/fetch/check/read/search/run/open/
+        // look), never "let me know", so a sign-off is not mistaken for a
+        // promised call.
+        guard let sentence = Self.closingSentence(of: last), sentence.count <= 120 else { return false }
+        let loweredSentence = sentence.lowercased()
+        return Self.actionAnnouncementPrefixes.contains { loweredSentence.hasPrefix($0) }
     }
+
+    /// The last sentence of a line: the text after the final ". ", "! " or
+    /// "? " boundary. `nil` when the line is a single sentence (the line rule
+    /// already judged it).
+    private static func closingSentence(of line: String) -> String? {
+        var cut: String.Index? = nil
+        for boundary in [". ", "! ", "? "] {
+            if let range = line.range(of: boundary, options: .backwards) {
+                if cut == nil || range.upperBound > cut! { cut = range.upperBound }
+            }
+        }
+        guard let cut else { return nil }
+        let tail = line[cut...].trimmingCharacters(in: .whitespacesAndNewlines)
+        return tail.isEmpty ? nil : tail
+    }
+
+    /// First-person "about to act on a source" openers for the closing-sentence
+    /// rule. Lowercased, matched as prefixes of the final sentence only.
+    private static let actionAnnouncementPrefixes: [String] = [
+        "let me try ", "let me fetch ", "let me check ", "let me read ", "let me search ",
+        "let me run ", "let me open ", "let me look ", "let me pull ", "let me grab ",
+        "now let me ", "next, let me ", "next let me ",
+        "i'll try ", "i'll fetch ", "i'll check ", "i'll read ", "i'll search ",
+        "i'll run ", "i'll open ", "i'll look ", "i'll pull ", "i'll grab ",
+        "i will try ", "i will fetch ", "i will check ", "i will read ", "i will search ",
+        "next, i'll ", "next i'll ",
+    ]
 
     /// Openers of a first-person "about to act" line. Lowercased, matched as
     /// prefixes of the final line only.

@@ -162,9 +162,18 @@ public final class AgentTaskState {
     /// call (observed live: 31 identical `osaurus_inspect` executions in one
     /// turn, each re-run for nothing). Replaying the held rejection costs no
     /// execution; it does not, by itself, stop a model that ignores it.
+    /// `osaurus_config` qualifies for its PRE-EXECUTION validation failures
+    /// only: an `invalid_args` / `not_found` rejection (a stdio server given
+    /// `auth: none`, a section that does not exist) is decided by the planner
+    /// before anything is written, so the identical document is rejected the
+    /// same way every time (observed: nine identical validation failures
+    /// executed nine times). Approval waits, cancellations and execution
+    /// errors are other kinds and are never held; a successful write drops
+    /// every held configuration error (see `record`) because later
+    /// validation may depend on the state it changed.
     private static let deterministicErrorTools: Set<String> = [
         "file_read", "file_search", "file_edit", "capabilities_load",
-        "read_knowledge", "osaurus_inspect", "osaurus_help",
+        "read_knowledge", "osaurus_inspect", "osaurus_help", "osaurus_config",
     ]
 
     /// The configuration reads whose held rejections a configuration write
@@ -628,7 +637,10 @@ public final class AgentTaskState {
         // failed for a reason the write cannot change (a junk scope) simply
         // fail again once, which is cheap.
         if Self.configurationWriteTools.contains(name), ToolEnvelope.isSuccess(result) {
-            for key in heldErrors.keys where Self.configurationReadTools.contains(key.name) {
+            for key in heldErrors.keys
+            where Self.configurationReadTools.contains(key.name)
+                || Self.configurationWriteTools.contains(key.name)
+            {
                 heldErrors[key] = nil
                 heldErrorReplays[key] = nil
             }
