@@ -316,13 +316,21 @@ enum AgentLoopModelStep {
         // The same announcement as the closing SENTENCE of a status line:
         // "The Wellkr site blocks retrieval. Let me try the Verywell Health
         // article and the Quantum Cacao source." ended an Ornith research run
-        // with `stop` and no call. Narrower than the line rule: only
-        // first-person action phrases (try/fetch/check/read/search/run/open/
-        // look), never "let me know", so a sign-off is not mistaken for a
-        // promised call.
+        // with `stop` and no call. A verb allowlist (try/fetch/check/read/…)
+        // then missed the next three endings of the same model on the folder-
+        // attached run (2026-09-06, session 58544EC9): "I have solid sources
+        // now. Let me get one more with scientific detail…", "I have enough
+        // sources. Let me write the research report to the host files
+        // folder.", "No, I haven't written the file yet. Let me do that now."
+        // — each accepted as a final answer while file_write was available.
+        // The closing sentence is therefore judged by its OPENER (a first-
+        // person "about to act" phrase) with an explicit sign-off exclusion
+        // list ("let me know…", "I'll be here…", "I will wait…"), so a promise
+        // of work is recovered whatever the verb, and a sign-off stays final.
         guard let sentence = Self.closingSentence(of: last), sentence.count <= 120 else { return false }
         let loweredSentence = sentence.lowercased()
-        return Self.actionAnnouncementPrefixes.contains { loweredSentence.hasPrefix($0) }
+        guard Self.closingActionOpeners.contains(where: { loweredSentence.hasPrefix($0) }) else { return false }
+        return !Self.closingSignOffPrefixes.contains(where: { loweredSentence.hasPrefix($0) })
     }
 
     /// The last sentence of a line: the text after the final ". ", "! " or
@@ -340,16 +348,21 @@ enum AgentLoopModelStep {
         return tail.isEmpty ? nil : tail
     }
 
-    /// First-person "about to act on a source" openers for the closing-sentence
-    /// rule. Lowercased, matched as prefixes of the final sentence only.
-    private static let actionAnnouncementPrefixes: [String] = [
-        "let me try ", "let me fetch ", "let me check ", "let me read ", "let me search ",
-        "let me run ", "let me open ", "let me look ", "let me pull ", "let me grab ",
-        "now let me ", "next, let me ", "next let me ",
-        "i'll try ", "i'll fetch ", "i'll check ", "i'll read ", "i'll search ",
-        "i'll run ", "i'll open ", "i'll look ", "i'll pull ", "i'll grab ",
-        "i will try ", "i will fetch ", "i will check ", "i will read ", "i will search ",
-        "next, i'll ", "next i'll ",
+    /// First-person "about to act" openers for the closing-sentence rule.
+    /// Lowercased, matched as prefixes of the final sentence only.
+    private static let closingActionOpeners: [String] = [
+        "let me ", "now let me ", "next, let me ", "next let me ", "first, let me ", "first let me ",
+        "i'll ", "i will ", "i'm going to ", "i am going to ", "next, i'll ", "next i'll ",
+    ]
+
+    /// Closing sentences that open like an announcement but are sign-offs or
+    /// requests to the user, never a promised call: they stay final.
+    private static let closingSignOffPrefixes: [String] = [
+        "let me know", "let me be ", "let me explain", "let me clarify", "let me summarize", "let me summarise",
+        "i'll be ", "i will be ", "i'll let you know", "i will let you know", "i'll wait", "i will wait",
+        "i'll stand by", "i will stand by", "i'll leave ", "i will leave ", "i'll stop ", "i will stop ",
+        "i'll hold ", "i will hold ", "i'll need ", "i will need ", "i'll have to ", "i will have to ",
+        "i'll refrain", "i will refrain", "i'll defer", "i will defer",
     ]
 
     /// Openers of a first-person "about to act" line. Lowercased, matched as

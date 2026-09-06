@@ -723,6 +723,45 @@ struct AgentToolLoopTests {
         }
     }
 
+    /// Ornith 9B, folder attached, file_write available (2026-09-06, session
+    /// 58544EC9, run 063659): these three endings closed R1/R2/R3 as final
+    /// answers with zero announce notices because the closing-sentence rule
+    /// only knew try/fetch/check/read/search/run/open/look/pull/grab. Each is
+    /// a promise of work, so each must be recovered.
+    @Test func closingSentenceAnnouncementsFromTheFolderRunAreRecoverable() {
+        let endings = [
+            "I have solid sources now. Let me get one more with scientific detail on the mechanism and cocoa powder specifics.",
+            "I have enough sources. Let me write the research report to the host files folder.",
+            "No, I haven't written the file yet. Let me do that now.",
+            "I have four solid sources. Let me get one more specifically on the cocoa/chocolate clinical study to complete the picture.",
+        ]
+        for text in endings {
+            #expect(AgentLoopModelStep.isAnnounceOnly(text), "must be recovered: \(text)")
+            let step = AgentLoopModelStep.classifyTerminal(
+                contentIsBlank: false,
+                thinkingIsBlank: true,
+                stopReason: "stop",
+                requiresVisibleFinalResponse: false,
+                toolsWereOffered: true,
+                content: text
+            )
+            guard case .announcedToolCall = step else {
+                Issue.record("announce-only closing sentence must not end the run: \(text)")
+                return
+            }
+        }
+        // Sign-offs and requests to the user that open the same way stay final.
+        let signOffs = [
+            "The report is at hostfiles/report.md. Let me know if you want the sources expanded.",
+            "Done. I'll be here if you need more.",
+            "The file is written and verified. I will wait for your review before continuing.",
+            "That page is blocked everywhere I tried. I'll need a different source from you to go further.",
+        ]
+        for text in signOffs {
+            #expect(!AgentLoopModelStep.isAnnounceOnly(text), "must stay final: \(text)")
+        }
+    }
+
     /// The guard that matters most: a real answer must never be re-run. A
     /// false positive here costs the user a duplicated response.
     @Test func genuineAnswersStayFinal() {
