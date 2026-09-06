@@ -4824,6 +4824,15 @@ extension FloatingInputCard {
             .buttonStyle(.plain)
             .pointingHandCursor()
             .help(folderChipHelp(hasFolder: hasFolder))
+            // The chip is icon-only in the compact state and its text is
+            // decorative otherwise, so assistive tech (and the AX-driven
+            // harness) saw an unnamed button. Name it and keep the folder
+            // name readable through the value.
+            .accessibilityLabel(Text("Folder", bundle: .module))
+            .accessibilityValue(
+                Text(verbatim: hasFolder ? (folderState.rootPath?.lastPathComponent ?? "") : "")
+            )
+            .accessibilityIdentifier("composer.folderChip")
             .contextMenu {
                 if hasFolder {
                     Button {
