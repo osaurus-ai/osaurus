@@ -744,6 +744,8 @@ struct AgentToolLoopTests {
             "I have enough sources. Let me write the research report to the host files folder.",
             "No, I haven't written the file yet. Let me do that now.",
             "I have four solid sources. Let me get one more specifically on the cocoa/chocolate clinical study to complete the picture.",
+            // 128 characters, above the old 120-character bound (run 121436 R1).
+            "I'll search for more accessible sources with the scientific data, including the 71% inhibition figure and peer-reviewed studies.",
         ]
         for text in endings {
             #expect(AgentLoopModelStep.isAnnounceOnly(text), "must be recovered: \(text)")

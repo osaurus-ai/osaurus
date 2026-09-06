@@ -320,8 +320,14 @@ enum AgentLoopModelStep {
         // "Let me check the result" / "I'll write these now" as the whole
         // closing line, with no answer after it. Bounded length keeps this
         // from matching a long sentence that merely opens with "I'll".
+        // Bound raised from 120: a 128-character promise ("I'll search for
+        // more accessible sources with the scientific data, including the
+        // 71% inhibition figure and peer-reviewed studies.") closed an Ornith
+        // turn as a final answer on 2026-09-06 (run 121436 R1).
         let lowered = last.lowercased()
-        if last.count <= 120, Self.announcementPrefixes.contains(where: { lowered.hasPrefix($0) }) {
+        if last.count <= Self.announcementLengthBound,
+            Self.announcementPrefixes.contains(where: { lowered.hasPrefix($0) })
+        {
             return true
         }
 
@@ -339,7 +345,8 @@ enum AgentLoopModelStep {
         // person "about to act" phrase) with an explicit sign-off exclusion
         // list ("let me know…", "I'll be here…", "I will wait…"), so a promise
         // of work is recovered whatever the verb, and a sign-off stays final.
-        guard let sentence = Self.closingSentence(of: last), sentence.count <= 120 else { return false }
+        guard let sentence = Self.closingSentence(of: last), sentence.count <= Self.announcementLengthBound
+        else { return false }
         let loweredSentence = sentence.lowercased()
         guard Self.closingActionOpeners.contains(where: { loweredSentence.hasPrefix($0) }) else { return false }
         return !Self.closingSignOffPrefixes.contains(where: { loweredSentence.hasPrefix($0) })
@@ -359,6 +366,11 @@ enum AgentLoopModelStep {
         let tail = line[cut...].trimmingCharacters(in: .whitespacesAndNewlines)
         return tail.isEmpty ? nil : tail
     }
+
+    /// Longest line / closing sentence still read as an announcement. Long
+    /// enough for a promise that names its sources and figures, short enough
+    /// that a paragraph opening with "I'll" is still an answer.
+    static let announcementLengthBound = 200
 
     /// First-person "about to act" openers for the closing-sentence rule.
     /// Lowercased, matched as prefixes of the final sentence only.
