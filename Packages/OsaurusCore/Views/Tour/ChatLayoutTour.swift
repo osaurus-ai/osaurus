@@ -27,13 +27,6 @@ public enum ChatTourAnchor: String, Sendable {
     case sidebarLensBar
     case tabStrip
     case historyButton
-    /// The Settings row at the foot of the sidebar.
-    case sidebarSettings
-}
-
-struct ChatTourShortcut: Hashable {
-    let keys: String
-    let label: String
 }
 
 struct ChatTourStop: Identifiable {
@@ -41,21 +34,19 @@ struct ChatTourStop: Identifiable {
     let anchor: ChatTourAnchor
     let title: String
     let body: String
-    /// Keyboard shortcuts listed under the body, one per row.
-    var shortcuts: [ChatTourShortcut] = []
 }
 
 extension ChatTourStop {
-    /// The four stops, in order. Copy leads with "moved / still here" so the
+    /// The three stops, in order. Copy leads with "moved / still here" so the
     /// message is reassurance, not a feature pitch.
     @MainActor static var all: [ChatTourStop] {
         [
             ChatTourStop(
                 id: "agents",
                 anchor: .sidebarLensBar,
-                title: L("Agents come first now"),
+                title: L("Chats are now organized by agent"),
                 body: L(
-                    "The sidebar now lists your agents, with Projects one tab over.\n\nPick an agent to open it in its own tab, and hover a row for its settings.\n\nThe selected agent shows which chat is open."
+                    "Choose an agent to continue your conversation.\n\nYou can start a new chat with that agent anytime."
                 )
             ),
             ChatTourStop(
@@ -63,30 +54,14 @@ extension ChatTourStop {
                 anchor: .tabStrip,
                 title: L("Every chat is a tab"),
                 body: L(
-                    "Open several chats side by side, like a browser.\n\nA reply keeps streaming in a background tab.\n\nDrag tabs to reorder them."
-                ),
-                shortcuts: [
-                    ChatTourShortcut(keys: "⌘T", label: L("New tab")),
-                    ChatTourShortcut(keys: "⌘W", label: L("Close tab")),
-                    ChatTourShortcut(keys: "⇧⌘T", label: L("Reopen the last closed tab")),
-                    ChatTourShortcut(keys: "⌃Tab", label: L("Next tab")),
-                ]
+                    "Open multiple chats and switch between them like browser tabs, without interrupting responses in progress."
+                )
             ),
             ChatTourStop(
                 id: "history",
                 anchor: .historyButton,
-                title: L("Your chats didn’t go anywhere"),
-                body: L(
-                    "Chat history moved out of the sidebar to this button.\n\nIt lists every conversation for the selected agent, with search, import, and the same actions as before."
-                )
-            ),
-            ChatTourStop(
-                id: "settings",
-                anchor: .sidebarSettings,
-                title: L("Settings moved to the sidebar"),
-                body: L(
-                    "The settings button now sits at the bottom of the sidebar.\n\nEverything inside it is unchanged."
-                )
+                title: L("Your chat history"),
+                body: L("View and search past chats with this agent.")
             ),
         ]
     }
@@ -563,28 +538,6 @@ struct ChatTourOverlayView: View {
                 .font(.system(size: 12.5))
                 .foregroundColor(theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
-            if !stop.shortcuts.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(stop.shortcuts, id: \.self) { shortcut in
-                        HStack(spacing: 10) {
-                            Text(verbatim: shortcut.keys)
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundColor(theme.primaryText)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .frame(minWidth: 56)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                        .fill(theme.tertiaryBackground.opacity(0.8))
-                                )
-                            Text(verbatim: shortcut.label)
-                                .font(.system(size: 12))
-                                .foregroundColor(theme.secondaryText)
-                        }
-                    }
-                }
-                .padding(.top, 2)
-            }
             // Footer: progress on the left, navigation on the right. No Skip:
             // four short stops don't need one (Esc still bails out).
             HStack(spacing: 12) {

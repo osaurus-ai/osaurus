@@ -771,8 +771,6 @@ struct ChatSessionSidebar: View {
             withAnimation(theme.springAnimation(responseMultiplier: 0.8)) { isFooterHovered = hovering }
         }
         .localizedHelp("Settings")
-        // Tour spotlight anchor (invisible; reports the row's frame).
-        .background(TourAnchorMarker(anchor: .sidebarSettings))
         .padding(.horizontal, 8)
         .padding(.vertical, 8)
     }
