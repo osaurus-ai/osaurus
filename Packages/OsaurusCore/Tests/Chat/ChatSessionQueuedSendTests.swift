@@ -586,6 +586,30 @@ struct ChatSessionQueuedSendTests {
             #expect(session.turns.last?.content == "and also this")
         }
     }
+
+    // MARK: - History reasoning omitted for a declaring bundle
+
+    /// Raptor copies its own prior `<think>` turn by turn once one identical
+    /// turn exists; a bundle stamped `history_reasoning: omit` gets its
+    /// historical assistant turns without `reasoning_content` (content and
+    /// tool calls intact), so the template renders `<think></think>` for them.
+    @Test
+    func historyReasoningOmitted_dropsReasoningContentOnly() async throws {
+        try await ChatHistoryTestStorage.run {
+            let turn = ChatTurn(role: .assistant, content: "")
+            turn.appendThinking("The tool requires a `scope` argument.")
+            turn.toolCalls = [
+                ToolCall(id: "c1", type: "function",
+                    function: ToolCallFunction(name: "osaurus_inspect", arguments: #"{"action":"describe","scope":"default_agent"}"#))
+            ]
+            let kept = ChatSession.modelVisibleAssistantMessage(turn, isLastTurn: false)
+            #expect(kept?.reasoning_content == "The tool requires a `scope` argument.")
+            let omitted = ChatSession.modelVisibleAssistantMessage(turn, isLastTurn: false, includeReasoning: false)
+            #expect(omitted?.reasoning_content == nil)
+            #expect(omitted?.tool_calls?.first?.id == "c1")
+            #expect(omitted?.content == nil)
+        }
+    }
 }
 
 // MARK: - Test doubles
