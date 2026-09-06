@@ -799,6 +799,10 @@ struct AgentToolLoopTests {
         #expect(notice.contains("described the next action 3 times without making a tool call"))
         #expect(notice.contains("what remains undone"))
         #expect(notice.contains("Do not promise to do it next"))
+        // Run 123927 R1: the status step listed the completed sources truthfully
+        // and then closed with "Writing it now." — a promise no tool can keep
+        // in a tool-free response.
+        #expect(notice.contains("This response ends the turn: do not promise any further action (fetching, writing, verifying)"))
         _ = promise
 
         // Headless: the narration is still accepted as final, no wrap-up.
@@ -839,6 +843,7 @@ struct AgentToolLoopTests {
         #expect(notice.contains("has failed 3 times"))
         #expect(notice.contains("cached replay of the earlier failure, not a new network request"))
         #expect(notice.contains("keep every successful result"))
+        #expect(notice.contains("This response ends the turn: do not promise any further action (fetching, writing, verifying)"))
         // The replayed envelopes in the transcript say they are cached, so
         // "I retried" cannot be an honest reading of them.
         let replays = surface.batchOutcomes.flatMap { $0 }.filter { $0.wasDeduped }

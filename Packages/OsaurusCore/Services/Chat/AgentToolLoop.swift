@@ -1503,7 +1503,9 @@ enum AgentToolLoop {
         "[System Notice] You described the next action \(announcements) times without making a tool call, "
             + "so nothing further ran. No more tools are available in this response. Report truthfully: "
             + "what was completed (keep every result already above), what remains undone, and what blocked "
-            + "the step you kept announcing. Do not promise to do it next, and do not claim it was done."
+            + "the step you kept announcing. Do not promise to do it next, and do not claim it was done. "
+            + "This response ends the turn: do not promise any further action (fetching, writing, verifying) — "
+            + "the user decides what happens next."
     }
 
     /// The one tool-free status step after the same retrieval failed and was
@@ -1517,7 +1519,8 @@ enum AgentToolLoop {
             + "and this response cannot retry it. No more tools are available in this response. "
             + "Report truthfully: what was completed (keep every successful result already above), "
             + "what remains undone, and that this source is blocked. Do not promise to try again, "
-            + "and do not claim the failed page was read."
+            + "and do not claim the failed page was read. This response ends the turn: do not promise any "
+            + "further action (fetching, writing, verifying) — the user decides what happens next."
     }
 
     static let iterationCapWrapUpNotice =
