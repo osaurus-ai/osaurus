@@ -427,7 +427,11 @@ struct InvalidArgsLoopDriverTests {
 
     /// (d) Three consecutive rejections → still exactly one notice, and it
     /// rides the build right after the SECOND rejection (bounded per tool
-    /// per run, never a standing nag).
+    /// per run, never a standing nag). The third call repeats the first
+    /// rejected document byte for byte: `osaurus_config` validation
+    /// rejections are deterministic and held, so it is replayed from the
+    /// hold rather than re-executed (the Ornith `auth: none` shape ran the
+    /// same rejected document nine times before this).
     @Test
     func threeConsecutiveRejections_stillOneNotice() async throws {
         let surface = InvalidArgsLoopSurface(
@@ -454,13 +458,16 @@ struct InvalidArgsLoopDriverTests {
         #expect(result.exit == .finalResponse)
         #expect(surface.deliveredPerBuild() == [0, 0, 1, 0])
         #expect(surface.deliveredNotices().count == 1)
-        // The third call still executed: advisory only.
-        #expect(surface.executions.count == 3)
+        // The notice is advisory: the loop continued to the third call. That
+        // call is the identical rejected document, replayed from the held
+        // rejection instead of validated a third time.
+        #expect(surface.executions.count == 2)
     }
 
     /// (e) The live shape end to end, with the inspect/help detour between
-    /// rejections: the loop continues past the notice, the third call is
-    /// still executed, and the run ends with an ordinary final response.
+    /// rejections: the loop continues past the notice, the identical third
+    /// apply is replayed from its held rejection, and the run ends with an
+    /// ordinary final response.
     @Test
     func liveShape_loopContinuesToFinalResponse() async throws {
         let surface = InvalidArgsLoopSurface(
@@ -493,7 +500,9 @@ struct InvalidArgsLoopDriverTests {
         // The detour between the two rejected applies does not launder the
         // streak: the notice lands on the build after the second rejection.
         #expect(surface.deliveredPerBuild() == [0, 0, 0, 0, 1, 0])
-        #expect(surface.executions.count == 5)
+        // Two inspects, two distinct applies; the fifth call repeats the
+        // second apply's document and is replayed, not executed.
+        #expect(surface.executions.count == 4)
     }
 
     // MARK: - Notice-slot composition

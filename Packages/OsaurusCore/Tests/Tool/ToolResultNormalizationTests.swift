@@ -152,4 +152,19 @@ struct ToolResultNormalizationTests {
         let smallCjk = String(repeating: "漢字", count: 10_000)  // 20,000 chars, 60 KB: under the cap
         #expect(!ToolRegistry.normalizeToolResult(smallCjk, tool: "mcp_thing").contains("\"truncated\":true"))
     }
+
+    /// A proportional character slice under-counts when the payload is ASCII
+    /// at the front and emoji at the back (the kept tail is 4 bytes per
+    /// character): the kept text must fit the BYTE cap, whatever the mix.
+    @Test func mixedAsciiEmojiResultIsCappedByBytes() {
+        let cap = ToolOutputCaps.universalResult
+        let mixed = String(repeating: "a", count: 80_000) + String(repeating: "🦖", count: 60_000)  // 140,000 chars, 320,000 bytes
+        let normalized = ToolRegistry.normalizeToolResult(mixed, tool: "mcp_thing")
+        let payload = ToolEnvelope.successPayload(normalized) as? [String: Any]
+        #expect(payload?["truncated"] as? Bool == true)
+        let kept = payload?["content"] as? String ?? ""
+        #expect(kept.utf8.count <= cap, "kept \(kept.utf8.count) bytes over a \(cap)-byte cap")
+        #expect(kept.utf8.count > cap / 2, "the cap should be used, not collapsed")
+        #expect(kept.hasPrefix("aaaa") && kept.hasSuffix("🦖"))
+    }
 }

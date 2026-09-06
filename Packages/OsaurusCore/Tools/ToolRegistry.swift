@@ -1545,12 +1545,20 @@ public final class ToolRegistry: ObservableObject {
         if byteCount <= cap {
             return isEnvelope ? payload : ToolEnvelope.success(tool: tool, text: payload)
         }
-        let characterCap = max(1, Int(Double(cap) * Double(payload.count) / Double(byteCount)))
-
         // Head-biased: at the registry backstop the front of an oversized
         // payload is what identifies it (the recovery hint rides in the
-        // envelope, not the marker).
-        let truncatedContent = HeadTailTruncation.apply(payload, cap: characterCap, headFraction: 2.0 / 3.0)
+        // envelope, not the marker). The cap is a BYTE budget: a proportional
+        // character slice is only a first guess (mixed emoji/ASCII payloads
+        // are denser at one end than the other), so shrink the character
+        // budget until the kept text really fits.
+        var characterCap = max(1, Int(Double(cap) * Double(payload.count) / Double(byteCount)))
+        var truncatedContent = HeadTailTruncation.apply(payload, cap: characterCap, headFraction: 2.0 / 3.0)
+        var passes = 0
+        while truncatedContent.utf8.count > cap, characterCap > 1, passes < 12 {
+            passes += 1
+            characterCap = max(1, Int(Double(characterCap) * Double(cap) / Double(truncatedContent.utf8.count)))
+            truncatedContent = HeadTailTruncation.apply(payload, cap: characterCap, headFraction: 2.0 / 3.0)
+        }
         let hint =
             "Output exceeded the per-call cap and was truncated (head and tail kept). "
             + "Re-run with narrower arguments — filters, `max_results`, line ranges, or "
