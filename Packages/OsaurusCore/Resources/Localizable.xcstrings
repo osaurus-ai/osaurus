@@ -19709,40 +19709,6 @@
         }
       }
     },
-    "Agents come first now" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Agenten stehen jetzt an erster Stelle"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "이제 에이전트가 먼저입니다"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Теперь агенты на первом месте"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "智能体现在优先显示"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "智能體現在優先顯示"
-          }
-        }
-      }
-    },
     "Agents execute commands safely" : {
       "localizations" : {
         "de" : {
@@ -41697,6 +41663,40 @@
         }
       }
     },
+    "Chats are now organized by agent" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chats sind jetzt nach Agent sortiert"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이제 채팅이 에이전트별로 정리됩니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чаты теперь сгруппированы по агентам"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聊天现在按智能体整理"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聊天現在按智能體整理"
+          }
+        }
+      }
+    },
     "Chats in this project will build shared memory here." : {
       "localizations" : {
         "de" : {
@@ -43290,6 +43290,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "選擇智能體"
+          }
+        }
+      }
+    },
+    "Choose an agent to continue your conversation.\n\nYou can start a new chat with that agent anytime." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle einen Agenten, um deine Unterhaltung fortzusetzen.\n\nDu kannst jederzeit einen neuen Chat mit diesem Agenten beginnen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트를 선택하여 대화를 이어가세요.\n\n언제든지 해당 에이전트와 새 채팅을 시작할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите агента, чтобы продолжить беседу.\n\nНовый чат с этим агентом можно начать в любой момент."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择一个智能体以继续对话。\n\n你可以随时与该智能体开始新的聊天。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇一個智能體以繼續對話。\n\n你可以隨時與該智能體開始新的聊天。"
           }
         }
       }
@@ -46830,40 +46864,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "關閉會話"
-          }
-        }
-      }
-    },
-    "Close tab" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tab schließen"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "탭 닫기"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Закрыть вкладку"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "关闭标签页"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "關閉分頁"
           }
         }
       }
@@ -124454,40 +124454,6 @@
         }
       }
     },
-    "New tab" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Neuer Tab"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "새 탭"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Новая вкладка"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "新建标签页"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "新增分頁"
-          }
-        }
-      }
-    },
     "New Tab" : {
       "localizations" : {
         "de" : {
@@ -124875,40 +124841,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "下一個會話"
-          }
-        }
-      }
-    },
-    "Next tab" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nächster Tab"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "다음 탭"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Следующая вкладка"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "下一个标签页"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "下一個分頁"
           }
         }
       }
@@ -138468,6 +138400,40 @@
         }
       }
     },
+    "Open multiple chats and switch between them like browser tabs, without interrupting responses in progress." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Öffne mehrere Chats und wechsle zwischen ihnen wie zwischen Browser-Tabs, ohne laufende Antworten zu unterbrechen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "여러 채팅을 열고 브라우저 탭처럼 전환하세요. 진행 중인 응답은 중단되지 않습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открывайте несколько чатов и переключайтесь между ними, как между вкладками браузера, не прерывая ответы, которые ещё формируются."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开多个聊天并像浏览器标签页一样切换，不会打断正在生成的回复。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開啟多個聊天並像瀏覽器分頁一樣切換，不會打斷正在生成的回覆。"
+          }
+        }
+      }
+    },
     "Open on GitHub" : {
       "comment" : "A menu option to open a plugin's GitHub repository.",
       "isCommentAutoGenerated" : true,
@@ -139062,40 +139028,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "打開設置"
-          }
-        }
-      }
-    },
-    "Open several chats side by side, like a browser.\n\nA reply keeps streaming in a background tab.\n\nDrag tabs to reorder them." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Öffne mehrere Chats nebeneinander wie in einem Browser.\n\nEine Antwort läuft in einem Hintergrund-Tab weiter.\n\nZiehe Tabs, um sie neu anzuordnen."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "브라우저처럼 여러 채팅을 나란히 열 수 있습니다.\n\n답변은 백그라운드 탭에서 계속 스트리밍됩니다.\n\n탭을 드래그하여 순서를 바꿀 수 있습니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Открывайте несколько чатов рядом, как в браузере.\n\nОтвет продолжает поступать в фоновой вкладке.\n\nПеретаскивайте вкладки, чтобы изменить их порядок."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "像浏览器一样并排打开多个聊天。\n\n回复会在后台标签页中继续生成。\n\n拖动标签页可重新排序。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "像瀏覽器一樣並排開啟多個聊天。\n\n回覆會在背景分頁中繼續生成。\n\n拖曳分頁可重新排序。"
           }
         }
       }
@@ -169349,40 +169281,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "重新開啟"
-          }
-        }
-      }
-    },
-    "Reopen the last closed tab" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Zuletzt geschlossenen Tab wieder öffnen"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "마지막으로 닫은 탭 다시 열기"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Открыть последнюю закрытую вкладку"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "重新打开最近关闭的标签页"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "重新開啟最近關閉的分頁"
           }
         }
       }
@@ -212053,40 +211951,6 @@
         }
       }
     },
-    "The sidebar now lists your agents, with Projects one tab over.\n\nPick an agent to open it in its own tab, and hover a row for its settings.\n\nThe selected agent shows which chat is open." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Die Seitenleiste zeigt jetzt deine Agenten, Projekte sind einen Tab weiter.\n\nWähle einen Agenten, um ihn in einem eigenen Tab zu öffnen, und fahre über eine Zeile für die Einstellungen.\n\nDer ausgewählte Agent zeigt, welcher Chat geöffnet ist."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "사이드바에 이제 에이전트가 표시되며, 프로젝트는 옆 탭에 있습니다.\n\n에이전트를 선택하면 별도의 탭에서 열리고, 행 위에 마우스를 올리면 설정이 표시됩니다.\n\n선택된 에이전트에는 열려 있는 채팅이 표시됩니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "В боковой панели теперь перечислены ваши агенты, а проекты находятся на соседней вкладке.\n\nВыберите агента, чтобы открыть его в отдельной вкладке, и наведите курсор на строку, чтобы открыть настройки.\n\nУ выбранного агента показан открытый чат."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "侧边栏现在列出了你的智能体，项目在旁边的选项卡中。\n\n选择一个智能体即可在单独的标签页中打开，悬停在行上可查看其设置。\n\n选中的智能体会显示当前打开的聊天。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "側邊欄現在列出了你的智能體，專案在旁邊的選項卡中。\n\n選擇一個智能體即可在單獨的分頁中開啟，懸停在列上可查看其設定。\n\n選取的智能體會顯示目前開啟的聊天。"
-          }
-        }
-      }
-    },
     "The signing key for \"%@\" has changed. Uninstall the plugin and reinstall it to accept the new key." : {
       "localizations" : {
         "de" : {
@@ -228830,6 +228694,40 @@
         }
       }
     },
+    "View and search past chats with this agent." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Frühere Chats mit diesem Agenten ansehen und durchsuchen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 에이전트와의 이전 채팅을 보고 검색하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Просматривайте прошлые чаты с этим агентом и ищите по ним."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看并搜索与该智能体的过往聊天。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看並搜尋與該智能體的過往聊天。"
+          }
+        }
+      }
+    },
     "View Chat" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -238032,36 +237930,36 @@
         }
       }
     },
-    "Your chats didn’t go anywhere" : {
+    "Your chat history" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Deine Chats sind noch da"
+            "value" : "Dein Chat-Verlauf"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "채팅은 사라지지 않았습니다"
+            "value" : "채팅 기록"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ваши чаты никуда не делись"
+            "value" : "История ваших чатов"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "你的聊天都还在"
+            "value" : "你的聊天历史"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "你的聊天都還在"
+            "value" : "你的聊天歷史"
           }
         }
       }
@@ -239595,108 +239493,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Zip 捆綁包"
-          }
-        }
-      }
-    },
-    "Chat history moved out of the sidebar to this button.\n\nIt lists every conversation for the selected agent, with search, import, and the same actions as before.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Der Chat-Verlauf ist aus der Seitenleiste zu dieser Schaltfläche umgezogen.\n\nSie listet alle Unterhaltungen des ausgewählten Agenten, mit Suche, Import und denselben Aktionen wie zuvor."
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "채팅 기록이 사이드바에서 이 버튼으로 이동했습니다.\n\n선택된 에이전트의 모든 대화가 검색, 가져오기 및 이전과 동일한 작업과 함께 표시됩니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "История чатов переехала из боковой панели на эту кнопку.\n\nОна перечисляет все беседы выбранного агента с поиском, импортом и теми же действиями, что и раньше."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "聊天历史从侧边栏移到了此按钮。\n\n它会列出所选智能体的所有对话，并保留搜索、导入和之前的全部操作。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "聊天歷史從側邊欄移到了此按鈕。\n\n它會列出所選智能體的所有對話，並保留搜尋、匯入和之前的全部操作。"
-          }
-        }
-      }
-    },
-    "Settings moved to the sidebar": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Einstellungen sind in die Seitenleiste umgezogen"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "설정이 사이드바로 이동했습니다"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Настройки переехали в боковую панель"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "设置移到了侧边栏"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "設定移到了側邊欄"
-          }
-        }
-      }
-    },
-    "The settings button now sits at the bottom of the sidebar.\n\nEverything inside it is unchanged.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Die Einstellungen-Schaltfläche sitzt jetzt unten in der Seitenleiste.\n\nAlles darin ist unverändert."
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "설정 버튼은 이제 사이드바 하단에 있습니다.\n\n안의 내용은 그대로입니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Кнопка настроек теперь находится внизу боковой панели.\n\nВсё внутри осталось прежним."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "设置按钮现在位于侧边栏底部。\n\n里面的内容没有变化。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "設定按鈕現在位於側邊欄底部。\n\n裡面的內容沒有變化。"
           }
         }
       }
