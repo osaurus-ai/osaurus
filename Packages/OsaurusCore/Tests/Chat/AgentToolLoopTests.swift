@@ -3129,4 +3129,27 @@ struct CompactionWatermarkIdentityTests {
         watermark.validate(against: [ChatMessage(role: "user", content: "stable")])
         #expect(watermark.droppedCount == 1)
     }
+
+    /// Ornith research run (2026-09-06): the Web Researcher's schema had no
+    /// file tool, so "Let me write the markdown file…" could never become a
+    /// call, and the bare nudge told the model to emit that call anyway. The
+    /// nudge names the tools that exist and says what to do when the needed
+    /// one is absent. Fails before the change (the notice never named a tool).
+    @MainActor @Test func announceOnlyNoticeNamesTheToolsThatExistInThisChat() async throws {
+        let surface = ScriptedLoopSurface(steps: [.announcedToolCall, .finalResponse])
+        var hooks = surface.makeHooks()
+        hooks.authorizedToolNames = { ["web_search", "search_and_extract", "get_current_time"] }
+        _ = try await AgentToolLoop.run(policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
+        let notice = surface.builtNotices.flatMap { $0 }.first { $0.contains("described a tool call but did not actually emit one") }
+        let text = try #require(notice)
+        #expect(text.contains("get_current_time, search_and_extract, web_search"))
+        #expect(text.contains("say plainly that you cannot do it in this chat"))
+
+        // Without a tool list the notice is the bare nudge (no fabricated list).
+        let bare = ScriptedLoopSurface(steps: [.announcedToolCall, .finalResponse])
+        _ = try await AgentToolLoop.run(policy: chatPolicy(), state: AgentTaskState(), hooks: bare.makeHooks())
+        let bareNotice = try #require(bare.builtNotices.flatMap { $0 }.first { $0.contains("described a tool call") })
+        #expect(!bareNotice.contains("The tools you can call in this chat are"))
+        #expect(AgentToolLoop.announcedToolCallNotice(availableTools: []) == AgentToolLoop.announcedToolCallNotice)
+    }
 }

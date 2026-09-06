@@ -339,4 +339,17 @@ private final class SearchExtractionHTTPStubProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+
+    /// Ornith research run 2026-09-06: the second `search_and_extract` of a
+    /// blocked page held the tool loop ~5 minutes although the tool promised
+    /// 25 s — `URLRequest.timeoutInterval` only bounds idle time and a
+    /// session's default resource timeout is seven days. The per-page timeout
+    /// must bound the whole fetch.
+    @Test func extractionSessionBoundsTheWholeFetchToThePageTimeout() {
+        let configuration = SearchReadability.boundedConfiguration(.ephemeral, timeout: 7)
+        #expect(configuration.timeoutIntervalForRequest == 7)
+        #expect(configuration.timeoutIntervalForResource == 7)
+        let fresh = URLSessionConfiguration.ephemeral
+        #expect(fresh.timeoutIntervalForResource > 7, "the default resource timeout is what let the fetch run on")
+    }
 }

@@ -6894,6 +6894,7 @@ final class ChatSession: ObservableObject {
                             // `currentAgentId` is already pinned by the
                             // outer turn-level binding; we only need to
                             // layer per-tool-call session/turn/call ids.
+                            let toolStartedAt = Date()
                             let resultText = try await ChatExecutionContext.$toolExecutionScope
                                 .withValue(toolScope) {
                                     try await ChatExecutionContext.$currentSessionId.withValue(
@@ -6915,6 +6916,12 @@ final class ChatSession: ObservableObject {
                                             }
                                     }
                                 }
+                                                // Wall time of the execution itself, so a tool that
+                                                // returns late (a blocked page trickling bytes for
+                                                // minutes) is visible in the run log.
+                                                print(
+                                                    "[Osaurus][Tool] Elapsed: \(inv.toolName) \(Int(Date().timeIntervalSince(toolStartedAt) * 1000)) ms"
+                                                )
                                                 return await postProcessToolResult(
                                                     inv,
                                                     callId: callId,

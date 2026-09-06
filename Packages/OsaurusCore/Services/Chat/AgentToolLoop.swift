@@ -1225,6 +1225,22 @@ enum AgentToolLoop {
         + "No file was written and no command executed. Emit the tool call itself now, as a real call — "
         + "do not describe it, narrate it, or claim it already ran."
 
+    /// The announce-only nudge, naming the tools that actually exist in this
+    /// chat. Ornith research run (2026-09-06, current main): the Web
+    /// Researcher agent had no file tool in its schema (no folder granted), so
+    /// "Let me write the markdown file to the host files folder" could never
+    /// become a call — the bare nudge told the model to "emit the tool call
+    /// itself now" for a tool it did not have, twice, and the run ended on
+    /// the same announcement. With the list, an action that needs an absent
+    /// tool is told to be reported as impossible instead of re-announced.
+    static func announcedToolCallNotice(availableTools: Set<String>?) -> String {
+        guard let names = availableTools, !names.isEmpty else { return announcedToolCallNotice }
+        return announcedToolCallNotice
+            + " The tools you can call in this chat are: " + names.sorted().joined(separator: ", ") + "."
+            + " If what you described needs a tool that is not in that list (for example writing a file when no file tool is listed), "
+            + "do not announce it again — say plainly that you cannot do it in this chat and give the user the result you have."
+    }
+
     /// How many times a run will push back on "shall I continue?" before
     /// letting the question stand. Two: enough to get past a model that asks
     /// reflexively, few enough that a user who really is being consulted is
@@ -2503,7 +2519,8 @@ enum AgentToolLoop {
                 consecutiveAnnouncedToolCalls += 1
                 totalAnnouncedToolCallRetries += 1
                 if consecutiveAnnouncedToolCalls <= Self.maxAnnouncedToolCallRetries {
-                    replaceStateNotice(Self.announcedToolCallNotice)
+                    replaceStateNotice(
+                        Self.announcedToolCallNotice(availableTools: hooks.authorizedToolNames?()))
                     // Not charged against the tool-iteration budget.
                     iteration -= 1
                     continue
