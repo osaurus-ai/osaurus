@@ -157,10 +157,19 @@ final class ChatSession: ObservableObject {
 
     @Published var turns: [ChatTurn] = []
 
+    /// The model's OUTPUT for the in-flight run is complete (vmlx emitted its
+    /// terminal info) even though the RUN has not ended: the adapter keeps the
+    /// stream open through vmlx's post-generation cache store (9.5–15 s on a
+    /// 96 GB bundle, measured 2026-09-04) to preserve allocator ordering. The
+    /// streaming cursor keys on this so it stops at the last letter; the send
+    /// gate keys on `isStreaming`, which still waits for the real end.
+    @Published var outputComplete: Bool = false
+
     @Published var isStreaming: Bool = false {
         didSet {
             guard isStreaming != oldValue else { return }
             if isStreaming {
+                outputComplete = false
                 ChatPerfTrace.shared.begin("stream-\(Int(Date().timeIntervalSince1970))")
                 beginRunProgressMonitor()
             } else {
@@ -549,6 +558,24 @@ final class ChatSession: ObservableObject {
     /// process-wide `SessionToolStateStore` so chat sessions and the
     /// HTTP/plugin path share one cache. Keyed by `sessionId.uuidString`.
     private var sessionStateKey: (UUID) -> String { { $0.uuidString } }
+
+    /// Prompt/scope agreement tripwire (advisory, never a block): the
+    /// Orchestrator addendum tells the model to ALWAYS call `osaurus_help` /
+    /// `osaurus_inspect` / `osaurus_config`; if this turn's schema does not
+    /// expose one of them the scope refuses it with `tool_not_found` and the
+    /// model has been set up to loop (seen live after an agent-chip switch
+    /// before the agent joined the session fingerprint). Logged so a live
+    /// proof can see the disagreement. Only the Default agent carries the
+    /// addendum, so other agents are skipped.
+    static func logOrchestratorScopeDisagreement(agentId: UUID, scope: ToolExecutionScope) {
+        guard agentId == Agent.defaultId else { return }
+        let missing = DefaultAgentSystemPromptBuilder.missingRequiredToolNames(
+            exposed: scope.authorizedNames
+        )
+        guard !missing.isEmpty else { return }
+        let names = missing.sorted().joined(separator: ", ")
+        debugLog("[Tools] orchestrator addendum requires tools the scope refuses: \(names)")
+    }
 
     // MARK: - Agent Loop State (Chat-as-Agent)
 
@@ -1791,7 +1818,7 @@ final class ChatSession: ObservableObject {
         // In Mode 2 the remote agent owns the conversation, so its name heads
         // the thread; otherwise fall back to the local agent's name.
         let displayName = threadAgentDisplayName ?? localName
-        var streamingTurnId = isStreaming ? turns.last?.id : nil
+        var streamingTurnId = (isStreaming && !outputComplete) ? turns.last?.id : nil
 
         // While a send waits on the pre-send warm-up handshake there is no
         // assistant turn yet; render a placeholder typing-indicator group so
@@ -4472,17 +4499,49 @@ final class ChatSession: ObservableObject {
         if autonomous {
             await SandboxToolRegistrar.shared.registerTools(for: agentId)
         }
-        // A folder that a background dispatch supplied (Watcher / schedule /
-        // plugin folder_bookmark) is an explicit target with no interactive
-        // sandbox toggle, so it wins over the agent's default sandbox —
-        // otherwise the pure-VM agent can't see its own target files.
-        // Interactive folders keep sandbox priority.
-        return ToolRegistry.shared.resolveExecutionMode(
-            folderContext: activeFolderContext(for: agentId),
+        return resolveExecutionModeForSend(
+            agentId: agentId,
             autonomousEnabled: autonomous,
-            allowHostFolderWrites: config?.allowHostFolderWrites == true,
+            allowHostFolderWrites: config?.allowHostFolderWrites == true
+        )
+    }
+
+    /// The pure resolution step of `prepareChatExecutionMode` (no sandbox
+    /// provisioning side effects), so the dispatch-folder contract is
+    /// unit-testable. A folder that a background dispatch supplied (Watcher
+    /// / schedule / plugin folder_bookmark) is an explicit target with no
+    /// interactive sandbox toggle, so it wins over the agent's default
+    /// sandbox — otherwise the pure-VM agent can't see its own target files.
+    /// Interactive folders keep sandbox priority.
+    func resolveExecutionModeForSend(
+        agentId: UUID,
+        autonomousEnabled: Bool,
+        allowHostFolderWrites: Bool = false
+    ) -> ExecutionMode {
+        ToolRegistry.shared.resolveExecutionMode(
+            folderContext: activeFolderContext(for: agentId),
+            autonomousEnabled: autonomousEnabled,
+            allowHostFolderWrites: allowHostFolderWrites,
             preferHostFolder: folderContextFromDispatchBookmark
         )
+    }
+
+    /// The folder root bound as `ChatExecutionContext.currentFolderRoot` for
+    /// one turn. A selected folder is suspended while VM execution is
+    /// enabled — EXCEPT when a background dispatch supplied it: that folder
+    /// wins over the sandbox, exactly as it does in
+    /// `resolveExecutionModeForSend` (`preferHostFolder`). Without the
+    /// exception the two disagree: the execution mode exposes the host file
+    /// tools, but the root binding stays nil, so every folder tool returns
+    /// "no working folder is selected" (the Voice Memo Watcher failure).
+    /// Pure so the contract is unit-testable.
+    static func turnFolderRoot(
+        sandboxEnabled: Bool,
+        folderFromDispatch: Bool,
+        folderRoot: URL?
+    ) -> URL? {
+        let suspendFolderForSandbox = sandboxEnabled && !folderFromDispatch
+        return suspendFolderForSandbox ? nil : folderRoot
     }
 
     // MARK: - Private Helpers
@@ -4525,6 +4584,10 @@ final class ChatSession: ObservableObject {
         currentTurn.terminalStopReason = nil
         currentTurn.unclosedReasoning = false
         currentTurn.completedAt = nil
+        currentTurn.lastOutputAt = nil
+        // Output-complete relay: the adapter announces the instant vmlx's
+        // terminal info arrives (before the cache-store tail it withholds the
+        // stream end for). Stop the cursor and stamp completion right then.
         // On every exit — clean end, cancel, tool-invocation throw, or a
         // mid-stream error — drop a tool-call-progress placeholder if it never
         // resolved to a committed tool name, so the "Preparing tool call" card
@@ -4579,6 +4642,41 @@ final class ChatSession: ObservableObject {
         var processor = StreamingDeltaProcessor(turn: currentTurn) { [weak self] in
             self?.rebuildVisibleBlocks()
         }
+        // The relay fires when the ENGINE is done; the last deltas may still
+        // be in flight to this loop and the smooth-streaming pacer may still be
+        // painting them (live: "…247 248 249 2" shown as complete for the
+        // whole tail — the "50" was in the pacing buffer). So completion is
+        // settled, not stamped: wait for a quiet window with no new delta,
+        // drain the processor so every character is painted, THEN stop the
+        // cursor and stamp. No engine output can follow `.info`, so the quiet
+        // window only ever waits on delivery, never on generation.
+        var lastDeltaAt = Date()
+        let outputCompleteSub = GenerationOutputRelay.shared.$lastCompletion
+            .compactMap { $0 }
+            .filter { $0.at >= streamStartTime }
+            .first()
+            .receive(on: RunLoop.main)
+            .sink { [weak self, weak currentTurn] completion in
+                guard let self else { return }
+                Task { @MainActor [weak self, weak currentTurn] in
+                    let quiet: TimeInterval = 0.15
+                    var waited: TimeInterval = 0
+                    while Date().timeIntervalSince(lastDeltaAt) < quiet, waited < 3 {
+                        try? await Task.sleep(nanoseconds: 50_000_000); waited += 0.05
+                    }
+                    await processor.finalize()
+                    guard let self, self.activeRunId == runId else { return }
+                    let at = Date()
+                    if let turn = currentTurn {
+                        if turn.completedAt == nil { turn.completedAt = at }
+                        if turn.lastOutputAt == nil { turn.lastOutputAt = at }
+                    }
+                    self.outputComplete = true
+                    self.rebuildVisibleBlocks()
+                    print("[Osaurus][UI] output complete at \(String(format: "%.2f", at.timeIntervalSince(streamStartTime)))s (engine done at \(String(format: "%.2f", completion.at.timeIntervalSince(streamStartTime)))s; run end pending on the engine tail)")
+                }
+            }
+        defer { outputCompleteSub.cancel() }
 
         // The engine surfaces parsed tool calls by *throwing* a
         // `ServiceToolInvocation` (or `ServiceToolInvocations`) at end-of-
@@ -4833,6 +4931,7 @@ final class ChatSession: ObservableObject {
                         now: now,
                         turn: currentTurn
                     )
+                    currentTurn.lastOutputAt = now
                     processor.receiveReasoning(reasoning)
                 } else if !delta.isEmpty {
                     let now = Date()
@@ -4844,6 +4943,7 @@ final class ChatSession: ObservableObject {
                         ttftTrace?.emit()
                     }
                     uiDeltaCount += 1
+                    lastDeltaAt = now
                     // Content delta — counted uniformly with reasoning.
                     let tokens = ContextBudgetManager.estimateTokens(for: delta)
                     rollingRate.observe(tokens: tokens, at: now)
@@ -4853,6 +4953,7 @@ final class ChatSession: ObservableObject {
                         now: now,
                         turn: currentTurn
                     )
+                    currentTurn.lastOutputAt = now
                     processor.receiveDelta(delta)
 
                     // The model has collapsed into a phrase-repetition loop.
@@ -4958,9 +5059,19 @@ final class ChatSession: ObservableObject {
         // unconditionally so cancelled and zero-token streams still get
         // a timestamp — the token count tells the consumer how much was
         // actually generated.
-        currentTurn.completedAt = Date()
+        let streamEndedAt = Date()
+        currentTurn.completedAt = streamEndedAt
 
-        let totalTime = Date().timeIntervalSince(streamStartTime)
+        let totalTime = streamEndedAt.timeIntervalSince(streamStartTime)
+        // Last visible delta → stream termination. For local models this is
+        // vmlx's post-generation cache store (the adapter holds the terminal
+        // stats until the upstream drains): measured 4.3 s AR / 10–13 s
+        // native-MTP on a 930-token JANG_4M answer. A tok/s derived from
+        // `completedAt` silently absorbs it; this makes it visible per turn.
+        let visibleTailMs =
+            currentTurn.lastOutputAt.map {
+                Int(max(0, streamEndedAt.timeIntervalSince($0)) * 1000)
+            } ?? -1
         let uiSentinelOnlyCount =
             uiToolSentinelCount + uiReasoningItemCount + uiStatsHintCount
             + uiBillingHintCount + uiPrefillHintCount
@@ -4969,7 +5080,7 @@ final class ChatSession: ObservableObject {
             ? (uiSentinelOnlyCount > 0 ? "sentinel-only" : "empty")
             : "non-empty"
         print(
-            "[Osaurus][UI] Stream consumption completed: contentDeltas=\(uiDeltaCount) reasoningDeltas=\(uiReasoningDeltaCount) classification=\(uiStreamClassification) in \(String(format: "%.2f", totalTime))s, final contentLen=\(currentTurn.contentLength), toolSentinels=\(uiToolSentinelCount), reasoningItems=\(uiReasoningItemCount), stats=\(uiStatsHintCount), billing=\(uiBillingHintCount), prefill=\(uiPrefillHintCount), capturedTools=\(capturedInvocations.count)"
+            "[Osaurus][UI] Stream consumption completed: contentDeltas=\(uiDeltaCount) reasoningDeltas=\(uiReasoningDeltaCount) classification=\(uiStreamClassification) in \(String(format: "%.2f", totalTime))s, lastOutput→completion tailMs=\(visibleTailMs), final contentLen=\(currentTurn.contentLength), toolSentinels=\(uiToolSentinelCount), reasoningItems=\(uiReasoningItemCount), stats=\(uiStatsHintCount), billing=\(uiBillingHintCount), prefill=\(uiPrefillHintCount), capturedTools=\(capturedInvocations.count)"
         )
 
         return (capturedInvocations, currentTurn)
@@ -5867,12 +5978,20 @@ final class ChatSession: ObservableObject {
             // failure after the user turns sandbox off). Interactive sessions
             // keep the suspension — the user toggles sandbox off to use a
             // folder there.
-            let suspendFolderForSandbox =
-                sandboxEnabled && !self.folderContextFromDispatchBookmark
-            let turnFolderRoot =
-                suspendFolderForSandbox
-                ? nil : self.activeFolderContext(for: turnAgentId)?.rootPath
+            let turnFolderRoot = Self.turnFolderRoot(
+                sandboxEnabled: sandboxEnabled,
+                folderFromDispatch: self.folderContextFromDispatchBookmark,
+                folderRoot: self.activeFolderContext(for: turnAgentId)?.rootPath
+            )
+            // A dispatched folder is the run's ONLY filesystem: mark it so the
+            // file tools never answer a `/workspace/...` path from the VM
+            // (the autonomous agent's sandbox stays registered process-wide,
+            // so the bridge would otherwise still be bound in host-folder
+            // mode). Interactive chats never set this.
+            let folderIsDispatchTarget =
+                self.folderContextFromDispatchBookmark && turnFolderRoot != nil
             await ChatExecutionContext.$currentFolderRoot.withValue(turnFolderRoot) { [self] in
+            await ChatExecutionContext.$hostFolderIsDispatchTarget.withValue(folderIsDispatchTarget) { [self] in
             // Typed run provenance for the whole turn. The session's own
             // persisted `source` is authoritative here (a dispatched
             // schedule/watcher/self-schedule run re-binds the same value the
@@ -6001,9 +6120,15 @@ final class ChatSession: ObservableObject {
                                         let liveToolMode = AgentManager.shared.effectiveToolSelectionMode(
                                             for: effectiveAgentId
                                         )
+                    // The agent id is part of the fingerprint: the baseline
+                    // schema is per-agent, so switching the agent chip must
+                    // re-freeze the always-loaded snapshot for the new agent
+                    // (otherwise the Orchestrator inherits a custom agent's
+                    // frozen list without `osaurus_help` / `osaurus_config`).
                     let liveFingerprint = SessionToolState.fingerprint(
                         executionMode: executionMode,
-                        toolMode: liveToolMode
+                        toolMode: liveToolMode,
+                        agentId: effectiveAgentId
                     )
                     let cachedSession: SessionToolState?
                     if let sid = sessionId {
@@ -6192,6 +6317,9 @@ final class ChatSession: ObservableObject {
                     // whole run: `capabilities_load` legitimately GROWS this set mid-run while
                     // `toolSpecs` stays frozen, so an immutable snapshot would kill that feature.
                     let toolScope = ToolExecutionScope(exposed: toolSpecs)
+                    if !isRemoteAgentTarget {
+                        Self.logOrchestratorScopeDisagreement(agentId: effectiveAgentId, scope: toolScope)
+                    }
 
                     // Persist the always-loaded snapshot back onto the session
                     // so the next send freezes the schema against tools that
@@ -7007,7 +7135,7 @@ final class ChatSession: ObservableObject {
                     // lives in `AgentToolLoop`. These hooks carry everything
                     // the chat surface owns: turn history, streaming UI,
                     // TaskLocal scoping, and the agent-loop intercepts.
-                    let loopHooks = AgentLoopHooks(
+                    var loopHooks = AgentLoopHooks(
                         isCancelled: { !self.isRunActive(runId) },
                         buildMessages: { notices in
                             // Mid-run steering: a text-only message queued
@@ -7612,8 +7740,22 @@ final class ChatSession: ObservableObject {
                             self.turns.append(retryTurn)
                             assistantTurn = retryTurn
                             self.rebuildVisibleBlocks()
+                        },
+                        assistantVisibleText: {
+                            // Ungated sibling of `finalVisibleText` for the
+                            // file side-effect advisory: read BEFORE
+                            // `onBatchComplete` swaps in a fresh buffer, so a
+                            // tool-calling message's narration is what the
+                            // loop sees, not the empty next turn.
+                            assistantTurn.content
                         }
                     )
+                    // What this run may execute, read live: the driver folds
+                    // `osaurus_help!!` onto `osaurus_help` only when the
+                    // canonical name is in scope, and lists these names in the
+                    // `tool_not_found` notice. Assigned after construction so
+                    // the hooks literal above stays type-checkable.
+                    loopHooks.authorizedToolNames = { toolScope.authorizedNames }
 
                     let runResult = try await AgentToolLoop.run(
                         policy: AgentLoopPolicy(
@@ -7877,6 +8019,7 @@ final class ChatSession: ObservableObject {
             }  // ChatExecutionContext.$currentAgentId.withValue
             }  // ChatExecutionContext.$currentChatSessionBox.withValue
             }  // ChatExecutionContext.$currentSessionSource.withValue
+            }  // ChatExecutionContext.$hostFolderIsDispatchTarget.withValue
             }  // ChatExecutionContext.$currentFolderRoot.withValue
         }
     }

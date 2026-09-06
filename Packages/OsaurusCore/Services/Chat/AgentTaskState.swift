@@ -236,6 +236,33 @@ public final class AgentTaskState {
     /// always executes.
     private static let dynamicToolRunThreshold = 4
 
+    /// Consecutive `invalid_args` rejections of ONE tool name (arguments
+    /// ignored) before the argument-rejection notice fires. Every existing
+    /// loop-breaker keys on identical arguments or on a same-name run of a
+    /// planning/dynamic tool, so the observed Ornith 9B loop — `osaurus_config`
+    /// rejected three times in a row with DIFFERENT arguments each time
+    /// (`token_ref: env var ... is not set`, then `Unexpected property
+    /// set_api_key`, then the first shape again), re-narrating the same plan
+    /// verbatim between attempts — met no detector at all. Two rejections is
+    /// the signal: one is an honest schema miss the model may fix on its own;
+    /// a second on the same tool means it is not reading the validator
+    /// message. Advisory only; the call always executes, and the notice is
+    /// staged at most once per tool per message so it can never become a
+    /// standing nag.
+    static let invalidArgsRunThreshold = 2
+
+    /// Consecutive `tool_not_found` results for one tool NAME (punctuation
+    /// variants folded together, see `canonicalToolName`) before the
+    /// not-available notice fires. Mirrors `invalidArgsRunThreshold`: one
+    /// refusal is an honest miss the envelope itself explains; a second on
+    /// the same name means the model is not reading the envelope (observed
+    /// live: `osaurus_help` refused three times, then `osaurus_help!!`,
+    /// `osaurus_help!`, then a bare `!` as the answer). The notice restates
+    /// the refusal and lists the tools that ARE authorized, so the model can
+    /// answer with one of those or without a tool. Advisory only; the call
+    /// still executes (and is still refused) — nothing here blocks.
+    static let toolNotFoundRunThreshold = 2
+
     // MARK: State
 
     /// A read result still considered fresh: the canonical path it read and
@@ -342,6 +369,37 @@ public final class AgentTaskState {
     /// `web_search` executions since the last concrete retrieval/processing
     /// action, regardless of argument changes or intervening meta tools.
     private var webDiscoveryRunCount = 0
+    /// Consecutive `invalid_args` rejections per tool NAME, arguments
+    /// ignored. Any non-`invalid_args` result for that tool (a success, or a
+    /// different failure kind) clears its entry; calls to OTHER tools leave
+    /// it alone, so an inspect/help detour between two rejected `osaurus_config`
+    /// applies does not launder the streak.
+    private var invalidArgsRuns: [String: Int] = [:]
+    /// Tools that have already received the argument-rejection notice this
+    /// message. Bounds delivery to one notice per tool per message.
+    private var invalidArgsNoticedTools: Set<String> = []
+    /// Set by `record` when the most recent call brought a tool to
+    /// `invalidArgsRunThreshold` consecutive rejections for the first time;
+    /// cleared by every other recorded call. `nextStepBias` surfaces it.
+    private var pendingInvalidArgsNotice: String?
+    /// Consecutive `tool_not_found` results per canonical tool name (see
+    /// `canonicalToolName`), arguments ignored. Any other result for that
+    /// name clears its entry; calls to OTHER tools leave it alone.
+    private var toolNotFoundRuns: [String: Int] = [:]
+    /// Canonical tool names that have already received the not-available
+    /// notice this message. Bounds delivery to one notice per tool per
+    /// message.
+    private var toolNotFoundNoticedTools: Set<String> = []
+    /// Set by `record` when the most recent call brought a name to
+    /// `toolNotFoundRunThreshold` consecutive refusals for the first time;
+    /// cleared by every other recorded call. `nextStepBias` surfaces it.
+    private var pendingToolNotFoundNotice: String?
+    /// The names this request is authorized to execute, supplied by the
+    /// surface (chat binds it to `ToolExecutionScope.authorizedNames` via
+    /// `AgentLoopHooks.authorizedToolNames`). Read lazily at notice time so
+    /// same-run `capabilities` activations are reflected. Nil when the
+    /// surface publishes no scope — the notice then omits the list.
+    public var authorizedToolNamesProvider: (() -> Set<String>)?
     /// Armed only until the next same-path mutation attempt. This catches the
     /// observed stale rewrite without becoming a persistent rollback policy.
     private var successfulEditSnapshots: [String: SuccessfulEditSnapshot] = [:]
@@ -377,6 +435,12 @@ public final class AgentTaskState {
         dynamicRunCount = 0
         callCounts.removeAll(keepingCapacity: true)
         webDiscoveryRunCount = 0
+        invalidArgsRuns.removeAll(keepingCapacity: true)
+        invalidArgsNoticedTools.removeAll(keepingCapacity: true)
+        pendingInvalidArgsNotice = nil
+        toolNotFoundRuns.removeAll(keepingCapacity: true)
+        toolNotFoundNoticedTools.removeAll(keepingCapacity: true)
+        pendingToolNotFoundNotice = nil
         successfulEditSnapshots.removeAll(keepingCapacity: true)
     }
 
@@ -665,6 +729,65 @@ public final class AgentTaskState {
             }
         }
 
+        // Consecutive argument rejections of one tool, arguments ignored.
+        // Keyed on the canonical failure envelope (`ok:false` +
+        // `kind:"invalid_args"`, which both the registry's schema preflight
+        // and tool bodies emit for a contract violation); `execution_error`
+        // is a runtime failure, not an argument problem, so it is deliberately
+        // NOT counted. The notice arms exactly when the streak first reaches
+        // the threshold and the tool has not been noticed this message —
+        // a third rejection gets nothing more (bounded), and any
+        // non-rejection result for the tool resets its streak.
+        pendingInvalidArgsNotice = nil
+        if ToolEnvelope.isError(result),
+            Self.errorKind(result) == ToolEnvelope.Kind.invalidArgs.rawValue
+        {
+            let run = (invalidArgsRuns[name] ?? 0) + 1
+            invalidArgsRuns[name] = run
+            if run == Self.invalidArgsRunThreshold, !invalidArgsNoticedTools.contains(name) {
+                invalidArgsNoticedTools.insert(name)
+                pendingInvalidArgsNotice = Self.invalidArgsLoopNotice(
+                    tool: name,
+                    envelope: result,
+                    consecutiveRejections: run
+                )
+                // Visible in the run log so a live proof can show the notice fired
+                // (the notice itself only travels inside the model prompt).
+                print("[Osaurus][Loop] invalid-args notice staged tool=\(name) consecutiveRejections=\(run)")
+            }
+        } else {
+            invalidArgsRuns[name] = nil
+        }
+
+        // Consecutive `tool_not_found` refusals of one tool name, arguments
+        // ignored, keyed on the canonical name so `osaurus_help`,
+        // `osaurus_help!` and `osaurus_help!!` count as one streak. Same
+        // arming rule as the invalid-args notice above: exactly on the
+        // threshold crossing, once per tool per message, and any other
+        // result for the name resets its streak.
+        pendingToolNotFoundNotice = nil
+        let canonicalName = Self.canonicalToolName(name)
+        if ToolEnvelope.isError(result),
+            Self.errorKind(result) == ToolEnvelope.Kind.toolNotFound.rawValue
+        {
+            let run = (toolNotFoundRuns[canonicalName] ?? 0) + 1
+            toolNotFoundRuns[canonicalName] = run
+            if run == Self.toolNotFoundRunThreshold,
+                !toolNotFoundNoticedTools.contains(canonicalName)
+            {
+                toolNotFoundNoticedTools.insert(canonicalName)
+                pendingToolNotFoundNotice = Self.toolNotFoundLoopNotice(
+                    tool: canonicalName,
+                    authorizedToolNames: authorizedToolNamesProvider?()
+                )
+                print(
+                    "[Osaurus][Loop] tool-not-found notice staged tool=\(canonicalName) consecutiveRefusals=\(run)"
+                )
+            }
+        } else {
+            toolNotFoundRuns[canonicalName] = nil
+        }
+
         // Repeated-call detector for non-read tools: reads are handled by
         // the dedupe replay, but an identical write/exec re-executes by
         // design (it may legitimately differ) — so count it, and once the
@@ -790,6 +913,25 @@ public final class AgentTaskState {
             Self.isFileWriteContentTooLarge(envelope) {
             return
                 "The previous `file_write` did not execute because `content` exceeded the per-call limit. Do not regenerate another complete oversized payload. Split the content now: send a first chunk under \(WorkspaceToolContract.recommendedWriteChunkCharacters) characters with overwrite mode, then send only each remaining chunk with `mode: \"append\"`."
+        }
+
+        // Consecutive argument rejections of one tool with varying
+        // arguments: the model is retrying without reading the validator.
+        // Outranks the identical-args nudge below (which needs three exact
+        // repeats and so never fires on this shape) and is delivered once
+        // per tool per message — `record` only arms it on the threshold
+        // crossing, so a third rejection falls through to the ordinary
+        // `.error` (nil) branch rather than nagging again.
+        if let notice = pendingInvalidArgsNotice {
+            return notice
+        }
+
+        // Consecutive `tool_not_found` refusals of one name: the model keeps
+        // calling a tool this conversation does not have. Same rank and
+        // delivery rule as the invalid-args notice (once per tool per
+        // message, armed on the threshold crossing only).
+        if let notice = pendingToolNotFoundNotice {
+            return notice
         }
 
         if let tool = lastToolName,
@@ -1002,6 +1144,114 @@ public final class AgentTaskState {
             let message = dict["message"] as? String
         else { return false }
         return message.contains("must contain at most")
+    }
+
+    /// Longest slice of the validator message the notice quotes. Validator
+    /// messages are one line; the cap only guards against a tool body that
+    /// stuffs a payload dump into `message`.
+    private static let invalidArgsQuotedMessageCap = 600
+
+    /// The argument-rejection notice for `tool` after `consecutiveRejections`
+    /// `invalid_args` results in a row. Quotes the LAST validator message
+    /// verbatim (bounded), repeats the allowed-property list when the
+    /// registry's `Unexpected property ... Allowed: a, b, c` shape is present,
+    /// surfaces the envelope's `field` / `expected` hints when set, and
+    /// instructs the model to either fix the arguments exactly as stated or
+    /// stop retrying and tell the user what is missing. Advisory only.
+    static func invalidArgsLoopNotice(
+        tool: String,
+        envelope: String,
+        consecutiveRejections: Int
+    ) -> String {
+        var dict: [String: Any] = [:]
+        if let data = envelope.data(using: .utf8),
+            let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        {
+            dict = parsed
+        }
+        let rawMessage = (dict["message"] as? String ?? ToolEnvelope.failureMessage(envelope))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var message = String(rawMessage.prefix(invalidArgsQuotedMessageCap))
+        if message.count < rawMessage.count { message += "…" }
+
+        var lines: [String] = []
+        lines.append(
+            "`\(tool)` has rejected your arguments \(consecutiveRejections) times in a row (`invalid_args`). Repeating the call with another guessed shape will not change the outcome."
+        )
+        lines.append("Last validator message, verbatim: \"\(message)\"")
+        if let allowed = allowedPropertyList(in: rawMessage) {
+            lines.append("Allowed properties for `\(tool)`: \(allowed). Any other property is rejected.")
+        }
+        if let field = dict["field"] as? String, !field.isEmpty {
+            var hint = "The rejected field is `\(field)`"
+            if let expected = dict["expected"] as? String, !expected.isEmpty {
+                hint += " (expected: \(expected))"
+            }
+            lines.append(hint + ".")
+        }
+        lines.append(
+            "Do exactly one of the following now: (1) fix the arguments EXACTLY as that message states and call `\(tool)` once more, or (2) if the message names something you cannot supply from here (for example an environment variable that is not set, or a value only the user has), stop retrying `\(tool)` and tell the user plainly what is missing and how to provide it."
+        )
+        return lines.joined(separator: " ")
+    }
+
+    /// The not-available notice for `tool` after
+    /// `toolNotFoundRunThreshold` consecutive `tool_not_found` results.
+    /// Lists the authorized names (sorted, so the text is byte-stable for a
+    /// given scope) when the surface supplied them; otherwise points the
+    /// model at its own tool schema. Advisory only.
+    static func toolNotFoundLoopNotice(tool: String, authorizedToolNames: Set<String>?) -> String {
+        var lines: [String] = []
+        lines.append(
+            "`\(tool)` is not available in this conversation and calling it again will fail identically."
+        )
+        if let names = authorizedToolNames {
+            if names.isEmpty {
+                lines.append("There are no tools available in this conversation.")
+            } else {
+                lines.append(
+                    "The tools you have are exactly: \(names.sorted().joined(separator: ", "))."
+                )
+            }
+        } else {
+            lines.append("The tools you have are exactly the ones in your tool schema.")
+        }
+        lines.append("Answer the user with those or without a tool.")
+        return lines.joined(separator: " ")
+    }
+
+    /// Characters a model hallucinates around a tool name — emphasis and
+    /// sentence punctuation (`osaurus_help!!`, `"osaurus_help"`,
+    /// `` `osaurus_help` ``). Only leading / trailing runs are stripped;
+    /// interior characters (`server.tool`, `tool/name`, `a-b`) are part of
+    /// legitimate names and untouched.
+    private static let hallucinatedToolNameEdges = CharacterSet(charactersIn: "!?.,;:'\"`()[]{}<>*")
+        .union(.whitespacesAndNewlines)
+
+    /// `rawName` with hallucinated leading / trailing punctuation removed.
+    /// Returns `rawName` unchanged when nothing was stripped or stripping
+    /// would leave an empty name. Pure normalisation: whether the canonical
+    /// name may EXECUTE is the caller's decision (the loop substitutes it
+    /// only when the request scope authorizes the canonical name, so a
+    /// withheld tool cannot be reached by decorating its name).
+    public static func canonicalToolName(_ rawName: String) -> String {
+        let trimmed = rawName.trimmingCharacters(in: hallucinatedToolNameEdges)
+        return trimmed.isEmpty ? rawName : trimmed
+    }
+
+    /// Pull the comma-separated allowed-property list out of the registry's
+    /// `Unexpected property `x`. Allowed: a, b, c` validator message, or nil
+    /// when the message has no such list.
+    static func allowedPropertyList(in message: String) -> String? {
+        guard let range = message.range(of: "Allowed: ") else { return nil }
+        var tail = String(message[range.upperBound...])
+        // The registry appends its own sentence after the list on the
+        // malformed-JSON path; keep only the list itself.
+        if let stop = tail.firstIndex(where: { $0 == "\n" || $0 == "." }) {
+            tail = String(tail[..<stop])
+        }
+        let list = tail.trimmingCharacters(in: .whitespacesAndNewlines)
+        return list.isEmpty ? nil : list
     }
 
     private static func runnableMutationNotice(tool: String, envelope: String) -> String? {

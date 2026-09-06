@@ -268,6 +268,23 @@ public enum ChatExecutionContext {
     /// untouched.
     @TaskLocal public static var sandboxReadBridge: SandboxReadBridge?
 
+    /// True while a turn runs against a host folder that a BACKGROUND
+    /// DISPATCH supplied (a Watcher's watched folder, a scheduled task's
+    /// folder, a plugin's `folder_bookmark`). That folder is the run's only
+    /// filesystem: the run was pointed at it, has no interactive sandbox
+    /// toggle, and must never be served the Linux VM in its place. Bound by
+    /// `ChatSession.send` from `folderContextFromDispatchBookmark` together
+    /// with `currentFolderRoot`; consulted by `combinedFileRoute` and
+    /// `ToolRegistry.combinedSandboxReadBridge` so an absolute
+    /// `/workspace/...` path is refused on the host route instead of being
+    /// answered with the agent's VM home. Live failure without it: the
+    /// autonomous agent's `sandbox_exec` is registered process-wide, so the
+    /// bridge was bound even in `.hostFolder` mode, and a Watcher run that
+    /// asked for `/workspace/agents/<id>` (its own earlier transcript named
+    /// it) got a real listing — `SOUL.md` + `plugins/` — and reported the
+    /// watched folder "empty" again. `false` for every interactive chat.
+    @TaskLocal public static var hostFolderIsDispatchTarget: Bool = false
+
     /// Linux sandbox agent name for the current execution. Bound alongside
     /// `sandboxReadBridge` so Agent DB file tools can resolve paths under
     /// `/workspace/...` even in plain sandbox mode (no host folder).

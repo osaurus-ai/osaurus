@@ -1803,13 +1803,23 @@ struct MLXBatchAdapter {
             var toolEarlyStopRequested = false
             await withTaskCancellationHandler {
                 for await event in upstream {
-                    if case .info = event {
+                    if case .info(let info) = event {
                         // `.info` is terminal to every public consumer. Hold
                         // it until the upstream producer, disk/cache commit,
                         // and allocator teardown have all completed; yielding
                         // it here lets an immediate follow-up request enter
                         // ModelRuntime before this request closes its allocator
                         // window, suppressing the required inter-request clear.
+                        //
+                        // The OUTPUT is complete right now, though — and the
+                        // post-`.info` cache store behind this hold measured
+                        // 9.5–15 s on a 96 GB bundle. Announce output
+                        // completion on the relay so the chat can stop its
+                        // cursor at the last letter; the run's ordering
+                        // (lease, allocator window, send gate) is untouched.
+                        GenerationOutputRelay.shared.announce(
+                            modelName: modelName,
+                            generationTokens: info.generationTokenCount)
                         terminalInfo = event
                         continue
                     }

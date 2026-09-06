@@ -27,6 +27,28 @@ public enum DefaultAgentSystemPromptBuilder {
     }
     private static var cache: [String: CacheSlot] = [:]
 
+    /// Tool names the Orchestrator addendum instructs the model to call
+    /// unconditionally — every rendered variant (compact or full) tells the
+    /// model to ALWAYS read `osaurus_help` for Osaurus questions, to read
+    /// state with `osaurus_inspect`, and to make changes with
+    /// `osaurus_config`. A prompt that advertises these while the request's
+    /// tool scope refuses them is the live `tool_not_found` loop (the model
+    /// obeyed the addendum three times, then gave up with `!`). The schema
+    /// resolver and the session tool-state store are responsible for keeping
+    /// them exposed whenever the Default agent is the active one; tests pin
+    /// the contract with `missingRequiredToolNames(exposed:)`.
+    nonisolated public static let orchestratorRequiredToolNames: Set<String> = [
+        "osaurus_help", "osaurus_inspect", "osaurus_config",
+    ]
+
+    /// The addendum-required tool names that `exposed` does NOT contain —
+    /// empty when the prompt and the scope agree. Advisory helper: the
+    /// caller decides what to do with a disagreement (tests assert it is
+    /// empty; the send path logs it).
+    nonisolated public static func missingRequiredToolNames(exposed: Set<String>) -> Set<String> {
+        orchestratorRequiredToolNames.subtracting(exposed)
+    }
+
     /// Render (or return the cached) addendum. Memoized against
     /// `ConfigurationDomainRegistry.shared.generation` so the prompt
     /// is byte-stable across turns when nothing has changed and

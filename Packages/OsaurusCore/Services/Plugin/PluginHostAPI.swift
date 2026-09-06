@@ -1004,7 +1004,11 @@ final class PluginHostContext: @unchecked Sendable {
         // forced a full re-prefill.
         var cachedSession: SessionToolState?
         if let sid = sessionId {
-            let liveFp = SessionToolState.fingerprint(executionMode: execMode, toolMode: toolMode)
+            let liveFp = SessionToolState.fingerprint(
+                executionMode: execMode,
+                toolMode: toolMode,
+                agentId: agentId
+            )
             await SessionToolStateStore.shared.invalidateIfFingerprintChanged(
                 sid,
                 liveFingerprint: liveFp
@@ -1029,7 +1033,11 @@ final class PluginHostContext: @unchecked Sendable {
                 sid,
                 alwaysLoadedNames: composed.alwaysLoadedNames,
                 toolSpecs: composed.initialToolSpecs,
-                fingerprint: SessionToolState.fingerprint(executionMode: execMode, toolMode: toolMode),
+                fingerprint: SessionToolState.fingerprint(
+                    executionMode: execMode,
+                    toolMode: toolMode,
+                    agentId: agentId
+                ),
                 manifest: composed.enabledManifest,
                 soul: composed.soul
             )
@@ -1221,7 +1229,8 @@ final class PluginHostContext: @unchecked Sendable {
             // since last turn — same rule as the chat send path.
             let liveFp = SessionToolState.fingerprint(
                 executionMode: executionMode,
-                toolMode: toolMode
+                toolMode: toolMode,
+                agentId: agentId
             )
             await SessionToolStateStore.shared.invalidateIfFingerprintChanged(sid, liveFingerprint: liveFp)
             let cached = await SessionToolStateStore.shared.get(sid)
@@ -1276,7 +1285,8 @@ final class PluginHostContext: @unchecked Sendable {
             let builtInNames = Set(builtInTools.map { $0.function.name })
             let fp = SessionToolState.fingerprint(
                 executionMode: executionMode,
-                toolMode: toolMode
+                toolMode: toolMode,
+                agentId: agentId
             )
             await SessionToolStateStore.shared.setInitial(
                 sid,

@@ -3,6 +3,44 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.24.7</title>
+            <pubDate>Sat, 05 Sep 2026 00:01:34 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.24.7</sparkle:version>
+            <sparkle:shortVersionString>0.24.7</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.24.7/Osaurus-0.24.7.dmg" length="74809820" type="application/octet-stream" sparkle:edSignature="9QY05OJ89Nx/k5Wm6SGRS69LfglXchs5w3jqLIsAoO7xfy4V1snKS9sL8+emOa6ZHID180/OrIp+EN6Tf2xIBw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Repin vmlx-swift to 577d9c63 (non-finite logits probe, Raptor top-level jang stamps) (#2642) by @jjang-ai
+- Flash-Next MTP: layout advisory popup, explicit depth-3 default, stream-tail instrumentation, repin vmlx c8a4b66b (#2635) by @jjang-ai
+- Repin vmlx-swift: proposal-head stamp runtime (vmlx#422) (#2631) by @jjang-ai
+- Web pipeline: retrieval rides with discovery; hallucinated fetch calls get steered (#2625) by @jjang-ai
+
+## 🚀 Features
+
+- make cmd+n start a new chat inside the current project (#2634) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Thinking default detection for top-level jang reasoning blocks and enable\_thinking-undefined templates; compose agent-loop state notices (#2641) by @jjang-ai
+- Agent loop: log when the invalid-args notice is staged (#2640) by @jjang-ai
+- Capability grounding follow-ups: honest enum errors, Host Files scope copy, ungrounded file-side-effect notice (#2638) by @jjang-ai
+- Delegation: enforce the RAM-safety sequence for every spawn\_agent handoff (unload main → load delegate → run → unload delegate → reload main) (#2639) by @jjang-ai
+- Watcher dispatch grounds itself; config apply says DONE (#2628) by @jjang-ai
+- Agent loop: knowledge-tool dedupe, dynamic same-name run advisory, repeat visibility (#2632) by @jjang-ai
+- Correct 0.24.6 release notes (#2627) by @jjang-ai
+
+## 🧰 Maintenance
+
+- Catalog: drop the Ling-2.6 Flash entries (Ling 2.6 runtime no longer shipped) (#2637) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.24.6...0.24.7
+]]></description>
+        </item>
+        <item>
             <title>0.24.6</title>
             <pubDate>Fri, 04 Sep 2026 05:38:34 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

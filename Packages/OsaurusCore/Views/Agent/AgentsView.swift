@@ -3509,12 +3509,13 @@ struct AgentDetailView: View {
 
             AgentAbilityGroupHeader(
                 label: "Host Files",
-                description: "Let the agent read and write files inside a folder you choose."
+                description:
+                    "Let authenticated remote agent runs read and write files inside a folder you choose."
             )
             AgentAbilityCard(
                 title: "Host Files",
                 subtitle:
-                    "Grant access to one macOS folder, including over authenticated remote agent runs. Writes stay inside the folder; shell and git remain disabled.",
+                    "Grant access to one macOS folder for authenticated remote agent runs (Secure Channel, agent-scoped key). Chats inside the app do not use this grant — attach a folder with the Folder chip instead. Writes stay inside the folder; shell and git remain disabled.",
                 icon: "folder.badge.person.crop",
                 isActive: hostWorkspacePath != nil
             ) {
@@ -5372,15 +5373,25 @@ struct AgentDetailView: View {
     }
 
     /// Host Files row (Abilities → Overview). Lets the user grant this agent a
-    /// real macOS folder it may read and write inside — including over an
-    /// authenticated remote agent run (Secure Channel, agent-scoped key). The
-    /// grant is a security-scoped bookmark persisted on the agent; writes are
-    /// confined to the folder and shell/git stay denied on the remote surface.
+    /// real macOS folder it may read and write inside over an authenticated
+    /// remote agent run (Secure Channel, agent-scoped key) — that is the ONLY
+    /// surface that mounts the grant (`HTTPHandler.handleAgentRunEndpoint` →
+    /// `ChatExecutionContext.authenticatedHostFolderRoot`); an in-app chat
+    /// gets its workspace from the Folder chip, never from here. The grant is
+    /// a security-scoped bookmark persisted on the agent; writes are confined
+    /// to the folder and shell/git stay denied on the remote surface.
     /// Independent of the Linux sandbox, so it renders regardless of sandbox
     /// availability.
     @ViewBuilder
     private var hostWorkspaceFolderRow: some View {
         VStack(alignment: .leading, spacing: 8) {
+            Text(
+                "Used by authenticated remote agent runs only. For chats in the app, attach a folder with the Folder chip.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 12) {
                 Text(hostWorkspacePath ?? L("No folder selected"))
                     .font(.system(size: 12, weight: .medium))

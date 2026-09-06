@@ -64,7 +64,8 @@ struct ImportGuideSheet: View {
             Provider(
                 id: "claude",
                 name: "Claude",
-                recipe: "Settings → Privacy → Export data. The download link arrives by email as a zip file.",
+                recipe:
+                    "Settings → Privacy → Export data. The download link arrives by email. Large accounts are split into several batch zip files plus an index JSON: import each batch zip, not the index.",
                 exportURL: URL(string: "https://claude.ai/settings/data-privacy-controls")
             ),
             Provider(

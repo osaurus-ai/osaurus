@@ -174,6 +174,15 @@ actor SessionToolStateStore {
     /// of names that are safe to carry across modes; everything else
     /// (frozen specs, manifest, always-loaded snapshot, mode-owned tools)
     /// is still dropped so the next compose re-resolves from scratch.
+    ///
+    /// The carry applies to a MODE flip only. When the fingerprint's agent
+    /// component changed (the user switched the agent chip mid-chat), the
+    /// entry is dropped wholesale: the new agent's grant is a different
+    /// baseline, and `resolveTools` unions `additionalToolNames` into the
+    /// Default agent's allowlist without re-checking the grant, so a load
+    /// made under a custom agent would otherwise ride into the Orchestrator's
+    /// schema. The model can `capabilities` the tool again under the new
+    /// agent if it is still granted there.
     /// Returns `true` if an invalidation actually happened.
     @discardableResult
     func invalidateIfFingerprintChanged(
@@ -192,7 +201,15 @@ actor SessionToolStateStore {
             return false
         }
         if recorded == liveFingerprint { return false }
-        let carried = entry.loadedToolNames.intersection(preserved)
+        let agentSwitched =
+            SessionToolState.agentComponent(of: recorded)
+            != SessionToolState.agentComponent(of: liveFingerprint)
+        let carried = agentSwitched ? [] : entry.loadedToolNames.intersection(preserved)
+        debugLog(
+            "[SessionToolState] fingerprint flip session=\(sessionId) "
+                + "recorded=\(recorded) live=\(liveFingerprint) "
+                + "agentSwitched=\(agentSwitched) carried=\(carried.count)"
+        )
         states.removeValue(forKey: sessionId)
         lastSendCacheHint.removeValue(forKey: sessionId)
         lastConversationSend.removeValue(forKey: sessionId)

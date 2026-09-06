@@ -449,6 +449,21 @@ struct FloatingInputCard: View {
     /// The banner stays hidden for that selection but returns when the pick
     /// changes or the projection escalates to a hard block.
     @State private var ramBannerDismissedForModel: String?
+
+    // MARK: - MTP Bundle-Layout Advisory State
+
+    /// Non-nil when the selected LOCAL bundle is a Qwen 3.8 Flash-Next JANG
+    /// whose on-disk MTP layout predates the final contract. Advisory only —
+    /// never alters loading, sending, or runtime behavior.
+    @State private var mtpLayoutAdvisory: MTPLayoutAdvisory?
+    /// Selection the advisory was last evaluated for ("" = no selection).
+    /// The evaluation reads the bundle directory, so it must not ride the 2s
+    /// memory tick raw; this memo makes repeat calls a string compare.
+    @State private var mtpAdvisoryEvaluatedForModel: String?
+    /// Two-step delete guard: the banner's Re-download button first flips to
+    /// an in-banner confirmation (deletion is destructive), and only the
+    /// confirm click deletes + re-downloads.
+    @State private var mtpAdvisoryConfirmingRedownload = false
     // MARK: - Voice Input State
     // Deliberately NOT `@ObservedObject`: `SpeechService.audioLevel` publishes
     // per audio buffer while recording, and an observing card re-ran its whole
@@ -751,6 +766,7 @@ struct FloatingInputCard: View {
                 // happen to be active at the same time.
                 ramPressureRow
                 swapPressureRow
+                mtpLayoutAdvisoryRow
                 modelSwitchContinuityRow
             }
 
@@ -899,6 +915,9 @@ struct FloatingInputCard: View {
                     selectedModel: selectedModel,
                     refresh: refreshLoadFeasibility
                 )
+            )
+            .modifier(
+                MTPLayoutAdvisoryRearmModifier(rearm: rearmMTPLayoutAdvisory)
             )
             .onAppear {
                 // Execution choices are mutually exclusive in both behavior
@@ -1243,6 +1262,25 @@ private struct RAMTightFitModifier: ViewModifier {
             // the warn/block banner clears on its own as RAM frees.
             .onReceive(SystemMonitorService.shared.$memoryUsage) { _ in
                 refresh()
+            }
+    }
+}
+
+/// Re-arms the MTP bundle-layout advisory when the local model set changes:
+/// a delete and a completed download both post `.localModelsChanged`, so a
+/// freshly re-downloaded bundle re-evaluates (and clears the notice) on its
+/// own. Delivered on the main run loop — the notification is posted from
+/// whatever context finished the filesystem work.
+private struct MTPLayoutAdvisoryRearmModifier: ViewModifier {
+    let rearm: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(
+                NotificationCenter.default.publisher(for: .localModelsChanged)
+                    .receive(on: RunLoop.main)
+            ) { _ in
+                rearm()
             }
     }
 }
@@ -2397,7 +2435,7 @@ extension FloatingInputCard {
             help: manuallyBlocked
                 ? L("Speculative decoding is disabled for this bundle because its MTP head is not safe for production use.")
                 : L(
-                    "Auto activates only from measured tuning; 1–3 activate that depth directly. While active, this model decodes greedily (temperature 0); Off restores the configured sampling."
+                    "Auto activates from measured tuning or the family cold-start; 1–3 set the STARTING draft depth. Either way the depth adapts while generating — up to 5 when acceptance stays high, down (or to plain decoding) when speculation stops paying. While active, this model decodes greedily (temperature 0); Off restores the configured sampling."
                 )
         )
     }
@@ -2425,7 +2463,20 @@ extension FloatingInputCard {
     /// models — the next turn reloads. That is correct today (the launch plan,
     /// including whether the MTP head is in the graph, is resolved at load)
     /// but it makes this row costlier than Reasoning Effort beside it.
-    private func applyNativeMTPSegment(_ segment: String) {
+    /// UserDefaults key: the user pressed an MTP segment themselves at least
+    /// once. From that point the family default logic never touches the
+    /// setting again — their choice outranks the Flash-Next d3 default.
+    private static let mtpSegmentUserChoseKey = "nativeMTPSegmentUserChose"
+    /// UserDefaults key: the CURRENT saved segment was written by the
+    /// Flash-Next family default, not by a person. Only a state we wrote is
+    /// ours to revert when the selection leaves the family.
+    private static let mtpSegmentFamilyDefaultKey = "nativeMTPSegmentIsFamilyDefault"
+
+    private func applyNativeMTPSegment(_ segment: String, userInitiated: Bool = true) {
+        if userInitiated {
+            UserDefaults.standard.set(true, forKey: Self.mtpSegmentUserChoseKey)
+            UserDefaults.standard.set(false, forKey: Self.mtpSegmentFamilyDefaultKey)
+        }
         var settings = ServerController.runtimeSettingsForConfigureTool().settings
         switch segment {
         case "off":
@@ -2450,6 +2501,33 @@ extension FloatingInputCard {
         }
         nativeMTPSelection = segment
         Task { _ = await ServerController.applyRuntimeSettingsFromConfigureTool(settings) }
+    }
+
+    /// Family-scoped MTP default (Eric, 2026-09-04): selecting a Qwen 3.8
+    /// Flash-Next JANG bundle DEFAULTS the control to the explicit d3
+    /// activation — the "3" segment, forceOn + greedy — not Auto. Scoped
+    /// hard to that family: leaving it for any other local model reverts a
+    /// default WE wrote back to Auto (27B keeps its own tuned depth), and a
+    /// segment the user ever pressed themselves is never touched in either
+    /// direction.
+    private func applyFlashNextDefaultDepthIfNeeded(isFlashNextJANG: Bool) {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: Self.mtpSegmentUserChoseKey) else { return }
+        let mtp = ServerController.runtimeSettingsForConfigureTool().settings.mtp
+        if isFlashNextJANG {
+            // Lift only the FACTORY state (auto, nothing chosen): any other
+            // saved shape is a decision — ours from a previous selection
+            // (already d3) or a config-tool write we must not stomp.
+            guard mtp.mode == .auto, mtp.explicitDepth == nil, mtp.draftTokenLimit == nil
+            else { return }
+            applyNativeMTPSegment("3", userInitiated: false)
+            defaults.set(true, forKey: Self.mtpSegmentFamilyDefaultKey)
+        } else if defaults.bool(forKey: Self.mtpSegmentFamilyDefaultKey),
+            mtp.mode == .forceOn, mtp.explicitDepth == 3
+        {
+            applyNativeMTPSegment("auto", userInitiated: false)
+            defaults.set(false, forKey: Self.mtpSegmentFamilyDefaultKey)
+        }
     }
 
     /// Refreshes both the capable-model set and the saved selection.
@@ -3326,6 +3404,9 @@ extension FloatingInputCard {
     /// one actor hop and a `vm_statistics64` read.
     private func refreshLoadFeasibility() {
         refreshSwapPressure()
+        // Rides the same triggers (appear, model change, 2s tick); the
+        // per-selection memo inside makes tick calls a string compare.
+        refreshMTPLayoutAdvisory()
         guard localMemoryWarningsApplyToSelectedModel, let model = selectedModel else {
             if pendingLoadFeasibility != nil { pendingLoadFeasibility = nil }
             return
@@ -4428,6 +4509,225 @@ extension FloatingInputCard {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - MTP Bundle-Layout Advisory
+
+    /// Re-evaluate the selected local bundle's MTP layout. Memoized per
+    /// selection: the actual evaluation reads the bundle directory (a few
+    /// file stats + small JSON parses), so it runs once per pick — off the
+    /// main actor — not on every 2s memory tick.
+    ///
+    /// Advisory only, per the memory-pressure advisory's charter: it never
+    /// refuses, never caps, never blocks a load. The bundle keeps loading
+    /// exactly as before; this just tells the user a re-download exists.
+    private func refreshMTPLayoutAdvisory() {
+        let selection = selectedModel ?? ""
+        guard mtpAdvisoryEvaluatedForModel != selection else { return }
+
+        // Local bundles only: cloud/remote models have no directory to
+        // inspect, and remote-agent runs execute elsewhere. Deliberately NOT
+        // memoized on this path: with a cold local-scan cache the lookup
+        // reports "not local" for a bundle that IS local, so the 2s tick
+        // keeps retrying (two memoized dictionary reads) until the scan
+        // lands or the selection really is remote.
+        guard localMemoryWarningsApplyToSelectedModel,
+            let model = selectedModel,
+            let installed = ModelManager.findInstalledMLXModelFromCache(named: model)
+        else {
+            if mtpLayoutAdvisory != nil { mtpLayoutAdvisory = nil }
+            return
+        }
+
+        // A bundle mid-download or paused is INCOMPLETE by definition —
+        // its index legitimately names shards that haven't arrived yet.
+        // Skip (without memoizing, so the tick re-checks) until the
+        // download machinery is done with it.
+        switch ModelManager.shared.effectiveDownloadState(for: installed) {
+        case .downloading, .paused:
+            return
+        case .notStarted, .completed, .failed:
+            break
+        }
+
+        mtpAdvisoryEvaluatedForModel = selection
+        mtpAdvisoryConfirmingRedownload = false
+
+        let bundleDir = installed.localDirectory
+        Task.detached(priority: .utility) {
+            let advisory = MTPLayoutAdvisory.evaluate(bundleDirectory: bundleDir)
+            let isFlashNextJANG = MTPLayoutAdvisory.isFlashNextJANGBundle(
+                bundleDirectory: bundleDir)
+            await MainActor.run {
+                // The selection may have moved while we were on disk.
+                guard selectedModel == model else { return }
+                applyFlashNextDefaultDepthIfNeeded(isFlashNextJANG: isFlashNextJANG)
+                // Shown once per bundle per improper-state fingerprint: a
+                // dismissed state stays quiet across relaunches, while a
+                // DIFFERENT improper state re-arms the notice.
+                if let advisory,
+                    MTPLayoutAdvisoryDismissals.isDismissed(advisory.fingerprint)
+                {
+                    if mtpLayoutAdvisory != nil { mtpLayoutAdvisory = nil }
+                    return
+                }
+                if mtpLayoutAdvisory != advisory { mtpLayoutAdvisory = advisory }
+            }
+        }
+    }
+
+    /// Forget the per-selection memo and re-evaluate — called when the local
+    /// model set changes (a delete or a completed download), so a freshly
+    /// re-downloaded bundle clears or re-raises the notice on its own.
+    private func rearmMTPLayoutAdvisory() {
+        mtpAdvisoryEvaluatedForModel = nil
+        refreshMTPLayoutAdvisory()
+    }
+
+    /// In-flow wrapper mirroring `swapPressureRow`. One banner at a time:
+    /// RAM tight-fit, swap pressure, and the model-switch continuity notice
+    /// all outrank this (they are about the CURRENT session's health; this
+    /// one is stable and will still be true after they clear).
+    @ViewBuilder
+    private var mtpLayoutAdvisoryRow: some View {
+        if localMemoryWarningsApplyToSelectedModel,
+            !configContextTooSmall,
+            (pendingLoadFeasibility?.loadPressureSeverity ?? .none) == .none,
+            swapPressure == nil,
+            modelSwitchContinuityWarning == nil,
+            let advisory = mtpLayoutAdvisory
+        {
+            mtpLayoutAdvisoryBanner(advisory, pointerCenterX: 28)
+                .frame(width: Self.ramBannerWidth, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 20)
+                .padding(.top, 8)
+                .padding(.bottom, -16)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+    }
+
+    /// Same popover silhouette, tints, and typography as the swap-pressure
+    /// banner. Always orange: both severities are advisories about a
+    /// superseded bundle layout, never about a broken session.
+    private func mtpLayoutAdvisoryBanner(
+        _ advisory: MTPLayoutAdvisory,
+        pointerCenterX: CGFloat
+    ) -> some View {
+        let tint = Color.orange
+        let clampedX = min(
+            max(pointerCenterX, 14 + RAMBannerShape.pointerWidth / 2),
+            Self.ramBannerWidth - 14 - RAMBannerShape.pointerWidth / 2
+        )
+        let shape = RAMBannerShape(pointerCenterX: clampedX)
+
+        return VStack(alignment: .leading, spacing: 10) {
+            if mtpAdvisoryConfirmingRedownload {
+                (Text(Image(systemName: "trash"))
+                    .foregroundColor(tint)
+                    + Text(verbatim: "  ")
+                    + Text(
+                        "Delete this model's local files and download a fresh copy?",
+                        bundle: .module
+                    ).foregroundColor(theme.primaryText))
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(
+                    "The download starts right after the delete. Until it finishes, this model can't be used.",
+                    bundle: .module
+                )
+                .foregroundColor(theme.secondaryText)
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                .fixedSize(horizontal: false, vertical: true)
+                VStack(spacing: 10) {
+                    swapPrimaryButton(
+                        String(localized: "Delete & Re-download", bundle: .module),
+                        tint: .red
+                    ) {
+                        performMTPAdvisoryRedownload()
+                    }
+                    swapTextButton(String(localized: "Cancel", bundle: .module)) {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            mtpAdvisoryConfirmingRedownload = false
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 2)
+            } else {
+                (Text(Image(systemName: "shippingbox.fill"))
+                    .foregroundColor(tint)
+                    + Text(verbatim: "  ")
+                    + Text(verbatim: advisory.warningText)
+                        .foregroundColor(theme.primaryText))
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(verbatim: advisory.reassuranceText)
+                    .foregroundColor(theme.secondaryText)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .fixedSize(horizontal: false, vertical: true)
+                VStack(spacing: 10) {
+                    swapPrimaryButton(
+                        String(localized: "Re-download", bundle: .module), tint: tint
+                    ) {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            mtpAdvisoryConfirmingRedownload = true
+                        }
+                    }
+                    swapTextButton(String(localized: "Skip", bundle: .module)) {
+                        MTPLayoutAdvisoryDismissals.recordDismissal(advisory.fingerprint)
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            mtpLayoutAdvisory = nil
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 2)
+            }
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 12 + RAMBannerShape.pointerHeight)
+        .background(
+            ZStack {
+                shape.fill(.regularMaterial)
+                shape.fill(tint.opacity(0.12))
+            }
+        )
+        .overlay(shape.stroke(tint.opacity(0.35), lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
+        .accessibilityLabel(Text(verbatim: advisory.shortLabel))
+    }
+
+    /// Deletes the local bundle through the model library's own deletion
+    /// path (which quarantines + unloads safely), then kicks off a fresh
+    /// download of the SAME model through the existing download machinery.
+    /// The model struct is resolved BEFORE the delete so the download never
+    /// depends on re-resolving an id whose files are already gone.
+    private func performMTPAdvisoryRedownload() {
+        guard let model = selectedModel,
+            let installed = ModelManager.findInstalledMLXModelFromCache(named: model)
+        else {
+            withAnimation(.easeOut(duration: 0.2)) {
+                mtpAdvisoryConfirmingRedownload = false
+                mtpLayoutAdvisory = nil
+            }
+            return
+        }
+        withAnimation(.easeOut(duration: 0.2)) {
+            mtpAdvisoryConfirmingRedownload = false
+            mtpLayoutAdvisory = nil
+        }
+        Task { @MainActor in
+            let manager = ModelManager.shared
+            await manager.deleteModel(installed)
+            manager.downloadModel(installed)
+            // The delete + eventual download completion both post
+            // `.localModelsChanged`, which re-arms the evaluation; clearing
+            // the memo here just makes the first re-check immediate.
+            mtpAdvisoryEvaluatedForModel = nil
+        }
     }
 
     /// Close button for the warn-level tight-fit banner. Dismissal is scoped

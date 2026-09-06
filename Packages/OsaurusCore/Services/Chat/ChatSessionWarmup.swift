@@ -29,7 +29,8 @@ extension ChatSession: ChatWarmupSessionContext {
         let liveToolMode = AgentManager.shared.effectiveToolSelectionMode(for: effectiveAgentId)
         let liveFingerprint = SessionToolState.fingerprint(
             executionMode: executionMode,
-            toolMode: liveToolMode
+            toolMode: liveToolMode,
+            agentId: effectiveAgentId
         )
 
         let cachedSession: SessionToolState?

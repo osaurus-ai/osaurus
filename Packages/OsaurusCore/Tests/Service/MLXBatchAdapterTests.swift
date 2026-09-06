@@ -3116,7 +3116,8 @@ struct MLXBatchAdapterTests {
         #expect(laguna.repetitionPenalty == nil)
         #expect(laguna.repetitionContextSize == 20)
 
-        // A caller-supplied penalty still flows through unchanged.
+        // A caller-supplied penalty still flows through unchanged and widens
+        // the lookback to the with-penalty window.
         let lagunaOverride = ModelRuntime.makeGenerateParameters(
             temperature: 1.0,
             maxTokens: 64,
@@ -3125,7 +3126,10 @@ struct MLXBatchAdapterTests {
             modelName: "Laguna-M.1-JANG_1L"
         )
         #expect(lagunaOverride.repetitionPenalty == 1.05)
-        #expect(lagunaOverride.repetitionContextSize == 20)
+        #expect(
+            lagunaOverride.repetitionContextSize
+                == ModelRuntime.repetitionContextSizeWithPenalty
+        )
 
         // Non-laguna is identical: no injected penalty, default 20 window.
         let other = ModelRuntime.makeGenerateParameters(
@@ -3137,5 +3141,88 @@ struct MLXBatchAdapterTests {
         )
         #expect(other.repetitionPenalty == nil)
         #expect(other.repetitionContextSize == 20)
+    }
+
+    // MARK: - Repetition context window
+
+    @Test func makeGenerateParameters_repetitionContextWindowFollowsPenalty() {
+        // Raptor-v0.5-8B-A1B-JANG_6M (bundle repetition_penalty 1.05) repeated a
+        // ~25-token sentence five times verbatim: the HF-style penalty runs over
+        // a ring of the last N tokens, and at N == 20 a 25-token unit is never
+        // penalised. With an effective penalty the window widens to 64.
+        #expect(ModelRuntime.repetitionContextSizeWithPenalty == 64)
+        #expect(ModelRuntime.repetitionContextSizeWithPenalty <= 128)
+        #expect(ModelRuntime.repetitionContextSizeWithoutPenalty == 20)
+
+        let penalised = ModelRuntime.makeGenerateParameters(
+            temperature: 0.7,
+            maxTokens: 64,
+            topP: 0.95,
+            repetitionPenalty: 1.05,
+            modelName: "JANGQ-AI/Raptor-v0.5-8B-A1B-JANG_6M"
+        )
+        #expect(penalised.repetitionPenalty == 1.05)
+        #expect(penalised.repetitionContextSize == 64)
+
+        // No penalty: the processor is not installed, keep the standard 20.
+        let unpenalised = ModelRuntime.makeGenerateParameters(
+            temperature: 0.7,
+            maxTokens: 64,
+            topP: 0.95,
+            repetitionPenalty: nil,
+            modelName: "JANGQ-AI/Raptor-v0.5-8B-A1B-JANG_6M"
+        )
+        #expect(unpenalised.repetitionPenalty == nil)
+        #expect(unpenalised.repetitionContextSize == 20)
+
+        // A penalty of exactly 1.0 is a no-op multiplier: same as no penalty.
+        let identity = ModelRuntime.makeGenerateParameters(
+            temperature: 0.7,
+            maxTokens: 64,
+            topP: 0.95,
+            repetitionPenalty: 1.0
+        )
+        #expect(identity.repetitionContextSize == 20)
+
+        // An explicit window override wins over the penalty-derived default,
+        // in both directions.
+        let overrideWider = ModelRuntime.makeGenerateParameters(
+            temperature: 0.7,
+            maxTokens: 64,
+            topP: 0.95,
+            repetitionPenalty: 1.05,
+            repetitionContextSize: 96
+        )
+        #expect(overrideWider.repetitionContextSize == 96)
+
+        let overrideNarrower = ModelRuntime.makeGenerateParameters(
+            temperature: 0.7,
+            maxTokens: 64,
+            topP: 0.95,
+            repetitionPenalty: 1.05,
+            repetitionContextSize: 32
+        )
+        #expect(overrideNarrower.repetitionContextSize == 32)
+
+        let overrideNoPenalty = ModelRuntime.makeGenerateParameters(
+            temperature: 0.7,
+            maxTokens: 64,
+            topP: 0.95,
+            repetitionPenalty: nil,
+            repetitionContextSize: 40
+        )
+        #expect(overrideNoPenalty.repetitionContextSize == 40)
+
+        // Resolver in isolation.
+        #expect(ModelRuntime.resolveRepetitionContextSize(repetitionPenalty: 1.05) == 64)
+        #expect(ModelRuntime.resolveRepetitionContextSize(repetitionPenalty: nil) == 20)
+        #expect(ModelRuntime.resolveRepetitionContextSize(repetitionPenalty: 1.0) == 20)
+        #expect(
+            ModelRuntime.resolveRepetitionContextSize(repetitionPenalty: 1.05, override: 48) == 48
+        )
+        // A non-positive override is not a window; fall back to the derived value.
+        #expect(
+            ModelRuntime.resolveRepetitionContextSize(repetitionPenalty: 1.05, override: 0) == 64
+        )
     }
 }

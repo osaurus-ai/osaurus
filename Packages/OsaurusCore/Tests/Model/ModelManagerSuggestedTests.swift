@@ -56,8 +56,8 @@ struct ModelManagerSuggestedTests {
 
     @Test func curatedSuggestedIds_includesLingEntries() {
         let ids = ModelManager.curatedSuggestedIds
-        #expect(ids.contains("osaurusai/ling-2.6-flash-mxfp4"))
-        #expect(ids.contains("osaurusai/ling-2.6-flash-jangtq"))
+        #expect(!ids.contains("osaurusai/ling-2.6-flash-mxfp4"))  // Ling 2.6 runtime no longer shipped
+        #expect(!ids.contains("osaurusai/ling-2.6-flash-jangtq"))
     }
 
     @Test @MainActor func curatedSuggestedIds_matchInitialSuggestedModels() async {
@@ -113,32 +113,16 @@ struct ModelManagerSuggestedTests {
         }
     }
 
-    @Test @MainActor func lingEntries_haveExpectedMetadata() async {
+    @Test @MainActor func ling26Entries_areNotCurated() async {
+        // The Ling 2.6 (BailingHybrid / GLA) runtime is no longer shipped by
+        // the vmlx pin; `bailing_hybrid` is Ling 3.0 only. Raptor is the
+        // curated Bailing entry.
         await withIsolatedModelSizeCache {
             let suggested = ModelManager().suggestedModels
-            let mxfp4 = suggested.first { $0.id == "OsaurusAI/Ling-2.6-flash-MXFP4" }
-            let jangtq = suggested.first { $0.id == "OsaurusAI/Ling-2.6-flash-JANGTQ" }
-
-            #expect(mxfp4 != nil)
-            #expect(jangtq != nil)
-            #expect(mxfp4?.modelType == "bailing_hybrid")
-            #expect(jangtq?.modelType == "bailing_hybrid")
-            #expect(mxfp4?.releasedAt != nil)
-            #expect(jangtq?.releasedAt != nil)
-        }
-    }
-
-    @Test @MainActor func lfm25Entry_isCatalogOnly() async {
-        await withIsolatedModelSizeCache {
-            let suggested = ModelManager().suggestedModels
-            let mxfp8 = suggested.first { $0.id == "OsaurusAI/LFM2.5-8B-A1B-MXFP8" }
-
-            #expect(mxfp8 != nil)
-            #expect(mxfp8?.modelType == "lfm2_moe")
-            #expect(mxfp8?.isTopSuggestion == false)
-            // Sizes now come from `ModelSizeCache` (empty here), not literals.
-            #expect(mxfp8?.downloadSizeBytes == nil)
-            #expect(mxfp8?.releasedAt != nil)
+            #expect(!suggested.contains { $0.id.lowercased().contains("ling-2.6") })
+            // `suggestedModels` is RAM-tiered (the Top Pick can be filtered on a small
+            // runner); the unfiltered curated id list must still carry Raptor.
+            #expect(ModelManager.curatedSuggestedIds.contains("osaurusai/raptor-v0.5-8b-a1b-jang_6m"))
         }
     }
 

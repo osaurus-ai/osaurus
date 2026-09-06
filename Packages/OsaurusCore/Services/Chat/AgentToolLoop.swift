@@ -533,6 +533,25 @@ struct AgentLoopHooks {
     /// one answer, so the driver skips the check when this is nil.
     var prepareGroundedClaimRetry: (() async -> Void)?
 
+    /// The user-visible text of the assistant message the surface just
+    /// classified — a tool-calling message's narration OR a final answer —
+    /// for the file side-effect advisory (`GroundedFileSideEffectCheck`).
+    /// Unlike `finalVisibleText` this is not scoped to a tool surface. The
+    /// loop reads it BEFORE executing a tool batch, because a streaming
+    /// surface may swap in a fresh buffer in `onBatchComplete`. Leaving it
+    /// nil opts the surface out; a nil return skips the check for that turn.
+    var assistantVisibleText: (() async -> String?)?
+
+    /// The tool names this request is authorized to EXECUTE right now —
+    /// chat binds it to `ToolExecutionScope.authorizedNames` (the scope
+    /// grows with same-run `capabilities` activations, so this is a closure,
+    /// not a snapshot). The driver uses it for two advisory-only jobs:
+    /// folding a hallucinated punctuation variant of an authorized name
+    /// (`osaurus_help!!`) back onto the real tool before execution, and
+    /// listing the authorized names in the `tool_not_found` notice. Nil on
+    /// surfaces that publish no scope — both behaviours then stay off.
+    var authorizedToolNames: (() -> Set<String>)?
+
     init(
         isCancelled: @escaping () async -> Bool = { false },
         buildMessages: @escaping (_ notices: [String]) async -> AgentLoopIterationInput,
@@ -556,7 +575,9 @@ struct AgentLoopHooks {
         emitFallbackText: ((_ text: String) async -> Void)? = nil,
         emitToolRejectionText: ((_ text: String) async -> Void)? = nil,
         finalVisibleText: (() async -> String?)? = nil,
-        prepareGroundedClaimRetry: (() async -> Void)? = nil
+        prepareGroundedClaimRetry: (() async -> Void)? = nil,
+        assistantVisibleText: (() async -> String?)? = nil,
+        authorizedToolNames: (() -> Set<String>)? = nil
     ) {
         self.isCancelled = isCancelled
         self.buildMessages = buildMessages
@@ -574,6 +595,8 @@ struct AgentLoopHooks {
         self.emitToolRejectionText = emitToolRejectionText
         self.finalVisibleText = finalVisibleText
         self.prepareGroundedClaimRetry = prepareGroundedClaimRetry
+        self.assistantVisibleText = assistantVisibleText
+        self.authorizedToolNames = authorizedToolNames
     }
 }
 
@@ -1260,6 +1283,13 @@ enum AgentToolLoop {
     /// model; the model always writes its own corrected answer.
     static let maxGroundedClaimRetries = 2
 
+    /// Bounded file side-effect advisories per run for TOOL-CALLING turns
+    /// (see `GroundedFileSideEffectCheck`): the notice is staged for the
+    /// next step and the loop continues — never a stop — so a model that
+    /// ignores it is nudged at most this many times rather than every
+    /// iteration. Final-answer trips share `maxGroundedClaimRetries`.
+    static let maxUngroundedFileClaimNotices = 2
+
     static let incompleteReasoningFallback =
         "The model ended in reasoning without producing a user-visible final answer. "
         + "The agent task may be incomplete; retry with Thinking disabled or continue from the latest tool result."
@@ -1820,6 +1850,31 @@ enum AgentToolLoop {
     /// Explicit user denials and policy/security refusals stop immediately.
     /// Repeating an identical failing call also stops, preventing a correction
     /// loop from spinning on the same envelope.
+    /// `invocations` with each tool name replaced by its canonical form
+    /// (`AgentTaskState.canonicalToolName`) when — and only when — the
+    /// emitted name is NOT authorized but the canonical one IS. Everything
+    /// else is returned untouched, including every call when the surface
+    /// publishes no scope (`authorizedToolNames == nil`).
+    static func canonicalizedInvocations(
+        _ invocations: [ServiceToolInvocation],
+        authorizedToolNames: Set<String>?
+    ) -> [ServiceToolInvocation] {
+        guard let authorized = authorizedToolNames else { return invocations }
+        return invocations.map { invocation in
+            let raw = invocation.toolName
+            guard !authorized.contains(raw) else { return invocation }
+            let canonical = AgentTaskState.canonicalToolName(raw)
+            guard canonical != raw, authorized.contains(canonical) else { return invocation }
+            print("[Osaurus][Loop] canonicalized tool name raw=\(raw) -> \(canonical)")
+            return ServiceToolInvocation(
+                toolName: canonical,
+                jsonArguments: invocation.jsonArguments,
+                toolCallId: invocation.toolCallId,
+                geminiThoughtSignature: invocation.geminiThoughtSignature
+            )
+        }
+    }
+
     static func shouldStopAfterToolOutcome(_ outcome: AgentLoopToolOutcome) -> Bool {
         guard outcome.wasError || ToolEnvelope.isError(outcome.result) else { return false }
         if outcome.wasDeduped { return true }
@@ -2021,13 +2076,49 @@ enum AgentToolLoop {
         isolation: isolated (any Actor)? = #isolation
     ) async throws -> RunResult {
         var iteration = 0
+        // The `tool_not_found` notice lists what the request may execute;
+        // the surface's scope is the only source of that truth.
+        if let authorizedToolNames = hooks.authorizedToolNames {
+            state.authorizedToolNamesProvider = authorizedToolNames
+        }
         // Staged-notice slots, mirroring the historical chat locals
-        // (`pendingBudgetNotice` / `pendingStateNotice`). The state slot is
-        // overwritten per event so the LAST dedupe/bias in a batch wins,
-        // exactly as the per-call overwrite did in `ChatSession.send`.
+        // (`pendingBudgetNotice` / `pendingStateNotice`). The state slot
+        // holds an ORDERED, de-duplicated list rather than a single string:
+        // per-event signals (dedupe, escalation, no-tool-call recoveries)
+        // still replace it so the LAST one in a batch wins, exactly as the
+        // per-call overwrite did in `ChatSession.send`, while independent
+        // advisories staged later in the same iteration (task-tracking,
+        // data-movement relief, ungrounded file claims) COMPOSE onto it.
+        // Before this, `taskTrackingRequiredNotice` / `dataMovementReliefNotice`
+        // silently dropped the invalid-args notice `AgentTaskState.nextStepBias`
+        // had just staged. The bias notice always rides first.
         var pendingBudgetNotice: String?
-        var pendingStateNotice: String?
+        var pendingStateNotices: [String] = []
+        var stagedBiasNotice: String?
         var pendingTodoNotice: String?
+        /// Per-event replace: the historical single-slot overwrite.
+        func replaceStateNotice(_ notice: String) {
+            pendingStateNotices = [notice]
+            stagedBiasNotice = nil
+        }
+        /// Compose: append unless an identical notice is already staged.
+        func stageStateNotice(_ notice: String) {
+            guard !pendingStateNotices.contains(notice) else { return }
+            pendingStateNotices.append(notice)
+        }
+        /// The next-step bias (invalid-args, listing nudge, ...) goes FIRST
+        /// and a later bias in the same batch supersedes an earlier one
+        /// (last bias wins, as before) without touching the other staged
+        /// advisories.
+        func stageBiasNotice(_ bias: String) {
+            let notice = "[System Notice] " + bias
+            if let previous = stagedBiasNotice {
+                pendingStateNotices.removeAll { $0 == previous }
+            }
+            pendingStateNotices.removeAll { $0 == notice }
+            pendingStateNotices.insert(notice, at: 0)
+            stagedBiasNotice = notice
+        }
         // Consecutive empty (0-token / no-tool) turns this run. Reset by any
         // productive turn; bounds the nudge-and-retry recovery so the loop
         // can never spin on a deterministically-empty model.
@@ -2037,6 +2128,11 @@ enum AgentToolLoop {
         // final-response check has consumed (bounded, never editing output).
         var hasGroundedConfigApply = false
         var groundedClaimRetries = 0
+        // File side-effect grounding (`GroundedFileSideEffectCheck`): whether
+        // any file-writing tool succeeded this run, and how many advisory
+        // notices tool-calling turns have staged (bounded).
+        var hasGroundedFileWrite = false
+        var ungroundedFileClaimNotices = 0
         // Consecutive announce-only turns (visible "let me…" preamble, no
         // call). Reset by any productive turn, for the same reason.
         var consecutiveAnnouncedToolCalls = 0
@@ -2151,9 +2247,10 @@ enum AgentToolLoop {
                 notices.append(n)
                 pendingBudgetNotice = nil
             }
-            if let n = pendingStateNotice {
-                notices.append(n)
-                pendingStateNotice = nil
+            if !pendingStateNotices.isEmpty {
+                notices.append(contentsOf: pendingStateNotices)
+                pendingStateNotices.removeAll()
+                stagedBiasNotice = nil
             }
             if let n = pendingTodoNotice {
                 notices.append(n)
@@ -2202,10 +2299,33 @@ enum AgentToolLoop {
                             + "groundedApply=\(hasGroundedConfigApply)): "
                             + String(notice.prefix(140))
                     )
-                    pendingStateNotice = notice
+                    replaceStateNotice(notice)
                     await prepareRetry()
                     // Protocol correction, not agent progress — don't charge
                     // the tool-iteration budget (same as the empty-turn path).
+                    iteration -= 1
+                    continue
+                }
+                // File side-effect grounding on a final answer ("I've saved
+                // the report" with no file-writing tool landed this run):
+                // same bounded, notice-and-regenerate channel as above. The
+                // model writes its own corrected answer — either it calls
+                // the file tool now, or it says nothing was written.
+                if let assistantVisibleText = hooks.assistantVisibleText,
+                    let prepareRetry = hooks.prepareGroundedClaimRetry,
+                    !hasGroundedFileWrite,
+                    groundedClaimRetries < Self.maxGroundedClaimRetries,
+                    let visibleText = await assistantVisibleText(),
+                    GroundedFileSideEffectCheck.containsFileSideEffectClaim(visibleText)
+                {
+                    groundedClaimRetries += 1
+                    print(
+                        "[Osaurus] Ungrounded file side-effect claim in final answer "
+                            + "(retry \(groundedClaimRetries)/\(Self.maxGroundedClaimRetries)); "
+                            + "no file-writing tool succeeded this run"
+                    )
+                    replaceStateNotice(GroundedFileSideEffectCheck.ungroundedFileClaimNotice)
+                    await prepareRetry()
                     iteration -= 1
                     continue
                 }
@@ -2226,10 +2346,10 @@ enum AgentToolLoop {
             case .oversizedToolCall(let toolName, let argumentCharacters):
                 oversizedToolCallRetries += 1
                 if oversizedToolCallRetries <= Self.maxOversizedToolCallRetries {
-                    pendingStateNotice = Self.oversizedToolCallNotice(
+                    replaceStateNotice(Self.oversizedToolCallNotice(
                         toolName: toolName,
                         argumentCharacters: argumentCharacters
-                    )
+                    ))
                     iteration -= 1
                     continue
                 }
@@ -2239,10 +2359,10 @@ enum AgentToolLoop {
             case .truncatedToolCall(let toolName, let argumentCharacters):
                 truncatedToolCallRetries += 1
                 if truncatedToolCallRetries <= Self.maxTruncatedToolCallRetries {
-                    pendingStateNotice = Self.truncatedToolCallNotice(
+                    replaceStateNotice(Self.truncatedToolCallNotice(
                         toolName: toolName,
                         argumentCharacters: argumentCharacters
-                    )
+                    ))
                     iteration -= 1
                     continue
                 }
@@ -2258,7 +2378,7 @@ enum AgentToolLoop {
                 consecutiveEmptyTurns += 1
                 totalEmptyTurnRetries += 1
                 if consecutiveEmptyTurns <= Self.maxEmptyTurnRetries {
-                    pendingStateNotice = Self.emptyTurnNotice
+                    replaceStateNotice(Self.emptyTurnNotice)
                     // Not charged against the tool-iteration budget.
                     iteration -= 1
                     continue
@@ -2283,7 +2403,7 @@ enum AgentToolLoop {
                 consecutiveAnnouncedToolCalls += 1
                 totalAnnouncedToolCallRetries += 1
                 if consecutiveAnnouncedToolCalls <= Self.maxAnnouncedToolCallRetries {
-                    pendingStateNotice = Self.announcedToolCallNotice
+                    replaceStateNotice(Self.announcedToolCallNotice)
                     // Not charged against the tool-iteration budget.
                     iteration -= 1
                     continue
@@ -2310,7 +2430,7 @@ enum AgentToolLoop {
                 consecutiveContinuationRequests += 1
                 totalContinuationRequestRetries += 1
                 if consecutiveContinuationRequests <= Self.maxContinuationRequestRetries {
-                    pendingStateNotice = Self.continuationRequestNotice(pending: pending)
+                    replaceStateNotice(Self.continuationRequestNotice(pending: pending))
                     // Not charged against the tool-iteration budget.
                     iteration -= 1
                     continue
@@ -2325,7 +2445,7 @@ enum AgentToolLoop {
             case .repetitionLoop(let phrase):
                 repetitionLoopRetries += 1
                 if repetitionLoopRetries <= Self.maxRepetitionLoopRetries {
-                    pendingStateNotice = Self.repetitionLoopNotice(phrase: phrase)
+                    replaceStateNotice(Self.repetitionLoopNotice(phrase: phrase))
                     // Not charged against the tool-iteration budget.
                     iteration -= 1
                     continue
@@ -2372,13 +2492,32 @@ enum AgentToolLoop {
                     iterations: iteration
                 )
 
-            case .toolCalls(let invocations):
+            case .toolCalls(let emittedInvocations):
+                // Fold hallucinated punctuation around an AUTHORIZED name
+                // (`osaurus_help!!`) back onto the real tool before anything
+                // materialises or executes. A name whose canonical form is
+                // not in scope is left exactly as emitted, so the registry's
+                // `tool_not_found` still answers it — decoration never
+                // reaches a withheld tool.
+                let invocations = Self.canonicalizedInvocations(
+                    emittedInvocations,
+                    authorizedToolNames: hooks.authorizedToolNames?()
+                )
                 // A productive turn — reset the empty-turn and announce-only
                 // recovery budgets so a later unrelated stall gets its own
                 // fresh allowance.
                 consecutiveEmptyTurns = 0
                 consecutiveAnnouncedToolCalls = 0
                 consecutiveContinuationRequests = 0
+
+                // File side-effect advisory (`GroundedFileSideEffectCheck`):
+                // capture this message's visible narration BEFORE any tool
+                // runs — chat's `onBatchComplete` swaps in a fresh assistant
+                // buffer, so reading afterwards would see the empty next turn.
+                var toolCallVisibleText: String? = nil
+                if let assistantVisibleText = hooks.assistantVisibleText {
+                    toolCallVisibleText = await assistantVisibleText()
+                }
 
                 // A desktop subagent already completed successfully, and the
                 // very next model step emitted only a malformed repeat of that
@@ -2507,9 +2646,9 @@ enum AgentToolLoop {
                             // (it is a correctness signal, not chat polish);
                             // fresh-read replays keep the per-policy notice.
                             if let escalation = state.lastReplayNotice {
-                                pendingStateNotice = "[System Notice] " + escalation
+                                replaceStateNotice("[System Notice] " + escalation)
                             } else if policy.dedupeNoticeEnabled {
-                                pendingStateNotice = Self.dedupeNotice
+                                replaceStateNotice(Self.dedupeNotice)
                             }
                             continue
                         }
@@ -2603,9 +2742,9 @@ enum AgentToolLoop {
                                     wasError: ToolEnvelope.isError(held)
                                 )
                                 if let escalation = state.lastReplayNotice {
-                                    pendingStateNotice = "[System Notice] " + escalation
+                                    replaceStateNotice("[System Notice] " + escalation)
                                 } else if policy.dedupeNoticeEnabled {
-                                    pendingStateNotice = Self.dedupeNotice
+                                    replaceStateNotice(Self.dedupeNotice)
                                 }
                             } else {
                                 let deferredExecutions =
@@ -2653,14 +2792,16 @@ enum AgentToolLoop {
                         )
                     }
                     if let bias = state.nextStepBias() {
-                        pendingStateNotice = "[System Notice] " + bias
+                        stageBiasNotice(bias)
                     }
                     outcomes = slotted.compactMap { $0 }
                     if outcomes.contains(where: {
                         Self.isTaskTrackingRequiredResult($0.result)
                     }) {
-                        pendingStateNotice = Self.taskTrackingRequiredNotice(
-                            threshold: policy.todoRequiredBeforeToolCallCount
+                        stageStateNotice(
+                            Self.taskTrackingRequiredNotice(
+                                threshold: policy.todoRequiredBeforeToolCallCount
+                            )
                         )
                     }
                     if let pending = outcomes.compactMap({ outcome -> Int? in
@@ -2729,8 +2870,10 @@ enum AgentToolLoop {
                                     wasError: true
                                 )
                             )
-                            pendingStateNotice = Self.taskTrackingRequiredNotice(
-                                threshold: policy.todoRequiredBeforeToolCallCount
+                            stageStateNotice(
+                                Self.taskTrackingRequiredNotice(
+                                    threshold: policy.todoRequiredBeforeToolCallCount
+                                )
                             )
                             continue
                         }
@@ -2801,7 +2944,7 @@ enum AgentToolLoop {
                                 result: guarded
                             )
                             if let bias = state.nextStepBias() {
-                                pendingStateNotice = "[System Notice] " + bias
+                                stageBiasNotice(bias)
                             }
                             let guardedOutcome = AgentLoopToolOutcome(
                                 invocation: invocation,
@@ -2837,9 +2980,9 @@ enum AgentToolLoop {
                                 )
                             outcomes.append(outcome)
                             if let escalation = state.lastReplayNotice {
-                                pendingStateNotice = "[System Notice] " + escalation
+                                replaceStateNotice("[System Notice] " + escalation)
                             } else if policy.dedupeNoticeEnabled {
-                                pendingStateNotice = Self.dedupeNotice
+                                replaceStateNotice(Self.dedupeNotice)
                             }
                             if policy.stopOnToolRejection,
                                 Self.shouldStopAfterToolOutcome(outcome)
@@ -2885,7 +3028,7 @@ enum AgentToolLoop {
                             result: execution.result
                         )
                         if let bias = state.nextStepBias() {
-                            pendingStateNotice = "[System Notice] " + bias
+                            stageBiasNotice(bias)
                         }
                         outcomes.append(
                             AgentLoopToolOutcome(
@@ -2929,6 +3072,37 @@ enum AgentToolLoop {
                 {
                     hasGroundedConfigApply = true
                 }
+                // File side-effect grounding: one successful file-writing
+                // tool this run grounds later "saved / appended…" narration.
+                if !hasGroundedFileWrite,
+                    outcomes.contains(where: {
+                        GroundedFileSideEffectCheck.isGroundedFileWriteOutcome(
+                            toolName: $0.invocation.toolName,
+                            result: $0.result
+                        )
+                    })
+                {
+                    hasGroundedFileWrite = true
+                }
+                // Advisory, never a stop: the model narrated a file write
+                // ("appended to the file") in a message whose tool calls
+                // wrote nothing (observed live: `fetch_html` with no write
+                // tool in the schema). Stage the factual notice for the next
+                // step and keep going; bounded per run.
+                if !hasGroundedFileWrite,
+                    ungroundedFileClaimNotices < Self.maxUngroundedFileClaimNotices,
+                    let narration = toolCallVisibleText,
+                    GroundedFileSideEffectCheck.containsFileSideEffectClaim(narration)
+                {
+                    ungroundedFileClaimNotices += 1
+                    print(
+                        "[Osaurus] Ungrounded file side-effect claim in a tool-calling turn "
+                            + "(notice \(ungroundedFileClaimNotices)/\(Self.maxUngroundedFileClaimNotices)); "
+                            + "no file-writing tool succeeded this run"
+                    )
+                    let notice = GroundedFileSideEffectCheck.ungroundedFileClaimNotice
+                    stageStateNotice(notice)
+                }
                 let successfulTodoOutcomes = outcomes.filter { outcome in
                     outcome.invocation.toolName == "todo"
                         && !outcome.wasError
@@ -2965,8 +3139,8 @@ enum AgentToolLoop {
                     iteration -= 1
                     if !announcedDataMovementRelief {
                         announcedDataMovementRelief = true
-                        pendingStateNotice = Self.dataMovementReliefNotice(
-                            cap: policy.maxDataMovementSteps
+                        stageStateNotice(
+                            Self.dataMovementReliefNotice(cap: policy.maxDataMovementSteps)
                         )
                     }
                     continue

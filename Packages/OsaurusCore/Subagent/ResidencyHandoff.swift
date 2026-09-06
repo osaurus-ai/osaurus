@@ -50,23 +50,126 @@ struct ResidencyPlan: Sendable {
     /// (the BUG G crash class) at run start; process-wide exclusivity for the
     /// run itself comes from the admission class.
     var coexists: Bool
+    /// The user turned the "Local Orchestrator Handoff" toggle OFF and the
+    /// delegate is a DIFFERENT local model: the run proceeds with NO
+    /// unload/reload sequencing (the runtime's own eviction policy decides
+    /// what happens to the chat model). Never a refusal — this flag exists
+    /// so the tool result and activity readout can say so.
+    var sequencingDisabled: Bool
 
     init(
         shouldUnload: Bool,
         requiredBytes: Int64 = 0,
         ramSafetyEnabled: Bool = false,
         maxElapsedSeconds: Int = 300,
-        coexists: Bool = false
+        coexists: Bool = false,
+        sequencingDisabled: Bool = false
     ) {
         self.shouldUnload = shouldUnload
         self.requiredBytes = requiredBytes
         self.ramSafetyEnabled = ramSafetyEnabled
         self.maxElapsedSeconds = maxElapsedSeconds
         self.coexists = coexists
+        self.sequencingDisabled = sequencingDisabled
     }
 
     /// A plan that performs no residency change.
     static let none = ResidencyPlan(shouldUnload: false)
+
+    /// Stable readout token for the tool result / diagnostics.
+    var mode: String {
+        if shouldUnload { return "swap_unload_reload" }
+        if coexists { return "coexist" }
+        if sequencingDisabled { return "sequencing_off" }
+        return "in_place"
+    }
+}
+
+/// The delegation RAM-safety sequence as DATA, so the order is one testable
+/// value instead of an emergent property of three collaborating types:
+///
+///   unload main → (hand off) load delegate → run → unload delegate → reload main
+///
+/// Derived from a resolved `ResidencyPlan` plus what the unload leg actually
+/// found. Same-model, cloud, coexistence and toggle-off runs collapse to
+/// `[.run]` (no churn). The middleware emits the realized steps into the
+/// subagent feed and the tool payload (`handoff_sequence` / `handoff_summary`)
+/// so the user can see the swap happen and be undone.
+enum DelegationResidencySequence {
+    enum Step: Equatable, Sendable, CustomStringConvertible {
+        case unloadMain(String)
+        case loadDelegate(String)
+        case run
+        case unloadDelegate(String)
+        case reloadMain(String)
+
+        var description: String {
+            switch self {
+            case .unloadMain(let name): return "unload_main:\(name)"
+            case .loadDelegate(let name): return "load_delegate:\(name)"
+            case .run: return "run"
+            case .unloadDelegate(let name): return "unload_delegate:\(name)"
+            case .reloadMain(let name): return "reload_main:\(name)"
+            }
+        }
+    }
+
+    /// The ordered steps for one delegation. `mainResident` is whether the
+    /// chat model was loaded when the sequence began (false ⇒ the unload leg
+    /// is skipped but the reload leg still runs — parity across both states).
+    /// `mainModelName` nil (cloud / unknown parent) with a swap plan degrades
+    /// to a delegate-only load/unload, which the readout labels honestly.
+    static func steps(
+        plan: ResidencyPlan,
+        mainModelName: String?,
+        mainResident: Bool,
+        delegateModelName: String
+    ) -> [Step] {
+        guard plan.shouldUnload else { return [.run] }
+        var steps: [Step] = []
+        if mainResident, let mainModelName {
+            steps.append(.unloadMain(mainModelName))
+        }
+        steps.append(.loadDelegate(delegateModelName))
+        steps.append(.run)
+        steps.append(.unloadDelegate(delegateModelName))
+        if let mainModelName {
+            steps.append(.reloadMain(mainModelName))
+        }
+        return steps
+    }
+
+    /// One human sentence for the tool result / activity feed.
+    static func summary(
+        plan: ResidencyPlan,
+        mainModelName: String?,
+        mainResident: Bool,
+        delegateModelName: String
+    ) -> String {
+        let main = mainModelName ?? "the chat model"
+        if plan.shouldUnload {
+            if mainResident {
+                return
+                    "swapped chat model '\(main)' out for delegate '\(delegateModelName)'; "
+                    + "unloaded the delegate and loaded '\(main)' back after the run"
+            }
+            return
+                "chat model '\(main)' was not loaded; ran delegate '\(delegateModelName)', "
+                + "unloaded it, then loaded '\(main)' for the chat turn"
+        }
+        if plan.coexists {
+            return
+                "kept chat model '\(main)' loaded and ran delegate '\(delegateModelName)' "
+                + "alongside it (coexistence)"
+        }
+        if plan.sequencingDisabled {
+            return
+                "Local Orchestrator Handoff is off: ran delegate '\(delegateModelName)' "
+                + "without the unload/reload sequence; the runtime's eviction policy "
+                + "decides whether '\(main)' stays loaded"
+        }
+        return "delegate '\(delegateModelName)' ran in place; no model swap was needed"
+    }
 }
 
 /// Residency-backed handoff: refuse-before-evict preflight → unload resident
@@ -91,25 +194,42 @@ struct ResidencyHandoff: SubagentHandoff {
     typealias Restore =
         @Sendable (_ lease: ChatResidencyLease, _ onPhase: (String, String) -> Void) async throws
             -> [String]
+    /// Sequence leg "unload the delegate model" — release the child model(s)
+    /// this handoff cold-loaded, BEFORE the main model is reloaded. Optional
+    /// so single-step fixtures keep compiling; production wires it to
+    /// `ChatResidencyHandoff.releaseOwnedChildModels` and `restore` to the
+    /// reload-only leg, which makes the two legs individually observable.
+    typealias ReleaseDelegate =
+        @Sendable (_ lease: ChatResidencyLease, _ onPhase: (String, String) -> Void) async throws
+            -> [String]
 
     let plan: PlanProvider
     let preflight: Preflight
     let unload: Unload
     let restore: Restore
+    let releaseDelegate: ReleaseDelegate?
 
     init(
         plan: @escaping PlanProvider,
         preflight: @escaping Preflight,
         unload: @escaping Unload,
-        restore: @escaping Restore
+        restore: @escaping Restore,
+        releaseDelegate: ReleaseDelegate? = nil
     ) {
         self.plan = plan
         self.preflight = preflight
         self.unload = unload
         self.restore = restore
+        self.releaseDelegate = releaseDelegate
     }
 
     /// Production wiring: the injectable operations call `ChatResidencyHandoff`.
+    ///
+    /// The unload leg passes `restoreParentWhenNotResident: true`: a swap plan
+    /// only exists when the user's handoff toggle is ON and the delegate is a
+    /// different local model, and the product rule is that the sequence ends
+    /// with the chat model loaded back whether or not it was loaded at the
+    /// start.
     static func production(plan: @escaping PlanProvider) -> ResidencyHandoff {
         ResidencyHandoff(
             plan: plan,
@@ -124,11 +244,15 @@ struct ResidencyHandoff: SubagentHandoff {
                 try await ChatResidencyHandoff.unloadResidentChatModels(
                     parentModelName: parentModelName,
                     maxElapsedSeconds: maxElapsedSeconds,
+                    restoreParentWhenNotResident: true,
                     onPhase: onPhase
                 )
             },
             restore: { lease, onPhase in
-                try await ChatResidencyHandoff.restore(lease, onPhase: onPhase)
+                try await ChatResidencyHandoff.reloadParent(lease, onPhase: onPhase)
+            },
+            releaseDelegate: { lease, onPhase in
+                try await ChatResidencyHandoff.releaseOwnedChildModels(lease, onPhase: onPhase)
             }
         )
     }
@@ -154,12 +278,25 @@ struct ResidencyHandoff: SubagentHandoff {
             return try await body()
         }
 
+        // Step 1 — unload the main chat model (or, when it is not loaded,
+        // record the restore-only lease so step 6 still runs).
         let lease = try await unload(
             scope.parentModelName,
             plan.maxElapsedSeconds,
             emit
         )
-        let result: SubagentResult
+        let mainModelName =
+            lease.restoreModelNames.first ?? scope.parentModelName
+        let mainWasResident = !lease.unloadedModelNames.isEmpty
+        // Steps 2–4 — hand the task to the delegate; its model cold-loads
+        // under this lease's ownership token so step 5 can release exactly it.
+        feed.emitPhase(
+            "handing_off_to_delegate",
+            detail: mainWasResident
+                ? "chat model unloaded; loading delegate \(resolved.name)"
+                : "chat model was not loaded; loading delegate \(resolved.name)"
+        )
+        var result: SubagentResult
         do {
             result = try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(
                 lease.childOwnershipToken
@@ -167,9 +304,9 @@ struct ResidencyHandoff: SubagentHandoff {
                 try await body()
             }
         } catch let bodyError {
-            // Restore on the failure path too so the orchestrator is never left
-            // unloaded with no diagnostic. This cleanup must not inherit the
-            // cancelled child task: model preload checks cancellation, so
+            // Steps 5–6 on the failure path too so the orchestrator is never
+            // left unloaded with no diagnostic. This cleanup must not inherit
+            // the cancelled child task: model preload checks cancellation, so
             // running restore inline after Stop can otherwise fail before the
             // different-local orchestrator is resident again.
             do {
@@ -182,7 +319,28 @@ struct ResidencyHandoff: SubagentHandoff {
             }
             throw bodyError
         }
+        // Steps 5–6 — unload the delegate, load the main chat model back.
         _ = try await restoreOutsideCancelledRun(lease, feed: feed)
+
+        // Step 7 belongs to the caller (the chat turn continues). Surface what
+        // happened so the user can see the swap in the tool result + feed.
+        let steps = DelegationResidencySequence.steps(
+            plan: plan,
+            mainModelName: mainModelName,
+            mainResident: mainWasResident,
+            delegateModelName: resolved.name
+        )
+        let summary = DelegationResidencySequence.summary(
+            plan: plan,
+            mainModelName: mainModelName,
+            mainResident: mainWasResident,
+            delegateModelName: resolved.name
+        )
+        feed.emit(
+            SubagentActivityEvent(kind: .narrate, title: "model swap", detail: summary)
+        )
+        result.payload["handoff_sequence"] = steps.map(\.description)
+        result.payload["handoff_summary"] = summary
         return result
     }
 
@@ -191,15 +349,24 @@ struct ResidencyHandoff: SubagentHandoff {
     /// before the handoff returns. This is deliberately not fire-and-forget:
     /// the caller cannot release admission or finish the tool card while the
     /// original chat model is still absent.
+    ///
+    /// Order inside the task is fixed: release the delegate model FIRST
+    /// (when the handoff owns one), THEN reload the main chat model — the
+    /// two are never resident together on the way back either.
     private func restoreOutsideCancelledRun(
         _ lease: ChatResidencyLease,
         feed: SubagentFeed
     ) async throws -> [String] {
         let restore = self.restore
+        let releaseDelegate = self.releaseDelegate
         let operation = Task.detached(priority: .userInitiated) {
-            try await restore(lease) { phase, detail in
+            let onPhase: (String, String) -> Void = { phase, detail in
                 feed.emitPhase(phase, detail: detail.isEmpty ? nil : detail)
             }
+            if let releaseDelegate {
+                _ = try await releaseDelegate(lease, onPhase)
+            }
+            return try await restore(lease, onPhase)
         }
         return try await operation.value
     }
