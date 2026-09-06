@@ -1315,12 +1315,34 @@ enum AgentToolLoop {
         "[System Notice] Tool call budget: \(remaining) of \(maxIterations) remaining. Wrap up your current work and provide a summary."
     }
 
+    private static let budgetWarningNoticeMarker = "[System Notice] Tool call budget: "
+
+    /// The driver stages this iteration's notices BEFORE the surface's
+    /// `buildMessages` hook runs; chat injects a queued steer (a new user
+    /// message) inside that hook and resets `AgentTaskState` there. State
+    /// notices staged for the previous message ("you have made the exact
+    /// same call 3+ times", invalid-args nudges, planning-loop nudges) then
+    /// rode into the first request of the NEW message, telling the model it
+    /// had repeated a call it had not yet made in this message. Only the
+    /// run-scoped iteration-budget warning belongs to the run rather than to
+    /// the message that produced it; keep that one.
+    static func noticesSurvivingNewUserMessage(_ notices: [String]) -> [String] {
+        notices.filter { $0.hasPrefix(budgetWarningNoticeMarker) }
+    }
+
     /// Final, transient control notice for the one tool-free summarization
     /// request issued after the hard iteration cap. The model may still have
     /// an unfinished tool request in mind; without this explicit boundary it
     /// can print an imitation tool/result envelope and claim work that never
     /// executed. This notice asks for an honest status only. It does not alter
     /// sampling, thinking, templates, or any model-family behavior.
+    /// Visible text for a capped run whose wrap-up turn produced no visible
+    /// content at all (thinking only, or nothing). Not a summary of the work
+    /// — the model did not write one — just the truthful state.
+    static let iterationCapEmptyWrapUpText =
+        "The configured tool-call limit was reached before a final answer was written. "
+        + "The tool results above are the state of the work; send a message to continue."
+
     static let iterationCapWrapUpNotice =
         "[System Notice] The configured tool-call limit has been reached. "
         + "No more tools are available in this response. Give the user an honest final status "
