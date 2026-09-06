@@ -860,6 +860,53 @@ struct AgentToolLoopTests {
         #expect(surface.batchOutcomes.count == 3)
     }
 
+    /// Cross-family control for the widened announcement rules: ordinary
+    /// answers, quotations, code, abbreviations, decimals and non-English
+    /// text must stay final, whatever family produced them. A false positive
+    /// here costs every model an extra generation.
+    @Test func ordinaryAnswersAcrossStylesStayFinal() {
+        let answers = [
+            // Plain answers that happen to open with first-person verbs.
+            "I'll be honest: the evidence is mixed, and the effect size is small.",
+            "I will summarize what the three sources agree on: cocoa polyphenols bind non-heme iron in the gut.",
+            "Let me know if you want the table as CSV.",
+            // Quotations and reported speech.
+            "The author writes: \"Let me try to explain the mechanism.\" That sentence is the paper's framing, not a plan.",
+            "As Hotz et al. put it, \"we will fetch further samples in a follow-up study\".",
+            // Code and technical text (fenced, inline, identifiers, versions).
+            "Use `git fetch origin` and then `git rebase origin/main`.",
+            "```swift\nlet me = Person()\nprint(me.fetch())\n```",
+            "The fix landed in v1.6.28. Upgrade with `brew upgrade vmlx`.",
+            // Abbreviations, decimals, initials, ellipses.
+            "Absorption fell 63.5% (Hotz et al. 2009). Prof. J. R. Hunt reported similar figures i.e. a 50–70% drop.",
+            "Results: 12.5 mg/100 g vs. 3.1 mg/100 g. Sources: USDA ARS, NIH ODS.",
+            "The mechanism is well established… the polyphenols chelate Fe3+ in the lumen.",
+            // Non-English answers.
+            "Sí: el cacao inhibe la absorción de hierro no hemo. Déjame saber si quieres las fuentes.",
+            "Ja, Kakao hemmt die Aufnahme von Nicht-Häm-Eisen. Ich werde die Quellen unten auflisten:\n- USDA\n- NIH",
+            "はい、ココアは非ヘム鉄の吸収を阻害します。詳細は上記の通りです。",
+            "Oui, le cacao inhibe l'absorption du fer non héminique. Voici les sources : USDA, NIH.",
+            // Structural tails.
+            "Summary:\n- Yes, moderately.\n- Separate cocoa from iron-rich meals by an hour.\n- Vitamin C offsets it.",
+            "| Food | Iron mg | Inhibition |\n|---|---|---|\n| Cocoa | 13.9 | high |",
+        ]
+        for text in answers {
+            #expect(!AgentLoopModelStep.isAnnounceOnly(text), "must stay final: \(text)")
+            let step = AgentLoopModelStep.classifyTerminal(
+                contentIsBlank: false,
+                thinkingIsBlank: true,
+                stopReason: "stop",
+                requiresVisibleFinalResponse: false,
+                toolsWereOffered: true,
+                content: text
+            )
+            guard case .finalResponse = step else {
+                Issue.record("a real answer must stay final: \(text)")
+                return
+            }
+        }
+    }
+
     /// The guard that matters most: a real answer must never be re-run. A
     /// false positive here costs the user a duplicated response.
     @Test func genuineAnswersStayFinal() {
