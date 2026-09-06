@@ -297,11 +297,16 @@ struct DeclaredReasoningEffortTests {
         let empty = RaptorHistoryReasoningStamp.stamped("{\n  \"reasoning\": {\n  }\n}")
         #expect(empty != nil)
         #expect((empty.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }?["reasoning"] as? [String: Any])?["history_reasoning"] as? String == "omit")
-        // Scope: the OsaurusAI/Raptor family only — dash-suffixed variants and case forms,
-        // not a repo that merely starts with "Raptor", not other orgs or families.
+        // Scope: the validated legacy family only — OsaurusAI/Raptor-v0.5 and its
+        // dash-suffixed variants, case-insensitive. Not the bare repo, not Raptor 0.6
+        // (Nanbeige), not a repo that merely starts with "Raptor", not other orgs or families.
         #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M"))
-        #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "osaurusai/raptor-v0.6-8b-a1b-jang_4m"))
-        #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "OsaurusAI/Raptor"))
+        #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "osaurusai/raptor-v0.5-8b-a1b-jang_6m-rtn"))
+        #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "OsaurusAI/Raptor-v0.5"))
+        #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "OsaurusAI/Raptor-v0.6-Nanbeige-JANG_6M") == false)
+        #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "osaurusai/raptor-v0.6-8b-a1b-jang_4m") == false)
+        #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "OsaurusAI/Raptor") == false)
+        #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "OsaurusAI/Raptor-v0.55-8B") == false)
         #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "OsaurusAI/Raptorial-Unrelated") == false)
         #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "SomeoneElse/Raptor-v0.5") == false)
         #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "JANGQ-AI/Ling-3.0-tiny-JANG_6M") == false)
@@ -321,11 +326,19 @@ struct DeclaredReasoningEffortTests {
         #expect(((nestedRoot?["chat"] as? [String: Any])?["reasoning"] as? [String: Any])?["history_reasoning"] == nil)
         #expect(((nestedRoot?["chat"] as? [String: Any])?["reasoning"] as? [String: Any])?["legacy"] as? Bool == true)
     }
-    @Test("stampIfNeeded: Raptor only, once per process, never throws on a missing or read-only file")
+    /// A bundle directory with the config.json the migration requires
+    /// (`model_type: bailing_hybrid`, the Ling architecture Raptor v0.5 is built on).
+    private static func writeLingConfig(in dir: URL, modelType: String = "bailing_hybrid") throws {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try "{ \"model_type\": \"\(modelType)\", \"architectures\": [\"BailingMoeV3ForCausalLM\"] }"
+            .write(to: dir.appendingPathComponent("config.json"), atomically: true, encoding: .utf8)
+    }
+
+    @Test("stampIfNeeded: Raptor v0.5 on a Ling config only, once per process, never throws on a missing or read-only file")
     func raptorStampIfNeededIsScopedAndSafe() throws {
         RaptorHistoryReasoningStamp.resetForTests()
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("raptor-stamp-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Self.writeLingConfig(in: dir)
         defer { try? FileManager.default.removeItem(at: dir) }
         let url = dir.appendingPathComponent("jang_config.json")
         try #"{ "reasoning": { "supported": true } }"#.write(to: url, atomically: true, encoding: .utf8)
@@ -333,6 +346,21 @@ struct DeclaredReasoningEffortTests {
         // Another family with the same file shape: untouched.
         #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "JANGQ-AI/Ling-3.0-tiny-JANG_6M", directory: dir) == false)
         #expect(try String(contentsOf: url, encoding: .utf8).contains("history_reasoning") == false)
+        // Raptor 0.6 (Nanbeige) under the same org: untouched, by name alone.
+        #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.6-Nanbeige-JANG_6M", directory: dir) == false)
+        #expect(try String(contentsOf: url, encoding: .utf8).contains("history_reasoning") == false)
+        // A v0.5-named bundle whose config.json is NOT the Ling architecture: untouched,
+        // and so is one with no config.json at all — the name never decides alone.
+        let nanbeige = dir.appendingPathComponent("nanbeige")
+        try Self.writeLingConfig(in: nanbeige, modelType: "nanbeige4")
+        try #"{ "reasoning": { "supported": true } }"#.write(to: nanbeige.appendingPathComponent("jang_config.json"), atomically: true, encoding: .utf8)
+        #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: nanbeige) == false)
+        #expect(try String(contentsOf: nanbeige.appendingPathComponent("jang_config.json"), encoding: .utf8).contains("history_reasoning") == false)
+        let noConfig = dir.appendingPathComponent("noconfig")
+        try FileManager.default.createDirectory(at: noConfig, withIntermediateDirectories: true)
+        try #"{ "reasoning": { "supported": true } }"#.write(to: noConfig.appendingPathComponent("jang_config.json"), atomically: true, encoding: .utf8)
+        #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: noConfig) == false)
+        #expect(try String(contentsOf: noConfig.appendingPathComponent("jang_config.json"), encoding: .utf8).contains("history_reasoning") == false)
         // Raptor: stamped on the first load, memoised afterwards, file stays valid.
         #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: dir))
         let stamped = try String(contentsOf: url, encoding: .utf8)
@@ -344,13 +372,13 @@ struct DeclaredReasoningEffortTests {
         let late = dir.appendingPathComponent("late")
         #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: late) == false)
         #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: nil) == false)
-        try FileManager.default.createDirectory(at: late, withIntermediateDirectories: true)
+        try Self.writeLingConfig(in: late)
         try #"{ "reasoning": { "supported": true } }"#.write(to: late.appendingPathComponent("jang_config.json"), atomically: true, encoding: .utf8)
         #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: late))
         // Same id relocated/replaced at another directory: its own file gets stamped too
         // (the memo is per id AND resolved directory, not per id alone).
         let moved = dir.appendingPathComponent("moved")
-        try FileManager.default.createDirectory(at: moved, withIntermediateDirectories: true)
+        try Self.writeLingConfig(in: moved)
         try #"{ "reasoning": { "supported": true } }"#.write(to: moved.appendingPathComponent("jang_config.json"), atomically: true, encoding: .utf8)
         #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: moved))
         #expect(try String(contentsOf: moved.appendingPathComponent("jang_config.json"), encoding: .utf8).contains("history_reasoning"))
@@ -378,19 +406,121 @@ struct DeclaredReasoningEffortTests {
         #expect(stamped.contains("\"do_sample\": true"))
         #expect(RaptorHistoryReasoningStamp.stampedGenerationConfig(stamped) == nil)  // idempotent
         #expect(RaptorHistoryReasoningStamp.stampedGenerationConfig(#"{"default_chat_template_kwargs": {"enable_thinking": false}}"#) == nil)  // an explicit declaration is never overridden
+        #expect(RaptorHistoryReasoningStamp.stampedGenerationConfig(#"{"default_chat_template_kwargs": {"enable_thinking": true}}"#) == nil)
+        #expect(RaptorHistoryReasoningStamp.stampedGenerationConfig(#"{"default_chat_template_kwargs": null}"#) == nil)  // not an object: left alone
+        #expect(RaptorHistoryReasoningStamp.stampedGenerationConfig(#"{"default_chat_template_kwargs": 3}"#) == nil)
         let empty = try #require(RaptorHistoryReasoningStamp.stampedGenerationConfig("{}"))
         #expect(((try JSONSerialization.jsonObject(with: Data(empty.utf8)) as? [String: Any])?["default_chat_template_kwargs"] as? [String: Any])?["enable_thinking"] as? Bool == true)
+
+        // An EXISTING kwargs object without the leaf gets only the leaf: an empty object,
+        // and one with unrelated kwargs whose siblings must survive byte-for-byte.
+        let emptyKwargs = try #require(RaptorHistoryReasoningStamp.stampedGenerationConfig(#"{"default_chat_template_kwargs": {}}"#))
+        #expect(((try JSONSerialization.jsonObject(with: Data(emptyKwargs.utf8)) as? [String: Any])?["default_chat_template_kwargs"] as? [String: Any])?["enable_thinking"] as? Bool == true)
+        let siblings = """
+            {
+              "temperature": 0.7,
+              "default_chat_template_kwargs": {
+                "other_option": true,
+                "nested": { "reasoning": { "keep": 1 } }
+              }
+            }
+            """
+        let withSiblings = try #require(RaptorHistoryReasoningStamp.stampedGenerationConfig(siblings))
+        let siblingRoot = try #require(try JSONSerialization.jsonObject(with: Data(withSiblings.utf8)) as? [String: Any])
+        let kwargs = try #require(siblingRoot["default_chat_template_kwargs"] as? [String: Any])
+        #expect(kwargs["enable_thinking"] as? Bool == true)
+        #expect(kwargs["other_option"] as? Bool == true)
+        #expect(((kwargs["nested"] as? [String: Any])?["reasoning"] as? [String: Any])?["keep"] as? Int == 1)
+        #expect(siblingRoot["temperature"] as? Double == 0.7)
+        #expect(withSiblings.contains("\"other_option\": true,"))  // formatting kept, one line added
+        #expect(RaptorHistoryReasoningStamp.stampedGenerationConfig(withSiblings) == nil)  // idempotent
 
         // On disk: stampIfNeeded on a Raptor dir also stamps generation_config; a fresh
         // LocalReasoningCapability detect then reports the declared default.
         RaptorHistoryReasoningStamp.resetForTests()
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("raptor-gc-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Self.writeLingConfig(in: dir)
         defer { try? FileManager.default.removeItem(at: dir) }
         try #"{ "reasoning": { "supported": true, "default": "on" } }"#.write(to: dir.appendingPathComponent("jang_config.json"), atomically: true, encoding: .utf8)
         try original.write(to: dir.appendingPathComponent("generation_config.json"), atomically: true, encoding: .utf8)
         #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: dir))
         let gc = try String(contentsOf: dir.appendingPathComponent("generation_config.json"), encoding: .utf8)
         #expect(gc.contains("default_chat_template_kwargs"))
+    }
+
+    /// The companion mirrors the bundle's OWN declared default: a jang_config that
+    /// declares `reasoning.default: "off"` or declares no default gets NO
+    /// generation_config default synthesised (an explicit publisher OFF must never
+    /// become ON); only a declared ON is mirrored.
+    @Test("Raptor generation_config companion follows the bundle's declared default: off and absent stay untouched")
+    func raptorGenerationCompanionFollowsDeclaredDefault() throws {
+        for (label, jang, expectStamp) in [
+            ("off", #"{ "reasoning": { "supported": true, "default": "off" } }"#, false),
+            ("absent", #"{ "reasoning": { "supported": true } }"#, false),
+            ("legacy-nested-off", #"{ "reasoning": { "supported": true }, "chat": { "reasoning": { "default": "off" } } }"#, false),
+            ("on", #"{ "reasoning": { "supported": true, "default": "on" } }"#, true),
+            ("default_enabled", #"{ "reasoning": { "supported": true, "default_enabled": true } }"#, true),
+        ] {
+            RaptorHistoryReasoningStamp.resetForTests()
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("raptor-gc-default-\(UUID().uuidString)")
+            try Self.writeLingConfig(in: dir)
+            defer { try? FileManager.default.removeItem(at: dir) }
+            try jang.write(to: dir.appendingPathComponent("jang_config.json"), atomically: true, encoding: .utf8)
+            try "{}".write(to: dir.appendingPathComponent("generation_config.json"), atomically: true, encoding: .utf8)
+            // The history stamp itself is unconditional for an eligible bundle…
+            #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: dir), Comment(rawValue: label))
+            #expect(try String(contentsOf: dir.appendingPathComponent("jang_config.json"), encoding: .utf8).contains("history_reasoning"), Comment(rawValue: label))
+            // …the companion only where the bundle declares ON.
+            let gc = try String(contentsOf: dir.appendingPathComponent("generation_config.json"), encoding: .utf8)
+            #expect(gc.contains("enable_thinking") == expectStamp, Comment(rawValue: "\(label): \(gc)"))
+            if !expectStamp { #expect(gc == "{}", Comment(rawValue: label)) }
+            // Settled either way: a second call in the same process writes nothing more.
+            #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: dir) == false, Comment(rawValue: label))
+            #expect(try String(contentsOf: dir.appendingPathComponent("generation_config.json"), encoding: .utf8) == gc, Comment(rawValue: label))
+        }
+        // Pure outcome: explicit generation-config declarations are reported as such, not rewritten.
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("raptor-gc-explicit-\(UUID().uuidString)")
+        try Self.writeLingConfig(in: dir)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let explicitOff = #"{"default_chat_template_kwargs": {"enable_thinking": false}}"#
+        try explicitOff.write(to: dir.appendingPathComponent("generation_config.json"), atomically: true, encoding: .utf8)
+        let on = #"{ "reasoning": { "default": "on", "history_reasoning": "omit" } }"#
+        #expect(RaptorHistoryReasoningStamp.stampGenerationConfig(in: dir, jangConfigText: on) == .alreadyDeclared)
+        #expect(try String(contentsOf: dir.appendingPathComponent("generation_config.json"), encoding: .utf8) == explicitOff)
+        #expect(RaptorHistoryReasoningStamp.stampGenerationConfig(in: dir, jangConfigText: #"{ "reasoning": { "default": "off" } }"#) == .notApplicable)
+        try FileManager.default.removeItem(at: dir.appendingPathComponent("generation_config.json"))
+        #expect(RaptorHistoryReasoningStamp.stampGenerationConfig(in: dir, jangConfigText: on) == .retryable)
+    }
+
+    /// The two files are memoised independently: a jang_config that already carries
+    /// the key with a generation_config that is missing (or unwritable) at first is
+    /// repaired on the NEXT load in the same process, once the file is there.
+    @Test("Raptor companion stamp retries a missing generation_config in the same process; a repaired file is not rewritten again")
+    func raptorGenerationCompanionRetriesAfterMissingFile() throws {
+        RaptorHistoryReasoningStamp.resetForTests()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("raptor-gc-retry-\(UUID().uuidString)")
+        try Self.writeLingConfig(in: dir)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let jangURL = dir.appendingPathComponent("jang_config.json")
+        let gcURL = dir.appendingPathComponent("generation_config.json")
+        let alreadyStamped = #"{ "reasoning": { "supported": true, "default": "on", "history_reasoning": "omit" } }"#
+        try alreadyStamped.write(to: jangURL, atomically: true, encoding: .utf8)
+
+        // No generation_config yet: nothing to write, nothing memoised for it.
+        #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: dir) == false)
+        #expect(FileManager.default.fileExists(atPath: gcURL.path) == false)
+        #expect(try String(contentsOf: jangURL, encoding: .utf8) == alreadyStamped)
+
+        // The file appears (download completes, volume mounts): the very next call repairs it.
+        try "{}".write(to: gcURL, atomically: true, encoding: .utf8)
+        #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: dir) == false)  // jang untouched
+        let repaired = try String(contentsOf: gcURL, encoding: .utf8)
+        #expect(((try JSONSerialization.jsonObject(with: Data(repaired.utf8)) as? [String: Any])?["default_chat_template_kwargs"] as? [String: Any])?["enable_thinking"] as? Bool == true)
+        #expect(try String(contentsOf: jangURL, encoding: .utf8) == alreadyStamped)
+
+        // Settled now: a later call leaves both files byte-identical.
+        let before = try Data(contentsOf: gcURL)
+        #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: dir) == false)
+        #expect(try Data(contentsOf: gcURL) == before)
     }
 }
