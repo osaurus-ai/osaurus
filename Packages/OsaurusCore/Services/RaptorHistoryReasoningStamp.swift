@@ -17,12 +17,18 @@ import Foundation
 
 enum RaptorHistoryReasoningStamp {
 
-    /// Bundle ids this stamp applies to (case-insensitive prefix match).
-    static let bundleIdPrefix = "osaurusai/raptor"
-
+    /// The Raptor family: the `OsaurusAI/Raptor` repo and its dash-suffixed
+    /// variants (`OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M`, future `Raptor-…`).
+    /// Case-insensitive on the id; a repo merely STARTING with "Raptor"
+    /// (`OsaurusAI/Raptorial-…`) is not Raptor, and no other org qualifies.
     static func appliesTo(modelId: String) -> Bool {
-        modelId.lowercased().hasPrefix(bundleIdPrefix)
+        let id = modelId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return id == "osaurusai/raptor" || id.hasPrefix("osaurusai/raptor-")
     }
+
+    /// Upper bound for a jang_config we are willing to read on the load
+    /// path; real stamps are a few KB.
+    static let maxConfigBytes = 1 << 20
 
     /// The rewritten jang_config text, or nil when nothing should change: the
     /// key is already present, there is no top-level `reasoning` object, or
@@ -31,25 +37,35 @@ enum RaptorHistoryReasoningStamp {
         guard let data = text.data(using: .utf8),
             let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let reasoning = root["reasoning"] as? [String: Any],
-            reasoning["history_reasoning"] == nil,
-            let open = text.range(of: #""reasoning"\s*:\s*\{"#, options: .regularExpression)
+            reasoning["history_reasoning"] == nil
         else { return nil }
 
-        let lineStart =
-            text[..<open.lowerBound].lastIndex(of: "\n").map { text.index(after: $0) } ?? text.startIndex
-        let indent = String(text[lineStart..<open.lowerBound].prefix { $0 == " " || $0 == "\t" })
-        let rest = text[open.upperBound...]
-        let blockIsEmpty = rest.first(where: { !$0.isWhitespace }) == "}"
-        let insertion = "\n\(indent)  \"history_reasoning\": \"omit\"" + (blockIsEmpty ? "" : ",")
-
-        var out = text
-        out.insert(contentsOf: insertion, at: open.upperBound)
-
-        guard let outData = out.data(using: .utf8),
-            let outRoot = try? JSONSerialization.jsonObject(with: outData) as? [String: Any],
-            (outRoot["reasoning"] as? [String: Any])?["history_reasoning"] as? String == "omit"
-        else { return nil }
-        return out
+        // A nested `"reasoning": {` (legacy `chat.reasoning`) can precede the
+        // top-level one in the text: try each textual occurrence and keep the
+        // first whose result re-parses with the key on the ROOT reasoning
+        // object and every other value byte-for-byte equal.
+        var searchFrom = text.startIndex
+        while let open = text.range(of: #""reasoning"\s*:\s*\{"#, options: .regularExpression, range: searchFrom..<text.endIndex) {
+            searchFrom = open.upperBound
+            let lineStart =
+                text[..<open.lowerBound].lastIndex(of: "\n").map { text.index(after: $0) } ?? text.startIndex
+            let indent = String(text[lineStart..<open.lowerBound].prefix { $0 == " " || $0 == "\t" })
+            let blockIsEmpty = text[open.upperBound...].first(where: { !$0.isWhitespace }) == "}"
+            let insertion = "\n\(indent)  \"history_reasoning\": \"omit\"" + (blockIsEmpty ? "" : ",")
+            var out = text
+            out.insert(contentsOf: insertion, at: open.upperBound)
+            guard let outData = out.data(using: .utf8),
+                let outRoot = try? JSONSerialization.jsonObject(with: outData) as? [String: Any],
+                var outReasoning = outRoot["reasoning"] as? [String: Any],
+                outReasoning["history_reasoning"] as? String == "omit"
+            else { continue }
+            outReasoning["history_reasoning"] = nil
+            var strippedRoot = outRoot
+            strippedRoot["reasoning"] = outReasoning
+            guard NSDictionary(dictionary: strippedRoot).isEqual(to: root) else { continue }
+            return out
+        }
+        return nil
     }
 
     private static let lock = NSLock()
@@ -75,7 +91,13 @@ enum RaptorHistoryReasoningStamp {
         // file is NOT memoised, so a later load (volume mounted, permissions
         // fixed) gets another cheap try.
         let url = directory.appendingPathComponent("jang_config.json")
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return false }
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+            let size = attributes[.size] as? NSNumber, size.intValue <= maxConfigBytes,
+            let text = try? String(contentsOf: url, encoding: .utf8)
+        else {
+            print("[Osaurus][RaptorStamp] jang_config.json missing, unreadable or oversized at \(url.path) — load proceeds unchanged")
+            return false
+        }
         guard let rewritten = stamped(text) else {
             if Self.carriesKey(text) { markChecked(key) }
             return false

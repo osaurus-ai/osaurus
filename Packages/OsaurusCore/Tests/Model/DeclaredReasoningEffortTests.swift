@@ -297,10 +297,29 @@ struct DeclaredReasoningEffortTests {
         let empty = RaptorHistoryReasoningStamp.stamped("{\n  \"reasoning\": {\n  }\n}")
         #expect(empty != nil)
         #expect((empty.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }?["reasoning"] as? [String: Any])?["history_reasoning"] as? String == "omit")
-        // Scope: only OsaurusAI/Raptor bundle ids.
+        // Scope: the OsaurusAI/Raptor family only — dash-suffixed variants and case forms,
+        // not a repo that merely starts with "Raptor", not other orgs or families.
         #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M"))
+        #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "osaurusai/raptor-v0.6-8b-a1b-jang_4m"))
+        #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "OsaurusAI/Raptor"))
+        #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "OsaurusAI/Raptorial-Unrelated") == false)
+        #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "SomeoneElse/Raptor-v0.5") == false)
         #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "JANGQ-AI/Ling-3.0-tiny-JANG_6M") == false)
         #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "JANGQ-AI/Ornith-1.5-9B-JANG_4D") == false)
+        #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "JANGQ-AI/Qwen3.8-Flash-Next-JANG_4M") == false)
+        // A nested legacy `chat.reasoning` block that precedes the root one in the text
+        // is left alone; the key lands on the ROOT reasoning object only.
+        let nestedFirst = """
+            {
+              "chat": { "reasoning": { "legacy": true }, "sampling_defaults": { "temperature": 0.7 } },
+              "reasoning": { "supported": true }
+            }
+            """
+        let nestedStamped = RaptorHistoryReasoningStamp.stamped(nestedFirst)
+        let nestedRoot = nestedStamped.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+        #expect((nestedRoot?["reasoning"] as? [String: Any])?["history_reasoning"] as? String == "omit")
+        #expect(((nestedRoot?["chat"] as? [String: Any])?["reasoning"] as? [String: Any])?["history_reasoning"] == nil)
+        #expect(((nestedRoot?["chat"] as? [String: Any])?["reasoning"] as? [String: Any])?["legacy"] as? Bool == true)
     }
     @Test("stampIfNeeded: Raptor only, once per process, never throws on a missing or read-only file")
     func raptorStampIfNeededIsScopedAndSafe() throws {
