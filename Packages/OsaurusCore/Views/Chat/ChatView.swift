@@ -7172,7 +7172,12 @@ final class ChatSession: ObservableObject {
                             // during the run joins the conversation at this
                             // iteration boundary instead of waiting for the
                             // run to finish (or requiring Stop).
-                            self.injectQueuedSteerIfEligible()
+                            // A steer that lands here starts a new user
+                            // message: the state notices the driver staged for
+                            // the previous message no longer describe this one.
+                            let notices = self.injectQueuedSteerIfEligible()
+                                ? AgentToolLoop.noticesSurvivingNewUserMessage(notices)
+                                : notices
 
                             ttftTrace?.mark("build_messages_start")
                             var msgs = buildMessages()
@@ -7960,6 +7965,16 @@ final class ChatSession: ObservableObject {
                                     selectedModel: turnModelId
                                 )
                                 assistantTurn = finalTurn
+                                // A wrap-up that streamed only thinking (or
+                                // nothing) leaves an empty bubble at the end
+                                // of a capped run (seen live: 31 inspect
+                                // calls, then a 23-token think-only final
+                                // with `stop`). Show the honest status the
+                                // notice asked for instead of nothing.
+                                if finalTurn.contentIsBlank {
+                                    finalTurn.content = AgentToolLoop.iterationCapEmptyWrapUpText
+                                    rebuildVisibleBlocks()
+                                }
                             } catch {
                                 let message =
                                     "The agent reached the configured step limit, and its final wrap-up failed: "
