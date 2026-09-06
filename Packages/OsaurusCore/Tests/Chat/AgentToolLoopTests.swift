@@ -164,6 +164,16 @@ private func chatPolicy(maxIterations: Int = 15) -> AgentLoopPolicy {
     )
 }
 
+/// Chat's real policy: incomplete work ends in a truthful status step.
+private func chatWrapUpPolicy(maxIterations: Int = 15) -> AgentLoopPolicy {
+    AgentLoopPolicy(
+        maxIterations: maxIterations,
+        stopOnToolRejection: true,
+        dedupeNoticeEnabled: true,
+        wrapsUpIncompleteWork: true
+    )
+}
+
 private func headlessPolicy(maxIterations: Int = 30) -> AgentLoopPolicy {
     AgentLoopPolicy(
         maxIterations: maxIterations,
@@ -760,6 +770,83 @@ struct AgentToolLoopTests {
         for text in signOffs {
             #expect(!AgentLoopModelStep.isAnnounceOnly(text), "must stay final: \(text)")
         }
+    }
+
+    /// The two continuations that still ended untruthfully on 2026-09-06
+    /// (folder attached, file already written):
+    /// (a) run 065533 R2 — "I'll continue by fetching the next source to
+    ///     extract more detailed information…" announced twice, then the
+    ///     narration accepted as the final answer;
+    /// (b) run 075032 R2 — the same blocked URL until the second replay,
+    ///     then "The requested action was not completed." as the answer.
+    /// Under chat's policy both must end in ONE tool-free status step whose
+    /// notice names the completed/undone/blocked split; headless surfaces
+    /// keep their previous exits.
+    @Test func exhaustedAnnouncementsEndInATruthfulStatusStepNotAPromise() async throws {
+        let promise = "I'll continue by fetching the next source to extract more detailed information about chocolate and iron absorption."
+        let surface = ScriptedLoopSurface(steps: [
+            .announcedToolCall, .announcedToolCall, .announcedToolCall, .finalResponse,
+        ])
+        let result = try await AgentToolLoop.run(
+            policy: chatWrapUpPolicy(), state: AgentTaskState(), hooks: surface.makeHooks())
+        #expect(result.exit == .finalResponse)
+        // Two nudges were delivered, the third announcement is not retried,
+        // and no fourth model step runs inside the loop.
+        #expect(surface.builtNotices.count == 3)
+        let notice = try #require(result.wrapUpNotice)
+        #expect(notice.contains("described the next action 3 times without making a tool call"))
+        #expect(notice.contains("what remains undone"))
+        #expect(notice.contains("Do not promise to do it next"))
+        _ = promise
+
+        // Headless: the narration is still accepted as final, no wrap-up.
+        let headless = ScriptedLoopSurface(steps: [
+            .announcedToolCall, .announcedToolCall, .announcedToolCall, .finalResponse,
+        ])
+        let headlessResult = try await AgentToolLoop.run(
+            policy: chatPolicy(), state: AgentTaskState(), hooks: headless.makeHooks())
+        #expect(headlessResult.exit == .finalResponse)
+        #expect(headlessResult.wrapUpNotice == nil)
+    }
+
+    @Test func repeatedRetrievalFailureEndsInATruthfulStatusStepNotAnErrorSentence() async throws {
+        let args = #"{"url":"https://www.academia.edu/145246435/Iron_bioavailability_of_cocoa_powder"}"#
+        let failure = ToolEnvelope.failure(
+            kind: .executionError,
+            message: "No page content was retrieved from any attempted source.",
+            tool: "search_and_extract",
+            retryable: false
+        )
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("search_and_extract", args)]),
+            .toolCalls([inv("search_and_extract", args)]),
+            .toolCalls([inv("search_and_extract", args)]),
+            .finalResponse,
+        ])
+        var hooks = surface.makeHooks()
+        var rejectionTexts: [String] = []
+        hooks.emitToolRejectionText = { rejectionTexts.append($0) }
+        hooks.executeBatch = { calls in
+            calls.map { _ in AgentLoopToolExecution(result: failure, isError: true) }
+        }
+        let result = try await AgentToolLoop.run(
+            policy: chatWrapUpPolicy(), state: AgentTaskState(), hooks: hooks)
+        #expect(result.exit == .finalResponse)
+        #expect(rejectionTexts.isEmpty, "no 'The requested action was not completed.' sentence")
+        let notice = try #require(result.wrapUpNotice)
+        #expect(notice.contains("has failed 3 times"))
+        #expect(notice.contains("cached replay of the earlier failure, not a new network request"))
+        #expect(notice.contains("keep every successful result"))
+        // The replayed envelopes in the transcript say they are cached, so
+        // "I retried" cannot be an honest reading of them.
+        let replays = surface.batchOutcomes.flatMap { $0 }.filter { $0.wasDeduped }
+        #expect(replays.count == 2)
+        for replay in replays {
+            #expect(replay.result.contains("\"cached_replay\":true"))
+            #expect(replay.result.contains("Cached replay of the identical earlier attempt (no new network request was made)."))
+        }
+        // The successful and failed rows were all recorded before the wrap-up.
+        #expect(surface.batchOutcomes.count == 3)
     }
 
     /// The guard that matters most: a real answer must never be re-run. A

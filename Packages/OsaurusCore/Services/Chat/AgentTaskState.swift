@@ -534,9 +534,34 @@ public final class AgentTaskState {
             let failures = replays + 1  // original execution + replays
             lastReplayNotice =
                 "This exact `\(name)` call has now failed \(failures) times with the same error (the result above is a replay — it was NOT re-executed, and re-issuing it cannot succeed). You MUST change the arguments, or report what is blocking you."
+            // A replayed retrieval failure must read as what it is — a cached
+            // result, not another network attempt — in the transcript itself,
+            // not only in the notice: the model otherwise reports "I retried"
+            // for a request that never left the machine.
+            if Self.deterministicAsIsFailureTools.contains(name) {
+                return Self.cachedReplayEnvelope(held.envelope, replays: replays) ?? held.envelope
+            }
             return held.envelope
         }
         return nil
+    }
+
+    /// Marks a replayed retrieval failure envelope as a cached replay:
+    /// `cached_replay: true`, the replay count, and a message that says no
+    /// new network request was made.
+    static func cachedReplayEnvelope(_ envelope: String, replays: Int) -> String? {
+        guard let data = envelope.data(using: .utf8),
+            var dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        dict["cached_replay"] = true
+        dict["cached_replay_count"] = replays
+        let original = (dict["message"] as? String) ?? ""
+        dict["message"] =
+            "Cached replay of the identical earlier attempt (no new network request was made). " + original
+        return try? String(
+            data: JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]),
+            encoding: .utf8
+        )
     }
 
     /// Return a synthetic, structured transition result when the model keeps

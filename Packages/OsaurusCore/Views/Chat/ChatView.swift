@@ -7821,7 +7821,8 @@ final class ChatSession: ObservableObject {
                             dedupeNoticeEnabled: false,
                             todoStalenessThreshold: .max,
                             maxDataMovementSteps: min(16, maxAttempts),
-                            todoRequiredBeforeToolCallCount: 0
+                            todoRequiredBeforeToolCallCount: 0,
+                            wrapsUpIncompleteWork: true
                         ),
                         state: taskState,
                         hooks: loopHooks
@@ -7911,21 +7912,13 @@ final class ChatSession: ObservableObject {
                         lastStreamError = AgentToolLoop.incompleteReasoningFallback
                     }
 
-                    if runResult.exit == .iterationCapReached && isRunActive(runId) {
-                        if let pending = runResult.unfinishedTodoCount, pending > 0 {
-                            // A current-run Todo hit the hard step cap. Do not
-                            // launch the generic tool-free wrap-up stream: it
-                            // can only guess at unfinished work, and treating
-                            // it as clean would warm/index a partial task. The
-                            // driver provides the typed pending count instead.
-                            let message = AgentToolLoop.unfinishedTodoCapFallback(
-                                pending: pending
-                            )
-                            assistantTurn.content = message
-                            lastStreamError = message
-                            rebuildVisibleBlocks()
-                        } else {
-                            do {
+                    // One tool-free status step: the request carries no tool
+                    // schema and the notice explains the boundary. Used after
+                    // the hard iteration cap and, with a different notice,
+                    // after announce-only recovery or a repeated retrieval
+                    // failure ended the run on incomplete work.
+                    @MainActor func streamToolFreeWrapUp(notice: String, emptyText: String, failurePrefix: String) async {
+                        do {
                                 let trimmedFinalMessages =
                                     AgentLoopBudget.trimPreservingSystemPrefix(
                                         buildMessages(),
@@ -7942,7 +7935,7 @@ final class ChatSession: ObservableObject {
                                 // ordinary loop notices.
                                 let finalMessages =
                                     AgentLoopBudget.appendingTransientNotices(
-                                        [AgentToolLoop.iterationCapWrapUpNotice],
+                                        [notice],
                                         to: trimmedFinalMessages
                                     )
                                 var finalReq = ChatCompletionRequest(
@@ -8013,21 +8006,47 @@ final class ChatSession: ObservableObject {
                                 // with `stop`). Show the honest status the
                                 // notice asked for instead of nothing.
                                 if finalTurn.contentIsBlank {
-                                    finalTurn.content = AgentToolLoop.iterationCapEmptyWrapUpText
+                                    finalTurn.content = emptyText
                                     rebuildVisibleBlocks()
                                 }
-                            } catch {
-                                let message =
-                                    "The agent reached the configured step limit, and its final wrap-up failed: "
-                                    + error.localizedDescription
-                                                    debugLog(
-                                                        "send: final wrap-up call failed: \(error.localizedDescription)"
-                                                    )
-                                assistantTurn.content = message
-                                lastStreamError = message
-                                rebuildVisibleBlocks()
-                            }
+                        } catch {
+                            let message = failurePrefix + error.localizedDescription
+                            debugLog("send: final wrap-up call failed: \(error.localizedDescription)")
+                            assistantTurn.content = message
+                            lastStreamError = message
+                            rebuildVisibleBlocks()
                         }
+                    }
+                    if runResult.exit == .iterationCapReached && isRunActive(runId) {
+                        if let pending = runResult.unfinishedTodoCount, pending > 0 {
+                            // A current-run Todo hit the hard step cap. Do not
+                            // launch the generic tool-free wrap-up stream: it
+                            // can only guess at unfinished work, and treating
+                            // it as clean would warm/index a partial task. The
+                            // driver provides the typed pending count instead.
+                            let message = AgentToolLoop.unfinishedTodoCapFallback(
+                                pending: pending
+                            )
+                            assistantTurn.content = message
+                            lastStreamError = message
+                            rebuildVisibleBlocks()
+                        } else {
+                            await streamToolFreeWrapUp(
+                                notice: AgentToolLoop.iterationCapWrapUpNotice,
+                                emptyText: AgentToolLoop.iterationCapEmptyWrapUpText,
+                                failurePrefix: "The agent reached the configured step limit, and its final wrap-up failed: "
+                            )
+                        }
+                    }
+                    if let wrapUpNotice = runResult.wrapUpNotice, isRunActive(runId) {
+                        // The run stopped on a promise or a replayed failure:
+                        // the text on screen is not an answer. Stream the
+                        // truthful status step instead of leaving it there.
+                        await streamToolFreeWrapUp(
+                            notice: wrapUpNotice,
+                            emptyText: AgentToolLoop.incompleteWorkEmptyWrapUpText,
+                            failurePrefix: "The run stopped before the work was complete, and its final status call failed: "
+                        )
                     }
                 } catch is CancellationError {
                     // Two distinct cancel sources land here and they need
