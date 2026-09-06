@@ -347,5 +347,12 @@ struct DeclaredReasoningEffortTests {
         try FileManager.default.createDirectory(at: late, withIntermediateDirectories: true)
         try #"{ "reasoning": { "supported": true } }"#.write(to: late.appendingPathComponent("jang_config.json"), atomically: true, encoding: .utf8)
         #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: late))
+        // Same id relocated/replaced at another directory: its own file gets stamped too
+        // (the memo is per id AND resolved directory, not per id alone).
+        let moved = dir.appendingPathComponent("moved")
+        try FileManager.default.createDirectory(at: moved, withIntermediateDirectories: true)
+        try #"{ "reasoning": { "supported": true } }"#.write(to: moved.appendingPathComponent("jang_config.json"), atomically: true, encoding: .utf8)
+        #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: moved))
+        #expect(try String(contentsOf: moved.appendingPathComponent("jang_config.json"), encoding: .utf8).contains("history_reasoning"))
     }
 }

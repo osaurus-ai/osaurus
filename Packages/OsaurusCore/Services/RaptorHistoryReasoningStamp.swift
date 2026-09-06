@@ -80,7 +80,10 @@ enum RaptorHistoryReasoningStamp {
     @discardableResult
     static func stampIfNeeded(modelId: String, directory: URL?) -> Bool {
         guard appliesTo(modelId: modelId), let directory else { return false }
-        let key = modelId.lowercased()
+        // Memo per (id, resolved directory): the same id relocated or
+        // replaced at another path is a different file and gets its own
+        // check.
+        let key = modelId.lowercased() + "|" + directory.standardizedFileURL.resolvingSymlinksInPath().path
         lock.lock()
         let alreadyChecked = checkedThisProcess.contains(key)
         lock.unlock()
