@@ -3829,6 +3829,13 @@ public actor ModelRuntime {
         // Timeline breadcrumb so a main-thread hang that surfaces with an unsymbolicated
         // native stack still shows whether a model load was in flight. Model id only, no PII.
         CrashReportingService.recordBreadcrumb(category: "model.load", message: "begin model=\(name)")
+        // Raptor bundles only: first load in this process reads jang_config.json
+        // once and stamps `history_reasoning: omit` if missing. No-op for every
+        // other model id; cannot throw; the load proceeds regardless.
+        if RaptorHistoryReasoningStamp.appliesTo(modelId: id) {
+            RaptorHistoryReasoningStamp.stampIfNeeded(
+                modelId: id, directory: Self.findLocalDirectory(forModelId: id))
+        }
 
         while true {
             try Task.checkCancellation()

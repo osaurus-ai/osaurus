@@ -267,4 +267,61 @@ struct DeclaredReasoningEffortTests {
             """
         #expect(DeclaredReasoningEffort.parseJangDeclaration(data: Data(keep.utf8))?.historyReasoningOmitted == false)
     }
+    @Test("Raptor stamp inserts history_reasoning: omit textually, verified, idempotent, scoped")
+    func raptorStampRewritesOnlyWhatItMust() {
+        let original = """
+            {
+              "chat": { "sampling_defaults": { "temperature": 0.7 } },
+              "reasoning": {
+                "supported": true,
+                "parser": "bailing_v3",
+                "preserve_thinking_default": true,
+                "preserve_thinking_transport": "template_constant"
+              },
+              "tools": { "format": "xml_arg" }
+            }
+            """
+        let stamped = RaptorHistoryReasoningStamp.stamped(original)
+        #expect(stamped != nil)
+        #expect(stamped?.contains("\"reasoning\": {\n    \"history_reasoning\": \"omit\",\n    \"supported\": true") == true)
+        // Parses, key in place, everything else untouched.
+        let root = stamped.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+        #expect((root?["reasoning"] as? [String: Any])?["history_reasoning"] as? String == "omit")
+        #expect((root?["reasoning"] as? [String: Any])?["parser"] as? String == "bailing_v3")
+        #expect((root?["tools"] as? [String: Any])?["format"] as? String == "xml_arg")
+        #expect(DeclaredReasoningEffort.parseJangDeclaration(data: Data(stamped!.utf8))?.historyReasoningOmitted == true)
+        // Idempotent: a stamped file is left alone.
+        #expect(RaptorHistoryReasoningStamp.stamped(stamped!) == nil)
+        // No reasoning block → nothing to do; empty block → valid JSON without a trailing comma.
+        #expect(RaptorHistoryReasoningStamp.stamped(#"{"chat": {}}"#) == nil)
+        let empty = RaptorHistoryReasoningStamp.stamped("{\n  \"reasoning\": {\n  }\n}")
+        #expect(empty != nil)
+        #expect((empty.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }?["reasoning"] as? [String: Any])?["history_reasoning"] as? String == "omit")
+        // Scope: only OsaurusAI/Raptor bundle ids.
+        #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M"))
+        #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "JANGQ-AI/Ling-3.0-tiny-JANG_6M") == false)
+        #expect(RaptorHistoryReasoningStamp.appliesTo(modelId: "JANGQ-AI/Ornith-1.5-9B-JANG_4D") == false)
+    }
+    @Test("stampIfNeeded: Raptor only, once per process, never throws on a missing or read-only file")
+    func raptorStampIfNeededIsScopedAndSafe() throws {
+        RaptorHistoryReasoningStamp.resetForTests()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("raptor-stamp-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("jang_config.json")
+        try #"{ "reasoning": { "supported": true } }"#.write(to: url, atomically: true, encoding: .utf8)
+
+        // Another family with the same file shape: untouched.
+        #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "JANGQ-AI/Ling-3.0-tiny-JANG_6M", directory: dir) == false)
+        #expect(try String(contentsOf: url, encoding: .utf8).contains("history_reasoning") == false)
+        // Raptor: stamped on the first load, memoised afterwards, file stays valid.
+        #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: dir))
+        let stamped = try String(contentsOf: url, encoding: .utf8)
+        #expect(DeclaredReasoningEffort.parseJangDeclaration(data: Data(stamped.utf8))?.historyReasoningOmitted == true)
+        #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: dir) == false)
+        // Missing file / missing directory: false, no throw.
+        RaptorHistoryReasoningStamp.resetForTests()
+        #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: dir.appendingPathComponent("nope")) == false)
+        #expect(RaptorHistoryReasoningStamp.stampIfNeeded(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M", directory: nil) == false)
+    }
 }
