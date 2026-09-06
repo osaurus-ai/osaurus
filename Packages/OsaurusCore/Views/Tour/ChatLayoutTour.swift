@@ -86,7 +86,6 @@ public final class ChatLayoutTour: ObservableObject {
 
     private var overlayWindow: NSWindow?
     private var overlayHost: NSHostingView<ChatTourOverlayView>?
-    private var blurView: NSVisualEffectView?
     private var windowObservers: [NSObjectProtocol] = []
     private var escapeMonitor: Any?
     private var didAutoCheckThisLaunch = false
@@ -162,11 +161,9 @@ public final class ChatLayoutTour: ObservableObject {
 
     // MARK: Spotlight morph
 
-    /// The spotlight rect currently ON SCREEN, in window coordinates. Both
-    /// layers (the SwiftUI scrim/outline and the AppKit blur mask) render
-    /// this exact rect, and the morph between stops is interpolated here,
-    /// one frame at a time on a common-mode timer, so the two can never
-    /// drift apart the way a SwiftUI tween next to a snapping mask did.
+    /// The spotlight rect currently ON SCREEN, in window coordinates. The
+    /// morph between stops is interpolated here on a common-mode timer so it
+    /// keeps running while menus or other tracking loops are active.
     @Published private(set) var displayedCutout: CGRect?
     private var morphTimer: Timer?
     private static let morphDuration: TimeInterval = 0.25
@@ -178,7 +175,6 @@ public final class ChatLayoutTour: ObservableObject {
         morphTimer = nil
         guard animated, let from = displayedCutout, let to = target, from != to else {
             displayedCutout = target
-            updateBlurMask(cutout: target)
             return
         }
         let start = Date()
@@ -193,7 +189,6 @@ public final class ChatLayoutTour: ObservableObject {
                     width: from.width + (to.width - from.width) * e,
                     height: from.height + (to.height - from.height) * e)
                 self.displayedCutout = rect
-                self.updateBlurMask(cutout: rect)
                 if t >= 1 {
                     self.morphTimer?.invalidate()
                     self.morphTimer = nil
@@ -202,25 +197,6 @@ public final class ChatLayoutTour: ObservableObject {
         }
         RunLoop.main.add(timer, forMode: .common)
         morphTimer = timer
-    }
-
-    /// Blur everything behind the overlay except the spotlight. The blur is
-    /// an `NSVisualEffectView` (behind-window) whose mask clears the cutout.
-    private func updateBlurMask(cutout: CGRect?) {
-        guard let blurView, let overlayWindow else { return }
-        let size = overlayWindow.frame.size
-        guard size.width > 0, size.height > 0 else { return }
-        let image = NSImage(size: size, flipped: false) { rect in
-            NSColor.black.setFill()
-            rect.fill()
-            if let cutout {
-                NSGraphicsContext.current?.compositingOperation = .clear
-                NSBezierPath(roundedRect: cutout, xRadius: 10, yRadius: 10).fill()
-            }
-            return true
-        }
-        image.resizingMode = .stretch
-        blurView.maskImage = image
     }
 
     private func finish(markCompleted: Bool) {
@@ -270,21 +246,10 @@ public final class ChatLayoutTour: ObservableObject {
         overlay.isReleasedWhenClosed = false
         overlay.level = chatWindow.level
         overlay.collectionBehavior = [.fullScreenAuxiliary, .transient]
-        // Blur layer (behind-window) under the SwiftUI scrim + card.
-        let blur = NSVisualEffectView(frame: NSRect(origin: .zero, size: chatWindow.frame.size))
-        blur.blendingMode = .behindWindow
-        blur.material = .hudWindow
-        blur.state = .active
-        // Partial opacity softens the blur so the layout underneath stays
-        // recognisable; the card's shadow carries the focus instead.
-        blur.alphaValue = 0.45
-        blur.autoresizingMask = [.width, .height]
         let host = NSHostingView(rootView: ChatTourOverlayView(tour: self, windowId: id))
-        host.frame = blur.bounds
+        host.frame = NSRect(origin: .zero, size: chatWindow.frame.size)
         host.autoresizingMask = [.width, .height]
-        blur.addSubview(host)
-        overlay.contentView = blur
-        blurView = blur
+        overlay.contentView = host
         chatWindow.addChildWindow(overlay, ordered: .above)
         overlay.orderFront(nil)
         overlayWindow = overlay
@@ -336,7 +301,6 @@ public final class ChatLayoutTour: ObservableObject {
         }
         overlayWindow = nil
         overlayHost = nil
-        blurView = nil
     }
 }
 
@@ -441,13 +405,13 @@ struct ChatTourOverlayView: View {
             let size = proxy.size
             let stop = tour.currentStop
             // Window coords are bottom-left; SwiftUI is top-left.
-            // AppKit (bottom-left) cutout for the blur mask, SwiftUI (top-left)
-            // for the scrim and card.
+            // Anchors are in AppKit (bottom-left) window coordinates; the
+            // scrim and card draw in SwiftUI (top-left).
             let targetCutout: CGRect? = stop.flatMap { s in
                 tour.frame(of: s.anchor).map { Self.calibrated($0, for: s.anchor) }
             }
-            // What is drawn is the controller's interpolated rect, shared
-            // with the blur mask; the target only tells it where to go.
+            // What is drawn is the controller's interpolated rect; the
+            // target only tells it where to go.
             let spotlight: CGRect? = tour.displayedCutout.map { f in
                 CGRect(x: f.minX, y: size.height - f.maxY, width: f.width, height: f.height)
             }
@@ -490,8 +454,8 @@ struct ChatTourOverlayView: View {
 
     private func scrim(cutout: CGRect?, in size: CGSize) -> some View {
         Rectangle()
-            // Light tint only: the behind-window blur underneath does the
-            // work of pulling focus to the card.
+            // A light tint is all the dimming there is: the UI stays fully
+            // readable in context, and the outline + card carry the focus.
             .fill(Color.black.opacity(theme.isDark ? 0.14 : 0.07))
             .mask {
                 ZStack {
@@ -580,7 +544,7 @@ struct ChatTourOverlayView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(theme.cardBorder, lineWidth: 1)
         )
-        // Lifted well off the blurred backdrop.
+        // Lifted well off the backdrop.
         .shadow(color: Color.black.opacity(0.28), radius: 30, y: 14)
         .shadow(color: Color.black.opacity(0.12), radius: 6, y: 2)
     }
