@@ -1609,6 +1609,74 @@ struct AgentToolLoopTests {
         #expect(surface.builtNotices.count == 2)
     }
 
+    /// Ornith 9B research run (2026-09-06, reasoning on): the second identical
+    /// `search_and_extract` of a 404 page was replayed from the hold and the
+    /// deduped error ended the WHOLE turn ("The requested action was not
+    /// completed.") before the staged escalation notice could reach the
+    /// model. A replayed retrieval failure has no side effect to protect, so
+    /// the notice lands once; the same call replayed AGAIN ends the run.
+    @Test func repeatedAsIsExtractionFailureContinuesOnceWithTheEscalationNotice() async throws {
+        let args = #"{"url":"https://example.org/blocked"}"#
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("search_and_extract", args)]),
+            .toolCalls([inv("search_and_extract", args)]),
+            .toolCalls([inv("search_and_extract", args)]),
+            .finalResponse,
+        ])
+        surface.toolResults["search_and_extract"] = AgentLoopToolExecution(
+            result: ToolEnvelope.failure(
+                kind: .executionError,
+                message: "No page content was retrieved from any attempted source.",
+                tool: "search_and_extract",
+                retryable: false
+            ),
+            isError: true
+        )
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+        // Executed once; the second call is a replay that does NOT end the
+        // run, so a third model step happens and carries the escalation.
+        #expect(surface.executedCalls.count == 1)
+        #expect(surface.dedupedCalls.count == 2)
+        #expect(surface.builtNotices.count == 3)
+        #expect(surface.builtNotices[2].contains { $0.contains("has now failed 2 times") })
+        // The third identical call (second replay) ends the run as before.
+        #expect(result.exit == .toolRejected)
+
+        // Batch executor surface (what chat installs): same contract.
+        let batched = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("search_and_extract", args)]),
+            .toolCalls([inv("search_and_extract", args)]),
+            .toolCalls([inv("search_and_extract", args)]),
+            .finalResponse,
+        ])
+        var batchedHooks = batched.makeHooks()
+        batchedHooks.executeBatch = { calls in
+            calls.map { _ in
+                AgentLoopToolExecution(
+                    result: ToolEnvelope.failure(
+                        kind: .executionError,
+                        message: "No page content was retrieved from any attempted source.",
+                        tool: "search_and_extract",
+                        retryable: false
+                    ),
+                    isError: true
+                )
+            }
+        }
+        let batchedResult = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: batchedHooks
+        )
+        #expect(batched.builtNotices.count == 3)
+        #expect(batched.builtNotices[2].contains { $0.contains("has now failed 2 times") })
+        #expect(batchedResult.exit == .toolRejected)
+    }
+
     @Test func identicalRepeatedFailureIsTerminal() {
         let result = ToolEnvelope.failure(
             kind: .invalidArgs,

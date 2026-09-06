@@ -476,6 +476,20 @@ public final class AgentTaskState {
         readLikeTools.contains(name) || name == "file_write" || name == "sandbox_write_file"
     }
 
+    /// How many times the held error for this exact call has been replayed
+    /// so far (0 = never). The loop's stop rule reads it after a replay.
+    public func heldErrorReplayCount(name: String, argsJSON: String) -> Int {
+        heldErrorReplays[signature(name: name, argsJSON: argsJSON)] ?? 0
+    }
+
+    /// Retrieval tools whose as-is failure is held and replayed
+    /// (`search_and_extract`): a replayed failure here has no side effect to
+    /// protect, and the escalation notice tells the model to change the
+    /// source, so the loop lets that notice land before ending the run.
+    public static func isRetrievalAsIsFailureTool(_ name: String) -> Bool {
+        deterministicAsIsFailureTools.contains(name)
+    }
+
     /// If this call re-issues something the loop already holds the exact
     /// answer for, return that EXACT envelope so the loop replays it instead
     /// of re-executing. Two sources, checked in order:

@@ -1996,9 +1996,27 @@ enum AgentToolLoop {
         }
     }
 
-    static func shouldStopAfterToolOutcome(_ outcome: AgentLoopToolOutcome) -> Bool {
+    static func shouldStopAfterToolOutcome(
+        _ outcome: AgentLoopToolOutcome,
+        heldErrorReplays: Int = 0
+    ) -> Bool {
         guard outcome.wasError || ToolEnvelope.isError(outcome.result) else { return false }
-        if outcome.wasDeduped { return true }
+        if outcome.wasDeduped {
+            // A replayed retrieval failure (`search_and_extract`: the same
+            // URL failed as-is) is not a side effect, and the escalation
+            // notice staged with the replay tells the model to change the
+            // source. Ornith 9B research run (2026-09-06, reasoning on): the
+            // second identical 404 ended the whole turn with "The requested
+            // action was not completed." before that notice could reach the
+            // model. Let it land once; the same call replayed AGAIN ends the
+            // run exactly as before.
+            if AgentTaskState.isRetrievalAsIsFailureTool(outcome.invocation.toolName),
+                heldErrorReplays <= 1
+            {
+                return false
+            }
+            return true
+        }
         if isRecoverableTodoContractResult(outcome.result) { return false }
         if isTerminalDesktopSubagentFailure(
             toolName: outcome.invocation.toolName,
@@ -2995,7 +3013,15 @@ enum AgentToolLoop {
                         return await finishBatch(.cancelled)
                     }
                     if policy.stopOnToolRejection,
-                        let rejected = outcomes.first(where: Self.shouldStopAfterToolOutcome)
+                        let rejected = outcomes.first(where: {
+                            Self.shouldStopAfterToolOutcome(
+                                $0,
+                                heldErrorReplays: state.heldErrorReplayCount(
+                                    name: $0.invocation.toolName,
+                                    argsJSON: $0.invocation.jsonArguments
+                                )
+                            )
+                        })
                     {
                         await emitToolRejection(rejected)
                         return await finishBatch(.toolRejected)
@@ -3146,7 +3172,13 @@ enum AgentToolLoop {
                                 replaceStateNotice(Self.dedupeNotice)
                             }
                             if policy.stopOnToolRejection,
-                                Self.shouldStopAfterToolOutcome(outcome)
+                                Self.shouldStopAfterToolOutcome(
+                                    outcome,
+                                    heldErrorReplays: state.heldErrorReplayCount(
+                                        name: invocation.toolName,
+                                        argsJSON: invocation.jsonArguments
+                                    )
+                                )
                             {
                                 await emitToolRejection(outcome)
                                 return RunResult(exit: .toolRejected, iterations: iteration)

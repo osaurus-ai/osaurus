@@ -7812,6 +7812,7 @@ final class ChatSession: ObservableObject {
                         )
                     }
 
+                    let loopStartedAt = Date()
                     let runResult = try await AgentToolLoop.run(
                         policy: AgentLoopPolicy(
                             maxIterations: maxAttempts,
@@ -7826,6 +7827,10 @@ final class ChatSession: ObservableObject {
                         hooks: loopHooks
                     )
 
+                    print(
+                        "[Osaurus][Loop] exit=\(runResult.exit) iterations=\(runResult.iterations) "
+                            + "elapsedMs=\(Int(Date().timeIntervalSince(loopStartedAt) * 1000))"
+                    )
                     if runResult.exit == .toolRejected {
                         // A rejected/failed tool row is already recorded in
                         // history for the user and for the model-visible
@@ -7837,6 +7842,15 @@ final class ChatSession: ObservableObject {
                         // fingerprint immediately after a tool failure,
                         // making the next send look like a cold prefill.
                         lastStreamError = "Tool call failed."
+                        // The turn that closed on the rejection is terminal:
+                        // stamp it so the persisted row can be told apart
+                        // from an in-flight step (an Ornith research run
+                        // that ended this way left NULL, indistinguishable
+                        // from a run still working). Never "cancelled" — the
+                        // stop path keeps its own marker for that.
+                        if assistantTurn.terminalStopReason == nil {
+                            assistantTurn.terminalStopReason = "tool_rejected"
+                        }
                     }
 
                     if runResult.exit == .overBudget {
