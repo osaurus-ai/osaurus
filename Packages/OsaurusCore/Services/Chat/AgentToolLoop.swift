@@ -316,6 +316,10 @@ enum AgentLoopModelStep {
         else { return false }
 
         if last.hasSuffix(":") { return true }
+        // A colon WITH content after it is the answer itself ("I will
+        // summarize what the sources agree on: cocoa polyphenols bind…"),
+        // never a promise of a call (cross-family control, 2026-09-06).
+        if last.contains(": ") { return false }
 
         // "Let me check the result" / "I'll write these now" as the whole
         // closing line, with no answer after it. Bounded length keeps this
@@ -399,6 +403,8 @@ enum AgentLoopModelStep {
     /// requests to the user, never a promised call: they stay final.
     private static let closingSignOffPrefixes: [String] = [
         "let me know", "let me be ", "let me explain", "let me clarify", "let me summarize", "let me summarise",
+        "i'll summarize", "i'll summarise", "i will summarize", "i will summarise", "i'll explain", "i will explain",
+        "i'll answer", "i will answer", "i'll note", "i will note", "i'll say ", "i will say ",
         "i'll be ", "i will be ", "i'll let you know", "i will let you know", "i'll wait", "i will wait",
         "i'll stand by", "i will stand by", "i'll leave ", "i will leave ", "i'll stop ", "i will stop ",
         "i'll hold ", "i will hold ", "i'll need ", "i will need ", "i'll have to ", "i will have to ",
