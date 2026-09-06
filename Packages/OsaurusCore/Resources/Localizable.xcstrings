@@ -49891,6 +49891,88 @@
         }
       }
     },
+    "computer.use.diagnostics.key.label": {
+      "comment": "Field label in the Computer Use autonomy gate inspector for the keyboard key used by press_key. Kept separate from the generic 'Key' key, which means a credential or API key elsewhere.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Taste"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Key"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "키"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Клавиша"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按键"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按鍵"
+          }
+        }
+      }
+    },
+    "computer.use.diagnostics.verb.type": {
+      "comment": "Action label in the Computer Use autonomy gate inspector for typing text. Kept separate from the generic 'Type' key, which means a model or schema category elsewhere.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Eingeben"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Type"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "입력"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ввести"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "输入"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "輸入"
+          }
+        }
+      }
+    },
     "Concurrency": {
       "localizations": {
         "de": {
@@ -150910,7 +150992,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "按键"
+            "value": "按下按键"
           }
         },
         "zh-Hant": {
