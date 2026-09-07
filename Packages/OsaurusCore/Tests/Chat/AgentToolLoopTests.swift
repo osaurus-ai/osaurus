@@ -164,6 +164,16 @@ private func chatPolicy(maxIterations: Int = 15) -> AgentLoopPolicy {
     )
 }
 
+/// Chat's real policy: incomplete work ends in a truthful status step.
+private func chatWrapUpPolicy(maxIterations: Int = 15) -> AgentLoopPolicy {
+    AgentLoopPolicy(
+        maxIterations: maxIterations,
+        stopOnToolRejection: true,
+        dedupeNoticeEnabled: true,
+        wrapsUpIncompleteWork: true
+    )
+}
+
 private func headlessPolicy(maxIterations: Int = 30) -> AgentLoopPolicy {
     AgentLoopPolicy(
         maxIterations: maxIterations,
@@ -734,6 +744,10 @@ struct AgentToolLoopTests {
             "I have enough sources. Let me write the research report to the host files folder.",
             "No, I haven't written the file yet. Let me do that now.",
             "I have four solid sources. Let me get one more specifically on the cocoa/chocolate clinical study to complete the picture.",
+            // 128 characters, above the old 120-character bound (run 121436 R1).
+            "I'll search for more accessible sources with the scientific data, including the 71% inhibition figure and peer-reviewed studies.",
+            // Three retries streamed into one bubble with no separator (run 130916 R2).
+            "I have gathered comprehensive information from six sources. Let me now append the additional content from the apollo247.com source to my document.I'll append the extracted text from the apollo247.com source to my document.I'll append the extracted text from the apollo247.com source to my document.",
         ]
         for text in endings {
             #expect(AgentLoopModelStep.isAnnounceOnly(text), "must be recovered: \(text)")
@@ -756,9 +770,140 @@ struct AgentToolLoopTests {
             "Done. I'll be here if you need more.",
             "The file is written and verified. I will wait for your review before continuing.",
             "That page is blocked everywhere I tried. I'll need a different source from you to go further.",
+            // Decimal points and abbreviations are not sentence boundaries: no uppercase after them.
+            "The inhibition was 63.5% in the 2009 trial (Hotz et al. 2009). Let me know if you want the table.",
         ]
         for text in signOffs {
             #expect(!AgentLoopModelStep.isAnnounceOnly(text), "must stay final: \(text)")
+        }
+    }
+
+    /// The two continuations that still ended untruthfully on 2026-09-06
+    /// (folder attached, file already written):
+    /// (a) run 065533 R2 — "I'll continue by fetching the next source to
+    ///     extract more detailed information…" announced twice, then the
+    ///     narration accepted as the final answer;
+    /// (b) run 075032 R2 — the same blocked URL until the second replay,
+    ///     then "The requested action was not completed." as the answer.
+    /// Under chat's policy both must end in ONE tool-free status step whose
+    /// notice names the completed/undone/blocked split; headless surfaces
+    /// keep their previous exits.
+    @Test func exhaustedAnnouncementsEndInATruthfulStatusStepNotAPromise() async throws {
+        let promise = "I'll continue by fetching the next source to extract more detailed information about chocolate and iron absorption."
+        let surface = ScriptedLoopSurface(steps: [
+            .announcedToolCall, .announcedToolCall, .announcedToolCall, .finalResponse,
+        ])
+        let result = try await AgentToolLoop.run(
+            policy: chatWrapUpPolicy(), state: AgentTaskState(), hooks: surface.makeHooks())
+        #expect(result.exit == .finalResponse)
+        // Two nudges were delivered, the third announcement is not retried,
+        // and no fourth model step runs inside the loop.
+        #expect(surface.builtNotices.count == 3)
+        let notice = try #require(result.wrapUpNotice)
+        #expect(notice.contains("described the next action 3 times without making a tool call"))
+        #expect(notice.contains("what remains undone"))
+        #expect(notice.contains("Do not promise to do it next"))
+        // Run 123927 R1: the status step listed the completed sources truthfully
+        // and then closed with "Writing it now." — a promise no tool can keep
+        // in a tool-free response.
+        #expect(notice.contains("This response ends the turn: do not promise any further action (fetching, writing, verifying)"))
+        _ = promise
+
+        // Headless: the narration is still accepted as final, no wrap-up.
+        let headless = ScriptedLoopSurface(steps: [
+            .announcedToolCall, .announcedToolCall, .announcedToolCall, .finalResponse,
+        ])
+        let headlessResult = try await AgentToolLoop.run(
+            policy: chatPolicy(), state: AgentTaskState(), hooks: headless.makeHooks())
+        #expect(headlessResult.exit == .finalResponse)
+        #expect(headlessResult.wrapUpNotice == nil)
+    }
+
+    @Test func repeatedRetrievalFailureEndsInATruthfulStatusStepNotAnErrorSentence() async throws {
+        let args = #"{"url":"https://www.academia.edu/145246435/Iron_bioavailability_of_cocoa_powder"}"#
+        let failure = ToolEnvelope.failure(
+            kind: .executionError,
+            message: "No page content was retrieved from any attempted source.",
+            tool: "search_and_extract",
+            retryable: false
+        )
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("search_and_extract", args)]),
+            .toolCalls([inv("search_and_extract", args)]),
+            .toolCalls([inv("search_and_extract", args)]),
+            .finalResponse,
+        ])
+        var hooks = surface.makeHooks()
+        var rejectionTexts: [String] = []
+        hooks.emitToolRejectionText = { rejectionTexts.append($0) }
+        hooks.executeBatch = { calls in
+            calls.map { _ in AgentLoopToolExecution(result: failure, isError: true) }
+        }
+        let result = try await AgentToolLoop.run(
+            policy: chatWrapUpPolicy(), state: AgentTaskState(), hooks: hooks)
+        #expect(result.exit == .finalResponse)
+        #expect(rejectionTexts.isEmpty, "no 'The requested action was not completed.' sentence")
+        let notice = try #require(result.wrapUpNotice)
+        #expect(notice.contains("has failed 3 times"))
+        #expect(notice.contains("cached replay of the earlier failure, not a new network request"))
+        #expect(notice.contains("keep every successful result"))
+        #expect(notice.contains("This response ends the turn: do not promise any further action (fetching, writing, verifying)"))
+        // The replayed envelopes in the transcript say they are cached, so
+        // "I retried" cannot be an honest reading of them.
+        let replays = surface.batchOutcomes.flatMap { $0 }.filter { $0.wasDeduped }
+        #expect(replays.count == 2)
+        for replay in replays {
+            #expect(replay.result.contains("\"cached_replay\":true"))
+            #expect(replay.result.contains("Cached replay of the identical earlier attempt (no new network request was made)."))
+        }
+        // The successful and failed rows were all recorded before the wrap-up.
+        #expect(surface.batchOutcomes.count == 3)
+    }
+
+    /// Cross-family control for the widened announcement rules: ordinary
+    /// answers, quotations, code, abbreviations, decimals and non-English
+    /// text must stay final, whatever family produced them. A false positive
+    /// here costs every model an extra generation.
+    @Test func ordinaryAnswersAcrossStylesStayFinal() {
+        let answers = [
+            // Plain answers that happen to open with first-person verbs.
+            "I'll be honest: the evidence is mixed, and the effect size is small.",
+            "I will summarize what the three sources agree on: cocoa polyphenols bind non-heme iron in the gut.",
+            "Let me know if you want the table as CSV.",
+            // Quotations and reported speech.
+            "The author writes: \"Let me try to explain the mechanism.\" That sentence is the paper's framing, not a plan.",
+            "As Hotz et al. put it, \"we will fetch further samples in a follow-up study\".",
+            // Code and technical text (fenced, inline, identifiers, versions).
+            "Use `git fetch origin` and then `git rebase origin/main`.",
+            "```swift\nlet me = Person()\nprint(me.fetch())\n```",
+            "The fix landed in v1.6.28. Upgrade with `brew upgrade vmlx`.",
+            // Abbreviations, decimals, initials, ellipses.
+            "Absorption fell 63.5% (Hotz et al. 2009). Prof. J. R. Hunt reported similar figures i.e. a 50–70% drop.",
+            "Results: 12.5 mg/100 g vs. 3.1 mg/100 g. Sources: USDA ARS, NIH ODS.",
+            "The mechanism is well established… the polyphenols chelate Fe3+ in the lumen.",
+            // Non-English answers.
+            "Sí: el cacao inhibe la absorción de hierro no hemo. Déjame saber si quieres las fuentes.",
+            "Ja, Kakao hemmt die Aufnahme von Nicht-Häm-Eisen. Ich werde die Quellen unten auflisten:\n- USDA\n- NIH",
+            "はい、ココアは非ヘム鉄の吸収を阻害します。詳細は上記の通りです。",
+            "Oui, le cacao inhibe l'absorption du fer non héminique. Voici les sources : USDA, NIH.",
+            // Structural tails.
+            "Summary:\n- Yes, moderately.\n- Separate cocoa from iron-rich meals by an hour.\n- Vitamin C offsets it.",
+            "| Food | Iron mg | Inhibition |\n|---|---|---|\n| Cocoa | 13.9 | high |",
+        ]
+        for text in answers {
+            #expect(!AgentLoopModelStep.isAnnounceOnly(text), "must stay final: \(text)")
+            let step = AgentLoopModelStep.classifyTerminal(
+                contentIsBlank: false,
+                thinkingIsBlank: true,
+                stopReason: "stop",
+                requiresVisibleFinalResponse: false,
+                toolsWereOffered: true,
+                content: text
+            )
+            guard case .finalResponse = step else {
+                Issue.record("a real answer must stay final: \(text)")
+                return
+            }
         }
     }
 

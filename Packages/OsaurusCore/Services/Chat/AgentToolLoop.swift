@@ -80,6 +80,16 @@ struct AgentLoopPolicy: Sendable {
     /// zero and retain their existing semantics.
     var todoRequiredBeforeToolCallCount: Int = 0
 
+    /// Chat-only truthful termination. When announce-only recovery is
+    /// exhausted, or the same retrieval has failed and been replayed until
+    /// the run must stop, the run does NOT end on the model's last promise
+    /// or on an error sentence: the driver returns a `wrapUpNotice` and the
+    /// surface streams one tool-free status step (the same mechanism as the
+    /// iteration cap) asking for completed work, unfinished work and the
+    /// blocker. Exactly one such step; no retries, no sampler changes.
+    /// Headless surfaces keep their previous exits.
+    var wrapsUpIncompleteWork: Bool = false
+
     init(
         maxIterations: Int,
         budgetWarningThreshold: Int = 3,
@@ -87,8 +97,10 @@ struct AgentLoopPolicy: Sendable {
         dedupeNoticeEnabled: Bool,
         todoStalenessThreshold: Int = 4,
         maxDataMovementSteps: Int = 0,
-        todoRequiredBeforeToolCallCount: Int = 0
+        todoRequiredBeforeToolCallCount: Int = 0,
+        wrapsUpIncompleteWork: Bool = false
     ) {
+        self.wrapsUpIncompleteWork = wrapsUpIncompleteWork
         self.maxIterations = max(1, maxIterations)
         self.budgetWarningThreshold = budgetWarningThreshold
         self.stopOnToolRejection = stopOnToolRejection
@@ -304,12 +316,26 @@ enum AgentLoopModelStep {
         else { return false }
 
         if last.hasSuffix(":") { return true }
+        // A colon WITH content after it is the answer itself ("I will
+        // summarize what the sources agree on: cocoa polyphenols bind…"),
+        // never a promise of a call (cross-family control, 2026-09-06).
+        if last.contains(": ") { return false }
 
         // "Let me check the result" / "I'll write these now" as the whole
         // closing line, with no answer after it. Bounded length keeps this
         // from matching a long sentence that merely opens with "I'll".
+        // Bound raised from 120: a 128-character promise ("I'll search for
+        // more accessible sources with the scientific data, including the
+        // 71% inhibition figure and peer-reviewed studies.") closed an Ornith
+        // turn as a final answer on 2026-09-06 (run 121436 R1).
+        // The sign-off exclusions apply to the line rule as well: "I'll be
+        // honest: the evidence is mixed…" is an answer, not a promise (caught
+        // by the cross-family control on 2026-09-06).
         let lowered = last.lowercased()
-        if last.count <= 120, Self.announcementPrefixes.contains(where: { lowered.hasPrefix($0) }) {
+        if last.count <= Self.announcementLengthBound,
+            Self.announcementPrefixes.contains(where: { lowered.hasPrefix($0) }),
+            !Self.closingSignOffPrefixes.contains(where: { lowered.hasPrefix($0) })
+        {
             return true
         }
 
@@ -327,7 +353,8 @@ enum AgentLoopModelStep {
         // person "about to act" phrase) with an explicit sign-off exclusion
         // list ("let me know…", "I'll be here…", "I will wait…"), so a promise
         // of work is recovered whatever the verb, and a sign-off stays final.
-        guard let sentence = Self.closingSentence(of: last), sentence.count <= 120 else { return false }
+        guard let sentence = Self.closingSentence(of: last), sentence.count <= Self.announcementLengthBound
+        else { return false }
         let loweredSentence = sentence.lowercased()
         guard Self.closingActionOpeners.contains(where: { loweredSentence.hasPrefix($0) }) else { return false }
         return !Self.closingSignOffPrefixes.contains(where: { loweredSentence.hasPrefix($0) })
@@ -337,16 +364,33 @@ enum AgentLoopModelStep {
     /// "? " boundary. `nil` when the line is a single sentence (the line rule
     /// already judged it).
     private static func closingSentence(of line: String) -> String? {
+        // A boundary is a terminator followed by whitespace OR directly by
+        // an uppercase letter: announce-only retries stream into the same
+        // bubble with no separator ("…to my document.I'll append…", run
+        // 130916 R2), and a split only on ". " left the whole 250-character
+        // tail as one "sentence", so the third announcement was accepted
+        // as the final answer.
         var cut: String.Index? = nil
-        for boundary in [". ", "! ", "? "] {
-            if let range = line.range(of: boundary, options: .backwards) {
-                if cut == nil || range.upperBound > cut! { cut = range.upperBound }
+        var index = line.startIndex
+        while index < line.endIndex {
+            let ch = line[index]
+            if ch == "." || ch == "!" || ch == "?" {
+                let next = line.index(after: index)
+                if next < line.endIndex, line[next].isWhitespace || line[next].isUppercase {
+                    cut = next
+                }
             }
+            index = line.index(after: index)
         }
         guard let cut else { return nil }
         let tail = line[cut...].trimmingCharacters(in: .whitespacesAndNewlines)
         return tail.isEmpty ? nil : tail
     }
+
+    /// Longest line / closing sentence still read as an announcement. Long
+    /// enough for a promise that names its sources and figures, short enough
+    /// that a paragraph opening with "I'll" is still an answer.
+    static let announcementLengthBound = 200
 
     /// First-person "about to act" openers for the closing-sentence rule.
     /// Lowercased, matched as prefixes of the final sentence only.
@@ -359,6 +403,8 @@ enum AgentLoopModelStep {
     /// requests to the user, never a promised call: they stay final.
     private static let closingSignOffPrefixes: [String] = [
         "let me know", "let me be ", "let me explain", "let me clarify", "let me summarize", "let me summarise",
+        "i'll summarize", "i'll summarise", "i will summarize", "i will summarise", "i'll explain", "i will explain",
+        "i'll answer", "i will answer", "i'll note", "i will note", "i'll say ", "i will say ",
         "i'll be ", "i will be ", "i'll let you know", "i will let you know", "i'll wait", "i will wait",
         "i'll stand by", "i will stand by", "i'll leave ", "i will leave ", "i'll stop ", "i will stop ",
         "i'll hold ", "i will hold ", "i'll need ", "i will need ", "i'll have to ", "i will have to ",
@@ -1150,6 +1196,10 @@ enum AgentToolLoop {
         /// Announce-only recovery ran out of nudges; the model's preamble is
         /// kept as the answer.
         case announcedToolCallRecoveryExhausted
+        /// The same retrieval failed and was replayed until the run had to
+        /// stop; under `wrapsUpIncompleteWork` the surface streams a truthful
+        /// status step instead of ending on the error sentence.
+        case repeatedRetrievalFailureWrapUp
         /// The model asked whether to continue and no tracked work was
         /// pending, so the question was handed to the user.
         case continuationRequestNoPendingWork
@@ -1188,11 +1238,17 @@ enum AgentToolLoop {
         /// reaches the hard iteration cap. Nil for every other exit, including
         /// an ordinary tool-loop cap with no Todo contract.
         var unfinishedTodoCount: Int?
+        /// Set when the run stopped on incomplete work under
+        /// `AgentLoopPolicy.wrapsUpIncompleteWork`: the visible text is a
+        /// promise or an error, not an answer, and the surface must stream
+        /// one tool-free status step carrying this notice. Nil otherwise.
+        var wrapUpNotice: String?
 
-        init(exit: Exit, iterations: Int, unfinishedTodoCount: Int? = nil) {
+        init(exit: Exit, iterations: Int, unfinishedTodoCount: Int? = nil, wrapUpNotice: String? = nil) {
             self.exit = exit
             self.iterations = iterations
             self.unfinishedTodoCount = unfinishedTodoCount
+            self.wrapUpNotice = wrapUpNotice
         }
     }
 
@@ -1454,6 +1510,40 @@ enum AgentToolLoop {
     static let iterationCapEmptyWrapUpText =
         "The configured tool-call limit was reached before a final answer was written. "
         + "The tool results above are the state of the work; send a message to continue."
+
+    /// Visible text when the truthful-status step after incomplete work
+    /// produced no visible content. Not a summary — just the honest state.
+    static let incompleteWorkEmptyWrapUpText =
+        "The run stopped before the requested work was complete. "
+        + "The tool results above are the state of the work; send a message to continue."
+
+    /// The one tool-free status step after announce-only recovery ran out:
+    /// the model described its next action `announcements` times without
+    /// calling a tool. Ornith 9B (2026-09-06, run 065533 R2): "I'll continue
+    /// by fetching the next source…" twice, accepted as the final answer.
+    static func announceExhaustedWrapUpNotice(announcements: Int) -> String {
+        "[System Notice] You described the next action \(announcements) times without making a tool call, "
+            + "so nothing further ran. No more tools are available in this response. Report truthfully: "
+            + "what was completed (keep every result already above), what remains undone, and what blocked "
+            + "the step you kept announcing. Do not promise to do it next, and do not claim it was done. "
+            + "This response ends the turn: do not promise any further action (fetching, writing, verifying) — "
+            + "the user decides what happens next."
+    }
+
+    /// The one tool-free status step after the same retrieval failed and was
+    /// replayed until the run had to stop. Ornith 9B (2026-09-06, run 075032
+    /// R2): five blocked URLs, then "The requested action was not completed."
+    /// as the whole answer. Distinguishes the cached replay from the real
+    /// network attempts so the model does not report the replay as a retry.
+    static func repeatedRetrievalWrapUpNotice(tool: String, failures: Int) -> String {
+        "[System Notice] The identical `\(tool)` retrieval has failed \(failures) times. "
+            + "The last result was a cached replay of the earlier failure, not a new network request, "
+            + "and this response cannot retry it. No more tools are available in this response. "
+            + "Report truthfully: what was completed (keep every successful result already above), "
+            + "what remains undone, and that this source is blocked. Do not promise to try again, "
+            + "and do not claim the failed page was read. This response ends the turn: do not promise any "
+            + "further action (fetching, writing, verifying) — the user decides what happens next."
+    }
 
     static let iterationCapWrapUpNotice =
         "[System Notice] The configured tool-call limit has been reached. "
@@ -2335,6 +2425,21 @@ enum AgentToolLoop {
         func emitToolRejection(_ outcome: AgentLoopToolOutcome) async {
             await hooks.emitToolRejectionText?(ToolEnvelope.failureMessage(outcome.result))
         }
+        /// Under `wrapsUpIncompleteWork`, a stop caused by a replayed
+        /// retrieval failure becomes a truthful status step instead of the
+        /// error sentence: returns the notice for it, nil for every other
+        /// rejection (denials and terminal failures keep stopping as before).
+        func repeatedRetrievalWrapUp(_ outcome: AgentLoopToolOutcome) -> String? {
+            guard policy.wrapsUpIncompleteWork, outcome.wasDeduped,
+                AgentTaskState.isRetrievalAsIsFailureTool(outcome.invocation.toolName)
+            else { return nil }
+            let replays = state.heldErrorReplayCount(
+                name: outcome.invocation.toolName,
+                argsJSON: outcome.invocation.jsonArguments
+            )
+            return Self.repeatedRetrievalWrapUpNotice(
+                tool: outcome.invocation.toolName, failures: replays + 1)
+        }
         // Total oversized streamed-call recoveries. One typed retry gives a
         // model a chance to switch to bounded/chunked writes without allowing
         // another unbounded decode loop.
@@ -2601,6 +2706,16 @@ enum AgentToolLoop {
                     continue
                 }
                 await recordExit(.finalResponse, .announcedToolCallRecoveryExhausted)
+                if policy.wrapsUpIncompleteWork {
+                    // The visible text is a promise, not an answer: the
+                    // surface streams one tool-free status step.
+                    return RunResult(
+                        exit: .finalResponse,
+                        iterations: iteration,
+                        wrapUpNotice: Self.announceExhaustedWrapUpNotice(
+                            announcements: consecutiveAnnouncedToolCalls)
+                    )
+                }
                 return RunResult(exit: .finalResponse, iterations: iteration)
 
             case .continuationRequest:
@@ -3036,6 +3151,12 @@ enum AgentToolLoop {
                             )
                         })
                     {
+                        if let notice = repeatedRetrievalWrapUp(rejected) {
+                            await recordExit(.finalResponse, .repeatedRetrievalFailureWrapUp)
+                            let finished = await finishBatch(.finalResponse)
+                            return RunResult(
+                                exit: .finalResponse, iterations: finished.iterations, wrapUpNotice: notice)
+                        }
                         await emitToolRejection(rejected)
                         return await finishBatch(.toolRejected)
                     }
@@ -3193,6 +3314,12 @@ enum AgentToolLoop {
                                     )
                                 )
                             {
+                                if let notice = repeatedRetrievalWrapUp(outcome) {
+                                    await hooks.onBatchComplete(outcomes)
+                                    await recordExit(.finalResponse, .repeatedRetrievalFailureWrapUp)
+                                    return RunResult(
+                                        exit: .finalResponse, iterations: iteration, wrapUpNotice: notice)
+                                }
                                 await emitToolRejection(outcome)
                                 return RunResult(exit: .toolRejected, iterations: iteration)
                             }

@@ -1522,8 +1522,12 @@ struct RuntimePolicySourceTests {
     @Test("iteration-cap wrap-up uses the typed chat stream decoder")
     func iterationCapWrapUpCannotLeakStreamingSentinels() throws {
         let chat = try Self.source("Views/Chat/ChatView.swift")
+        // The wrap-up stream lives in the nested `streamToolFreeWrapUp`
+        // (shared by the iteration-cap exit and the incomplete-work exits);
+        // the block under test runs from that function through the cap
+        // branch that calls it.
         let start = try #require(
-            chat.range(of: "if runResult.exit == .iterationCapReached && isRunActive(runId)")
+            chat.range(of: "func streamToolFreeWrapUp(notice: String, emptyText: String, failurePrefix: String) async {")
         )
         let end = try #require(
             chat.range(
@@ -1537,6 +1541,8 @@ struct RuntimePolicySourceTests {
         #expect(block.contains("assistantTurn = finalTurn"))
         #expect(block.contains("AgentLoopBudget.appendingTransientNotices("))
         #expect(block.contains("AgentToolLoop.iterationCapWrapUpNotice"))
+        #expect(block.contains("if runResult.exit == .iterationCapReached && isRunActive(runId)"))
+        #expect(block.contains("tools: nil"))
         #expect(!block.contains("let processor = StreamingDeltaProcessor("))
         #expect(!block.contains("processor.receiveDelta(delta)"))
     }

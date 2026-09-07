@@ -1140,7 +1140,16 @@ struct AgentTaskStateTests {
         let replay = try #require(
             state.heldResult(name: "search_and_extract", argsJSON: extractionArgs)
         )
-        #expect(replay == extractionFailure)
+        // The replay is the held failure marked as a cached replay: the
+        // original fields and message survive, plus `cached_replay: true`,
+        // the replay count, and a message prefix saying no new network
+        // request was made — so the transcript itself cannot read as a retry.
+        #expect(replay != extractionFailure)
+        #expect(replay.contains("\"cached_replay\":true"))
+        #expect(replay.contains("\"cached_replay_count\":1"))
+        #expect(replay.contains("Cached replay of the identical earlier attempt (no new network request was made). "))
+        #expect(replay.contains("do not claim these pages were read"))
+        #expect(replay.contains("\"extraction_failed_count\":1"))
         #expect(state.lastReplayNotice?.contains("was NOT re-executed") == true)
     }
 
