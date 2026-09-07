@@ -303,9 +303,14 @@ OpenRouter provides access to multiple model providers. Use model IDs like:
 ```
 Host: opencode.ai
 Protocol: HTTPS
-Base Path: /zen/v1
+Base Path: /zen/go/v1   (OpenCode Go)
+           /zen/v1      (OpenCode Zen)
 Auth: API Key (get from opencode.ai)
 ```
+
+Pick the API format by model family: OpenAI Chat Completions for most Go
+models, OpenAI Responses for Grok and Muse, Anthropic for MiniMax and Qwen
+(see https://opencode.ai/docs/go/).
 
 OpenCode Go rejects requests that lack an `x-opencode-session` header with
 HTTP 400 "cannot be routed efficiently". Osaurus adds that header automatically
