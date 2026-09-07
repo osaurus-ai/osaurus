@@ -148,6 +148,49 @@ struct ChatSessionStopTests {
         )
     }
 
+
+    /// A run stopped during its cold load observes cancellation only when the
+    /// abandoned load finally throws — seconds later. If a retry was sent in
+    /// the meantime it has reset `stopRequested`, and the stale task used to
+    /// take the "cancelled before any delta → restore draft" branch against
+    /// the RETRY's transcript: its user turn and assistant placeholder were
+    /// rolled back while its stream kept generating into a detached turn, so
+    /// the engine answered and nothing was persisted (Flash-Next cold-load
+    /// Stop + retry within ~10 s, 2026-09-06/07). The stale task must leave
+    /// the newer run's turns alone.
+    @Test
+    func stop_duringColdLoad_thenRetry_lateCancellationKeepsRetryTurns() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            let engine = LateCancellingThenAnsweringEngine()
+            session.chatEngineFactory = { _ in engine }
+
+            session.send("Count to 400")
+            try await waitUntilAsync(timeout: Self.asyncTimeout) { await engine.firstRequestStarted }
+            session.stop()
+            #expect(session.isStreaming == false)
+
+            // Retry while the first task is still winding down (its "load"
+            // has not thrown yet).
+            session.send("What is 5 times 6?")
+            #expect(session.turns.last(where: { $0.role == .user })?.content == "What is 5 times 6?")
+
+            // Let the first task's late CancellationError land, then the
+            // retry's stream finish.
+            await engine.releaseFirst()
+            try await waitUntilAsync(timeout: Self.asyncTimeout) { await engine.secondRequestFinished }
+            try await waitUntil(timeout: Self.asyncTimeout) { session.isSendActiveForComposer == false }
+
+            let users = session.turns.filter { $0.role == .user }.map(\.content)
+            #expect(users == ["Count to 400", "What is 5 times 6?"], "the retry's user turn must survive the stale task's cancellation")
+            let answer = session.turns.last
+            #expect(answer?.role == .assistant)
+            #expect(answer?.content == "30", "the retry's answer must land in the transcript, not in a detached turn")
+            #expect(answer?.terminalStopReason != "cancelled")
+            #expect(session.input.isEmpty, "the stale task must not restore the stopped draft into the composer of a newer run")
+        }
+    }
+
     @Test
     func stop_ignoresLateResultsWhenEngineSetupIgnoresCancellation() async throws {
         try await ChatHistoryTestStorage.run {
@@ -367,6 +410,42 @@ struct ChatSessionStopTests {
             #expect(session.lastCompletedAssistantTurnId == completed.id)
             #expect(session.isSendActiveForComposer == false)
         }
+    }
+}
+
+
+/// First request: blocks like a cold load that ignores cooperative
+/// cancellation until it is released, then throws CancellationError (the
+/// abandoned load's late failure). Second request: answers "30".
+private actor LateCancellingThenAnsweringEngine: ChatEngineProtocol {
+    private(set) var firstRequestStarted = false
+    private(set) var secondRequestFinished = false
+    private var requests = 0
+    private var release: CheckedContinuation<Void, Never>?
+
+    func releaseFirst() {
+        release?.resume()
+        release = nil
+    }
+
+    func streamChat(request _: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
+        requests += 1
+        if requests == 1 {
+            firstRequestStarted = true
+            await withCheckedContinuation { release = $0 }
+            throw CancellationError()
+        }
+        return AsyncThrowingStream { continuation in
+            continuation.yield("30")
+            continuation.finish()
+            Task { await self.markSecondFinished() }
+        }
+    }
+
+    private func markSecondFinished() { secondRequestFinished = true }
+
+    func completeChat(request _: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+        throw NSError(domain: "ChatSessionStopTests", code: 7)
     }
 }
 

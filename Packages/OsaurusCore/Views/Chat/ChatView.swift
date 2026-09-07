@@ -8064,7 +8064,19 @@ final class ChatSession: ObservableObject {
                     // bubble, which was its own bug. This branch fixes
                     // both cases.
                     lastStreamError = nil
-                    if stopRequested {
+                    // `stopRequested` is session state and the NEXT send resets
+                    // it. A run stopped during its cold load only observes
+                    // this cancellation when the abandoned load finally
+                    // throws — seconds later, by which time a retry may
+                    // already own the session. Deciding by the flag alone
+                    // then rolled the RETRY's user turn and assistant
+                    // placeholder out of the transcript while its stream
+                    // kept generating into a detached turn (Flash-Next
+                    // cold-load Stop + retry within ~10 s: engine answered,
+                    // nothing persisted). Only the run that still owns the
+                    // session may roll the transcript back; a stale task
+                    // leaves the newer run's turns alone.
+                    if stopRequested || !isRunActive(runId) {
                         debugLog("send: stop() cancelled mid-prepare — keeping user turn")
                     } else {
                         debugLog("send: cancelled before any delta — restoring draft")
