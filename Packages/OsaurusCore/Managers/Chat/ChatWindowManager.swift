@@ -682,12 +682,27 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         return panel
     }
 
+    /// Default size for a brand-new chat window (before any frame autosave
+    /// exists). The session sidebar is shown by default and takes 260pt of
+    /// this, so the width is chosen to leave a comfortable ~800pt for the
+    /// chat pane. Shrunk to fit the target screen's visible frame on small
+    /// displays.
+    static func defaultWindowSize(fitting screen: NSScreen?) -> NSSize {
+        let preferred = WindowConfiguration.chat.defaultSize
+        guard let vf = screen?.visibleFrame else { return preferred }
+        let margin: CGFloat = 40
+        return NSSize(
+            width: min(preferred.width, max(vf.width - margin, 600)),
+            height: min(preferred.height, max(vf.height - margin, 500))
+        )
+    }
+
     /// Shared logic for creating the basic ChatPanel with its toolbar and delegate.
     private func createChatPanel(windowId: UUID, windowState: ChatWindowState) -> ChatPanel {
         // Calculate centered position on active screen, with offset for multiple windows
-        let defaultSize = NSSize(width: 800, height: 610)
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        let defaultSize = Self.defaultWindowSize(fitting: screen)
 
         // Cascade offset based on number of existing windows (25pt per window)
         // Use count - 1 so the first window starts at the base position
