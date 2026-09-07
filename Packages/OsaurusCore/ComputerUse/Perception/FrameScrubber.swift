@@ -38,11 +38,20 @@ public struct ScrubReport: Sendable, Equatable {
     public let maskedRegions: Int
     /// Count of masked regions per PII category (empty in `.allText` mode).
     public let categories: [String: Int]
+    /// Whether OCR completed. A failed OCR pass must not be confused with a
+    /// successful scan that found no text.
+    public let ocrSucceeded: Bool
 
-    public init(textRegions: Int, maskedRegions: Int, categories: [String: Int]) {
+    public init(
+        textRegions: Int,
+        maskedRegions: Int,
+        categories: [String: Int],
+        ocrSucceeded: Bool = true
+    ) {
         self.textRegions = textRegions
         self.maskedRegions = maskedRegions
         self.categories = categories
+        self.ocrSucceeded = ocrSucceeded
     }
 
     public var didMaskAnything: Bool { maskedRegions > 0 }
@@ -139,13 +148,17 @@ public enum FrameScrubber {
                 for span in spans { categories[categoryToken(span.category), default: 0] += 1 }
             }
         }
-        let masked = paintMasks(over: cgImage, normalizedRegions: regions) ?? cgImage
+        guard scan.ocrSucceeded else { return nil }
+        guard let maskResult = paintMasks(over: cgImage, normalizedRegions: regions) else {
+            return nil
+        }
         let report = ScrubReport(
             textRegions: scan.textRegions,
-            maskedRegions: regions.count,
-            categories: categories
+            maskedRegions: maskResult.paintedRegions,
+            categories: categories,
+            ocrSucceeded: scan.ocrSucceeded
         )
-        return (masked, report)
+        return (maskResult.image, report)
     }
 
     /// The regex ruleset to run over OCR'd text: the user's configured set when
@@ -166,6 +179,8 @@ public enum FrameScrubber {
         let regions: [CGRect]
         let categories: [String: Int]
         let textRegions: Int
+        /// False when the Vision request itself failed.
+        let ocrSucceeded: Bool
         /// One per recognized line: its text + normalized bounding box. Used by
         /// the `.pii` model pass, which runs the NER classifier per region and
         /// masks the whole region on a hit. Empty in `.allText` (every region
@@ -188,8 +203,19 @@ public enum FrameScrubber {
         ruleset: RegexEntityDetector.EffectiveRuleSet
     ) async -> OCRScan {
         await withCheckedContinuation { (continuation: CheckedContinuation<OCRScan, Never>) in
-            let request = VNRecognizeTextRequest { request, _ in
-                let observations = (request.results as? [VNRecognizedTextObservation]) ?? []
+            let request = VNRecognizeTextRequest { request, error in
+                guard error == nil, let observations = request.results as? [VNRecognizedTextObservation] else {
+                    continuation.resume(
+                        returning: OCRScan(
+                            regions: [],
+                            categories: [:],
+                            textRegions: 0,
+                            ocrSucceeded: false,
+                            observations: []
+                        )
+                    )
+                    return
+                }
                 var regions: [CGRect] = []
                 var categories: [String: Int] = [:]
                 var scanned: [OCRObservation] = []
@@ -221,6 +247,7 @@ public enum FrameScrubber {
                         regions: regions,
                         categories: categories,
                         textRegions: observations.count,
+                        ocrSucceeded: true,
                         observations: scanned
                     )
                 )
@@ -236,6 +263,7 @@ public enum FrameScrubber {
                         regions: [],
                         categories: [:],
                         textRegions: 0,
+                        ocrSucceeded: false,
                         observations: []
                     )
                 )
@@ -245,13 +273,64 @@ public enum FrameScrubber {
 
     // MARK: - Masking
 
+    private struct MaskPaintResult {
+        let image: CGImage
+        let paintedRegions: Int
+    }
+
+    /// Convert normalized Vision boxes into finite, image-bounded pixel rects.
+    /// Invalid or fully out-of-bounds boxes are dropped so reports cannot claim
+    /// a region was masked when no pixels were actually painted.
+    static func maskRects(
+        for normalizedRegions: [CGRect],
+        imageWidth width: Int,
+        imageHeight height: Int
+    ) -> [CGRect] {
+        guard width > 0, height > 0 else { return [] }
+        let bounds = CGRect(x: 0, y: 0, width: width, height: height)
+        let normalizedBounds = CGRect(x: 0, y: 0, width: 1, height: 1)
+        let w = CGFloat(width)
+        let h = CGFloat(height)
+        let padX = w * 0.004
+        let padY = h * 0.004
+
+        return normalizedRegions.compactMap { raw in
+            let region = raw.standardized
+            guard
+                region.origin.x.isFinite,
+                region.origin.y.isFinite,
+                region.size.width.isFinite,
+                region.size.height.isFinite
+            else { return nil }
+            let clipped = region.intersection(normalizedBounds)
+            guard !clipped.isNull, clipped.width > 0, clipped.height > 0 else {
+                return nil
+            }
+            let padded = CGRect(
+                x: clipped.minX * w - padX,
+                y: clipped.minY * h - padY,
+                width: clipped.width * w + padX * 2,
+                height: clipped.height * h + padY * 2
+            )
+            let bounded = padded.intersection(bounds)
+            guard !bounded.isNull, bounded.width > 0, bounded.height > 0 else {
+                return nil
+            }
+            return bounded
+        }
+    }
+
     /// Paint opaque rectangles over the given normalized (0…1, bottom-left)
     /// regions. CGContext is bottom-left origin too, so Vision boxes map
     /// directly with no y-flip.
-    private static func paintMasks(over image: CGImage, normalizedRegions: [CGRect]) -> CGImage? {
+    private static func paintMasks(
+        over image: CGImage,
+        normalizedRegions: [CGRect]
+    ) -> MaskPaintResult? {
         let width = image.width
         let height = image.height
         guard width > 0, height > 0 else { return nil }
+        let rects = maskRects(for: normalizedRegions, imageWidth: width, imageHeight: height)
         guard
             let context = CGContext(
                 data: nil,
@@ -267,20 +346,9 @@ public enum FrameScrubber {
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
 
-        let w = CGFloat(width)
-        let h = CGFloat(height)
-        let padX = w * 0.004
-        let padY = h * 0.004
-        for region in normalizedRegions {
-            let rect = CGRect(
-                x: region.minX * w - padX,
-                y: region.minY * h - padY,
-                width: region.width * w + padX * 2,
-                height: region.height * h + padY * 2
-            )
-            context.fill(rect)
-        }
-        return context.makeImage()
+        for rect in rects { context.fill(rect) }
+        guard let image = context.makeImage() else { return nil }
+        return MaskPaintResult(image: image, paintedRegions: rects.count)
     }
 
     // MARK: - Codec
