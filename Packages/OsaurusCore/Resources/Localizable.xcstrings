@@ -1,6 +1,51 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "All Chats": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Alle Chats" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "모든 채팅" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Все чаты" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "所有聊天" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "所有聊天" } }
+      }
+    },
+    "Agents": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Agenten" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "에이전트" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Агенты" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "智能体" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "智能體" } }
+      }
+    },
+    "Search agents...": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Agenten durchsuchen …" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "에이전트 검색..." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Поиск агентов..." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "搜索智能体..." } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "搜尋智能體..." } }
+      }
+    },
+    "No agents found": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Keine Agenten gefunden" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "에이전트를 찾을 수 없음" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Агенты не найдены" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "未找到智能体" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "未找到智能體" } }
+      }
+    },
+    "Choose which agent's chats to show": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Wähle, welche Agenten-Chats angezeigt werden" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "표시할 에이전트의 채팅 선택" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Выберите, чаты какого агента показывать" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "选择显示哪个智能体的聊天" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "選擇顯示哪個智能體的聊天" } }
+      }
+    },
     "Agent Settings" : {
       "localizations" : {
         "de" : {
