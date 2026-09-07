@@ -267,6 +267,10 @@ struct SubagentCapabilityRegistryTests {
     @Test("capability descriptors expose the right primary tool + guidance shape")
     func capabilityShape() {
         #expect(SubagentCapabilityRegistry.computerUse.primaryToolName == "computer_use")
+        #expect(
+            SubagentCapabilityRegistry.displayLabel(forKindId: SubagentCapabilityRegistry.computerUse.id)
+                == "Computer Use"
+        )
         #expect(SubagentCapabilityRegistry.computerUse.guidance != nil)
         // Image generation + editing now share the single `image` tool.
         #expect(SubagentCapabilityRegistry.image.primaryToolName == "image")

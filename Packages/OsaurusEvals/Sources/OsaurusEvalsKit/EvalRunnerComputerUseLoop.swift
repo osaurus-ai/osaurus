@@ -44,7 +44,7 @@ extension EvalRunner {
         let gate = ComputerUseGate(policy: AutonomyPolicy(globalPreset: preset))
         let feed = SubagentFeed(
             toolCallId: "eval-\(testCase.id)",
-            kindId: "computer_use",
+            kindId: SubagentCapabilityRegistry.computerUse.id,
             title: testCase.query
         )
         let interrupt = InterruptToken()

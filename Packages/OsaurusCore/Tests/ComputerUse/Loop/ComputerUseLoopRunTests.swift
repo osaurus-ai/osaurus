@@ -61,7 +61,7 @@ final class ComputerUseLoopRunTests: XCTestCase {
             modelId: "test-model",
             driver: driver,
             gate: gate,
-            feed: SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "test goal"),
+            feed: SubagentFeed(toolCallId: "t", kindId: SubagentCapabilityRegistry.computerUse.id, title: "test goal"),
             interrupt: interrupt,
             confirm: confirm,
             limits: limits,

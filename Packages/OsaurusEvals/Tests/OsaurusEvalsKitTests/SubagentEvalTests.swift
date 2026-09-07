@@ -617,13 +617,13 @@ struct SubagentEvalTests {
             ],
             maxSteps: 6
         )
-        #expect(transcript.tool == "computer_use")
+        #expect(transcript.tool == SubagentCapabilityRegistry.computerUse.primaryToolName)
         #expect(
             transcript.succeeded,
             "expected success; got \(transcript.envelopeKind) err=\(transcript.error ?? "-")"
         )
         #expect(transcript.envelopeKind == "success")
-        #expect(transcript.resultKind == "computer_use")
+        #expect(transcript.resultKind == SubagentCapabilityRegistry.computerUse.id)
         let values = await driver.finalValues()
         #expect(values["nightshift"] == "on")
         #expect(await driver.wasClicked("nightshift"))
