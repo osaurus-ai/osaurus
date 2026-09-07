@@ -28,6 +28,9 @@ public struct ComputerUseRunMetrics: Sendable, Equatable {
     public var blocked = 0
     /// Dead-end terminations encountered (resolution gave out).
     public var deadEnds = 0
+    /// Ambiguous target descriptions that were returned to the model as
+    /// candidate marks instead of being retried through more perception.
+    public var ambiguousTargets = 0
     /// Actions executed and how many the verify step saw land (view changed).
     public var actsAttempted = 0
     public var verifyChanged = 0
