@@ -2967,8 +2967,8 @@ extension FloatingInputCard {
                     guard state.totalUnitCount > 0 else {
                         return String(localized: "Prefilling context…", bundle: .module)
                     }
-                    let percent = Int(state.percentCompleted.rounded())
-                    return L("Prefilling context \(percent)% (\(state.completedUnitCount)/\(state.totalUnitCount) tokens)")
+                    let percent = Int(state.percentCompleted.rounded()).formatted(.percent)
+                    return L("Prefilling context \(percent) (\(state.completedUnitCount)/\(state.totalUnitCount) tokens)")
                 }
             }
             return warmupController.selectedModelResident
