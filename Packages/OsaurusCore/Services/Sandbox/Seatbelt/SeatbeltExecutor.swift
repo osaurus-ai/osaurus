@@ -22,7 +22,18 @@ enum SeatbeltExecutor {
     /// exact sanitized environment for this request. That lets xcrun perform
     /// any atomic cache refresh before confinement without running caller code
     /// or granting sandboxed work write access to the host's temp directory.
-    private static func preparePythonShimCache(home: String) {
+    ///
+    /// Async and bounded: this used to `waitUntilExit()` on the cooperative
+    /// thread pool with no limit. On a CI runner whose XPC services are
+    /// wedged, xcrun can hang, and a hung cooperative thread starves every
+    /// other async test in the process, so an unrelated test gets blamed
+    /// with "Time limit was exceeded". The wait now parks a continuation
+    /// instead of a thread, and a dispatch timer abandons xcrun after
+    /// `shimCacheDeadline`; the confined launch then surfaces the real tool
+    /// error, which is the existing best-effort contract.
+    private static let shimCacheDeadline: TimeInterval = 15
+
+    private static func preparePythonShimCache(home: String) async {
         guard let developerDirectory = SeatbeltSandbox.activeDeveloperDirectory,
               FileManager.default.isExecutableFile(atPath: "/usr/bin/xcrun")
         else { return }
@@ -37,13 +48,64 @@ enum SeatbeltExecutor {
         ]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            // The confined launch will surface the real tool error. Cache
-            // preparation is best effort and must not execute a retry loop.
+
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let gate = ResumeOnce(continuation)
+            process.terminationHandler = { _ in gate.take()?.resume() }
+            do {
+                try process.run()
+            } catch {
+                // The confined launch will surface the real tool error. Cache
+                // preparation is best effort and must not execute a retry loop.
+                gate.take()?.resume()
+                return
+            }
+            // Only `pid` and the Sendable gate cross into the timer closure;
+            // `Process` itself is not Sendable. Taking the continuation FIRST
+            // guarantees the kill only targets a child that has not reported
+            // termination, so a recycled pid is never signalled.
+            let pid = process.processIdentifier
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + shimCacheDeadline) {
+                guard let pending = gate.take() else { return }
+                _ = Darwin.kill(pid, SIGKILL)
+                pending.resume()
+            }
         }
+    }
+
+    /// Hands out a continuation exactly once, to whichever of the termination
+    /// handler and the deadline timer asks first.
+    private final class ResumeOnce: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<Void, Never>?
+
+        init(_ continuation: CheckedContinuation<Void, Never>) {
+            self.continuation = continuation
+        }
+
+        func take() -> CheckedContinuation<Void, Never>? {
+            lock.lock()
+            defer { lock.unlock() }
+            let pending = continuation
+            continuation = nil
+            return pending
+        }
+    }
+
+    /// Absolute wall-clock ceiling on one confined run, enforced from a
+    /// dispatch timer rather than the cooperative pool.
+    ///
+    /// The inactivity timeout below is polled by an async loop, so it only
+    /// fires if that loop gets scheduled. Under pool starvation (any test or
+    /// caller blocking cooperative threads while a sandboxed child is wedged
+    /// in an uninterruptible sandboxd wait) the loop never runs, the child
+    /// never dies, and the caller sits until the test harness's 180 s limit
+    /// fails the job. The watchdog SIGKILLs the child regardless of what the
+    /// pool is doing; the loop then observes the exit. A nil `timeout` keeps
+    /// the documented wait-forever semantics.
+    private static func hardDeadline(for timeout: TimeInterval?) -> TimeInterval? {
+        guard let timeout else { return nil }
+        return timeout * 2 + 30
     }
 
     struct Request {
@@ -159,7 +221,7 @@ enum SeatbeltExecutor {
         let confinedHome = request.cwd ?? scratch
         env["HOME"] = confinedHome
         if request.command.contains("python3") {
-            preparePythonShimCache(home: confinedHome)
+            await preparePythonShimCache(home: confinedHome)
         }
         process.environment = env
 
@@ -197,6 +259,19 @@ enum SeatbeltExecutor {
                 // handle's idempotent-kill contract.
                 _ = Darwin.kill(pid, signal)
             })
+
+        // Wall-clock watchdog (see `hardDeadline`). Cancelled on every exit
+        // path of this function, so it can only fire while the run is still
+        // in progress, i.e. while `pid` is ours. Captures the pid alone:
+        // `Process` is not Sendable, and `kill` on a pid that exited a moment
+        // earlier is ESRCH and harmless.
+        var watchdog: DispatchWorkItem?
+        if let ceiling = Self.hardDeadline(for: request.timeout) {
+            let item = DispatchWorkItem { _ = Darwin.kill(pid, SIGKILL) }
+            watchdog = item
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + ceiling, execute: item)
+        }
+        defer { watchdog?.cancel() }
 
         // Wait off the main thread with an inactivity timeout that
         // resets on output — the same semantics as the VM path's
