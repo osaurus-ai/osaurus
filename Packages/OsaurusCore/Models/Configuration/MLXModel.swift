@@ -786,6 +786,15 @@ struct MLXModel: Identifiable, Codable {
     }()
 }
 
+extension MLXModel {
+    /// Cross-surface favourite key for the local model catalog. The picker
+    /// uses the same `source + id` key shape, so a local model favourited from
+    /// the picker is also recognised on the model management page.
+    var favoriteKey: String {
+        FavoriteModelsStore.key(sourceKey: ModelPickerItem.Source.local.uniqueKey, modelId: id)
+    }
+}
+
 /// Hardware compatibility assessment for a model.
 enum ModelCompatibility {
     case compatible

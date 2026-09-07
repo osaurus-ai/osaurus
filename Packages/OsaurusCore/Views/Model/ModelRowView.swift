@@ -29,6 +29,9 @@ struct ModelRowView: View {
     /// Optional download metrics (speed, ETA, bytes transferred)
     let metrics: ModelDownloadService.DownloadMetrics?
 
+    /// Whether this model is pinned by the user.
+    var isFavorite: Bool = false
+
     /// Callback when user taps the Details button
     let onViewDetails: () -> Void
 
@@ -36,6 +39,9 @@ struct ModelRowView: View {
     /// card is unsupported, this fires instead of `onViewDetails` so the host
     /// can explain that the model can't be used rather than open its details.
     var onUnsupportedTap: (() -> Void)? = nil
+
+    /// Optional action for pinning/unpinning the model.
+    var onToggleFavorite: (() -> Void)? = nil
 
     /// Optional cancel action when downloading or paused
     let onCancel: (() -> Void)?
@@ -157,6 +163,7 @@ struct ModelRowView: View {
                     // shifts as state changes.
                     stateChip
                     Spacer(minLength: 0)
+                    favoriteButton
                     if content.isTopSuggestion {
                         topPickRibbon
                     }
@@ -287,6 +294,25 @@ struct ModelRowView: View {
 
     private var topPickRibbon: some View {
         headerChip(icon: "star.fill", text: L("Top Pick"))
+    }
+
+    @ViewBuilder
+    private var favoriteButton: some View {
+        if let onToggleFavorite {
+            Button(action: onToggleFavorite) {
+                Image(systemName: isFavorite ? "star.fill" : "star")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(isFavorite ? Color.yellow : Color.white)
+                    .frame(width: 24, height: 22)
+                    .background(
+                        Capsule().fill(.black.opacity(isFavorite ? 0.34 : 0.24))
+                    )
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(PlainButtonStyle())
+            .localizedHelp(isFavorite ? "Remove from favourites" : "Add to favourites")
+            .accessibilityLabel(Text(isFavorite ? L("Remove from favourites") : L("Add to favourites")))
+        }
     }
 
     /// Unified download-state indicator pinned to the header's top-left.

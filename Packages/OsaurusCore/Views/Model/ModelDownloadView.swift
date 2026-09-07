@@ -58,6 +58,9 @@ struct ModelDownloadView: View {
     /// Shared model manager for handling downloads and model state
     @ObservedObject private var modelManager = ModelManager.shared
 
+    /// Shared favourites so the model picker and model management grid stay in sync.
+    @ObservedObject private var favoritesStore = FavoriteModelsStore.shared
+
     /// System resource monitor for hardware info. Deliberately NOT
     /// `@ObservedObject`: observing it here re-evaluated the entire model
     /// grid on every 2s monitor tick (each card re-reading `totalMemoryGB`
@@ -136,6 +139,7 @@ struct ModelDownloadView: View {
     /// selected tab, debounced search text, or a throttled
     /// `modelManager` publish).
     @State private var gridListsSnapshot = GridLists(
+        favorites: [],
         suggested: [],
         others: [],
         downloaded: [],
@@ -217,6 +221,7 @@ struct ModelDownloadView: View {
         .onChange(of: sortOption) { _, _ in refreshGridLists() }
         .onChange(of: filterState) { _, _ in refreshGridLists() }
         .onChange(of: debouncedSearchText) { _, _ in refreshGridLists() }
+        .onChange(of: favoritesStore.favoriteKeys) { _, _ in refreshGridLists() }
         .onReceive(
             modelManager.objectWillChange
                 .throttle(for: .milliseconds(200), scheduler: DispatchQueue.main, latest: true)
@@ -711,8 +716,10 @@ struct ModelDownloadView: View {
             ),
             downloadState: modelManager.effectiveDownloadState(for: model),
             metrics: modelManager.downloadMetrics[model.id],
+            isFavorite: favoritesStore.isFavorite(model.favoriteKey),
             onViewDetails: { modelToShowDetails = model },
             onUnsupportedTap: { unsupportedModelName = model.name },
+            onToggleFavorite: { favoritesStore.toggle(model.favoriteKey) },
             onCancel: { modelManager.cancelDownload(model.id) },
             onPause: { modelManager.pauseDownload(model.id) },
             onResume: { modelManager.resumeDownload(model.id) }
@@ -855,15 +862,26 @@ struct ModelDownloadView: View {
             && !filterState.isActive
         if isBrowsing {
             VStack(alignment: .leading, spacing: 16) {
-                if lists.suggested.isEmpty {
+                if lists.favorites.isEmpty, lists.suggested.isEmpty {
                     modelGrid(models: lists.others)
                 } else {
-                    topPicksCarousel(lists.suggested)
-                    modelGridSection(
-                        title: L("Our Curated Models"),
-                        models: lists.others,
-                        isFirst: true
-                    )
+                    if !lists.favorites.isEmpty {
+                        modelGridSection(
+                            title: L("Favourites"),
+                            models: lists.favorites,
+                            isFirst: true
+                        )
+                    }
+                    if !lists.suggested.isEmpty {
+                        topPicksCarousel(lists.suggested)
+                    }
+                    if !lists.others.isEmpty {
+                        modelGridSection(
+                            title: L("Our Curated Models"),
+                            models: lists.others,
+                            isFirst: lists.favorites.isEmpty
+                        )
+                    }
                 }
                 imageModelsLinkRow
                 appleScriptModelsLinkRow
@@ -1397,6 +1415,7 @@ struct ModelDownloadView: View {
     /// pass to avoid running `applySort` / `SearchService.filterModels` /
     /// `filterState.apply` 4–6 times during animation frames.
     struct GridLists {
+        let favorites: [MLXModel]
         let suggested: [MLXModel]
         let others: [MLXModel]
         let downloaded: [MLXModel]
@@ -1412,7 +1431,7 @@ struct ModelDownloadView: View {
     /// `.animation(_:value:)` modifier (rather than `withAnimation`) gives
     /// `LazyVGrid` reliable reorder animations — same path search uses.
     private var gridChangeToken: String {
-        "\(selectedTab.rawValue)|\(sortOption.rawValue)|\(debouncedSearchText)|\(filterStateToken)"
+        "\(selectedTab.rawValue)|\(sortOption.rawValue)|\(debouncedSearchText)|\(filterStateToken)|\(favoritesStore.favoriteKeys.joined(separator: ","))"
     }
 
     /// Compact label for the active filter selection. `nil` when no
@@ -1460,6 +1479,7 @@ struct ModelDownloadView: View {
         let filterState: ModelManager.ModelFilterState
         let selectedTab: ModelListTab
         let sortOption: ModelSortOption
+        let favoriteKeys: [String]
         let totalMemoryGB: Double
     }
 
@@ -1474,6 +1494,7 @@ struct ModelDownloadView: View {
             filterState: filterState,
             selectedTab: selectedTab,
             sortOption: sortOption,
+            favoriteKeys: favoritesStore.favoriteKeys,
             totalMemoryGB: systemMonitor.totalMemoryGB
         )
     }
@@ -1488,7 +1509,8 @@ struct ModelDownloadView: View {
     nonisolated static func groupIntoFamilyCards(
         _ models: [MLXModel],
         totalMemoryGB: Double,
-        downloadStates: [String: DownloadState]
+        downloadStates: [String: DownloadState],
+        favoriteKeys: Set<String> = []
     ) -> [MLXModel] {
         var order: [String] = []
         var buckets: [String: [MLXModel]] = [:]
@@ -1502,7 +1524,8 @@ struct ModelDownloadView: View {
                 defaultFamilyVariant(
                     among: $0,
                     totalMemoryGB: totalMemoryGB,
-                    downloadStates: downloadStates
+                    downloadStates: downloadStates,
+                    favoriteKeys: favoriteKeys
                 )
             }
         }
@@ -1517,7 +1540,8 @@ struct ModelDownloadView: View {
     nonisolated static func defaultFamilyVariant(
         among variants: [MLXModel],
         totalMemoryGB: Double,
-        downloadStates: [String: DownloadState]
+        downloadStates: [String: DownloadState],
+        favoriteKeys: Set<String> = []
     ) -> MLXModel {
         func isActive(_ m: MLXModel) -> Bool {
             switch downloadStates[m.id] ?? .notStarted {
@@ -1537,6 +1561,9 @@ struct ModelDownloadView: View {
         let best = variants.min { lhs, rhs in
             if isActive(lhs) != isActive(rhs) { return isActive(lhs) }
             if lhs.isDownloaded != rhs.isDownloaded { return lhs.isDownloaded }
+            let lhsFavorite = favoriteKeys.contains(lhs.favoriteKey)
+            let rhsFavorite = favoriteKeys.contains(rhs.favoriteKey)
+            if lhsFavorite != rhsFavorite { return lhsFavorite }
             let lc = compatRank(lhs)
             let rc = compatRank(rhs)
             if lc != rc { return lc < rc }
@@ -1567,6 +1594,7 @@ struct ModelDownloadView: View {
         let filterState = input.filterState
         let searchText = input.searchText
         let downloadStates = input.downloadStates
+        let favoriteKeys = Set(input.favoriteKeys)
 
         func isActive(_ m: MLXModel) -> Bool {
             switch downloadStates[m.id] ?? .notStarted {
@@ -1578,6 +1606,9 @@ struct ModelDownloadView: View {
         // imported/non-curated models visible in the All tab.
         func isUserModel(_ m: MLXModel) -> Bool {
             m.isDownloaded || isActive(m)
+        }
+        func isFavorite(_ m: MLXModel) -> Bool {
+            favoriteKeys.contains(m.favoriteKey)
         }
         func compatibilityRank(_ m: MLXModel) -> Int {
             switch m.compatibility(totalMemoryGB: mem) {
@@ -1601,6 +1632,10 @@ struct ModelDownloadView: View {
                 break
             }
             return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
+        func stableFavoritesFirst(_ models: [MLXModel]) -> [MLXModel] {
+            guard !favoriteKeys.isEmpty else { return models }
+            return models.filter(isFavorite) + models.filter { !isFavorite($0) }
         }
         func applySort(_ models: [MLXModel]) -> [MLXModel] {
             switch sortOption {
@@ -1650,14 +1685,14 @@ struct ModelDownloadView: View {
         // Catalog default ordering is newest-first; an explicit sort choice
         // takes over via `applySort`, matching `sortedSuggested`'s convention.
         func sortedCatalog(_ models: [MLXModel]) -> [MLXModel] {
-            sortOption == .recommended ? models.sorted(by: newestFirst) : applySort(models)
+            stableFavoritesFirst(sortOption == .recommended ? models.sorted(by: newestFirst) : applySort(models))
         }
         func sortedSuggested(_ filtered: [MLXModel]) -> [MLXModel] {
             if sortOption != .recommended {
-                return applySort(filtered)
+                return stableFavoritesFirst(applySort(filtered))
             }
             let curatedIds = ModelManager.curatedSuggestedIds
-            return filtered.sorted { lhs, rhs in
+            return stableFavoritesFirst(filtered.sorted { lhs, rhs in
                 let lhsCurated = curatedIds.contains(lhs.id.lowercased())
                 let rhsCurated = curatedIds.contains(rhs.id.lowercased())
                 if lhsCurated != rhsCurated { return lhsCurated }
@@ -1667,7 +1702,7 @@ struct ModelDownloadView: View {
                 }
 
                 return newestFirst(lhs, rhs)
-            }
+            })
         }
         func computeDownloadedList() -> [MLXModel] {
             let all = input.deduplicatedModels
@@ -1684,8 +1719,8 @@ struct ModelDownloadView: View {
             }
             let searched = SearchService.filterModels(merged, with: searchText)
             let filtered = filterState.apply(to: searched, totalMemoryGB: mem)
-            let activeGroup = applySort(filtered.filter(isActive))
-            let restGroup = applySort(filtered.filter { !isActive($0) })
+            let activeGroup = stableFavoritesFirst(applySort(filtered.filter(isActive)))
+            let restGroup = stableFavoritesFirst(applySort(filtered.filter { !isActive($0) }))
             return activeGroup + restGroup
         }
 
@@ -1716,6 +1751,15 @@ struct ModelDownloadView: View {
         let suggFiltered = filterState.apply(to: suggSearched, totalMemoryGB: mem)
         let recommended = sortedSuggested(suggFiltered)
 
+        let favoriteCandidates = sortedCatalog((recommended + allFiltered).filter(isFavorite))
+        let favorites = groupIntoFamilyCards(
+            favoriteCandidates,
+            totalMemoryGB: mem,
+            downloadStates: downloadStates,
+            favoriteKeys: favoriteKeys
+        )
+        let favoriteFamilies = Set(favorites.map { ModelMetadataParser.familyKey(from: $0.id) })
+
         // The Top Picks carousel only exists under the default Recommended
         // sort. Any explicit sort merges the picks back into the grid so they
         // sort alongside everything else. The carousel itself is newest-first,
@@ -1724,14 +1768,20 @@ struct ModelDownloadView: View {
         let topPicks =
             sortOption == .recommended
             ? groupIntoFamilyCards(
-                sortedCatalog(recommended.filter { $0.isTopSuggestion }),
+                sortedCatalog(
+                    recommended.filter {
+                        $0.isTopSuggestion
+                            && !favoriteFamilies.contains(ModelMetadataParser.familyKey(from: $0.id))
+                    }
+                ),
                 totalMemoryGB: mem,
-                downloadStates: downloadStates
+                downloadStates: downloadStates,
+                favoriteKeys: favoriteKeys
             )
             : []
         // Exclude by family, not id, so demoted precision siblings of a Top
         // Pick don't reappear as separate grid cards below the carousel.
-        let topPickFamilies = Set(topPicks.map { ModelMetadataParser.familyKey(from: $0.id) })
+        let pinnedFamilies = favoriteFamilies.union(topPicks.map { ModelMetadataParser.familyKey(from: $0.id) })
 
         // The grid is the rest of the catalog — recommended non-top picks plus
         // everything else — deduped and ordered newest-first (or by the
@@ -1740,7 +1790,7 @@ struct ModelDownloadView: View {
         var catalogRest: [MLXModel] = []
         for model in recommended + allFiltered {
             let key = model.id.lowercased()
-            if topPickFamilies.contains(ModelMetadataParser.familyKey(from: model.id)) { continue }
+            if pinnedFamilies.contains(ModelMetadataParser.familyKey(from: model.id)) { continue }
             if seenCatalog.insert(key).inserted {
                 catalogRest.append(model)
             }
@@ -1748,7 +1798,8 @@ struct ModelDownloadView: View {
         let others = groupIntoFamilyCards(
             sortedCatalog(catalogRest),
             totalMemoryGB: mem,
-            downloadStates: downloadStates
+            downloadStates: downloadStates,
+            favoriteKeys: favoriteKeys
         )
 
         let downloaded = computeDownloadedList()
@@ -1765,7 +1816,7 @@ struct ModelDownloadView: View {
 
         let displayed: [MLXModel]
         switch input.selectedTab {
-        case .all: displayed = topPicks + others
+        case .all: displayed = favorites + topPicks + others
         case .downloaded: displayed = downloaded
         }
 
@@ -1781,6 +1832,7 @@ struct ModelDownloadView: View {
         }
 
         return GridLists(
+            favorites: favorites,
             suggested: topPicks,
             others: others,
             downloaded: downloaded,
@@ -1900,7 +1952,7 @@ struct ModelDownloadView: View {
         selectedTab = hasOwnModels ? .downloaded : .all
     }
 
-    private static func isOsaurusAI(_ model: MLXModel) -> Bool {
+    nonisolated private static func isOsaurusAI(_ model: MLXModel) -> Bool {
         model.id.lowercased().hasPrefix("osaurusai/")
     }
 
