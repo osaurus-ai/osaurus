@@ -288,18 +288,22 @@ struct EvalReviewReportTests {
         decoder.dateDecodingStrategy = .iso8601
         let snapshot = try decoder.decode(EvidenceReportRegistrySnapshot.self, from: data)
         let report = try #require(snapshot.reports.first)
+        let encoded = try #require(String(bytes: data, encoding: .utf8))
 
+        #expect(snapshot.schemaVersion == EvidenceReportRegistrySnapshot.currentSchemaVersion)
         #expect(snapshot.reports.count == 1)
         #expect(report.kind == .eval)
         #expect(report.source == EvalReviewReportBundle.evidenceSource)
         #expect(report.status == .failed)
-        #expect(report.artifact.path == summaryURL.path)
+        #expect(report.artifact.path == EvalReviewReportBundle.summaryFileName)
         #expect(report.artifact.availability == .available)
         #expect(report.counts.total == 2)
         #expect(report.counts.passed == 1)
         #expect(report.counts.failed == 1)
         #expect(report.metadata["artifact_id"] == "eval-smoke-1")
         #expect(report.metadata["judge_model"] == "<redacted>")
+        #expect(!report.id.contains(root.path))
+        #expect(!encoded.contains(root.path))
     }
 
     @Test func loadingStoredBundleUsesManifestModelRoles() throws {

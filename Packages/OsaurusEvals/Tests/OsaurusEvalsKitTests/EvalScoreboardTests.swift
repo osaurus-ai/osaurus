@@ -252,6 +252,47 @@ struct EvalScoreboardTests {
         #expect(scoreboard.models.first?.counts.total == 6)
     }
 
+    @Test func loadBundlesRecursivelyKeepsDistinctReportsWithoutArtifactIds() throws {
+        let root = try temporaryDirectory()
+        let firstDir = root.appendingPathComponent("main/first/report", isDirectory: true)
+        let secondDir = root.appendingPathComponent("main/second/report", isDirectory: true)
+        let first = EvalReviewReportBuilder.build(
+            manifest: manifest(
+                generatedAt: "2026-06-17T00:00:00Z",
+                commit: "first-commit",
+                artifactPath: firstDir.path
+            ),
+            reports: [
+                input(
+                    suite: "AgentLoop",
+                    reportPath: firstDir.appendingPathComponent("AgentLoop.json").path,
+                    report: passingFixtureReport()
+                ),
+            ]
+        )
+        let second = EvalReviewReportBuilder.build(
+            manifest: manifest(
+                generatedAt: "2026-06-18T00:00:00Z",
+                commit: "second-commit",
+                artifactPath: secondDir.path
+            ),
+            reports: [
+                input(
+                    suite: "AgentLoop",
+                    reportPath: secondDir.appendingPathComponent("AgentLoop.json").path,
+                    report: try fixtureReport("current")
+                ),
+            ]
+        )
+        try writeBundle(first, to: firstDir)
+        try writeBundle(second, to: secondDir)
+
+        let loaded = try EvalScoreboardBuilder.loadBundlesRecursively(from: [root])
+
+        #expect(loaded.count == 2)
+        #expect(Set(loaded.map { $0.bundle.manifest.commit }) == ["first-commit", "second-commit"])
+    }
+
     @Test func loadBundlesRecursivelyFailsOnInvalidRegistryBackedSummaryJSON() throws {
         let baselineReport = try fixtureReport("baseline")
         let bundle = EvalReviewReportBuilder.build(
