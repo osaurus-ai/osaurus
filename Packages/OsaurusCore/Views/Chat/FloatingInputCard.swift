@@ -441,6 +441,13 @@ struct FloatingInputCard: View {
     /// Dismissal is scoped to the severity it was dismissed at: the banner
     /// returns if pressure worsens, and the episode's end re-arms it.
     @State private var swapBannerDismissedAtSeverity: SwapPressureMonitor.Severity?
+    /// The banner's Unload is in flight: the runtime is draining leases and
+    /// tearing the model down through the guarded lifecycle (Stop-equivalent
+    /// session preparation first, then the timed runtime unload).
+    @State private var swapUnloadInFlight = false
+    /// A refused unload (the model stayed resident behind an active request
+    /// after the lease-drain timeout) is reported in the banner, not dropped.
+    @State private var swapUnloadFailure: String?
     /// Model the user hid the tight-fit banner for via its dismiss button.
     /// The banner stays hidden for that selection but returns when the pick
     /// changes or the projection escalates to a hard block.
@@ -4376,10 +4383,44 @@ extension FloatingInputCard {
                 .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                 .fixedSize(horizontal: false, vertical: true)
             VStack(spacing: 10) {
-                swapPrimaryButton(String(localized: "Unload Model", bundle: .module), tint: tint) {
-                    let target = swap.modelName ?? selectedModel
-                    guard let target else { return }
-                    Task { await ModelRuntime.shared.unload(name: target) }
+                swapPrimaryButton(
+                    swapUnloadInFlight
+                        ? String(localized: "Unloading…", bundle: .module)
+                        : String(localized: "Unload Model", bundle: .module),
+                    tint: tint
+                ) {
+                    // The monitor's emulated state names a placeholder
+                    // ("Simulated Model"); the only model an emulated banner
+                    // can unload is the chat's selected one. A real episode
+                    // names the resident model it measured.
+                    let target = swap.emulated ? selectedModel : (swap.modelName ?? selectedModel)
+                    guard let target, !swapUnloadInFlight else { return }
+                    swapUnloadInFlight = true
+                    swapUnloadFailure = nil
+                    Task {
+                        // Same guarded path as the cache inspector: every chat
+                        // session on this model is put through its Stop
+                        // lifecycle first (no successful-run follow-up can
+                        // reload it), then the runtime unload runs with the
+                        // lease-drain timeout. A refusal keeps the model
+                        // resident and is shown here instead of being dropped.
+                        let didUnload = await MLXService.shared.unloadRuntimeModel(named: target)
+                        swapUnloadInFlight = false
+                        if !didUnload {
+                            swapUnloadFailure = String(
+                                localized:
+                                    "Couldn't unload \(target) because it is still in use. Stop its active request and try again.",
+                                bundle: .module
+                            )
+                        }
+                    }
+                }
+                .disabled(swapUnloadInFlight)
+                if let swapUnloadFailure {
+                    Text(verbatim: swapUnloadFailure)
+                        .foregroundColor(theme.secondaryText)
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack(spacing: 18) {
                     swapTextButton(String(localized: "Keep Running", bundle: .module)) {
@@ -4412,6 +4453,10 @@ extension FloatingInputCard {
         )
         .overlay(shape.stroke(tint.opacity(0.35), lineWidth: 1))
         .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
+        // The banner is a container: its label is the swap message, and the
+        // buttons inside keep their own labels (Unload Model / Keep Running /
+        // Activity Monitor) instead of inheriting that sentence.
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(
             critical
                 ? Text(
@@ -4438,6 +4483,10 @@ extension FloatingInputCard {
                 .background(Capsule().fill(tint.opacity(0.85)))
                 .contentShape(Capsule())
         }
+        // The banner's own accessibilityLabel (the swap message) otherwise
+        // shadows every button inside it: assistive tech heard the same
+        // sentence for Unload, Keep Running and Activity Monitor.
+        .accessibilityLabel(Text(verbatim: title))
         .buttonStyle(.plain)
     }
 
@@ -4453,6 +4502,7 @@ extension FloatingInputCard {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(Text(verbatim: title))
     }
 
     // MARK: - MTP Bundle-Layout Advisory

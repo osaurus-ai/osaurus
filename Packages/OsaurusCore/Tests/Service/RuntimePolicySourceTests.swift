@@ -3914,4 +3914,44 @@ struct RuntimePolicySourceTests {
             "Blocked bundles must not advertise selectable Auto or explicit-depth chips."
         )
     }
+    @Test("Swap-pressure banner unloads through the guarded lifecycle and reports a refusal")
+    func swapBannerUnloadUsesGuardedLifecycle() throws {
+        let floatingInput = try Self.source("Views/Chat/FloatingInputCard.swift")
+        let bannerStart = try #require(floatingInput.range(of: "private func swapPressureBanner("))
+        let bannerEnd = try #require(
+            floatingInput.range(
+                of: "private func swapPrimaryButton(",
+                range: bannerStart.upperBound ..< floatingInput.endIndex
+            )
+        )
+        let banner = String(floatingInput[bannerStart.lowerBound ..< bannerEnd.lowerBound])
+
+        #expect(
+            banner.contains("await MLXService.shared.unloadRuntimeModel(named: target)"),
+            "The banner's Unload Model must take the same guarded path as the cache inspector: Stop-lifecycle preparation of every session on the model, then the timed runtime unload"
+        )
+        #expect(
+            !banner.contains("ModelRuntime.shared.unload(name:"),
+            "The banner must not call the runtime unload directly (that skipped session preparation and the lease-drain timeout, and dropped the result)"
+        )
+        #expect(
+            banner.contains("if !didUnload {") && banner.contains("swapUnloadFailure = String("),
+            "A refused unload (model still in use after the lease-drain timeout) must be reported in the banner instead of being discarded"
+        )
+        #expect(
+            banner.contains("guard let target, !swapUnloadInFlight else { return }")
+                && banner.contains(".disabled(swapUnloadInFlight)"),
+            "The Unload control must be single-flight while the runtime drains leases"
+        )
+        #expect(
+            banner.contains("let target = swap.emulated ? selectedModel : (swap.modelName ?? selectedModel)"),
+            "An emulated banner names a placeholder model; its Unload must target the chat's selected model (the live proof pressed Unload against \"Simulated Model\" and nothing was unloaded)"
+        )
+        let buttonsStart = bannerEnd.lowerBound
+        let buttons = String(floatingInput[buttonsStart...].prefix(2600))
+        #expect(
+            buttons.components(separatedBy: ".accessibilityLabel(Text(verbatim: title))").count >= 3,
+            "Both banner button helpers must expose their own title to accessibility; the banner container's label otherwise shadows Unload, Keep Running and Activity Monitor with the same sentence"
+        )
+    }
 }
