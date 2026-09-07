@@ -10,10 +10,14 @@
 //
 //  Why this design (`UnsafeMutableRawPointer` to `Unmanaged`):
 //  `@convention(c)` callbacks cannot capture Swift state, so the
-//  trampolines recover the `MockHost` instance from a static slot
-//  the test installed before the plugin made the call. We use a
-//  thread-local install stack so concurrent tests can run their
-//  own `MockHost` without clobbering each other's slot.
+//  trampolines recover the `MockHost` instance from a per-thread slot
+//  the test installed before the plugin made the call. The slot is a
+//  thread-local install stack: concurrent tests on different threads keep
+//  their own `MockHost`, and a `withInstalled { ... }` may nest inside
+//  another, restoring the outer host on exit. Host-global callbacks
+//  (log / config / dispatch / http) made from a plugin-spawned background
+//  thread — which has no slot of its own — fall back to the uniquely
+//  installed host so they are still recorded.
 //
 
 import Foundation
@@ -66,20 +70,27 @@ public final class MockHost: @unchecked Sendable {
     // MARK: - Install / uninstall
 
     /// Builds the C `OsrHostAPI` struct wired to this mock. The pointer
-    /// is heap-allocated and lives until `freeHostAPI()` is called or
-    /// the mock is deinitialized. Pass to the plugin's entry point.
+    /// is heap-allocated and lives until `uninstall()` is called or the
+    /// mock is deinitialized. Pass to the plugin's entry point.
     ///
-    /// IMPORTANT: only one `MockHost` may be installed at a time on a
-    /// given thread. Calling `hostAPIPointer` while another host is
-    /// installed traps. Use `withInstalled { ... }` for nested or
-    /// concurrent tests.
+    /// Installs onto this thread's install stack: any host already installed
+    /// on the thread is saved and restored when this one is uninstalled, so
+    /// a `withInstalled { ... }` may nest inside another. Installing the same
+    /// `MockHost` twice without an intervening `uninstall()` traps.
     public func hostAPIPointer() -> UnsafeMutablePointer<OsrHostAPI> {
         precondition(
-            Thread.current.threadDictionary[Self.threadKey] == nil,
-            "another MockHost is already installed on this thread; nest with `withInstalled`"
+            !didInstall,
+            "this MockHost is already installed; uninstall() it (or use `withInstalled`) before reinstalling"
         )
         let retain = Unmanaged.passRetained(self)
+        // Save the host this one displaces so uninstall() can restore it
+        // (the install stack), rather than unconditionally clearing the slot.
+        previousSlot = Thread.current.threadDictionary[Self.threadKey] as? UnsafeMutableRawPointer
         Thread.current.threadDictionary[Self.threadKey] = retain.toOpaque()
+        didInstall = true
+        Self.registryLock.withLock {
+            Self.installedHosts[ObjectIdentifier(self)] = Unmanaged.passUnretained(self)
+        }
 
         let api = OsrHostAPI(
             version: 6,
@@ -99,8 +110,9 @@ public final class MockHost: @unchecked Sendable {
         return ptr
     }
 
-    /// Frees the heap-allocated `OsrHostAPI` and clears the thread-
-    /// local install slot. Idempotent. Call from your test's tearDown
+    /// Frees the heap-allocated `OsrHostAPI`, drops this host's retain, and
+    /// restores the host it displaced on this thread's install stack (clearing
+    /// the slot if there was none). Idempotent. Call from your test's tearDown
     /// or use `withInstalled` which auto-cleans.
     public func uninstall() {
         if let ptr = installedPointer {
@@ -108,15 +120,44 @@ public final class MockHost: @unchecked Sendable {
             ptr.deallocate()
             installedPointer = nil
         }
-        if let raw = Thread.current.threadDictionary[Self.threadKey] as? UnsafeMutableRawPointer {
-            Unmanaged<MockHost>.fromOpaque(raw).release()
+        Self.registryLock.withLock {
+            Self.installedHosts[ObjectIdentifier(self)] = nil
+        }
+        guard didInstall else { return }
+        didInstall = false
+        // The install stack must unwind last-in-first-out on the install
+        // thread: this host's retained opaque is owned by the thread slot
+        // (if it is still the top) or has been moved into the `previousSlot`
+        // of whatever host was installed after it. Releasing it while a later
+        // host still references it would dangle that host's `previousSlot`, so
+        // a non-LIFO (or cross-thread) uninstall is unsupported and traps
+        // rather than silently leaking. `withInstalled`'s `defer` guarantees
+        // LIFO, so the blessed path never hits this.
+        let selfOpaque = Unmanaged.passUnretained(self).toOpaque()
+        precondition(
+            Thread.current.threadDictionary[Self.threadKey] as? UnsafeMutableRawPointer == selfOpaque,
+            "MockHost.uninstall() must run on the install thread and unwind in LIFO order; use `withInstalled` to guarantee this"
+        )
+        Unmanaged<MockHost>.fromOpaque(selfOpaque).release()
+        if let previousSlot {
+            Thread.current.threadDictionary[Self.threadKey] = previousSlot
+        } else {
             Thread.current.threadDictionary.removeObject(forKey: Self.threadKey)
         }
+        previousSlot = nil
     }
 
     deinit { uninstall() }
 
     private var installedPointer: UnsafeMutablePointer<OsrHostAPI>?
+
+    /// True between `hostAPIPointer()` and `uninstall()`. Guards against
+    /// double-install and makes `uninstall()` idempotent.
+    private var didInstall = false
+
+    /// The opaque pointer this host displaced on its install thread, restored
+    /// on `uninstall()` so installs nest correctly.
+    private var previousSlot: UnsafeMutableRawPointer?
 
     // MARK: - Convenience
 
@@ -135,10 +176,35 @@ public final class MockHost: @unchecked Sendable {
 
     private static let threadKey = "ai.osaurus.plugintestkit.mockhost"
 
+    /// Process-wide set of currently-installed hosts, used to attribute a
+    /// host-global callback made from a plugin-spawned background thread (which
+    /// carries no thread-local install slot). A background callback resolves to
+    /// the host here only when exactly one is installed; with two or more the
+    /// call is ambiguous and is dropped rather than misrouted.
+    private static let registryLock = NSLock()
+    nonisolated(unsafe) private static var installedHosts: [ObjectIdentifier: Unmanaged<MockHost>] = [:]
+
+    /// The host bound to the current per-agent frame (the calling thread's
+    /// install slot). Used by `get_active_agent_id`, which must return NULL
+    /// outside a per-agent frame — including a background thread — per the
+    /// host ABI.
     private static func current() -> MockHost? {
         guard let raw = Thread.current.threadDictionary[threadKey] as? UnsafeMutableRawPointer
         else { return nil }
         return Unmanaged<MockHost>.fromOpaque(raw).takeUnretainedValue()
+    }
+
+    /// The host to route a host-global callback (log / config / dispatch /
+    /// http) to. Prefers the calling thread's install slot; if there is none
+    /// (a plugin-spawned background thread) it falls back to the uniquely
+    /// installed host so the call is still recorded. Returns nil when zero or
+    /// more-than-one hosts are installed, so an ambiguous background call is
+    /// dropped rather than attributed to the wrong recorder.
+    private static func recordingHost() -> MockHost? {
+        if let host = current() { return host }
+        return registryLock.withLock {
+            installedHosts.count == 1 ? installedHosts.values.first?.takeUnretainedValue() : nil
+        }
     }
 
     /// Heap-allocate `s` as a NUL-terminated C string the plugin
@@ -155,14 +221,14 @@ public final class MockHost: @unchecked Sendable {
     }
 
     private static let trampolineConfigGet: OsrConfigGet = { keyPtr in
-        guard let host = current(), let keyPtr else { return nil }
+        guard let host = recordingHost(), let keyPtr else { return nil }
         let key = String(cString: keyPtr)
         guard let value = host.onConfigGet(key) else { return nil }
         return makeCString(value)
     }
 
     private static let trampolineConfigSet: OsrConfigSet = { keyPtr, valuePtr in
-        guard let host = current(), let keyPtr, let valuePtr else { return }
+        guard let host = recordingHost(), let keyPtr, let valuePtr else { return }
         host.configWrites.recordSet(
             key: String(cString: keyPtr),
             value: String(cString: valuePtr)
@@ -170,12 +236,12 @@ public final class MockHost: @unchecked Sendable {
     }
 
     private static let trampolineConfigDelete: OsrConfigDelete = { keyPtr in
-        guard let host = current(), let keyPtr else { return }
+        guard let host = recordingHost(), let keyPtr else { return }
         host.configWrites.recordDelete(key: String(cString: keyPtr))
     }
 
     private static let trampolineLog: OsrLog = { level, msgPtr in
-        guard let host = current(), let msgPtr else { return }
+        guard let host = recordingHost(), let msgPtr else { return }
         host.logs.record(level: Int(level), message: String(cString: msgPtr))
     }
 
@@ -183,7 +249,7 @@ public final class MockHost: @unchecked Sendable {
     /// the message via the same `LogRecorder`. NULL payload degrades
     /// to a normal log entry.
     private static let trampolineLogStructured: OsrLogStructured = { level, msgPtr, payloadPtr in
-        guard let host = current(), let msgPtr else { return }
+        guard let host = recordingHost(), let msgPtr else { return }
         let message = String(cString: msgPtr)
         if let payloadPtr {
             host.logs.record(
@@ -196,12 +262,12 @@ public final class MockHost: @unchecked Sendable {
     }
 
     private static let trampolineDispatch: OsrDispatch = { jsonPtr in
-        guard let host = current(), let jsonPtr else { return nil }
+        guard let host = recordingHost(), let jsonPtr else { return nil }
         return makeCString(host.onDispatch(String(cString: jsonPtr)))
     }
 
     private static let trampolineHttpRequest: OsrHttpRequest = { jsonPtr in
-        guard let host = current(), let jsonPtr else { return nil }
+        guard let host = recordingHost(), let jsonPtr else { return nil }
         return makeCString(host.onHttpRequest(String(cString: jsonPtr)))
     }
 
