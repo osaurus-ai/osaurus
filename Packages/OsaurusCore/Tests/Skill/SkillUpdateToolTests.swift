@@ -210,7 +210,7 @@ struct SkillUpdateToolTests {
 
     /// The wrapper only advertises editing when the tool is really exposed,
     /// and never for a skill the tool would reject.
-    @Test
+    @Test @MainActor
     func activeSkillWrapperAdvertisesEditingOnlyWhenEditable() {
         let editable = SkillManager.activeSkillPromptSection(
             name: "Plain English", body: "Body.", editable: true)
