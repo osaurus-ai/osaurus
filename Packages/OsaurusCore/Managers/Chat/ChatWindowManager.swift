@@ -683,18 +683,14 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     }
 
     /// Default size for a brand-new chat window (before any frame autosave
-    /// exists). The session sidebar is shown by default and takes 260pt of
-    /// this, so the width is chosen to leave a comfortable ~800pt for the
-    /// chat pane. Shrunk to fit the target screen's visible frame on small
-    /// displays.
+    /// exists): the whole visible area of the target screen, i.e. everything
+    /// but the menu bar and Dock. The chat is the app's main surface, so it
+    /// opens full-size and the user shrinks it if they want; their choice is
+    /// then remembered by frame autosave. `WindowConfiguration.chat` is only
+    /// the fallback when no screen is known.
     static func defaultWindowSize(fitting screen: NSScreen?) -> NSSize {
-        let preferred = WindowConfiguration.chat.defaultSize
-        guard let vf = screen?.visibleFrame else { return preferred }
-        let margin: CGFloat = 40
-        return NSSize(
-            width: min(preferred.width, max(vf.width - margin, 600)),
-            height: min(preferred.height, max(vf.height - margin, 500))
-        )
+        guard let vf = screen?.visibleFrame else { return WindowConfiguration.chat.defaultSize }
+        return vf.size
     }
 
     /// Install the SwiftUI root without letting it dictate the window size.
