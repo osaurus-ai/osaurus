@@ -179,6 +179,50 @@ struct SkillUpdateToolTests {
         #expect(!availability.reasonCodes.contains(.notSelectedByPreflight))
     }
 
+    // MARK: - Slash-command path
+
+    /// The slash wrapper forbids discovery ("use only the tools exposed in
+    /// this request"), so an on-demand tool can only reach a slash-invoked
+    /// turn by being pre-loaded with the skill. Without this, "update this
+    /// skill" produced a claimed update with nothing saved (0.24.7 report).
+    @Test
+    func slashInvocationPreloadsUpdateSkillForUserSkillsOnly() throws {
+        let user = Skill(name: "Plain English", instructions: "Use `some_mcp_tool` here.")
+        let preloaded = SkillManager.preloadedToolNames(
+            for: user, body: user.instructions, dynamicCandidates: ["some_mcp_tool", "other"])
+        #expect(preloaded.contains("update_skill"))
+        #expect(preloaded.contains("some_mcp_tool"))
+        #expect(!preloaded.contains("other"))
+
+        let builtIn = try #require(Skill.builtInSkills.first)
+        #expect(
+            !SkillManager.preloadedToolNames(
+                for: builtIn, body: builtIn.instructions, dynamicCandidates: []
+            ).contains("update_skill"))
+
+        var plugin = Skill(name: "Plugin Skill", instructions: "x")
+        plugin.pluginId = "com.example.plugin"
+        #expect(
+            !SkillManager.preloadedToolNames(for: plugin, body: "x", dynamicCandidates: [])
+                .contains("update_skill"))
+    }
+
+    /// The wrapper only advertises editing when the tool is really exposed,
+    /// and never for a skill the tool would reject.
+    @Test
+    func activeSkillWrapperAdvertisesEditingOnlyWhenEditable() {
+        let editable = SkillManager.activeSkillPromptSection(
+            name: "Plain English", body: "Body.", editable: true)
+        #expect(editable.contains("call `update_skill`"))
+        #expect(editable.contains("Never state that the skill was updated"))
+        #expect(editable.contains("Body."))
+
+        let readOnly = SkillManager.activeSkillPromptSection(
+            name: "Web Researcher", body: "Body.", editable: false)
+        #expect(!readOnly.contains("update_skill"))
+        #expect(readOnly.contains("Body."))
+    }
+
     // MARK: - Harness
 
     private static func withTempSkillStorage(

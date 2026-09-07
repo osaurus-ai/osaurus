@@ -6216,22 +6216,27 @@ final class ChatSession: ObservableObject {
                     // `capabilities_load` would use. Consume the pending id
                     // either way, but never inject in Mode 2 (the request
                     // must stay bare).
-                    var oneOffSkillSection: (name: String, body: String)?
+                    var oneOffSkillSection: (name: String, body: String, editable: Bool)?
                     var skillReferencedTools: LoadedTools = []
                     if let skillId = pendingOneOffSkillId {
                         pendingOneOffSkillId = nil
                                             if !isRemoteAgentTarget, let skill = SkillManager.shared.skill(for: skillId)
                                             {
                             let body = await SkillManager.shared.buildFullInstructions(for: skill)
-                            oneOffSkillSection = (skill.name, body)
+                            oneOffSkillSection = (skill.name, body, SkillManager.isEditable(skill))
                             let granted = AgentManager.shared
                                 .effectiveEnabledToolNames(for: effectiveAgentId)
                                 .map(Set.init)
                             let dynamicNames = Set(
                                 ToolRegistry.shared.listDynamicTools().map(\.name)
                             ).filter { granted?.contains($0) ?? true }
+                            // Also pre-loads `update_skill` for a user-editable
+                            // skill: the wrapper forbids discovery, so this is
+                            // the only route by which "update this skill" can
+                            // reach a real write instead of a claimed one.
                             skillReferencedTools = LoadedTools(
-                                SkillManager.toolNames(referencedIn: body, from: dynamicNames)
+                                SkillManager.preloadedToolNames(
+                                    for: skill, body: body, dynamicCandidates: dynamicNames)
                             )
                         }
                     }
@@ -6313,7 +6318,8 @@ final class ChatSession: ObservableObject {
                     if let oneOff = oneOffSkillSection {
                         sys += "\n\n" + SkillManager.activeSkillPromptSection(
                             name: oneOff.name,
-                            body: oneOff.body
+                            body: oneOff.body,
+                            editable: oneOff.editable
                         )
                     }
 
