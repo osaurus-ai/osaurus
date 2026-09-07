@@ -17,6 +17,7 @@
 //
 
 import AppKit
+import Combine
 import SwiftUI
 
 // MARK: - Anchors and stops
@@ -105,14 +106,81 @@ public final class ChatLayoutTour: ObservableObject {
     /// moved" walkthrough, fresh installs as a first-run intro to the same
     /// layout. Called when a chat window becomes key; runs at most once per
     /// launch, and never again once finished or dismissed.
+    ///
+    /// The start is deferred while any first-run dialog is on screen or
+    /// still queued (post-onboarding import prompt, launch campaign,
+    /// consent) so the coachmarks never fight a modal for the same window.
     func autoStartIfEligible(windowId: UUID) {
         guard !didAutoCheckThisLaunch else { return }
         didAutoCheckThisLaunch = true
         guard !UserDefaults.standard.bool(forKey: Self.completedKey) else { return }
-        // Let the first layout pass settle so anchors are reported.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-            self?.start(in: windowId)
+        pendingAutoStartWindowId = windowId
+        scheduleAutoStartAttempt()
+    }
+
+    // MARK: Auto-start deferral
+
+    /// Chat window waiting for a clear moment to auto-start the tour.
+    private var pendingAutoStartWindowId: UUID?
+    /// Outstanding `holdAutoStart()` calls. While non-zero the tour waits
+    /// even if no alert is on screen yet (the caller is about to show one).
+    private var autoStartHolds = 0
+    private var alertCenterObserver: AnyCancellable?
+    private var autoStartRetry: DispatchWorkItem?
+
+    /// Ask the tour to wait: the caller is about to present a first-run
+    /// dialog that has not been queued with the alert center yet. Pair
+    /// with `releaseAutoStart()` once the dialog is queued or skipped.
+    public func holdAutoStart() {
+        autoStartHolds += 1
+    }
+
+    public func releaseAutoStart() {
+        autoStartHolds = max(0, autoStartHolds - 1)
+        scheduleAutoStartAttempt()
+    }
+
+    /// True when nothing modal stands between the user and the chat.
+    private var isClearToAutoStart: Bool {
+        guard autoStartHolds == 0 else { return false }
+        guard NSApp.modalWindow == nil else { return false }
+        guard !NSApp.windows.contains(where: { $0.attachedSheet != nil }) else { return false }
+        guard !ThemedAlertCenter.shared.hasAnyActiveAlert else { return false }
+        return true
+    }
+
+    /// Retry the auto-start after a short settle. The delay also lets the
+    /// first layout pass finish so anchors are reported before stop 1.
+    private func scheduleAutoStartAttempt() {
+        guard pendingAutoStartWindowId != nil else { return }
+        autoStartRetry?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.attemptAutoStart()
         }
+        autoStartRetry = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
+    }
+
+    private func attemptAutoStart() {
+        guard let windowId = pendingAutoStartWindowId else { return }
+        guard isClearToAutoStart else {
+            // Wait for the alert center to change (a dismissal) and retry.
+            // `objectWillChange` fires before the stack mutates, so the
+            // retry is scheduled rather than evaluated inline.
+            if alertCenterObserver == nil {
+                alertCenterObserver = ThemedAlertCenter.shared.objectWillChange
+                    .receive(on: DispatchQueue.main)
+                    .sink { [weak self] _ in
+                        self?.scheduleAutoStartAttempt()
+                    }
+            }
+            return
+        }
+        alertCenterObserver = nil
+        pendingAutoStartWindowId = nil
+        // The window may have closed while the tour waited; `start` falls
+        // back to the last focused window in that case.
+        start(in: windowId)
     }
 
     // MARK: Lifecycle
@@ -120,6 +188,11 @@ public final class ChatLayoutTour: ObservableObject {
     /// Start (or restart) the tour in `windowId`, or in the last focused
     /// chat window, creating one when none exists. Help ▸ Chat Layout Tour.
     public func start(in requestedWindowId: UUID? = nil) {
+        // A manual start (Help menu) supersedes any deferred auto-start.
+        pendingAutoStartWindowId = nil
+        autoStartRetry?.cancel()
+        autoStartRetry = nil
+        alertCenterObserver = nil
         if isActive { finish(markCompleted: false) }
         let manager = ChatWindowManager.shared
         let targetId: UUID
