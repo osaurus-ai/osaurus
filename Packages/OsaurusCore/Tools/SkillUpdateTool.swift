@@ -121,9 +121,18 @@ final class SkillUpdateTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
             case .failure(let failure):
                 // Retryable: nothing was written, so the model can widen the
                 // `find` and try again without the user re-approving.
+                //
+                // The trailing sentence exists because of a live run: told
+                // "no match for Use German", the model decided the user must
+                // have meant the current language line and replaced THAT
+                // instead. The approval card caught it, but a card is a
+                // weaker guard than not proposing the wrong edit at all.
                 return ToolEnvelope.failure(
                     kind: .invalidArgs,
-                    message: failure.message,
+                    message:
+                        failure.message
+                        + " If the text the user asked about is not in the skill, tell them so "
+                        + "rather than substituting a different edit.",
                     field: "edits",
                     tool: name,
                     retryable: true

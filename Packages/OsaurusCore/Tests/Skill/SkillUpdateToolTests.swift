@@ -101,6 +101,7 @@ struct SkillUpdateToolTests {
                 "edits": [["find": "text that is not there", "replace": "x"]],
             ])
             #expect(result.contains("\"retryable\":true") || result.contains("\"retryable\": true"))
+            #expect(ToolEnvelope.failureMessage(result).contains("rather than substituting"))
             #expect(SkillManager.shared.skill(for: skill.id)?.instructions == "Keep this text.")
         }
     }
