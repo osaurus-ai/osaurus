@@ -7,6 +7,7 @@
 //  conversation into the window and dismisses the dialog.
 //
 
+import AppKit
 import SwiftUI
 
 enum ChatHistoryDialog {
@@ -54,23 +55,36 @@ private struct ChatHistoryDialogContent: View {
     let onOpenInNewTab: (ChatSessionData) -> Void
 
     @Environment(\.theme) private var theme
+    @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var sessionsManager = ChatSessionsManager.shared
+
+    /// Which agent's chats the list shows. nil until the user picks one,
+    /// so the initial lens tracks the window's agent (see `activeFilter`).
+    @State private var agentFilter: ChatHistoryAgentFilter?
+    @State private var showAgentPicker = false
+    @State private var isAgentButtonHovered = false
+
+    /// The Default agent has always listed every conversation here
+    /// (`sessions(for:)` returns all of them for Default), so it opens on
+    /// "All Chats"; any other agent opens on its own chats.
+    private var activeFilter: ChatHistoryAgentFilter {
+        if let agentFilter { return agentFilter }
+        return windowState.agentId == Agent.defaultId ? .all : .agent(windowState.agentId)
+    }
+
+    private var visibleSessions: [ChatSessionData] {
+        switch activeFilter {
+        case .all:
+            return sessionsManager.sessions
+        case .agent(let id):
+            return sessionsManager.sessions.filter { ($0.agentId ?? Agent.defaultId) == id }
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
-                let agent = windowState.cachedActiveAgent
-                AgentAvatarView(
-                    mascotId: agent.avatar,
-                    name: agent.displayName,
-                    tint: agentColorFor(agent.name),
-                    diameter: 20,
-                    customImageURL: agent.customAvatarURL,
-                    monogramFontSize: 9,
-                    borderWidth: 0
-                )
-                Text(windowState.cachedAgentDisplayName)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                agentDropdown
                 Spacer()
                 Button {
                     requestImport()
@@ -98,7 +112,7 @@ private struct ChatHistoryDialogContent: View {
             }
 
             ChatHistoryList(
-                sessions: windowState.filteredSessions,
+                sessions: visibleSessions,
                 currentSessionId: windowState.session.sessionId,
                 scope: scope,
                 onSelect: onSelect,
@@ -153,6 +167,87 @@ private struct ChatHistoryDialogContent: View {
         }
     }
 
+    // MARK: - Agent dropdown
+
+    /// Avatar + name + chevron, opening the agent picker popover. Changing
+    /// the lens only re-filters this list; the window's agent is untouched
+    /// until the user opens a chat (which adopts that chat's agent).
+    private var agentDropdown: some View {
+        Button {
+            showAgentPicker.toggle()
+        } label: {
+            // Pill: avatar flush to the leading edge, name, chevron. Reads
+            // as a raised control (soft fill, hairline edge, faint shadow)
+            // that lifts a touch more on hover / while the picker is open.
+            let isRaised = isAgentButtonHovered || showAgentPicker
+            HStack(spacing: 7) {
+                ChatHistoryAgentFilterAvatar(filter: activeFilter, agentManager: agentManager, diameter: 20)
+                activeFilterTitle
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(isRaised ? theme.primaryText : theme.secondaryText)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8.5, weight: .bold))
+                    .foregroundColor(isRaised ? theme.accentColor : theme.tertiaryText)
+                    .rotationEffect(.degrees(showAgentPicker ? 180 : 0))
+                    .padding(.trailing, 2)
+            }
+            .padding(.leading, 4)
+            .padding(.trailing, 9)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(
+                        isRaised
+                            ? theme.secondaryBackground.opacity(theme.isDark ? 0.9 : 1.0)
+                            : theme.secondaryBackground.opacity(theme.isDark ? 0.55 : 0.7)
+                    )
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(
+                        isRaised
+                            ? theme.accentColor.opacity(0.35)
+                            : theme.primaryBorder.opacity(theme.isDark ? 0.35 : 0.25),
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: theme.shadowColor.opacity(isRaised ? 0.18 : 0.08),
+                radius: isRaised ? 6 : 3,
+                x: 0,
+                y: isRaised ? 2 : 1
+            )
+            .contentShape(Capsule())
+            .pointingHandCursor()
+        }
+        .buttonStyle(.plain)
+        .onHover { isAgentButtonHovered = $0 }
+        .animation(.easeOut(duration: 0.15), value: isAgentButtonHovered)
+        .animation(.easeOut(duration: 0.15), value: showAgentPicker)
+        .localizedHelp("Choose which agent's chats to show")
+        .popover(isPresented: $showAgentPicker, arrowEdge: .bottom) {
+            ChatHistoryAgentPicker(
+                agents: agentManager.agents,
+                sessions: sessionsManager.sessions,
+                selected: activeFilter,
+                onSelect: { filter in
+                    agentFilter = filter
+                    showAgentPicker = false
+                }
+            )
+        }
+    }
+
+    private var activeFilterTitle: Text {
+        switch activeFilter {
+        case .all:
+            return Text("All Chats", bundle: .module)
+        case .agent(let id):
+            return Text(verbatim: agentManager.agent(for: id)?.displayName ?? windowState.cachedAgentDisplayName)
+        }
+    }
+
     /// Same Import flow the old sidebar had: first-time provider guide,
     /// then the picker; scoped to the selected agent (Default agent imports
     /// unscoped). A single imported conversation opens immediately.
@@ -195,3 +290,281 @@ private struct ChatHistoryDialogContent: View {
     }
 }
 
+// MARK: - Agent filter
+
+/// Which agent's conversations the History dialog lists.
+enum ChatHistoryAgentFilter: Equatable {
+    /// Every conversation, regardless of agent.
+    case all
+    /// Conversations tagged with this agent (untagged ones count as Default).
+    case agent(UUID)
+}
+
+/// The avatar for a filter: the agent's own, or a tray glyph for "All Chats".
+private struct ChatHistoryAgentFilterAvatar: View {
+    let filter: ChatHistoryAgentFilter
+    @ObservedObject var agentManager: AgentManager
+    let diameter: CGFloat
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        switch filter {
+        case .all:
+            ZStack {
+                Circle().fill(theme.accentColor.opacity(theme.isDark ? 0.18 : 0.12))
+                Image(systemName: "tray.full")
+                    .font(.system(size: diameter * 0.5, weight: .medium))
+                    .foregroundColor(theme.accentColor)
+            }
+            .frame(width: diameter, height: diameter)
+        case .agent(let id):
+            let agent = agentManager.agent(for: id)
+            AgentAvatarView(
+                mascotId: agent?.avatar,
+                name: agent?.displayName ?? "",
+                tint: agentColorFor(agent?.name ?? ""),
+                diameter: diameter,
+                customImageURL: agent?.customAvatarURL,
+                monogramFontSize: diameter * 0.45,
+                borderWidth: 0
+            )
+        }
+    }
+}
+
+// MARK: - Agent picker popover
+
+/// Agent chooser for the History dialog, in the model picker's idiom:
+/// titled header with a count pill, search field, then one row per agent
+/// with its chat count, the active lens marked with a checkmark. "All
+/// Chats" is pinned first.
+private struct ChatHistoryAgentPicker: View {
+    let agents: [Agent]
+    let sessions: [ChatSessionData]
+    let selected: ChatHistoryAgentFilter
+    let onSelect: (ChatHistoryAgentFilter) -> Void
+
+    @Environment(\.theme) private var theme
+    @ObservedObject private var agentManager = AgentManager.shared
+    @State private var searchText = ""
+    /// Tracks IME composition so the placeholder hides while composing.
+    @State private var isSearchComposing = false
+
+    private var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var filteredAgents: [Agent] {
+        guard isSearching else { return agents }
+        return agents.filter { SearchService.matches(query: searchText, in: $0.displayName) }
+    }
+
+    /// Chat count per agent id (untagged chats count as Default).
+    private var countsByAgent: [UUID: Int] {
+        var counts: [UUID: Int] = [:]
+        for session in sessions {
+            counts[session.agentId ?? Agent.defaultId, default: 0] += 1
+        }
+        return counts
+    }
+
+    private static let rowHeight: CGFloat = 40
+    private static let chromeHeight: CGFloat = 96
+
+    var body: some View {
+        let rows = filteredAgents
+        let counts = countsByAgent
+        let rowCount = rows.count + (isSearching ? 0 : 1)
+        VStack(spacing: 0) {
+            header
+            Divider().background(theme.primaryBorder.opacity(0.3))
+            searchField
+            Divider().background(theme.primaryBorder.opacity(0.3))
+
+            if rows.isEmpty {
+                emptyState
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        if !isSearching {
+                            row(
+                                filter: .all,
+                                title: Text("All Chats", bundle: .module),
+                                count: sessions.count
+                            )
+                        }
+                        ForEach(rows) { agent in
+                            row(
+                                filter: .agent(agent.id),
+                                title: Text(verbatim: agent.displayName),
+                                count: counts[agent.id] ?? 0
+                            )
+                        }
+                    }
+                    .padding(.vertical, 6)
+                }
+                .scrollIndicators(.hidden)
+            }
+        }
+        .frame(
+            width: 300,
+            height: min(CGFloat(max(rowCount, 1)) * Self.rowHeight + Self.chromeHeight + 12, 420)
+        )
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(theme.primaryBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [theme.glassEdgeLight.opacity(0.2), theme.primaryBorder.opacity(0.15)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
+        )
+        .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 6)
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Text("Agents", bundle: .module)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+
+            Text("\(agents.count)")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(theme.secondaryBackground))
+
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13))
+                .foregroundColor(theme.secondaryText)
+
+            ZStack(alignment: .leading) {
+                if searchText.isEmpty && !isSearchComposing {
+                    Text("Search agents...", bundle: .module)
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.secondaryText)
+                        .allowsHitTesting(false)
+                }
+                IMEAwareTextField(
+                    text: $searchText,
+                    isComposing: $isSearchComposing,
+                    font: .systemFont(ofSize: 13),
+                    textColor: NSColor(theme.primaryText)
+                )
+                .frame(height: 17)
+            }
+
+            if !searchText.isEmpty {
+                Button(action: { searchText = "" }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .buttonStyle(.plain)
+                .transition(.opacity.combined(with: .scale(scale: 0.8)))
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(theme.secondaryBackground.opacity(theme.isDark ? 0.4 : 0.5))
+        .animation(.easeOut(duration: 0.15), value: searchText.isEmpty)
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 24))
+                .foregroundColor(theme.tertiaryText)
+            Text("No agents found", bundle: .module)
+                .font(.system(size: 13))
+                .foregroundColor(theme.secondaryText)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+    }
+
+    private func row(filter: ChatHistoryAgentFilter, title: Text, count: Int) -> some View {
+        AgentPickerRow(
+            filter: filter,
+            title: title,
+            count: count,
+            isSelected: filter == selected,
+            agentManager: agentManager,
+            action: { onSelect(filter) }
+        )
+    }
+
+    /// One agent row; owns its hover state like the model picker's rows.
+    private struct AgentPickerRow: View {
+        let filter: ChatHistoryAgentFilter
+        let title: Text
+        let count: Int
+        let isSelected: Bool
+        @ObservedObject var agentManager: AgentManager
+        let action: () -> Void
+
+        @Environment(\.theme) private var theme
+        @State private var isHovering = false
+
+        var body: some View {
+            Button(action: action) {
+                HStack(spacing: 10) {
+                    ChatHistoryAgentFilterAvatar(filter: filter, agentManager: agentManager, diameter: 22)
+                    title
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                        .foregroundColor(isSelected ? theme.accentColor : theme.primaryText)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text("\(count)")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(isSelected ? theme.accentColor.opacity(0.9) : theme.tertiaryText)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1.5)
+                        .background(
+                            Capsule().fill(
+                                isSelected ? theme.accentColor.opacity(0.12) : theme.secondaryBackground)
+                        )
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(theme.accentColor)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(
+                            isSelected
+                                ? theme.accentColor.opacity(0.12)
+                                : (isHovering ? theme.tertiaryBackground.opacity(0.7) : Color.clear)
+                        )
+                )
+                .padding(.horizontal, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isHovering = hovering
+                }
+            }
+        }
+    }
+}
