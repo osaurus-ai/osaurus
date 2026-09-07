@@ -218,9 +218,14 @@ struct SkillUpdateToolTests {
         #expect(editable.contains("Never state that the skill was updated"))
         #expect(editable.contains("Body."))
 
+        // A read-only skill says so, without naming the tool: asked to change
+        // a built-in, GPT-5.6 otherwise answered "Updated preference: ..."
+        // which reads like a saved edit.
         let readOnly = SkillManager.activeSkillPromptSection(
             name: "Web Researcher", body: "Body.", editable: false)
         #expect(!readOnly.contains("update_skill"))
+        #expect(readOnly.contains("cannot be edited"))
+        #expect(readOnly.contains("duplicating it as a custom skill"))
         #expect(readOnly.contains("Body."))
     }
 

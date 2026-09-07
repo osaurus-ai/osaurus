@@ -802,7 +802,13 @@ public final class SkillManager {
             (it is exposed in this request) and report only what its result says. Never \
             state that the skill was updated unless that call succeeded.
             """
-            : ""
+            : """
+
+
+            This skill is built in or provided by a plugin, so its instructions cannot be \
+            edited. If the user asks to change it, say so plainly and suggest duplicating it \
+            as a custom skill; do not describe a preference as "updated" or "saved".
+            """
         return """
             ## Active Skill Instructions: \(name)
 
