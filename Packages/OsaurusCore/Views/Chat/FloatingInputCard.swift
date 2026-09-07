@@ -123,7 +123,6 @@ struct FloatingInputCard: View {
     /// Identity of the conversation backing the history. Navigation state
     /// resets when it changes so a recalled index can't leak across chats.
     var inputHistoryKey: UUID?
-    /// When true, the model chip dot reflects warm-up state (yellow/green).
     /// Session-scoped LLM context-compaction state, rendered as inline
     /// progress / result rows inside the Context Budget popover.
     var compactionState: ContextCompactionUIState = .idle
@@ -2930,9 +2929,10 @@ extension FloatingInputCard {
         return warmupController.selectedModelResident ? .green : .gray
     }
 
-    /// Warm-up tooltip for the model chip, applied as a modifier so the
-    /// `WarmupProgressHub` observation lives in the modifier's own view node —
-    /// per-tick prefill progress no longer re-evaluates the whole card body.
+    /// Residency tooltip for the model chip, applied as a modifier so only
+    /// the modifier's own view node observes the controller. Send-time load
+    /// and prefill progress is the ordinary inference progress UI
+    /// (`InferenceProgressManager`); the tooltip states residency only.
     private struct ModelWarmupHelp: ViewModifier {
         let isDeprecated: Bool
         /// `isSelectedModelLocal && !isRemoteAgentRun` — a local model whose
@@ -2940,7 +2940,6 @@ extension FloatingInputCard {
         let isLocalModelRun: Bool
         let selectedModel: String?
         @ObservedObject var warmupController: ChatWarmupController
-        @ObservedObject private var warmupProgressHub = WarmupProgressHub.shared
 
         func body(content: Content) -> some View {
             content.help(
@@ -2956,20 +2955,6 @@ extension FloatingInputCard {
         private var helpText: String {
             guard isLocalModelRun else {
                 return String(localized: "Model ready", bundle: .module)
-            }
-            // Actual load / prefill progress after Send (reported by the
-            // runtime), otherwise plain residency.
-            if let model = selectedModel, let phase = warmupProgressHub.phases[model] {
-                switch phase {
-                case .loadingModel:
-                    return String(localized: "Loading model…", bundle: .module)
-                case .prefilling(let state):
-                    guard state.totalUnitCount > 0 else {
-                        return String(localized: "Prefilling context…", bundle: .module)
-                    }
-                    let percent = Int(state.percentCompleted.rounded()).formatted(.percent)
-                    return L("Prefilling context \(percent) (\(state.completedUnitCount)/\(state.totalUnitCount) tokens)")
-                }
             }
             return warmupController.selectedModelResident
                 ? String(localized: "Model loaded — ready to respond", bundle: .module)

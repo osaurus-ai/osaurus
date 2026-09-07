@@ -1951,34 +1951,6 @@
         }
       }
     },
-    "Prefilling context %@ (%lld/%lld tokens)": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Kontext wird vorbereitet: %@ (%lld/%lld Token)"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "컨텍스트 프리필 %@ (%lld/%lld 토큰)"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Предзаполнение контекста %@ (%lld/%lld токенов)"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "正在预填充上下文 %@（%lld/%lld 个 token）"
-          }
-        }
-      }
-    },
     "Downloading, %lld%%": {
       "localizations": {
         "de": {
