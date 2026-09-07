@@ -648,7 +648,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         )
 
         let panel = createChatPanel(windowId: windowId, windowState: windowState)
-        panel.contentViewController = hostingController
+        attach(hostingController, to: panel)
 
         applyWindowFramePersistence(panel: panel)
 
@@ -675,7 +675,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         )
 
         let panel = createChatPanel(windowId: windowId, windowState: windowState)
-        panel.contentViewController = hostingController
+        attach(hostingController, to: panel)
 
         applyWindowFramePersistence(panel: panel)
 
@@ -695,6 +695,25 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             width: min(preferred.width, max(vf.width - margin, 600)),
             height: min(preferred.height, max(vf.height - margin, 500))
         )
+    }
+
+    /// Install the SwiftUI root without letting it dictate the window size.
+    ///
+    /// AppKit owns chat window size via the default size and frame autosave.
+    /// With the hosting controller's default `sizingOptions`, attaching it
+    /// pushes the root view's measured size onto the window, which resolved
+    /// to the view's *minimum* (680pt) and shrank every new window. The
+    /// management window disables this for the same reason. The SwiftUI
+    /// minimum is re-applied as the panel's `contentMinSize` so the user
+    /// still can't drag the window below what the layout supports.
+    private func attach(_ hostingController: NSHostingController<some View>, to panel: ChatPanel) {
+        if #available(macOS 13.0, *) {
+            hostingController.sizingOptions = []
+        }
+        let contentSize = panel.contentRect(forFrameRect: panel.frame).size
+        panel.contentViewController = hostingController
+        panel.contentMinSize = NSSize(width: 680, height: 575)
+        panel.setContentSize(contentSize)
     }
 
     /// Shared logic for creating the basic ChatPanel with its toolbar and delegate.
