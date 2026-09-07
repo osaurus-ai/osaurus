@@ -80,6 +80,74 @@ struct ThemedAlertCenterTests {
         center.dismiss(scope: scope, id: request.id)
     }
 
+    // MARK: - Nested alerts over a container dialog
+
+    /// A request flagged `hostsNestedAlerts` (the chat History dialog) is
+    /// NOT replaced by an alert presented while it is on top: the new one
+    /// stacks above it, the container keeps its presenter, and dismissing
+    /// the nested alert brings the container back as the active request.
+    @Test func nestedAlertStacksOverHostingContainerAndPopsBack() {
+        let center = ThemedAlertCenter.shared
+        let scope = ThemedAlertScope.chat(UUID())
+
+        var containerDismissed = false
+        let container = ThemedAlertRequest(
+            title: "History",
+            message: nil,
+            buttons: [],
+            hostsNestedAlerts: true,
+            onDismiss: { containerDismissed = true }
+        )
+        let nested = ThemedAlertRequest(
+            title: "Delete Conversation?",
+            message: nil,
+            buttons: [],
+            onDismiss: {}
+        )
+
+        center.present(container, scope: scope)
+        center.present(nested, scope: scope)
+        #expect(containerDismissed == false, "The container must survive a nested alert")
+        #expect(center.active(for: scope)?.id == nested.id)
+        #expect(center.stack(for: scope).map(\.id) == [container.id, nested.id])
+
+        center.dismiss(scope: scope, id: nested.id)
+        #expect(center.active(for: scope)?.id == container.id)
+        #expect(center.stack(for: scope).count == 1)
+
+        center.dismiss(scope: scope, id: container.id)
+        #expect(center.active(for: scope) == nil)
+    }
+
+    /// The single-slot rule still applies ABOVE the container: a second
+    /// nested alert replaces the first nested one (resetting its presenter)
+    /// rather than growing the stack, and the container stays underneath.
+    @Test func secondNestedAlertReplacesFirstNestedNotContainer() {
+        let center = ThemedAlertCenter.shared
+        let scope = ThemedAlertScope.chat(UUID())
+
+        let container = ThemedAlertRequest(
+            title: "History", message: nil, buttons: [], hostsNestedAlerts: true, onDismiss: {}
+        )
+        var firstNestedDismissed = false
+        let firstNested = ThemedAlertRequest(
+            title: "Export", message: nil, buttons: [], onDismiss: { firstNestedDismissed = true }
+        )
+        let secondNested = ThemedAlertRequest(
+            title: "Exporting…", message: nil, buttons: [], onDismiss: {}
+        )
+
+        center.present(container, scope: scope)
+        center.present(firstNested, scope: scope)
+        center.present(secondNested, scope: scope)
+        #expect(firstNestedDismissed)
+        #expect(center.stack(for: scope).map(\.id) == [container.id, secondNested.id])
+
+        center.dismiss(scope: scope, id: secondNested.id)
+        #expect(center.active(for: scope)?.id == container.id)
+        center.dismiss(scope: scope, id: container.id)
+    }
+
     // MARK: - Cross-scope occupancy
 
     /// `hasAnyActiveAlert` is the read-only "is anything showing anywhere"

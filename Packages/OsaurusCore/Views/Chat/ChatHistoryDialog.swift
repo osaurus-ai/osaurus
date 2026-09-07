@@ -40,6 +40,10 @@ enum ChatHistoryDialog {
                 showsCloseButton: true,
                 customContent: AnyView(content),
                 width: 470,
+                // Row actions raise their own alerts (delete confirmation,
+                // export chooser + progress). Those stack over this dialog
+                // and return to it, instead of replacing it.
+                hostsNestedAlerts: true,
                 onDismiss: dismiss
             ),
             scope: scope
