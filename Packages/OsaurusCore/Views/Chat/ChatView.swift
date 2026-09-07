@@ -1045,13 +1045,10 @@ final class ChatSession: ObservableObject {
                     self.pendingAttachments = []
                 }
 
-                self.warmupController.handleModelSelectionChange(
-                    session: self,
-                    to: model,
-                    performSwitch: { [weak self] evictOthers in
-                        await self?.performModelResidencySwitch(evictOthers: evictOthers)
-                    }
-                )
+                // Selection only records the choice (and re-evaluates the
+                // residency dot). Loading, eviction and prefill happen on
+                // the first Send, through the ordinary request path.
+                self.warmupController.handleModelSelectionChange(session: self, to: model)
             }
 
         // Model-option toggles (Thinking, reasoning effort) change both the
@@ -1525,7 +1522,6 @@ final class ChatSession: ObservableObject {
                     cachedPreviewContext = nil
                     cachedContext = nil
                     warmupController.invalidateWarmState()
-                    warmupController.scheduleWarmup(session: self)
                     objectWillChange.send()
                 }
             }
@@ -4008,10 +4004,6 @@ final class ChatSession: ObservableObject {
             flushQueuedSendIfEligible()
         }
         suppressQueuedSendFlushForCurrentRun = false
-        handleWarmupAfterRunCompleted(
-            wasCancelled: stopRequested,
-            hadError: lastStreamError != nil
-        )
     }
 
     /// Outcome of the auto-title eligibility check for one clean run
@@ -5738,14 +5730,9 @@ final class ChatSession: ObservableObject {
         // becomes a no-op.
         reconcilePromptShapeBeforeSend()
 
-        // DSV4 must not use the first visible response as its MLX/JIT warm-up.
-        // Promote a missing family warm-up to required handshake work before
-        // the generic scheduled-warm-up cancellation below.  The required
-        // task survives that cancellation and is awaited by the normal send
-        // lifecycle; every other model keeps the existing fast path.
-        warmupController.requireDSV4PreSendWarmupIfNeeded(session: self)
-
-        // A scheduled-but-not-started warm-up must not fire mid-run.
+        // Lazy loading: no pre-send warm-up exists for any family (the DSV4
+        // pre-send prefix request is gone with it). The model loads and the
+        // real request prefills inside dispatchSend's ordinary path.
         warmupController.cancelScheduledWarmup()
 
         // Common case: nothing pending — dispatch synchronously so the user
@@ -9174,7 +9161,6 @@ struct ChatView: View {
                                     return ChatInputHistory.entries(from: observedSession.turns)
                                 },
                                 inputHistoryKey: observedSession.sessionId,
-                                warmModelsOnLoadEnabled: ChatConfigurationStore.load().warmModelsOnLoad,
                                 compactionState: observedSession.compactionState,
                                 canCompactConversation: observedSession
                                     .canManuallyCompactConversation,

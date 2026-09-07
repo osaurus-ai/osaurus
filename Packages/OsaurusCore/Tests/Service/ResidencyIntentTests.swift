@@ -285,33 +285,19 @@ struct ResidencyIntentTests {
         #expect(residency.contains("protectedResidentModels"))
     }
 
-    @Test("The user's warm-up privilege is one-shot, not permanent")
+    @Test("chat selection carries no eviction-entitled load intent at all")
     func userIntentGrantIsConsumed() throws {
         let src = try Self.source("Services/Chat/ChatWarmupController.swift")
 
-        // `userIntentWarmupModel` records "the user just picked this by hand", which
-        // entitles the follow-up warm-up to displace a resident model. It used to be
-        // set and never cleared — so "the user picked A once" silently became "any
-        // warm-up of A, forever, may evict", and a re-warm minutes later, triggered
-        // by nothing the user did, could still unload an API client's model. The
-        // grant has to expire with the intent that created it.
-        #expect(
-            src.contains("private func consumeUserIntent(for model: String) -> Bool"),
-            "the user-intent grant must be consumed, not merely compared against"
-        )
-        #expect(
-            src.contains("userIntentWarmupModel = nil"),
-            "consuming the grant must clear it"
-        )
-
-        // And it must be resolved once and threaded, not re-derived at each use —
-        // two independent comparisons against a mutable field can disagree.
-        #expect(src.contains("let userIntent = consumeUserIntent(for: payload.model)"))
-        #expect(src.contains("request.backgroundModelLoad = !userIntent"))
-        #expect(
-            !src.contains("payload.model != userIntentWarmupModel"),
-            "no site may re-derive user intent by comparing the raw field"
-        )
+        // Chat loading is lazy: the controller that used to turn "the user
+        // just picked this model" into a warm-up allowed to displace a
+        // resident model no longer issues requests of any intent. The only
+        // chat request that can load or evict is the user's real Send, which
+        // goes through the ordinary interactive path.
+        #expect(!src.contains("userIntentWarmupModel"))
+        #expect(!src.contains("backgroundModelLoad"))
+        #expect(!src.contains("streamChat("))
+        #expect(!src.contains(".preload("))
     }
 
     // MARK: - The refusal is legible

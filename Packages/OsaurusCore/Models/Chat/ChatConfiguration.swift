@@ -117,10 +117,11 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// When true, Osaurus will monitor the clipboard for new text content to offer as context.
     public var enableClipboardMonitoring: Bool
 
-    // MARK: - Model Warm-Up
-    /// When true, local chat sessions proactively load the selected model and
-    /// prefill the static prompt prefix (system + tools + history) before the
-    /// user sends, so the first response pays less time-to-first-token cost.
+    // MARK: - Model Warm-Up (retired)
+    /// No longer has any effect: chat model loading is lazy (selecting a
+    /// model records the choice; the first Send loads it and prefills the
+    /// real request). Retained only so existing configuration files keep
+    /// decoding; absent, `true` and `false` all authorize nothing.
     public var warmModelsOnLoad: Bool
 
     // MARK: - Auto-Generated Chat Titles

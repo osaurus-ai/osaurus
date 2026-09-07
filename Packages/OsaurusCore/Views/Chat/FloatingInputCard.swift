@@ -124,7 +124,6 @@ struct FloatingInputCard: View {
     /// resets when it changes so a recalled index can't leak across chats.
     var inputHistoryKey: UUID?
     /// When true, the model chip dot reflects warm-up state (yellow/green).
-    var warmModelsOnLoadEnabled: Bool = false
     /// Session-scoped LLM context-compaction state, rendered as inline
     /// progress / result rows inside the Context Budget popover.
     var compactionState: ContextCompactionUIState = .idle
@@ -183,7 +182,6 @@ struct FloatingInputCard: View {
         isRemoteAgentRun: Bool = false,
         inputHistoryProvider: (() -> [String])? = nil,
         inputHistoryKey: UUID? = nil,
-        warmModelsOnLoadEnabled: Bool = false,
         compactionState: ContextCompactionUIState = .idle,
         canCompactConversation: Bool = false,
         onCompactConversation: (() -> Void)? = nil,
@@ -232,7 +230,6 @@ struct FloatingInputCard: View {
         self.isRemoteAgentRun = isRemoteAgentRun
         self.inputHistoryProvider = inputHistoryProvider
         self.inputHistoryKey = inputHistoryKey
-        self.warmModelsOnLoadEnabled = warmModelsOnLoadEnabled
         self.compactionState = compactionState
         self.canCompactConversation = canCompactConversation
         self.onCompactConversation = onCompactConversation
@@ -2925,18 +2922,11 @@ extension FloatingInputCard {
 
     private var modelWarmupDotColor: Color {
         // Remote models and remote agent runs execute elsewhere — there is
-        // no local load/warm state to report.
+        // no local load state to report.
         guard isSelectedModelLocal, !isRemoteAgentRun else { return .green }
-        if warmModelsOnLoadEnabled {
-            switch warmupController.state {
-            case .cold: return .gray
-            case .warming: return .yellow
-            case .warm: return .green
-            }
-        }
-        // Warm-on-load off: no warm-up pass exists, so readiness is
-        // residency. Green only while the model is actually loaded — never a
-        // hardcoded green that survives an idle unload.
+        // Lazy loading: readiness is residency. Green only while the model is
+        // actually loaded — a merely selected model is gray until the first
+        // Send loads it, and an idle unload turns it gray again.
         return warmupController.selectedModelResident ? .green : .gray
     }
 
@@ -2945,10 +2935,8 @@ extension FloatingInputCard {
     /// per-tick prefill progress no longer re-evaluates the whole card body.
     private struct ModelWarmupHelp: ViewModifier {
         let isDeprecated: Bool
-        /// `warmModelsOnLoadEnabled && isSelectedModelLocal && !isRemoteAgentRun`
-        let warmupApplies: Bool
         /// `isSelectedModelLocal && !isRemoteAgentRun` — a local model whose
-        /// load state is knowable even when warm-on-load is off.
+        /// load state is knowable.
         let isLocalModelRun: Bool
         let selectedModel: String?
         @ObservedObject var warmupController: ChatWarmupController
@@ -2966,57 +2954,29 @@ extension FloatingInputCard {
         }
 
         private var helpText: String {
-            guard warmupApplies else {
-                guard isLocalModelRun else {
-                    return String(localized: "Model ready", bundle: .module)
-                }
-                return warmupController.selectedModelResident
-                    ? String(localized: "Model loaded — ready to respond", bundle: .module)
-                    : String(
-                        localized: "Model not loaded — your next message loads it first",
-                        bundle: .module
-                    )
+            guard isLocalModelRun else {
+                return String(localized: "Model ready", bundle: .module)
             }
-            switch warmupController.state {
-            case .warm:
-                return String(
-                    localized: "Chat prefix warm — ready for a fast next response",
-                    bundle: .module
-                )
-            case .cold:
-                return warmupController.selectedModelResident
-                    ? String(
-                        localized:
-                            "Chat prefix not pre-warmed — the next response may restore cache or prefill",
-                        bundle: .module
-                    )
-                    : String(
-                        localized:
-                            "Model not loaded — the next response loads the model first",
-                        bundle: .module
-                    )
-            case .warming:
-                guard let model = selectedModel, let phase = warmupProgressHub.phases[model] else {
-                    return String(localized: "Warming up…", bundle: .module)
-                }
+            // Actual load / prefill progress after Send (reported by the
+            // runtime), otherwise plain residency.
+            if let model = selectedModel, let phase = warmupProgressHub.phases[model] {
                 switch phase {
                 case .loadingModel:
-                    return String(localized: "Warming up — loading model…", bundle: .module)
+                    return String(localized: "Loading model…", bundle: .module)
                 case .prefilling(let state):
                     guard state.totalUnitCount > 0 else {
-                        return String(
-                            localized: "Warming up — prefilling context…",
-                            bundle: .module
-                        )
+                        return String(localized: "Prefilling context…", bundle: .module)
                     }
                     let percent = Int(state.percentCompleted.rounded())
-                    return state.totalUnitCount == 1
-                        ? L("Warming up — prefilling context \(percent)% (\(state.completedUnitCount)/1 token)")
-                        : L(
-                            "Warming up — prefilling context \(percent)% (\(state.completedUnitCount)/\(state.totalUnitCount) tokens)"
-                        )
+                    return L("Prefilling context \(percent)% (\(state.completedUnitCount)/\(state.totalUnitCount) tokens)")
                 }
             }
+            return warmupController.selectedModelResident
+                ? String(localized: "Model loaded — ready to respond", bundle: .module)
+                : String(
+                    localized: "Model not loaded — your next message loads it first",
+                    bundle: .module
+                )
         }
     }
 
@@ -3158,7 +3118,6 @@ extension FloatingInputCard {
         .modifier(
             ModelWarmupHelp(
                 isDeprecated: isSelectedModelDeprecated,
-                warmupApplies: warmModelsOnLoadEnabled && isSelectedModelLocal && !isRemoteAgentRun,
                 isLocalModelRun: isSelectedModelLocal && !isRemoteAgentRun,
                 selectedModel: selectedModel,
                 warmupController: warmupController
