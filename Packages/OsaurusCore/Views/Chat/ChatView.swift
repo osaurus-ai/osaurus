@@ -9257,12 +9257,17 @@ struct ChatView: View {
         // anything narrower squished the chat column; the content is responsive
         // (chips collapse to icons, tabs fold into an overflow menu), so a narrow
         // width reflows the same UI rather than clipping it.
+        //
+        // The ideal size is what a brand-new window actually opens at: the
+        // hosting controller pushes the root view's fitting size onto the
+        // window when it is attached, overriding the panel's content rect.
+        // Keep it tied to the shared default so both agree.
         .frame(
             minWidth: 680,
-            idealWidth: 950,
+            idealWidth: WindowConfiguration.chat.defaultSize.width,
             maxWidth: .infinity,
             minHeight: 575,
-            idealHeight: 610,
+            idealHeight: WindowConfiguration.chat.defaultSize.height,
             maxHeight: .infinity
         )
         // Matches the window's rounded corners; in full screen the window is
