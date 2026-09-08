@@ -177,6 +177,8 @@ private extension ManagementView {
         switch tab {
         case .credits:
             CreditsView()
+        case .workspaces:
+            WorkspacesView()
         case .models:
             ModelDownloadView(
                 deeplinkModelId: deeplinkModelId,

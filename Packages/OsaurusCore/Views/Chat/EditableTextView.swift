@@ -49,6 +49,10 @@ struct EditableTextView: NSViewRepresentable {
     /// its weak `textView` reference; the parent uses `lockFocus(for:)`
     /// to refuse resignation during state-mutation cascades.
     var focusController: TextViewFocusController? = nil
+    /// False renders the text read-only (composer lock: offline team agent,
+    /// read-only teammate conversation). Selection stays enabled so the
+    /// user can still copy a draft.
+    var isEditable: Bool = true
     var onCommit: (() -> Void)? = nil
     var onShiftCommit: (() -> Void)? = nil
     /// Called on ↑ arrow key. Return true to consume the event (prevents cursor movement).
@@ -88,7 +92,7 @@ struct EditableTextView: NSViewRepresentable {
         textView.maxHeight = maxHeight
 
         textView.isRichText = false
-        textView.isEditable = true
+        textView.isEditable = isEditable
         textView.isSelectable = true
         textView.allowsUndo = true
         textView.drawsBackground = false
@@ -127,6 +131,7 @@ struct EditableTextView: NSViewRepresentable {
 
         syncMaxHeight(textView, scrollView: scrollView)
         syncText(textView, scrollView: scrollView)
+        if textView.isEditable != isEditable { textView.isEditable = isEditable }
         syncStyling(textView, coord: coord)
         syncFocus(textView)
         syncScrollerVisibility(textView, scrollView: scrollView, coord: coord)

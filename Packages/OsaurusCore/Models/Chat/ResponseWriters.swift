@@ -91,6 +91,39 @@ final class SSEResponseWriter: ResponseWriter {
         var osaurus_agent_tool: Trace
     }
 
+    /// Router billing summary relayed verbatim in the shape the Osaurus
+    /// Router itself emits (`{"osaurus": {...}}`), so the teammate's
+    /// `RemoteProviderService` decodes it with the same code path.
+    struct RouterSummaryRelayChunk: Encodable {
+        struct Summary: Encodable {
+            var request_id: String?
+            var cost_micro: String
+            var status: String
+            var token_source: String
+            var input_tokens: Int
+            var output_tokens: Int
+            var billed_to: String?
+        }
+        var osaurus: Summary
+    }
+
+    /// Relay a workspace-billed router summary to the caller of
+    /// `/agents/{id}/run` so its spend chip ticks in real time.
+    func writeRouterSummary(_ summary: RouterBillingSummary, context: ChannelHandlerContext) {
+        let chunk = RouterSummaryRelayChunk(
+            osaurus: .init(
+                request_id: summary.requestId,
+                cost_micro: summary.costMicro,
+                status: summary.status,
+                token_source: summary.tokenSource,
+                input_tokens: summary.inputTokens,
+                output_tokens: summary.outputTokens,
+                billed_to: summary.billedTo
+            )
+        )
+        writeSSEChunk(chunk, context: context)
+    }
+
     func writeHeaders(_ context: ChannelHandlerContext, extraHeaders: [(String, String)]? = nil) {
         var head = HTTPResponseHead(version: .http1_1, status: .ok)
         var headers = HTTPHeaders()

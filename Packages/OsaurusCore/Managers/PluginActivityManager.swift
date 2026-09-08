@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Tracks in-flight inline plugin inference (`complete`, `complete_stream`,
-//  `embed`) so the notch UI can surface a "plugin working" indicator even
+//  `embed`) so the Activity UI can surface a "plugin working" indicator even
 //  when no background task / chat session has been registered for the call.
 //
 //  Dispatched tasks (`host->dispatch`) live in `BackgroundTaskManager`. This
@@ -77,7 +77,7 @@ public final class PluginActivityManager: ObservableObject {
     /// True when at least one inline plugin call is in flight.
     public var hasActive: Bool { !active.isEmpty }
 
-    /// Most-recently-started activity (for the compact notch indicator).
+    /// Most-recently-started activity (for the compact Activity indicator).
     public var topActivity: PluginActivityRecord? {
         active.values.sorted { $0.startedAt > $1.startedAt }.first
     }

@@ -19,7 +19,22 @@ public protocol AccessKeyLifecycleManaging: AnyObject {
     func reload()
 }
 
-extension APIKeyManager: AccessKeyLifecycleManaging {}
+extension APIKeyManager: AccessKeyLifecycleManaging {
+    // Swift doesn't let a default argument (`overrideExpiresAt`) satisfy a
+    // protocol requirement; forward explicitly.
+    public func generate(
+        label: String,
+        expiration: AccessKeyExpiration,
+        agentIndex: UInt32?
+    ) throws -> (fullKey: String, info: AccessKeyInfo) {
+        try generate(
+            label: label,
+            expiration: expiration,
+            agentIndex: agentIndex,
+            overrideExpiresAt: nil
+        )
+    }
+}
 
 public final class AccessKeyLifecycleService: @unchecked Sendable {
     public static let shared = AccessKeyLifecycleService()

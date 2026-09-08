@@ -38,7 +38,7 @@ public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
     public var tabs: [ManagementTab] {
         switch self {
         case .general:
-            [.settings, .chat, .voice, .themes, .credits, .identity, .permissions, .privacy]
+            [.settings, .chat, .voice, .themes, .credits, .workspaces, .identity, .permissions, .privacy]
         case .models: [.models, .providers, .imageGeneration]
         case .agents: [.orchestrator, .agents, .agentChannels]
         case .capabilities: [.search, .knowledge, .memory, .tools, .skills, .commands]
@@ -78,6 +78,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case permissions
     case identity
     case credits
+    case workspaces
     case insights
 
     public var id: String { rawValue }
@@ -90,7 +91,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     /// The sidebar section this tab belongs to.
     public var section: ManagementSection {
         switch self {
-        case .settings, .chat, .voice, .themes, .credits, .identity, .permissions, .privacy:
+        case .settings, .chat, .voice, .themes, .credits, .workspaces, .identity, .permissions, .privacy:
             .general
         case .models, .providers, .imageGeneration: .models
         case .orchestrator, .agents, .agentChannels: .agents
@@ -108,6 +109,8 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case "dashboard": .credits
         case "channels", "integrations", "agent-channels": .agentChannels
         case "storage": .privacy
+        // Pre-rename tab id (Teams → Workspaces); keep old settings links working.
+        case "teams": .workspaces
         default: ManagementTab(rawValue: rawValue)
         }
     }
@@ -115,6 +118,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     public var icon: String {
         switch self {
         case .credits: "creditcard.fill"
+        case .workspaces: "rectangle.3.group.fill"
         case .models: "cube.box.fill"
         case .providers: "cloud.fill"
         case .agents: "person.2.fill"
@@ -147,6 +151,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     public var label: String {
         switch self {
         case .credits: L("Credits")
+        case .workspaces: L("Workspaces")
         case .models: L("Local Models")
         case .providers: L("Cloud Models")
         case .agents: L("Agents")

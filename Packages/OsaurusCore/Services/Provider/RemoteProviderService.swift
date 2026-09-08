@@ -596,10 +596,13 @@ public actor RemoteProviderService: ToolCapableService {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw RemoteProviderServiceError.invalidResponse
         }
+        OsaurusRelayPresenceSignal.observe(url: httpResponse.url, statusCode: httpResponse.statusCode, body: data)
 
         if httpResponse.statusCode >= 400 {
             if let rateLimited = RemoteProviderServiceError.rateLimited(from: httpResponse) { throw rateLimited }
-            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+            let errorMessage =
+                OsaurusRelayPresenceSignal.unreachableMessage(statusCode: httpResponse.statusCode, body: data)
+                ?? String(data: data, encoding: .utf8) ?? "Unknown error"
             throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
         }
 
@@ -711,10 +714,13 @@ public actor RemoteProviderService: ToolCapableService {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw RemoteProviderServiceError.invalidResponse
         }
+        OsaurusRelayPresenceSignal.observe(url: httpResponse.url, statusCode: httpResponse.statusCode, body: data)
 
         if httpResponse.statusCode >= 400 {
             if let rateLimited = RemoteProviderServiceError.rateLimited(from: httpResponse) { throw rateLimited }
-            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+            let errorMessage =
+                OsaurusRelayPresenceSignal.unreachableMessage(statusCode: httpResponse.statusCode, body: data)
+                ?? String(data: data, encoding: .utf8) ?? "Unknown error"
             throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
         }
 
@@ -1659,12 +1665,23 @@ public actor RemoteProviderService: ToolCapableService {
             return false
         }
 
-        if providerType == .osaurusRouter,
+        // Router billing summary. Emitted by the Osaurus Router itself, and
+        // relayed verbatim by a teammate's Osaurus host on a workspace-billed
+        // `/agents/{id}/run` stream (`.osaurus` provider) so the caller's spend
+        // chip ticks live. The cheap substring pre-check keeps ordinary
+        // content chunks from paying for a failed decode.
+        if providerType == .osaurusRouter || providerType == .osaurus,
+            dataContent.contains("\"osaurus\""),
             let summary = try? state.decoder.decode(OsaurusRouterSummaryEvent.self, from: jsonData)
         {
             state.routerSummarySeen = true
-            Task { @MainActor in
-                OsaurusRouterAccountService.shared.noteRouterSummary(summary.osaurus)
+            // A relayed team-pool charge must not touch this device's personal
+            // balance; the workspace ledger refresh handles it. Direct router
+            // streams keep the existing accounting.
+            if providerType == .osaurusRouter || summary.osaurus.billedWorkspaceId != nil {
+                Task { @MainActor in
+                    OsaurusRouterAccountService.shared.noteRouterSummary(summary.osaurus)
+                }
             }
             // Surface the charge on the stream so the chat layer can keep +
             // explain a billed-but-empty turn and record the on-device ledger
@@ -2769,6 +2786,13 @@ public actor RemoteProviderService: ToolCapableService {
                         contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"),
                         attempt: attempt
                     )
+                    // A Mode 2 turn through the relay is the freshest
+                    // presence evidence there is: 2xx/4xx came from the
+                    // host (online); 502 agent_offline means no tunnel.
+                    if httpResponse.statusCode < 400 {
+                        OsaurusRelayPresenceSignal.observe(
+                            url: httpResponse.url, statusCode: httpResponse.statusCode, body: nil)
+                    }
 
                     if httpResponse.statusCode >= 400 {
                         var errorData = Data()
@@ -2803,10 +2827,15 @@ public actor RemoteProviderService: ToolCapableService {
                         // Parse the error envelope instead of dumping the raw
                         // JSON body into chat; known upstream rejections map
                         // to actionable copy.
-                        let errorMessage = Self.extractErrorMessage(
-                            from: errorData,
-                            statusCode: httpResponse.statusCode
-                        )
+                        OsaurusRelayPresenceSignal.observe(
+                            url: httpResponse.url, statusCode: httpResponse.statusCode, body: errorData)
+                        let errorMessage =
+                            OsaurusRelayPresenceSignal.unreachableMessage(
+                                statusCode: httpResponse.statusCode, body: errorData)
+                            ?? Self.extractErrorMessage(
+                                from: errorData,
+                                statusCode: httpResponse.statusCode
+                            )
                         continuation.finish(
                             throwing: RemoteProviderServiceError.requestFailed(
                                 "HTTP \(httpResponse.statusCode): \(errorMessage)"
@@ -3169,6 +3198,24 @@ public actor RemoteProviderService: ToolCapableService {
                 ? (parameters.idempotencyKey ?? "auto-\(UUID().uuidString)") : nil
         )
 
+        // Workspace-billed inference (router only). Precedence:
+        // 1. An explicit `workspaceBillingContext` bound by the HTTP agent-run
+        //    surface — a teammate driving this agent through a redeemed workspace
+        //    session; it carries their `caller_attestation` for usage
+        //    attribution.
+        // 2. The agent's own billing preference (Settings → Workspaces), keyed by
+        //    the send-turn TaskLocal agent id.
+        // Turns with neither bill the personal wallet as before.
+        if provider.providerType == .osaurusRouter {
+            if let bound = ChatExecutionContext.workspaceBillingContext {
+                request.workspaceContext = bound
+            } else if let agentId = ChatExecutionContext.currentAgentId,
+                let workspaceContext = WorkspacesService.workspaceContext(forAgentId: agentId)
+            {
+                request.workspaceContext = workspaceContext
+            }
+        }
+
         // Ask OpenAI Chat-Completions upstreams to emit a final `usage` chunk so
         // the streaming path can report real completion tokens (the parser
         // captures it; `dispatchFinal` surfaces it as a stats hint). Only for
@@ -3217,6 +3264,14 @@ public actor RemoteProviderService: ToolCapableService {
             }
         }
         request.runAsRemoteAgent = parameters.runAsRemoteAgent
+        // Mode 2 against an Osaurus peer: thread the conversation id so the
+        // host groups this chat's turns into one history row (see
+        // `remoteAgentSessionId`).
+        if isAgentRun, provider.providerType == .osaurus,
+            let sessionId = parameters.sessionId, !sessionId.isEmpty
+        {
+            request.remoteAgentSessionId = sessionId
+        }
         return request
     }
 
@@ -4577,6 +4632,14 @@ struct RemoteChatRequest: Encodable {
     /// signature. Only ever set for `.osaurusRouter` (see `buildChatRequest`),
     /// so other OpenAI-compat upstreams never see an unknown field.
     var idempotencyKey: String? = nil
+    /// Router-only workspace billing. When the executing agent opted into billing
+    /// a workspace's credit pool (Settings → Workspaces), this carries
+    /// `{workspace_id, agent_address}` so the router charges the pool instead of
+    /// the signer's personal balance. Lives in the body so the request
+    /// signature covers it; encoded only when non-nil, so no other
+    /// OpenAI-compat upstream ever sees the field. Set in `buildChatRequest`
+    /// for `.osaurusRouter` only.
+    var workspaceContext: OsaurusRouterWorkspaceContext? = nil
     /// OpenAI `stream_options`. Set (in `buildChatRequest`) only for *streaming*
     /// requests to OpenAI Chat-Completions upstreams that honor it (see
     /// `requestsStreamUsageOptions`), so the provider emits a final `usage`
@@ -4611,6 +4674,12 @@ struct RemoteChatRequest: Encodable {
     /// Local-only source conversation key for Codex Responses Lite affinity.
     /// Intentionally absent from `CodingKeys`.
     var codexSessionKey: String? = nil
+    /// Mode 2 only: the caller's stable conversation id, sent as `session_id`
+    /// on `/agents/{address}/run` so the hosting Osaurus can group a workspace
+    /// teammate's turns into one persisted conversation (its local history
+    /// row under the shared agent) instead of one row per request. Never
+    /// encoded for `/chat/completions` — that wire is a plain OpenAI body.
+    var remoteAgentSessionId: String? = nil
     /// Local-only source conversation key for OpenCode session affinity
     /// (`x-opencode-session`). Intentionally absent from `CodingKeys`.
     var opencodeSessionKey: String? = nil
@@ -4622,7 +4691,9 @@ struct RemoteChatRequest: Encodable {
         case reasoning
         case thinking
         case clamp_to_balance
+        case remoteAgentSessionId = "session_id"
         case idempotencyKey = "idempotency_key"
+        case workspaceContext = "workspace_context"
         case veniceParameters = "venice_parameters"
         case streamOptions = "stream_options"
         case promptCacheKey = "prompt_cache_key"
@@ -4640,6 +4711,8 @@ struct RemoteChatRequest: Encodable {
         // the intent. Every other path keeps its exact current wire bytes.
         if !runAsRemoteAgent {
             try container.encode(model, forKey: .model)
+        } else if let remoteAgentSessionId, !remoteAgentSessionId.isEmpty {
+            try container.encode(remoteAgentSessionId, forKey: .remoteAgentSessionId)
         }
         try container.encode(messages, forKey: .messages)
         try container.encodeIfPresent(temperature, forKey: .temperature)
@@ -4676,6 +4749,7 @@ struct RemoteChatRequest: Encodable {
         try container.encodeIfPresent(thinking, forKey: .thinking)
         try container.encodeIfPresent(clamp_to_balance, forKey: .clamp_to_balance)
         try container.encodeIfPresent(idempotencyKey, forKey: .idempotencyKey)
+        try container.encodeIfPresent(workspaceContext, forKey: .workspaceContext)
         try container.encodeIfPresent(veniceParameters, forKey: .veniceParameters)
         try container.encodeIfPresent(streamOptions, forKey: .streamOptions)
         try container.encodeIfPresent(promptCacheKey, forKey: .promptCacheKey)
@@ -6416,9 +6490,25 @@ extension RemoteProviderService {
         // provider disconnected, instead of reporting a phantom connection.
         throw RemoteProviderServiceError.requestFailed(
             reachedPeer
-                ? "Remote agent rejected the connection (check pairing and authorization)."
+                ? Self.peerRejectedConnectionMessage
                 : "Could not reach the remote agent (Secure Channel handshake failed)."
         )
+    }
+
+    /// The peer answered but refused our credentials (4xx on the agent
+    /// endpoints). For a workspace pairing this almost always means the
+    /// attested key expired or was revoked — a fresh handshake repairs it,
+    /// so callers check for this exact message before offering a dead Retry.
+    nonisolated static let peerRejectedConnectionMessage =
+        "Remote agent rejected the connection (check pairing and authorization)."
+
+    /// True when `error` is the peer-rejection above (or its user-facing
+    /// rendering via `ChatErrorMessages`).
+    nonisolated static func isPeerRejection(_ error: Error) -> Bool {
+        if case RemoteProviderServiceError.requestFailed(let message) = error {
+            return message == peerRejectedConnectionMessage
+        }
+        return false
     }
 
     /// Live metadata for a paired/discovered Osaurus agent, fetched from

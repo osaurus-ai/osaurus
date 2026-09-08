@@ -54,6 +54,10 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
     /// The project this session belongs to. nil = not in any project.
     /// Orthogonal to `agentId`: a project can group chats across agents.
     public var projectId: UUID?
+    /// Workspace (team) identity when this chat is with — or was served for —
+    /// a shared agent. nil for ordinary local chats. See
+    /// `WorkspaceSessionContext` for the client/host split.
+    public var workspace: WorkspaceSessionContext?
 
     public init(
         id: UUID = UUID(),
@@ -73,7 +77,8 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         folderBookmark: Data? = nil,
         folderPath: String? = nil,
         conversationSummary: ConversationSummary? = nil,
-        projectId: UUID? = nil
+        projectId: UUID? = nil,
+        workspace: WorkspaceSessionContext? = nil
     ) {
         self.id = id
         self.title = title
@@ -93,6 +98,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         self.folderPath = folderPath
         self.conversationSummary = conversationSummary
         self.projectId = projectId
+        self.workspace = workspace
     }
 
     // Custom decoder for backward compatibility with old sessions
@@ -119,6 +125,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         conversationSummary = try container.decodeIfPresent(
             ConversationSummary.self, forKey: .conversationSummary)
         projectId = try container.decodeIfPresent(UUID.self, forKey: .projectId)
+        workspace = try container.decodeIfPresent(WorkspaceSessionContext.self, forKey: .workspace)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -141,6 +148,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(folderPath, forKey: .folderPath)
         try container.encodeIfPresent(conversationSummary, forKey: .conversationSummary)
         try container.encodeIfPresent(projectId, forKey: .projectId)
+        try container.encodeIfPresent(workspace, forKey: .workspace)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -153,6 +161,21 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         case folderBookmark, folderPath
         case conversationSummary
         case projectId
+        case workspace
+    }
+
+    /// Lowercased team-agent address when this is a chat with (or served for)
+    /// a shared agent; nil for local chats.
+    public var remoteAgentAddress: String? { workspace?.agentAddress }
+}
+
+extension ChatSessionData {
+    /// Sessions the teammate had with a shared agent (client side). Host-side
+    /// rows served for a teammate are excluded — those belong to the local
+    /// shared agent's history, tagged with the caller.
+    public var isWorkspaceAgentChat: Bool {
+        guard let workspace else { return false }
+        return !workspace.isServedForTeammate
     }
 
     /// Generate a title from the first user message

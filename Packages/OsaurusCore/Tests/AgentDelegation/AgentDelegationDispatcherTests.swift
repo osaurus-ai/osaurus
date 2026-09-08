@@ -7,7 +7,7 @@
 //  spawn-tool strip inside a delegated child, the delegation gating on
 //  `TextSubagentKind` (production agent targets delegate; the eval seam
 //  and bare-model spawns keep the in-memory runner), and the feed's
-//  notch-mirror suppression + child-session link.
+//  Activity-mirror suppression + child-session link.
 //
 
 import Foundation
@@ -228,7 +228,7 @@ struct AgentDelegationDispatcherTests {
         // Chat-owned inference provenance: the parent's residency-handoff
         // restore must be able to reclaim the helper's model afterwards.
         #expect(SessionSource.delegation.inferenceSource == .chatUI)
-        // Sidebar/notch decoration.
+        // Sidebar/Activity decoration.
         #expect(SessionSource.delegation.originLabel() == "delegated")
         #expect(SessionSource.delegation.shortLabel == "Delegated")
         #expect(!SessionSource.delegation.iconName.isEmpty)
@@ -285,11 +285,11 @@ struct AgentDelegationDispatcherTests {
     // MARK: - Delegation gating on TextSubagentKind
 
     @Test func agentTargetsDelegateOnlyWithoutTheEvalSeam() {
-        // Production agent target → true delegation (and no duplicate notch
+        // Production agent target → true delegation (and no duplicate Activity
         // mirror: the dispatched run registers its own background task).
         let production = TextSubagentKind(agentID: UUID(), input: "x")
         #expect(production.isDelegatedAgentTarget)
-        #expect(production.suppressNotchMirror)
+        #expect(production.suppressActivityMirror)
 
         // The eval seam forces the deterministic in-memory runner.
         let eval = TextSubagentKind(
@@ -298,27 +298,27 @@ struct AgentDelegationDispatcherTests {
             modelOverride: "eval/forced-model"
         )
         #expect(!eval.isDelegatedAgentTarget)
-        #expect(!eval.suppressNotchMirror)
+        #expect(!eval.suppressActivityMirror)
 
         // Bare-model spawns keep the ephemeral flow unchanged.
         let model = TextSubagentKind(model: "some-model", input: "x")
         #expect(!model.isDelegatedAgentTarget)
-        #expect(!model.suppressNotchMirror)
+        #expect(!model.suppressActivityMirror)
     }
 
     // MARK: - Feed: mirror suppression + child session link
 
     @Test func feedCarriesSuppressionFlagAndDelegatedSessionId() {
         let plain = SubagentFeed(toolCallId: "t1", kindId: "spawn", title: "spawn → Helper")
-        #expect(!plain.suppressNotchMirror)
+        #expect(!plain.suppressActivityMirror)
 
         let suppressed = SubagentFeed(
             toolCallId: "t2",
             kindId: "spawn",
             title: "spawn → Helper",
-            suppressNotchMirror: true
+            suppressActivityMirror: true
         )
-        #expect(suppressed.suppressNotchMirror)
+        #expect(suppressed.suppressActivityMirror)
 
         // The delegated child's session id lands on the feed (thread-safe
         // one-shot) so the in-chat card can link to the chat, and setting it

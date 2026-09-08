@@ -89,6 +89,14 @@ struct ChatEmptyState: View {
     /// variant: the chat isn't actually encrypted until the channel is up, so
     /// the badge shows "Securing connection…" instead of claiming E2E early.
     var isConnecting: Bool = false
+    /// Workspace/shared agent this tab talks to, when it is one. Present even
+    /// before the agent is paired or while the connect fails, so the hero
+    /// never falls back to the local mascot for a remote conversation.
+    var sharedAgent: SharedAgentIdentity?
+    /// Connection status of `sharedAgent`; drives the badge under the
+    /// greeting (one vocabulary with the composer lock notice) and hides the
+    /// quick actions while the composer is locked.
+    var sharedAgentStatus: SharedAgentStatus?
 
     @State private var hasAppeared = false
     @Environment(\.theme) private var theme
@@ -99,13 +107,17 @@ struct ChatEmptyState: View {
 
     /// True when this empty state heads a Mode 2 remote-agent conversation.
     private var isRemoteChat: Bool {
-        activeRelayAgent != nil || activeDiscoveredAgent != nil
+        sharedAgent != nil || activeRelayAgent != nil || activeDiscoveredAgent != nil
     }
 
     /// Display name of the active remote agent (Mode 2), if any. Drives the
     /// empty-state title so a remote conversation is headed by the remote
     /// agent's own name rather than the local agent's greeting.
     private var remoteAgentName: String? {
+        if let shared = sharedAgent {
+            let trimmed = shared.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
+        }
         if let relay = activeRelayAgent {
             let trimmed = relay.name.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : trimmed
@@ -153,7 +165,8 @@ struct ChatEmptyState: View {
         // introduces itself), never the local agent's custom
         // subtitle. Falls back to the neutral default when it has none.
         if isRemoteChat {
-            if let d = remoteAgentDescription?.trimmingCharacters(in: .whitespacesAndNewlines),
+            if let d = (remoteAgentDescription ?? sharedAgent?.description)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
                 !d.isEmpty
             {
                 return LocalizedStringKey(d)
@@ -172,6 +185,18 @@ struct ChatEmptyState: View {
         return "How can I help you today?"
     }
 
+    /// "Shared by Maggie · annietest" for a teammate's shared agent; nil for
+    /// the user's own agents and legacy Mode 2 peers (no owner to name).
+    private var sharedAttribution: String? {
+        guard isRemoteChat, let shared = sharedAgent, !shared.isMine,
+            let owner = shared.ownerName?.trimmingCharacters(in: .whitespacesAndNewlines), !owner.isEmpty
+        else { return nil }
+        if let workspace = shared.workspaceName?.trimmingCharacters(in: .whitespacesAndNewlines), !workspace.isEmpty {
+            return String(format: L("Shared by %@ · %@"), owner, workspace)
+        }
+        return String(format: L("Shared by %@"), owner)
+    }
+
     /// Quick actions to render. Remote chats use the remote agent's advertised
     /// actions; local chats use the selected agent's configured shortcuts.
     private var effectiveQuickActions: [AgentQuickAction] {
@@ -180,6 +205,9 @@ struct ChatEmptyState: View {
         // defaults (never the local agent's shortcuts — e.g. a local coding
         // agent's actions don't represent a remote research agent).
         if isRemoteChat {
+            // Locked composer (offline / not connected / unavailable / read-
+            // only): a suggestion the user can't send is a dead end.
+            if let status = sharedAgentStatus, !status.canSend { return [] }
             if let remote = remoteAgentQuickActions, !remote.isEmpty { return remote }
             return AgentQuickAction.defaultChatQuickActions
         }
@@ -289,11 +317,33 @@ struct ChatEmptyState: View {
                     .offset(y: hasAppeared ? 0 : 15)
                     .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
 
-                if securityBadgeState != nil {
-                    securityBadge
-                        .opacity(hasAppeared ? 1 : 0)
-                        .offset(y: hasAppeared ? 0 : 12)
-                        .animation(theme.springAnimation().delay(0.24), value: hasAppeared)
+                // Teammate's shared agent: who shared it and through which
+                // workspace, next to the transport/status badge — the two
+                // facts that distinguish it from a local agent of the same
+                // name.
+                if sharedAttribution != nil || securityBadgeState != nil {
+                    HStack(spacing: 8) {
+                        if let attribution = sharedAttribution {
+                            HStack(spacing: 5) {
+                                Image(systemName: "person.2.fill")
+                                    .font(.system(size: 9, weight: .semibold))
+                                Text(verbatim: attribution)
+                                    .lineLimit(1)
+                            }
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(theme.secondaryText.opacity(theme.isDark ? 0.12 : 0.08)))
+                            .help(sharedAgent?.shortAddress ?? "")
+                        }
+                        if securityBadgeState != nil {
+                            securityBadge
+                        }
+                    }
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : 12)
+                    .animation(theme.springAnimation().delay(0.24), value: hasAppeared)
                 }
             }
 
@@ -309,11 +359,11 @@ struct ChatEmptyState: View {
             // Match the local hero: the remote agent's own mascot (surfaced over
             // the Secure Channel), falling back to a monogram on its name.
             AgentAvatarView(
-                mascotId: remoteAgentAvatar,
+                mascotId: remoteAgentAvatar ?? sharedAgent?.avatar,
                 name: remoteDisplayName,
                 tint: agentColorFor(remoteDisplayName),
                 diameter: heroAvatarDiameter,
-                customImageURL: nil,
+                customImageURL: sharedAgent?.customAvatarURL,
                 monogramFontSize: heroAvatarIconFontSize,
                 borderWidth: 0,
                 bleedsToEdge: true
@@ -327,13 +377,37 @@ struct ChatEmptyState: View {
     /// `connecting` takes precedence — the secure channel isn't up yet, so we
     /// must not claim encryption — and once connected it reflects the transport
     /// status. nil = not a remote chat / nothing to show (no badge).
-    private enum SecurityBadgeState: Hashable {
+    enum SecurityBadgeState: Hashable {
         case connecting
         case encrypted
         case peerNeedsUpgrade
+        /// Shared agent's host isn't reachable.
+        case offline
+        /// Shared agent isn't paired / the connect failed.
+        case notConnected
+        /// Shared agent was unshared / membership lost / Router off.
+        case unavailable
+        /// Teammate's conversation served by this host.
+        case readOnly
+    }
+
+    /// Badge for a shared agent from its status. `connecting` and `ready`
+    /// keep the security semantics (the channel is what's being secured);
+    /// the other states name the reason the composer is locked so the badge
+    /// never claims encryption for a chat that can't send.
+    nonisolated static func badgeState(for status: SharedAgentStatus) -> SecurityBadgeState {
+        switch status {
+        case .ready: return .encrypted
+        case .checking, .connecting: return .connecting
+        case .offline: return .offline
+        case .notConnected: return .notConnected
+        case .unavailable: return .unavailable
+        case .readOnlyTeammate: return .readOnly
+        }
     }
 
     private var securityBadgeState: SecurityBadgeState? {
+        if let status = sharedAgentStatus { return Self.badgeState(for: status) }
         if isConnecting { return .connecting }
         switch remoteEncryptionStatus {
         case .endToEndEncrypted: return .encrypted
@@ -346,7 +420,8 @@ struct ChatEmptyState: View {
         switch state {
         case .connecting: return theme.accentColor
         case .encrypted: return theme.successColor
-        case .peerNeedsUpgrade: return theme.warningColor
+        case .peerNeedsUpgrade, .notConnected: return theme.warningColor
+        case .offline, .unavailable, .readOnly: return theme.secondaryText
         }
     }
 
@@ -355,9 +430,21 @@ struct ChatEmptyState: View {
         switch state {
         case .connecting:
             MorphingStatusIcon(state: .active, accentColor: theme.accentColor, size: 12)
-        case .encrypted, .peerNeedsUpgrade:
-            Image(systemName: state == .encrypted ? "lock.fill" : "exclamationmark.triangle.fill")
+        case .encrypted, .peerNeedsUpgrade, .offline, .notConnected, .unavailable, .readOnly:
+            Image(systemName: securityBadgeSymbol(state))
                 .font(.system(size: 9, weight: .semibold))
+        }
+    }
+
+    private func securityBadgeSymbol(_ state: SecurityBadgeState) -> String {
+        switch state {
+        case .connecting: return SharedAgentStatus.connecting.symbolName
+        case .encrypted: return SharedAgentStatus.ready.symbolName
+        case .peerNeedsUpgrade: return "exclamationmark.triangle.fill"
+        case .offline: return SharedAgentStatus.offline(lastSeen: nil).symbolName
+        case .notConnected: return SharedAgentStatus.notConnected(reason: nil, hasAttempted: false).symbolName
+        case .unavailable: return SharedAgentStatus.unavailable(reason: "", fix: .none).symbolName
+        case .readOnly: return SharedAgentStatus.readOnlyTeammate(callerName: nil).symbolName
         }
     }
 
@@ -369,6 +456,14 @@ struct ChatEmptyState: View {
             return Text("End-to-end encrypted", bundle: .module)
         case .peerNeedsUpgrade:
             return Text("Peer needs an Osaurus upgrade for encrypted chat", bundle: .module)
+        case .offline:
+            return Text(verbatim: sharedAgentStatus?.shortLabel ?? L("Offline"))
+        case .notConnected:
+            return Text("Not connected", bundle: .module)
+        case .unavailable:
+            return Text("Unavailable", bundle: .module)
+        case .readOnly:
+            return Text("Read-only", bundle: .module)
         }
     }
 
@@ -386,6 +481,9 @@ struct ChatEmptyState: View {
             return L(
                 "This peer runs an older Osaurus without the Secure Channel. Agent chat is refused until it upgrades — no plaintext fallback."
             )
+        case .offline, .notConnected, .unavailable, .readOnly:
+            guard let status = sharedAgentStatus else { return "" }
+            return status.message(agentName: remoteDisplayName, hostName: sharedAgent?.ownerName)
         }
     }
 

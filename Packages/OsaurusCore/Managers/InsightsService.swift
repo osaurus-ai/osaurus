@@ -490,6 +490,15 @@ extension InsightsService {
             (#"(?<![A-Za-z0-9])sk-[A-Za-z0-9._-]{8,}"#, "<redacted>"),
             // JSON-Web-Token shaped values (id/access tokens).
             (#"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"#, "<redacted>"),
+            // Workspaces membership attestations and wallet signatures as
+            // they appear in `/pair-invite` envelopes: `"attestation": "<b64url>.<b64url>"`
+            // (two segments, so the JWT rule above misses it) and
+            // `"wallet_signature": "0x<130 hex>"`. Keyed on the field name
+            // so ordinary two-segment strings elsewhere are left alone.
+            (
+                #"(?i)("(?:attestation|wallet_signature|caller_attestation)"\s*:\s*)"[^"]*""#,
+                "$1\"<redacted>\""
+            ),
             // Header-style secret carriers: `x-api-key: v`, `api-key=v`,
             // `x-goog-api-key: v`, and stringified `"authorization": "v"`.
             // `Bearer …` authorization values are excluded: the Bearer regex

@@ -1362,6 +1362,9 @@ struct AgentDetailView: View {
     @State private var saveDebounceTask: Task<Void, Never>?
     @State private var showDeleteConfirm = false
     @State private var showRelayConfirmation = false
+    /// Confirms turning the relay OFF while the agent is shared with a
+    /// workspace (teammates lose reach immediately).
+    @State private var showRelayOffConfirmation = false
     @State private var copiedRelayURL = false
     @State private var copiedRouteURL: String?
     @State private var pickerItems: [ModelPickerItem] = []
@@ -1769,11 +1772,22 @@ struct AgentDetailView: View {
             .themedAlert(
                 L("Delete Agent"),
                 isPresented: $showDeleteConfirm,
-                message:
-                    L(
-                        "Are you sure you want to delete \"\(currentAgent.name)\"? This action cannot be undone. Any sandbox resources provisioned for this agent will also be removed."
+                message: deleteAgentMessage,
+                primaryButton: .destructive(L("Delete")) { unshareEverywhereThenDelete() },
+                secondaryButton: .cancel(L("Cancel"))
+            )
+            .themedAlert(
+                L("Turn off relay?"),
+                isPresented: $showRelayOffConfirmation,
+                message: String(
+                    format: L(
+                        "This agent is shared with %@. Turning off the relay disconnects teammates immediately; it stays shared, so turning the relay back on restores access."
                     ),
-                primaryButton: .destructive(L("Delete")) { onDelete(currentAgent) },
+                    ListFormatter.localizedString(byJoining: sharedWorkspaceNames)
+                ),
+                primaryButton: .destructive(L("Turn off")) {
+                    relayManager.setTunnelEnabled(false, for: agent.id)
+                },
                 secondaryButton: .cancel(L("Cancel"))
             )
             .themedAlert(
@@ -2475,6 +2489,53 @@ struct AgentDetailView: View {
         tabHelperText(DetailTab.network.helperText)
         bonjourSection
         relaySection
+        if agent.id != Agent.defaultId {
+            AgentSharedWithSection(agent: currentAgent)
+        }
+    }
+
+    /// Workspaces this agent is shared into right now (roster-derived).
+    private var sharedWorkspaceNames: [String] {
+        guard let address = currentAgent.agentAddress else { return [] }
+        return WorkspaceRosterStore.shared.workspacesSharing(agentAddress: address).map(\.name)
+    }
+
+    /// Delete copy: warns when teammates would lose the agent.
+    private var deleteAgentMessage: String {
+        let base = L(
+            "Are you sure you want to delete \"\(currentAgent.name)\"? This action cannot be undone. Any sandbox resources provisioned for this agent will also be removed."
+        )
+        let shared = sharedWorkspaceNames
+        guard !shared.isEmpty else { return base }
+        return base + " "
+            + String(
+                format: L("It's shared with %@ — it will be unshared first and teammates lose access immediately."),
+                ListFormatter.localizedString(byJoining: shared)
+            )
+    }
+
+    /// Unshare from every workspace, then delete. Deleting first would leave
+    /// dangling roster rows teammates can't connect to.
+    private func unshareEverywhereThenDelete() {
+        let target = currentAgent
+        guard let address = target.agentAddress else {
+            onDelete(target)
+            return
+        }
+        let workspaces = WorkspaceRosterStore.shared.workspacesSharing(agentAddress: address)
+        guard !workspaces.isEmpty else {
+            onDelete(target)
+            return
+        }
+        Task { @MainActor in
+            for workspace in workspaces {
+                _ = await WorkspacesService.shared.unshareAgent(
+                    workspaceId: workspace.id,
+                    agentAddress: address
+                )
+            }
+            onDelete(target)
+        }
     }
 
     @ViewBuilder
@@ -5836,6 +5897,7 @@ struct AgentDetailView: View {
                 agentId: agent.id,
                 agentAddress: currentAgent.agentAddress,
                 showRelayConfirmation: $showRelayConfirmation,
+                showRelayOffConfirmation: $showRelayOffConfirmation,
                 copiedRelayURL: $copiedRelayURL
             )
         }
@@ -7210,7 +7272,16 @@ private struct AgentDetailRelaySection: View {
     let agentId: UUID
     let agentAddress: String?
     @Binding var showRelayConfirmation: Bool
+    @Binding var showRelayOffConfirmation: Bool
     @Binding var copiedRelayURL: Bool
+    @ObservedObject private var rosterStore = WorkspaceRosterStore.shared
+
+    /// Shared into at least one workspace: turning the relay off needs a
+    /// confirmation because teammates lose reach.
+    private var isSharedWithWorkspace: Bool {
+        guard let agentAddress else { return false }
+        return !rosterStore.workspacesSharing(agentAddress: agentAddress).isEmpty
+    }
 
     var body: some View {
         let status = relayManager.agentStatuses[agentId] ?? .disconnected
@@ -7279,6 +7350,8 @@ private struct AgentDetailRelaySection: View {
                             set: { newValue in
                                 if newValue {
                                     showRelayConfirmation = true
+                                } else if isSharedWithWorkspace {
+                                    showRelayOffConfirmation = true
                                 } else {
                                     relayManager.setTunnelEnabled(false, for: agentId)
                                 }

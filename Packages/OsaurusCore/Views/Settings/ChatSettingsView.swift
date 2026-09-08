@@ -94,16 +94,6 @@ struct ChatSettingsView: View {
     @State private var showCompactionModelPicker = false
     @State private var compactionModelPickerItems: [ModelPickerItem] = []
 
-    /// Placement of the task-progress notch overlay. With no saved preference,
-    /// it defaults on for hardware-notch displays and off elsewhere. Off keeps
-    /// it below the menu bar; on anchors it to the top of the display. Bound
-    /// to `UserDefaults` key
-    /// `NotchOverlayPlacement.defaultsKey`, stored as the enum raw value and
-    /// read by `NotchWindowController` when it repositions the panel. Applied
-    /// immediately, so it's excluded from the debounced save baseline.
-    @AppStorage(NotchOverlayPlacement.defaultsKey) private var notchPlacementRaw: String =
-        NotchOverlayPlacement.current.rawValue
-
     /// Prevent idle system sleep while agent sessions are actively running
     /// or queued. Display sleep and explicit system sleep remain available.
     @AppStorage(AgentRunPowerManager.keepAwakeDefaultsKey)
@@ -212,21 +202,6 @@ struct ChatSettingsView: View {
                 } else {
                     autoAllowAllToolsEnabled = isOn
                 }
-            }
-        )
-    }
-
-    /// Bridges the string-backed placement preference to the boolean
-    /// `SettingsToggle`. Writing flips the raw value and immediately asks the
-    /// notch controller to reposition so the change is visible without a
-    /// restart.
-    private var notchOnMenuBarBinding: Binding<Bool> {
-        Binding(
-            get: { notchPlacementRaw == NotchOverlayPlacement.onMenuBar.rawValue },
-            set: { isOn in
-                notchPlacementRaw =
-                    (isOn ? NotchOverlayPlacement.onMenuBar : .belowMenuBar).rawValue
-                NotchWindowController.shared.refreshPlacement()
             }
         )
     }
@@ -368,14 +343,6 @@ struct ChatSettingsView: View {
                 autoTitleToggleRow
 
                 followUpToggleRow
-
-                SettingsToggle(
-                    title: L("Show Notch Overlay on Menu Bar"),
-                    description:
-                        "Place the task-progress notch overlay on the menu bar. When off, it sits just below the menu bar so it never covers the clock, battery, or other system status controls.",
-                    isOn: notchOnMenuBarBinding
-                )
-                .settingsLandingAnchor("settings.chat.notchPlacement")
 
                 SettingsDivider()
 

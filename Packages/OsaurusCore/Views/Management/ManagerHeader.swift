@@ -288,6 +288,9 @@ struct HeaderPrimaryButton: View {
 /// Subtle background button for secondary actions (Import, Reset, etc.)
 struct HeaderSecondaryButton: View {
     @Environment(\.theme) private var theme
+    /// Dims the label when a caller attaches `.disabled(...)`, mirroring
+    /// `HeaderPrimaryButton`, so gated actions read as unavailable.
+    @Environment(\.isEnabled) private var isEnabled
 
     let title: String
     let icon: String?
@@ -313,7 +316,7 @@ struct HeaderSecondaryButton: View {
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
             }
-            .foregroundColor(theme.primaryText)
+            .foregroundColor(isEnabled ? theme.primaryText : theme.tertiaryText)
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(
@@ -323,11 +326,12 @@ struct HeaderSecondaryButton: View {
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(theme.inputBorder, lineWidth: 1)
                     )
-                    .opacity(isHovering ? 0.8 : 1)
+                    .opacity(isEnabled && isHovering ? 0.8 : 1)
             )
         }
         .buttonStyle(PlainButtonStyle())
         .onHover { hovering in
+            guard isEnabled else { return }
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovering = hovering
             }
@@ -340,6 +344,7 @@ struct HeaderSecondaryButton: View {
 /// Icon-only button for compact actions (Refresh, etc.)
 struct HeaderIconButton: View {
     @Environment(\.theme) private var theme
+    @Environment(\.isEnabled) private var isEnabled
 
     let icon: String
     let action: () -> Void
@@ -367,12 +372,12 @@ struct HeaderIconButton: View {
                         .font(.system(size: 13, weight: .medium))
                 }
             }
-            .foregroundColor(theme.secondaryText)
+            .foregroundColor(isEnabled ? theme.secondaryText : theme.tertiaryText)
             .frame(width: 32, height: 32)
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(theme.tertiaryBackground)
-                    .opacity(isHovering ? 0.8 : 1)
+                    .opacity(isEnabled && isHovering ? 0.8 : 1)
             )
         }
         .buttonStyle(PlainButtonStyle())

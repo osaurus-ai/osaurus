@@ -87,7 +87,7 @@ final class ToolPermissionRunScope: @unchecked Sendable {
 /// task locals so a background helper dispatch can address its launching
 /// session at completion time. Weak on purpose: the box never extends the
 /// session's lifetime — if the chat is gone when the helper finishes, the
-/// report-back is dropped and the notch row remains the record.
+/// report-back is dropped and the Activity row remains the record.
 final class WeakChatSessionBox: @unchecked Sendable {
     @MainActor private(set) weak var session: ChatSession?
 
@@ -125,6 +125,14 @@ public enum ChatExecutionContext {
 
     /// The agent ID whose context is active for the current execution.
     @TaskLocal public static var currentAgentId: UUID?
+
+    /// Workspace billing for the current execution, bound by the HTTP agent-run
+    /// surface when the inbound caller authenticated with a workspace-minted
+    /// access key (Workspaces shared-agent handshake). Takes precedence over the
+    /// `currentAgentId`-keyed billing preference in the router request
+    /// builder, and carries the redeeming teammate's `caller_attestation`
+    /// so pool spend is attributed to the teammate who asked.
+    @TaskLocal public static var workspaceBillingContext: OsaurusRouterWorkspaceContext?
 
     /// Exact model selected for the parent turn that dispatched the current
     /// tool. Residency handoff uses this identity instead of treating every

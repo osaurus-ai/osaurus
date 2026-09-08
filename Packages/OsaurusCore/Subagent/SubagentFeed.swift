@@ -145,8 +145,8 @@ public final class SubagentFeed: @unchecked Sendable {
     /// True when this run executes as a REAL dispatched chat session (true
     /// agent delegation). The dispatched run registers its own background
     /// task with a working "Open Chat", so `SubagentBackgroundTaskBridge`
-    /// must not adopt this feed as a second notch row.
-    public let suppressNotchMirror: Bool
+    /// must not adopt this feed as a second Activity row.
+    public let suppressActivityMirror: Bool
 
     private let lock = NSLock()
     private var _events: [SubagentActivityEvent] = []
@@ -183,7 +183,7 @@ public final class SubagentFeed: @unchecked Sendable {
         title: String,
         agentId: UUID? = nil,
         parentSessionId: String? = nil,
-        suppressNotchMirror: Bool = false
+        suppressActivityMirror: Bool = false
     ) {
         self.init(
             toolCallId: toolCallId,
@@ -191,7 +191,7 @@ public final class SubagentFeed: @unchecked Sendable {
             title: title,
             agentId: agentId,
             parentSessionId: parentSessionId,
-            suppressNotchMirror: suppressNotchMirror,
+            suppressActivityMirror: suppressActivityMirror,
             beforeEventPublicationForTesting: nil
         )
     }
@@ -202,7 +202,7 @@ public final class SubagentFeed: @unchecked Sendable {
         title: String,
         agentId: UUID? = nil,
         parentSessionId: String? = nil,
-        suppressNotchMirror: Bool = false,
+        suppressActivityMirror: Bool = false,
         beforeEventPublicationForTesting:
             (@Sendable (_ revision: UInt64) -> Void)?
     ) {
@@ -211,7 +211,7 @@ public final class SubagentFeed: @unchecked Sendable {
         self.title = title
         self.agentId = agentId
         self.parentSessionId = parentSessionId
-        self.suppressNotchMirror = suppressNotchMirror
+        self.suppressActivityMirror = suppressActivityMirror
         self.startedAt = Date()
         self.beforeEventPublicationForTesting =
             beforeEventPublicationForTesting

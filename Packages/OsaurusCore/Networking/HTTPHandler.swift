@@ -22,6 +22,18 @@ private final class SendableBool: @unchecked Sendable {
     }
 }
 
+/// Thread-safe counter for cross-closure capture (e.g. how many loop
+/// messages the agent-run route has already mirrored into a hosted tab).
+private final class SendableInt: @unchecked Sendable {
+    private var _value: Int
+    private let _lock = NSLock()
+    init(_ value: Int) { _value = value }
+    var value: Int {
+        get { _lock.withLock { _value } }
+        set { _lock.withLock { _value = newValue } }
+    }
+}
+
 /// Thread-safe optional-string holder for cross-closure model capture on the
 /// agent-run streaming route, where the model name isn't known until after
 /// agent resolution but the close hook (a different closure) needs it.
@@ -238,6 +250,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// all-agent key. Agent-scoped keys (`false`) are confined to their
         /// own agent's routes.
         var authedScopeIsMaster: Bool = false
+        /// `true` when the validated agent-scoped key was minted by the
+        /// Workspaces attestation handshake (vs. a legacy `/pair` or
+        /// `AgentInvite` key). Workspace keys get the strict route allowlist;
+        /// legacy keys keep their pre-existing surface so paired peers are not
+        /// disrupted. See `agentScopedRouteRejection`.
+        var authedKeyIsWorkspaceMinted: Bool = false
         /// `true` when the caller presented a Bearer token that validated
         /// against the configured access keys. Set by the global auth gate
         /// (non-loopback) or by the opportunistic loopback validation, and
@@ -524,6 +542,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         stateRef.value.authedAudience = audience.lowercased()
                         stateRef.value.authedScopeIsMaster =
                             apiKeyValidator.isMasterScoped(audience: audience)
+                        stateRef.value.authedKeyIsWorkspaceMinted =
+                            !stateRef.value.authedScopeIsMaster
+                            && WorkspaceAgentAccessHost.isWorkspaceMintedKey(nonce: keyNonce)
                         // Snapshot the attribution into the off-loop-readable box
                         // (read by the possibly-off-loop request log) so inbound
                         // `.httpAPI` traffic is tied to this paired key. Built
@@ -562,6 +583,61 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         responseStatus: 401,
                         startTime: startTime
                     )
+                    stateRef.value.requestHead = nil
+                    stateRef.value.requestBodyBuffer = nil
+                    return
+                }
+
+                // Confinement for agent-scoped keys (see
+                // `agentScopedRouteRejection`): route policy by key origin,
+                // plus a cross-agent `X-Osaurus-Agent-Id` check so a key for
+                // agent A can never persist into / act as agent B. Runs after
+                // the key validated so the 403 is distinguishable from a bad key.
+                let rejection =
+                    Self.agentScopedRouteRejection(
+                        method: head.method,
+                        path: path,
+                        authedAudience: stateRef.value.authedAudience,
+                        authedScopeIsMaster: stateRef.value.authedScopeIsMaster,
+                        isWorkspaceMintedKey: stateRef.value.authedKeyIsWorkspaceMinted
+                    )
+                    ?? Self.agentHeaderScopeRejection(
+                        headerValue: head.headers.first(name: "X-Osaurus-Agent-Id"),
+                        authedAudience: stateRef.value.authedAudience,
+                        authedScopeIsMaster: stateRef.value.authedScopeIsMaster
+                    )
+                if let rejection {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: stateRef.value.corsHeaders)
+                    let errorBody =
+                        #"{"error":{"code":"\#(rejection.code)","message":"\#(rejection.message)","type":"permission_error"}}"#
+                    sendResponse(
+                        context: context,
+                        version: head.version,
+                        status: .forbidden,
+                        headers: headers,
+                        body: errorBody
+                    )
+                    logRequest(
+                        method: method,
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: errorBody,
+                        responseStatus: 403,
+                        startTime: startTime,
+                        errorMessage: rejection.message
+                    )
+                    let deniedAudience = stateRef.value.authedAudience ?? ""
+                    let deniedKeyNonce = _inboundConnection.value?.accessKeyId
+                    Task.detached(priority: .utility) {
+                        await WorkspaceAuditLog.shared.recordScopeDenied(
+                            keyNonce: deniedKeyNonce,
+                            audience: deniedAudience,
+                            method: method,
+                            path: path
+                        )
+                    }
                     stateRef.value.requestHead = nil
                     stateRef.value.requestBodyBuffer = nil
                     return
@@ -1308,6 +1384,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logPath = path
         let parsedBody = head.method == .PUT ? readRequestBody() : nil
 
+        // Who may get here: loopback callers and master-scoped keys from any
+        // origin (unchanged contract — remote automation with the owner's key
+        // keeps working). Agent-scoped keys of either origin never reach this
+        // handler: the auth gate denies `/admin/*` to them (see
+        // `agentScopedRouteRejection`), so a paired peer or a workspace
+        // teammate cannot change how this host runs.
         runRequestTask(priority: .userInitiated) {
             let previous = ServerRuntimeSettingsStore.snapshot()
 
@@ -3266,9 +3348,39 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - CORS
 
-    /// Best-effort source IP for rate-limiting the pairing endpoints.
+    /// Best-effort source key for rate-limiting the unauthenticated pairing /
+    /// handshake endpoints.
+    ///
+    /// Direct connections key on the socket address. Relay-tunnelled requests
+    /// all arrive from `127.0.0.1` (the relay proxies onto loopback), so keying
+    /// on the socket would put every remote caller in ONE bucket — a single
+    /// abusive peer could lock every teammate out of `/secure/session` and
+    /// `/pair-invite`. For relay traffic the key is derived from the first hop
+    /// of the relay-supplied `X-Forwarded-For` (falling back to a shared
+    /// `relay` bucket), prefixed so it can never collide with a LAN address.
+    /// This is a best-effort fairness measure, not an identity claim: the
+    /// header is only trusted as a bucketing hint, and authentication never
+    /// depends on it.
     private func remoteIP(_ context: ChannelHandlerContext) -> String {
-        context.channel.remoteAddress?.ipAddress ?? "unknown"
+        let socketIP = context.channel.remoteAddress?.ipAddress ?? "unknown"
+        guard stateRef.value.isRelayOrigin else { return socketIP }
+        return Self.relayRateLimitKey(
+            forwardedFor: stateRef.value.requestHead?.headers.first(name: "X-Forwarded-For"),
+            socketIP: socketIP
+        )
+    }
+
+    /// Pure helper behind `remoteIP` for relay-origin requests.
+    static func relayRateLimitKey(forwardedFor: String?, socketIP: String) -> String {
+        let firstHop =
+            forwardedFor?
+            .split(separator: ",")
+            .first
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            ?? ""
+        // Bound the key so a hostile header cannot bloat the limiter's table.
+        let bounded = String(firstHop.prefix(64))
+        return bounded.isEmpty ? "relay:\(socketIP)" : "relay:\(bounded)"
     }
 
     /// Whether the inbound connection is a "trusted local caller" — i.e., a
@@ -3329,6 +3441,216 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
         }
         return nil
+    }
+
+    /// Route-level confinement for agent-scoped access keys, by key origin.
+    ///
+    /// An agent-scoped key grants access to ONE agent, but historically only
+    /// `/agents/{id}*` consulted the key's audience. Two classes of key exist
+    /// and they get different policies so shipped integrations are not
+    /// disrupted:
+    ///
+    /// **Workspace-minted keys** (Workspaces attestation handshake; strict
+    /// default-deny allowlist — nothing shipped depends on more, and raw
+    /// inference would bypass workspace billing/mirroring):
+    /// - `GET /models` — the teammate client probes it for model discovery.
+    /// - `GET /agents/{id}`, `POST /agents/{id}/run`
+    ///   — the per-agent check (`agentScopeRejection`) still applies inside.
+    /// Detached dispatch and task routes are unavailable to workspace keys.
+    ///
+    /// **Legacy pairing / `AgentInvite` keys** keep their pre-existing surface
+    /// — in particular `POST /chat/completions`, which the paired-peer "Mode 1"
+    /// flow (peer used as a plain OpenAI-compatible backend) relies on. The
+    /// only route class newly closed to them is server administration
+    /// (`/admin/*`): a paired peer must never be able to change how this host
+    /// runs. Cross-agent reach is closed separately by
+    /// `agentHeaderScopeRejection` and `DispatchTaskOwnership`, neither of
+    /// which a same-agent client ever trips.
+    ///
+    /// Rejections use the same `agent_scope_denied` shape the per-agent check
+    /// uses. Master-scoped keys and callers with no recorded audience (loopback
+    /// trust, public routes) are unrestricted. `HEAD` is treated like `GET`.
+    static func agentScopedRouteRejection(
+        method: HTTPMethod,
+        path: String,
+        authedAudience: String?,
+        authedScopeIsMaster: Bool,
+        isWorkspaceMintedKey: Bool
+    ) -> (code: String, message: String)? {
+        guard authedAudience != nil, !authedScopeIsMaster else { return nil }
+        let allowed =
+            isWorkspaceMintedKey
+            ? Self.workspaceKeyMayReach(method: method, path: path)
+            : Self.legacyAgentScopedKeyMayReach(method: method, path: path)
+        if allowed { return nil }
+        return (
+            "agent_scope_denied",
+            "This access key is scoped to a single agent and cannot access \(path)."
+        )
+    }
+
+    /// Cross-agent header check for agent-scoped keys: when a request names an
+    /// agent via `X-Osaurus-Agent-Id` (chat-completions history/memory
+    /// attribution, `/memory/*`, `/mcp/call`), that agent must be the one the
+    /// key is scoped to. A same-agent client (the relay tunnel stamps the
+    /// tunnel's own agent) is unaffected. The built-in Default agent id is
+    /// ignored here because the handlers already drop it for external callers.
+    /// Malformed values are left to the handlers' existing 4xx paths.
+    static func agentHeaderScopeRejection(
+        headerValue: String?,
+        authedAudience: String?,
+        authedScopeIsMaster: Bool,
+        resolveAddress: (UUID) -> String? = { AgentIdentityRegistry.shared.address(forAgentId: $0) }
+    ) -> (code: String, message: String)? {
+        guard let aud = authedAudience, !authedScopeIsMaster else { return nil }
+        guard let raw = headerValue?.trimmingCharacters(in: .whitespaces), !raw.isEmpty,
+            let agentId = UUID(uuidString: raw), agentId != Agent.defaultId
+        else { return nil }
+        if let target = resolveAddress(agentId), target.lowercased() == aud.lowercased() {
+            return nil
+        }
+        return (
+            "agent_scope_denied",
+            "X-Osaurus-Agent-Id names an agent this access key is not scoped to."
+        )
+    }
+
+    /// Legacy pairing / invite keys: everything they could reach before, minus
+    /// server administration. `path` is normalized (no `/v1` / `/api` prefix,
+    /// no query string).
+    static func legacyAgentScopedKeyMayReach(method: HTTPMethod, path: String) -> Bool {
+        let components = path.split(separator: "/", omittingEmptySubsequences: true)
+        return components.first != "admin"
+    }
+
+    /// Strict allowlist for workspace-minted keys. `path` is already
+    /// normalized (no `/v1` / `/api` prefix, no query string).
+    static func workspaceKeyMayReach(method: HTTPMethod, path: String) -> Bool {
+        let effectiveMethod: HTTPMethod = method == .HEAD ? .GET : method
+        let components = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard let root = components.first else { return false }
+        switch root {
+        case "models":
+            return effectiveMethod == .GET && components.count == 1
+        case "agents":
+            guard components.count >= 2, !components[1].isEmpty else { return false }
+            if components.count == 2 { return effectiveMethod == .GET }
+            if components.count == 3, effectiveMethod == .POST {
+                return components[2] == "run"
+            }
+            return false
+        default:
+            return false }
+    }
+
+    static func dispatchSessionKey(_ supplied: String?, audience: String?, keyNonce: String?) -> String? {
+        guard let supplied else {
+                return nil }
+        guard let audience else { return supplied }
+        guard let keyNonce, !keyNonce.isEmpty else { return nil }
+        // Encode a tuple: separators in user input cannot collide with scope.
+        let data = try? JSONEncoder().encode([audience.lowercased(), keyNonce, supplied])
+        return data.map { "credential:" + $0.base64EncodedString() }
+    }
+
+    /// Which access-key audience created each HTTP-dispatched background task,
+    /// so `/tasks/{id}` (status / cancel / clarify) can be confined to the
+    /// key that created the task. Only tasks created by an *agent-scoped* key
+    /// are recorded; master-scoped and loopback callers are unrestricted and
+    /// never recorded. Bounded FIFO so a chatty peer cannot grow it unbounded.
+    final class DispatchTaskOwnership: @unchecked Sendable {
+        static let shared = DispatchTaskOwnership(
+            fileURL: OsaurusPaths.workspaces().appendingPathComponent("dispatch-owners.json")
+        )
+
+        private let lock = NSLock()
+        private struct Owner: Codable {
+            let audience: String
+            let keyNonce: String
+        }
+        private var owners: [UUID: Owner] = [:]
+        private var order: [UUID] = []
+        private let capacity: Int
+        private let fileURL: URL?
+
+        init(capacity: Int = 4096, fileURL: URL? = nil) {
+            self.capacity = max(1, capacity)
+            self.fileURL = fileURL
+            if let fileURL, let data = try? Data(contentsOf: fileURL),
+                let saved = try? JSONDecoder().decode([UUID: Owner].self, from: data)
+            {
+                for id in saved.keys.sorted(by: { $0.uuidString < $1.uuidString }).suffix(self.capacity) {
+                    owners[id] = saved[id]
+                    order.append(id)
+                }
+            }
+        }
+
+        func record(taskId: UUID, audience: String, keyNonce: String) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !keyNonce.isEmpty else { return }
+            if owners.updateValue(Owner(audience: audience.lowercased(), keyNonce: keyNonce), forKey: taskId) == nil {
+                order.append(taskId)
+                while order.count > capacity {
+                    let evicted = order.removeFirst()
+                    owners.removeValue(forKey: evicted)
+                }
+            }
+            persistLocked()
+        }
+
+        func owner(of taskId: UUID) -> String? {
+            lock.lock()
+            defer { lock.unlock() }
+            return owners[taskId]?.audience
+        }
+
+        /// `nil` when the caller may act on the task. A caller with no
+        /// recorded audience or a master-scoped key is unrestricted; an
+        /// agent-scoped key must have created the task itself.
+        func rejection(
+            taskId: UUID,
+            authedAudience: String?,
+            authedScopeIsMaster: Bool,
+            keyNonce: String? = nil
+        ) -> (code: String, message: String)? {
+            guard let aud = authedAudience?.lowercased(), !authedScopeIsMaster else { return nil }
+            lock.lock()
+            defer { lock.unlock() }
+            guard let keyNonce, !keyNonce.isEmpty,
+                let owner = owners[taskId], owner.audience == aud, owner.keyNonce == keyNonce
+            else {
+                return (
+                    "agent_scope_denied",
+                    "This access key did not create the requested task."
+                )
+            }
+            return nil
+        }
+
+        func removeAll() {
+            lock.lock()
+            defer { lock.unlock() }
+            owners.removeAll()
+            order.removeAll()
+            persistLocked()
+        }
+
+        private func persistLocked() {
+            guard let fileURL else { return }
+            do {
+                try FileManager.default.createDirectory(
+                    at: fileURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try JSONEncoder().encode(owners).write(to: fileURL, options: .atomic)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+            } catch {
+                // A missing persisted owner fails closed after relaunch.
+                NSLog("[Osaurus] Could not persist remote task ownership: %@", String(describing: error))
+            }
+        }
     }
 
     /// Loopback callers always get `Access-Control-Allow-Origin: *` (issue
@@ -4293,7 +4615,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             var bodyCopy = body
             let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
             data = Data(bytes)
-            requestBodyString = String(decoding: data, as: UTF8.self)
+            // Connector signature / nonce / HPKE key: log the redacted twin only.
+            requestBodyString = Self.redactedPairInviteRequestBody(data)
         } else {
             data = Data()
             requestBodyString = nil
@@ -4570,6 +4893,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let agentAddress: String
         let agentName: String
         let agentDescription: String?
+        /// Workspaces handshake only: the model the shared agent runs, for
+        /// the teammate's roster badge. Omitted (nil) for invite redemption.
+        let agentModel: String?
         let relayBaseURL: String
         let apiKey: String
         /// HPKE-sealed access key (set when the redeeming client supplied an
@@ -4587,6 +4913,41 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let encPub: String?
     }
 
+    /// Keys in a `/pair-invite` request body whose values are credentials or
+    /// credential-adjacent material and must never land in the request log:
+    /// the router membership attestation (bearer-like for its ~10 min TTL),
+    /// the wallet/invite signatures, the invite's single-use nonce, and the
+    /// redeemer's HPKE public key.
+    static let pairInviteRedactedKeys: Set<String> = [
+        "attestation", "wallet_signature", "sig", "signature", "nonce", "encPub", "enc_pub",
+    ]
+
+    /// Redacted twin of a `/pair-invite` request body for the Insights request
+    /// log. Walks the JSON (recursing into the `team_redeem` envelope) and
+    /// replaces the values of `pairInviteRedactedKeys`. Non-JSON bodies are
+    /// replaced wholesale rather than logged verbatim.
+    static func redactedPairInviteRequestBody(_ data: Data) -> String {
+        guard let object = try? JSONSerialization.jsonObject(with: data) else {
+            return data.isEmpty ? "" : "<redacted: non-JSON body>"
+        }
+        func redact(_ value: Any) -> Any {
+            if let dict = value as? [String: Any] {
+                var out: [String: Any] = [:]
+                for (key, inner) in dict {
+                    out[key] = pairInviteRedactedKeys.contains(key) ? "<redacted>" : redact(inner)
+                }
+                return out
+            }
+            if let array = value as? [Any] { return array.map(redact) }
+            return value
+        }
+        let redacted = redact(object)
+        guard
+            let out = try? JSONSerialization.data(withJSONObject: redacted, options: [.sortedKeys])
+        else { return "<redacted>" }
+        return String(decoding: out, as: UTF8.self)
+    }
+
     /// POST /pair-invite — unauthenticated endpoint that swaps a signed
     /// `AgentInvite` for an `osk-v1` access key. The invite IS the auth: it's
     /// signed by the agent's per-agent child key, it carries a single-use
@@ -4601,13 +4962,33 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         startTime: Date,
         userAgent: String?
     ) {
+        // Same per-source budget as `/pair` and `/secure/session`: this route
+        // is public, does signature verification + router round-trips per
+        // call, and mints keys. Unthrottled it is a free CPU / prompt / nonce
+        // sink for anyone who can reach the host or its relay address.
+        let pairingIP = remoteIP(context)
+        guard PairingRateLimiter.shared.allow(ip: pairingIP) else {
+            sendPairingRateLimited(
+                head: head,
+                context: context,
+                path: "/pair-invite",
+                method: "POST",
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+
         let data: Data
         let requestBodyString: String?
         if let body = stateRef.value.requestBodyBuffer {
             var bodyCopy = body
             let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
             data = Data(bytes)
-            requestBodyString = String(decoding: data, as: UTF8.self)
+            // The request carries bearer-like material (membership attestation,
+            // wallet signature, invite signature, HPKE public key). Only the
+            // redacted twin ever reaches the Insights request log.
+            requestBodyString = Self.redactedPairInviteRequestBody(data)
         } else {
             data = Data()
             requestBodyString = nil
@@ -4628,6 +5009,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             .trimmingCharacters(in: .whitespaces)
 
         func reply(status: HTTPResponseStatus, body: String, code: Int) {
+            // A failed proof (bad signature, unknown challenge, not shared,
+            // revoked invite) backs the source off, as `/pair` does on denial.
+            if code == 401 || code == 403 {
+                PairingRateLimiter.shared.penalize(ip: pairingIP)
+            }
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
                 headers.append(contentsOf: cors)
@@ -4648,6 +5034,78 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: logStartTime
                 )
             }
+        }
+
+        // Workspace mode: a `{"team_redeem": …}` envelope is the membership-
+        // attestation handshake (teammate connecting to a shared agent), not
+        // an invite redemption. Same endpoint so relays need no new route.
+        if let envelope = try? JSONDecoder().decode(WorkspacePairRedeemEnvelope.self, from: data) {
+            let payload = envelope.workspaceRedeem
+            runRequestTask(priority: .userInitiated) {
+                let outcome = await WorkspaceAgentAccessHost.shared.handle(payload)
+                switch outcome {
+                case .challenge(let nonce, let expiresIn):
+                    let challenge = WorkspacePairChallengeResponse(
+                        workspaceChallenge: .init(nonce: nonce, expiresIn: expiresIn)
+                    )
+                    let body =
+                        (try? JSONEncoder.osaurusCanonical().encode(challenge))
+                        .map { String(decoding: $0, as: UTF8.self) }
+                        ?? #"{"error":"Encoding failed"}"#
+                    reply(status: .ok, body: body, code: 200)
+                case .rejected(let rejection):
+                    let message = rejection.wireMessage
+                        .replacingOccurrences(of: "\\", with: "")
+                        .replacingOccurrences(of: "\"", with: "'")
+                    reply(
+                        status: HTTPResponseStatus(statusCode: rejection.httpStatus),
+                        body: #"{"error":"\#(message)"}"#,
+                        code: rejection.httpStatus
+                    )
+                case .granted(let grant):
+                    func responseBody(apiKey: String, sealed: PairingKeyEnvelope.Sealed?) -> String {
+                        let body = PairInviteResponse(
+                            agentAddress: grant.agentAddress,
+                            agentName: grant.agentName,
+                            agentDescription: grant.agentDescription,
+                            agentModel: grant.agentModel,
+                            relayBaseURL: "https://\(grant.agentAddress).agent.osaurus.ai",
+                            apiKey: apiKey,
+                            sealedApiKey: sealed,
+                            secureChannel: true
+                        )
+                        return (try? JSONEncoder.osaurusCanonical().encode(body))
+                            .map { String(decoding: $0, as: UTF8.self) }
+                            ?? #"{"error":"Encoding failed"}"#
+                    }
+                    let json = responseBody(
+                        apiKey: grant.apiKeyForWire, sealed: grant.sealedApiKey
+                    )
+                    // Redacted twin for the request log — never echo the key.
+                    let redactedJson = responseBody(apiKey: "<redacted>", sealed: nil)
+                    hop {
+                        var headers = [("Content-Type", "application/json; charset=utf-8")]
+                        headers.append(contentsOf: cors)
+                        self.sendResponse(
+                            context: ctx.value,
+                            version: head.version,
+                            status: .ok,
+                            headers: headers,
+                            body: json
+                        )
+                        logSelf.logRequest(
+                            method: "POST",
+                            path: "/pair-invite",
+                            userAgent: logUserAgent,
+                            requestBody: logRequestBody,
+                            responseBody: redactedJson,
+                            responseStatus: 200,
+                            startTime: logStartTime
+                        )
+                    }
+                }
+            }
+            return
         }
 
         guard let invite = try? JSONDecoder().decode(AgentInvite.self, from: data) else {
@@ -4763,6 +5221,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         agentAddress: agentAddress,
                         agentName: agent.name,
                         agentDescription: agent.description.isEmpty ? nil : agent.description,
+                        agentModel: nil,
                         relayBaseURL: invite.url,
                         apiKey: apiKey,
                         sealedApiKey: sealed,
@@ -5260,6 +5719,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let writerBound = NIOLoopBound(writer, eventLoop: loop)
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let runChannel = context.channel
         let logSelf = self
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -5289,6 +5749,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let info = inboundConnectionInfo()
             return info?.accessKeyId ?? info?.audience ?? "peer"
         }()
+        // Nonce of the validated access key (event-loop snapshot). Inside the
+        // run task it resolves to a workspace-minted key record — if this run is a
+        // teammate driving a shared agent — so workspace billing + caller
+        // attribution can be bound for the whole loop.
+        let authedKeyNonce: String? = isAuthenticatedRemote ? inboundConnectionInfo()?.accessKeyId : nil
+        // Agent-address audience the key is scoped to (event-loop snapshot):
+        // stamps the hosted transcript of an invite-link peer's run.
+        let authedKeyAudience: String? = isAuthenticatedRemote ? inboundConnectionInfo()?.audience : nil
+        let workspaceKeyRequired = stateRef.value.authedKeyIsWorkspaceMinted
 
         hop { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
 
@@ -5310,11 +5779,76 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // the whole run (incl. remote-peer runs). `defer` balances all exits.
             ServerController.signalGenerationStart()
             defer { ServerController.signalGenerationEnd() }
+
+            // Workspaces shared-agent session: when the caller authenticated with a
+            // workspace-minted key (attestation handshake), every router-billed step
+            // of this run carries the workspace pool + the teammate's current
+            // attestation for `caller` usage attribution. An expired record
+            // resolves to nil — the key validator already rejected expired keys,
+            // and a stale attestation must be omitted, never sent best-effort.
+            // Resolved before the model so a teammate cannot pick the model.
+            let workspaceKeyRecord: WorkspaceAgentAccessHost.WorkspaceKeyRecord? = await {
+                guard let nonce = authedKeyNonce else { return nil }
+                return await WorkspaceAgentAccessHost.shared.workspaceKeyRecord(forKeyNonce: nonce)
+            }()
+
+            do {
+                if workspaceKeyRequired && workspaceKeyRecord == nil { throw WorkspaceRedeemRejection.notShared }
+                if let record = workspaceKeyRecord {
+                    try await WorkspaceAgentAccessHost.shared.validateCurrentAccess(record)
+                }
+            } catch {
+                hop {
+                    writerBound.value.writeError(
+                        "Workspace access could not be verified. Sending is paused.",
+                        context: ctx.value
+                    )
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                return
+            }
+
             // Resolve model: a Mode 2 caller omits `model` (decoded as empty),
             // and older clients send the "default" sentinel. Both resolve to
             // the agent's effective model server-side.
             let model: String
-            if req.model.isEmpty || req.model == "default" {
+            if let workspaceKeyRecord {
+                // A teammate runs the shared agent exactly as its owner
+                // configured it: the model is the owner's choice (and the
+                // owner's / pool's bill), never the caller's. An explicit
+                // different model is refused rather than silently swapped so
+                // the client can surface why.
+                let agentModel = await MainActor.run { AgentManager.shared.effectiveModel(for: agentId) }
+                let requested = req.model
+                if !requested.isEmpty, requested != "default", requested != agentModel {
+                    let msg =
+                        "Shared workspace agents always run the model configured by their owner; remove the `model` override and retry."
+                    RemoteAgentRunLog.serverError(
+                        "run agent=\(agentId.uuidString) REJECTED reqModel=\(requested) error=workspace_model_locked"
+                    )
+                    await WorkspaceAuditLog.shared.recordRunRejected(
+                        record: workspaceKeyRecord,
+                        agentId: agentId,
+                        reason: "model_override",
+                        detail: requested
+                    )
+                    hop {
+                        writerBound.value.writeError(msg, context: ctx.value)
+                        writerBound.value.writeEnd(ctx.value)
+                    }
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: path,
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseStatus: 200,
+                        startTime: logStartTime,
+                        errorMessage: msg
+                    )
+                    return
+                }
+                model = agentModel ?? ""
+            } else if req.model.isEmpty || req.model == "default" {
                 let agentModel = await MainActor.run { AgentManager.shared.effectiveModel(for: agentId) }
                 if let agentModel {
                     model = agentModel
@@ -5464,6 +5998,173 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // ends; otherwise every HTTP spawn leaks an undrained bucket
             // plus orphaned files in the artifact store.
             defer { SpawnArtifactCollector.discard(sessionId: requestId) }
+
+            // Workspace billing context for the whole loop (record resolved
+            // above, before model selection).
+            let workspaceBilling: OsaurusRouterWorkspaceContext? = workspaceKeyRecord.map { record in
+                OsaurusRouterWorkspaceContext(
+                    workspaceId: record.workspaceId,
+                    agentAddress: record.agentAddressLower,
+                    callerAttestation: record.attestationToken
+                )
+            }
+            // Host-side shared-agent run: every authenticated remote caller —
+            // a workspace teammate (workspace-minted key) or an invite-link
+            // peer (agent-scoped key) — is hosted as a session-backed
+            // background task: a live read-only tab of the shared agent
+            // ("Alice → Research Agent" with step + Stop), a History row from
+            // the first turn, retained across relaunch until dismissed.
+            let inboundRun: InboundSharedRun? = await {
+                guard isAuthenticatedRemote, let nonce = authedKeyNonce else { return nil }
+                let context: WorkspaceSessionContext
+                if let record = workspaceKeyRecord {
+                    let callerName = await WorkspaceCallerNameResolver.shared.displayName(
+                        workspaceId: record.workspaceId,
+                        accountId: record.accountId,
+                        wallet: record.wallet
+                    )
+                    context = WorkspaceSessionContext(
+                        workspaceId: record.workspaceId,
+                        agentAddress: record.agentAddressLower,
+                        callerWallet: record.wallet,
+                        callerName: callerName
+                    )
+                } else {
+                    // Invite-link peer: no workspace (empty id), identified by
+                    // the paired key's nonce and labelled with the key's label
+                    // the owner chose when sharing.
+                    let label = APIKeyManager.shared.listKeys().first { $0.nonce == nonce }?.label
+                    context = WorkspaceSessionContext(
+                        workspaceId: "",
+                        agentAddress: authedKeyAudience ?? "",
+                        callerWallet: nonce,
+                        callerName: (label?.isEmpty == false) ? label : nil
+                    )
+                }
+                let callerKey = (context.callerWallet ?? nonce).lowercased()
+                let externalKey = "\(callerKey):\(req.session_id ?? requestId)"
+                // Host-side Stop: flag the run cancelled, then end the SSE
+                // response on the channel's loop. `writeEnd` closes the channel,
+                // whose close future cancels the exact request task.
+                let stopRecord = workspaceKeyRecord
+                let stop: @Sendable () -> Void = {
+                    disconnected.value = true
+                    if let record = stopRecord {
+                        Task.detached(priority: .utility) {
+                            await WorkspaceAuditLog.shared.recordRunStopped(
+                                record: record,
+                                agentId: agentId,
+                                runKey: requestId
+                            )
+                        }
+                    }
+                    let block: @Sendable () -> Void = {
+                        guard runChannel.isActive else { return }
+                        writerBound.value.writeError(
+                            "The host stopped this conversation. Check the agent’s availability and workspace access before retrying.",
+                            context: ctx.value
+                        )
+                        writerBound.value.writeEnd(ctx.value)
+                    }
+                    if loop.inEventLoop { block() } else { loop.execute(block) }
+                }
+                let requestMessages = req.messages
+                let handle = await MainActor.run {
+                    InboundSharedRunBridge.shared.begin(
+                        runKey: requestId,
+                        agentId: agentId,
+                        context: context,
+                        externalKey: externalKey,
+                        requestMessages: requestMessages,
+                        stop: stop
+                    )
+                }
+                if let record = workspaceKeyRecord {
+                    await WorkspaceAuditLog.shared.recordRunStarted(
+                        record: record,
+                        agentId: agentId,
+                        runKey: requestId,
+                        model: model,
+                        callerName: context.callerName
+                    )
+                }
+                return InboundSharedRun(context: context, handle: handle, externalKey: externalKey)
+            }()
+            let accessMonitor: Task<Void, Never>? = workspaceKeyRecord.map { record in
+                Task {
+                    while !Task.isCancelled && !disconnected.value {
+                        do {
+                            try await Task.sleep(for: .seconds(1))
+                            try Task.checkCancellation()
+                            try await WorkspaceAgentAccessHost.shared.validateCurrentAccess(record)
+                        } catch {
+                            guard !Task.isCancelled else { return }
+                            disconnected.value = true
+                            if let inboundRun {
+                                await MainActor.run {
+                                    InboundSharedRunBridge.shared.stopRequested(runKey: inboundRun.handle.runKey)
+                                }
+                            }
+                            return
+                        }
+                    }
+                }
+            }
+            defer { accessMonitor?.cancel() }
+            let inboundOutcome = InboundSharedRun.Outcome()
+            // Messages the host has already mirrored into the hosted
+            // transcript; the loop hooks flush anything appended past this.
+            let mirroredCount = SendableInt(messages.count)
+            let mirrorNewMessages: @Sendable ([ChatMessage]) async -> Void = { current in
+                guard let inboundRun else { return }
+                let start = mirroredCount.value
+                guard current.count > start else { return }
+                let fresh = Array(current[start...])
+                mirroredCount.value = current.count
+                await MainActor.run {
+                    InboundSharedRunBridge.shared.appendMessages(inboundRun.handle, fresh)
+                }
+            }
+            defer {
+                if let inboundRun {
+                    let success = inboundOutcome.success
+                    let summary = inboundOutcome.summary
+                    let toolNames = inboundOutcome.toolNames
+                    let toolErrors = inboundOutcome.toolErrorCount
+                    let handle = inboundRun.handle
+                    let finalMessages = messages
+                    Task { @MainActor in
+                        // Flush any tail the hooks didn't (fallback text
+                        // appended after the last step), then close the run.
+                        let start = mirroredCount.value
+                        if finalMessages.count > start {
+                            InboundSharedRunBridge.shared.appendMessages(
+                                handle,
+                                Array(finalMessages[start...])
+                            )
+                        }
+                        InboundSharedRunBridge.shared.finish(
+                            handle,
+                            success: success,
+                            summary: summary
+                        )
+                    }
+                    if let record = workspaceKeyRecord {
+                        Task.detached(priority: .utility) {
+                            await WorkspaceAuditLog.shared.recordRunFinished(
+                                record: record,
+                                agentId: agentId,
+                                runKey: requestId,
+                                model: model,
+                                success: success,
+                                summary: summary,
+                                toolNames: toolNames,
+                                toolErrorCount: toolErrors
+                            )
+                        }
+                    }
+                }
+            }
             // Per-request harness state. The agent-run endpoint is stateless
             // across requests by design (see the divergence note above), so a
             // per-request instance is correct — there is no prior listing to
@@ -5566,7 +6267,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 isCancelled: {
                     // Client hung up between iterations — stop the agent loop.
                     // The close hook already cancelled the model's generation.
-                    disconnected.value
+                    // A host-side Stop on an inbound shared-agent run trips the
+                    // same flag via the bridge's stop closure.
+                    disconnected.value || (inboundRun?.handle.token.isInterrupted ?? false)
                 },
                 buildMessages: { notices in
                     // Canonical notice contract (shared with chat/plugin):
@@ -5635,17 +6338,43 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     var contentCoalescer = Self.StreamDeltaCoalescer(
                         interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
                     )
+                    if let inboundRun {
+                        Task { @MainActor in
+                            InboundSharedRunBridge.shared.step(inboundRun.handle, "Thinking…")
+                        }
+                    }
+                    var inboundStepMarkedWriting = false
 
                     do {
                         let stream = try await chatEngine.streamChat(request: iterationReq)
                         if disconnected.value { throw CancellationError() }
                         for try await delta in stream {
                             if disconnected.value { throw CancellationError() }
+                            // Workspace-billed run: relay the router's billing
+                            // summary to the teammate (same `{"osaurus": …}`
+                            // shape the router emits) so their spend chip ticks
+                            // live. Decoded BEFORE the generic sentinel filter.
+                            if let billing = StreamingBillingHint.decode(delta) {
+                                if workspaceBilling != nil {
+                                    hop {
+                                        writerBound.value.writeRouterSummary(billing, context: ctx.value)
+                                    }
+                                }
+                                continue
+                            }
                             // Reasoning sentinel must be decoded BEFORE the
                             // generic `isSentinel` filter; emit it on the
                             // OpenAI extended `reasoning_content` channel
                             // and do NOT mix it into `responseContent`.
                             if let reasoning = StreamingReasoningHint.decode(delta) {
+                                if let inboundRun {
+                                    await MainActor.run {
+                                        InboundSharedRunBridge.shared.streamDelta(
+                                            inboundRun.handle,
+                                            reasoning: reasoning
+                                        )
+                                    }
+                                }
                                 if let pending = contentCoalescer.flush() {
                                     hop {
                                         writerBound.value.writeContent(
@@ -5672,6 +6401,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             if StreamingToolHint.isSentinel(delta) { continue }
                             responseContent += delta
                             loggedResponseText += delta
+                            if let inboundRun {
+                                await MainActor.run {
+                                    InboundSharedRunBridge.shared.streamDelta(inboundRun.handle, content: delta)
+                                }
+                            }
+                            if let inboundRun, !inboundStepMarkedWriting {
+                                inboundStepMarkedWriting = true
+                                Task { @MainActor in
+                                    InboundSharedRunBridge.shared.step(inboundRun.handle, "Writing…")
+                                }
+                            }
                             if let chunk = contentCoalescer.append(delta) {
                                 hop {
                                     writerBound.value.writeContent(
@@ -5741,6 +6481,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                     // Final text response — done
                     messages.append(ChatMessage(role: "assistant", content: responseContent))
+                    await mirrorNewMessages(messages)
                     return .finalResponse
                 },
                 executeTool: { inv, callId in
@@ -5778,6 +6519,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         if AgentToolLoop.containsIntercept(calls) {
                             var executions: [AgentLoopToolExecution] = []
                             for call in calls {
+                                if let inboundRun {
+                                    let name = call.invocation.toolName
+                                    Task { @MainActor in
+                                        InboundSharedRunBridge.shared.toolStarted(
+                                            inboundRun.handle,
+                                            toolName: name
+                                        )
+                                    }
+                                }
                                 if emitAgentToolTrace {
                                     hop {
                                         writerBound.value.writeAgentToolTrace(
@@ -5822,6 +6572,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             }
                             return executions
                         }
+                        if let inboundRun {
+                            let names = calls.map { $0.invocation.toolName }
+                            Task { @MainActor in
+                                for name in names {
+                                    InboundSharedRunBridge.shared.toolStarted(
+                                        inboundRun.handle,
+                                        toolName: name
+                                    )
+                                }
+                            }
+                        }
                         if emitAgentToolTrace {
                             for call in calls {
                                 RemoteAgentRunLog.server(
@@ -5855,6 +6616,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 onBatchComplete: { outcomes in
                     var assistantToolCalls: [ToolCall] = []
                     var toolResultsByCallId: [(String, String)] = []
+                    if let inboundRun {
+                        let finished = outcomes.map { ($0.invocation.toolName, $0.wasError) }
+                        inboundOutcome.recordTools(finished.map { (name: $0.0, isError: $0.1) })
+                        Task { @MainActor in
+                            for (name, isError) in finished {
+                                InboundSharedRunBridge.shared.toolFinished(
+                                    inboundRun.handle,
+                                    toolName: name,
+                                    isError: isError
+                                )
+                            }
+                        }
+                    }
                     for outcome in outcomes {
                         if emitAgentToolTrace {
                             RemoteAgentRunLog.server(
@@ -5915,6 +6689,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             ChatMessage(role: "tool", content: result, tool_calls: nil, tool_call_id: callId)
                         )
                     }
+                    await mirrorNewMessages(messages)
                 },
                 emitFallbackText: { text in
                     // Empty-turn recovery exhausted: stream a visible fallback
@@ -5922,6 +6697,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     if text == AgentToolLoop.emptyToolTaskFallback {
                         messages.append(ChatMessage(role: "assistant", content: text))
                         loggedResponseText += text
+                        await mirrorNewMessages(messages)
                         return
                     }
                     hop {
@@ -5935,6 +6711,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                     messages.append(ChatMessage(role: "assistant", content: text))
                     loggedResponseText += text
+                    await mirrorNewMessages(messages)
                 }
             )
 
@@ -5947,27 +6724,32 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // the parallel batch executor inherit the task-locals.
                 // `currentFolderRoot` scopes the folder tools + undo +
                 // change checkpoints to THIS run's granted folder.
-                let runResult = try await ChatExecutionContext.$currentFolderRoot
-                    .withValue(hostFolder?.url) {
-                        try await ChatExecutionContext.$authenticatedHostFolderRoot
+                let runResult = try await ChatExecutionContext.$workspaceBillingContext
+                    .withValue(workspaceBilling) {
+                        try await ChatExecutionContext.$currentFolderRoot
                             .withValue(hostFolder?.url) {
-                                try await AgentToolLoop.run(
-                                    policy: AgentLoopPolicy(
-                                        maxIterations: maxIterations,
-                                        stopOnToolRejection: false,
-                                        dedupeNoticeEnabled: false,
-                                        maxDataMovementSteps: min(16, maxIterations)
-                                    ),
-                                    state: taskState,
-                                    hooks: hooks
-                                )
+                                try await ChatExecutionContext.$authenticatedHostFolderRoot
+                                    .withValue(hostFolder?.url) {
+                                        try await AgentToolLoop.run(
+                                            policy: AgentLoopPolicy(
+                                                maxIterations: maxIterations,
+                                                stopOnToolRejection: false,
+                                                dedupeNoticeEnabled: false,
+                                                maxDataMovementSteps: min(16, maxIterations)
+                                            ),
+                                            state: taskState,
+                                            hooks: hooks
+                                        )
+                                    }
                             }
                     }
                 exitState = runResult.exit
                 RemoteAgentRunLog.server(
                     "run loop done agent=\(agentId.uuidString) model=\(model) exit=\(String(describing: exitState))"
                 )
+                inboundOutcome.record(exit: exitState, cancelled: disconnected.value)
             } catch {
+                inboundOutcome.record(error: error, cancelled: disconnected.value)
                 await releaseHostFolder()
                 RemoteAgentRunLog.serverError(
                     "run loop FAILED agent=\(agentId.uuidString) model=\(model) error=\(error.localizedDescription)"
@@ -6186,8 +6968,49 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // below runs in a detached task that must not touch `stateRef`.
         let authedAudience = stateRef.value.authedAudience
         let authedScopeIsMaster = stateRef.value.authedScopeIsMaster
+        let authedKeyNonce: String? = isLoopback ? nil : inboundConnectionInfo()?.accessKeyId
 
         runRequestTask(priority: .userInitiated) {
+            // Workspace-minted keys are refused here: a detached dispatch has
+            // no way to carry the workspace pool / caller attestation into
+            // every router-billed step, nor to mirror the run for the owner's
+            // Stop button — so it would run unbilled-to-pool and unattributed.
+            // Teammate clients drive shared agents over `/agents/{id}/run`.
+            if let nonce = authedKeyNonce,
+                let record = await WorkspaceAgentAccessHost.shared.workspaceKeyRecord(forKeyNonce: nonce)
+            {
+                let message =
+                    "Shared workspace agents cannot be dispatched as background tasks; use /agents/{id}/run."
+                let bodyJSON = #"{"error":"workspace_dispatch_unsupported","message":"\#(message)"}"#
+                await WorkspaceAuditLog.shared.recordScopeDenied(
+                    keyNonce: nonce,
+                    audience: record.agentAddressLower,
+                    method: "POST",
+                    path: path
+                )
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .forbidden,
+                        headers: headers,
+                        body: bodyJSON
+                    )
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: path,
+                        userAgent: logUserAgent,
+                        requestBody: requestBodyString,
+                        responseStatus: 403,
+                        startTime: logStartTime,
+                        errorMessage: message
+                    )
+                }
+                return
+            }
+
             // Resolve identifier: try UUID first, then crypto address
             guard let agentId = await MainActor.run(body: { AgentManager.shared.resolveAgentId(agentIdentifier) })
             else {
@@ -6303,9 +7126,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             let title = json["title"] as? String
             let requestId = UUID()
-            let externalSessionKey =
+            let suppliedSessionKey =
                 json["external_session_key"] as? String
                 ?? json["session_id"] as? String
+            // A caller-controlled reattachment key must never resolve another
+            // credential's task before ownership is recorded below.
+            let externalSessionKey = Self.dispatchSessionKey(
+                suppliedSessionKey,
+                audience: authedScopeIsMaster ? nil : authedAudience,
+                keyNonce: authedKeyNonce
+            )
 
             let request = DispatchRequest(
                 id: requestId,
@@ -6334,6 +7164,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // matches an existing session the dispatcher reattaches and
                 // reports the existing session's id rather than `requestId`.
                 let resolvedId = handle.id.uuidString
+                // Agent-scoped keys may only poll / cancel the tasks they
+                // created (see `DispatchTaskOwnership`).
+                if let authedAudience, !authedScopeIsMaster, let authedKeyNonce {
+                    DispatchTaskOwnership.shared.record(taskId: handle.id, audience: authedAudience,
+                        keyNonce: authedKeyNonce
+                    )
+                }
                 let pollUrl = "/v1/tasks/\(resolvedId)"
                 let resp: [String: Any] = ["id": resolvedId, "status": "running", "poll_url": pollUrl]
                 responseBody =
@@ -6370,6 +7207,59 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    /// Confine agent-scoped keys to the background tasks they created. Sends a
+    /// 403 and returns `true` when the caller may not act on `taskId`. Must run
+    /// on the event loop (reads `stateRef`).
+    private func sendTaskOwnershipRejectionIfNeeded(
+        taskId: UUID,
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) -> Bool {
+        guard
+            let rejection = DispatchTaskOwnership.shared.rejection(
+                taskId: taskId,
+                authedAudience: stateRef.value.authedAudience,
+                authedScopeIsMaster: stateRef.value.authedScopeIsMaster,
+                keyNonce: inboundConnectionInfo()?.accessKeyId
+            )
+        else { return false }
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: stateRef.value.corsHeaders)
+        let body = #"{"error":"\#(rejection.code)","message":"\#(rejection.message)"}"#
+        sendResponse(
+            context: context,
+            version: head.version,
+            status: .forbidden,
+            headers: headers,
+            body: body
+        )
+        logRequest(
+            method: head.method.rawValue,
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: body,
+            responseStatus: 403,
+            startTime: startTime,
+            errorMessage: rejection.message
+        )
+        let deniedAudience = stateRef.value.authedAudience ?? ""
+        let deniedKeyNonce = inboundConnectionInfo()?.accessKeyId
+        let method = head.method.rawValue
+        Task.detached(priority: .utility) {
+            await WorkspaceAuditLog.shared.recordScopeDenied(
+                keyNonce: deniedKeyNonce,
+                audience: deniedAudience,
+                method: method,
+                path: path
+            )
+        }
+        return true
+    }
+
     /// GET /tasks/{task_id} — poll task status
     private func handleTaskStatusEndpoint(
         head: HTTPRequestHead,
@@ -6402,6 +7292,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     body: #"{"error":"invalid_task_id","message":"Invalid task UUID in path"}"#
                 )
             }
+            return
+        }
+
+        if sendTaskOwnershipRejectionIfNeeded(
+            taskId: taskId,
+            head: head,
+            context: context,
+            path: path,
+            startTime: startTime,
+            userAgent: userAgent
+        ) {
             return
         }
 
@@ -6471,10 +7372,28 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
+        if sendTaskOwnershipRejectionIfNeeded(
+            taskId: taskId,
+            head: head,
+            context: context,
+            path: path,
+            startTime: startTime,
+            userAgent: userAgent
+        ) {
+            return
+        }
+        let cancelKeyNonce = inboundConnectionInfo()?.accessKeyId
+        let cancelAudience = stateRef.value.authedAudience
+
         runRequestTask(priority: .userInitiated) {
             await MainActor.run {
                 BackgroundTaskManager.shared.cancelTask(taskId)
             }
+            await WorkspaceAuditLog.shared.recordTaskCancelled(
+                taskId: taskId,
+                keyNonce: cancelKeyNonce,
+                audience: cancelAudience
+            )
 
             hop {
                 self.sendResponse(
@@ -6541,6 +7460,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     body: #"{"error":"invalid_task_id","message":"Invalid task UUID in path"}"#
                 )
             }
+            return
+        }
+
+        if sendTaskOwnershipRejectionIfNeeded(
+            taskId: taskId,
+            head: head,
+            context: context,
+            path: path,
+            startTime: startTime,
+            userAgent: userAgent
+        ) {
             return
         }
 

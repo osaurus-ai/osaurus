@@ -5,7 +5,9 @@ implemented as an OpenAI-compatible remote provider with a few Router-only
 contracts for billing, request deduplication, and upstream compatibility.
 
 This document captures the invariants that keep Router behavior reliable in the
-chat UI and agent loop.
+chat UI and agent loop. The Workspaces surface (shared agents, invites, the
+single-plan subscription with its free trial, in-app Stripe Checkout, and pool
+billing) is documented separately in [Osaurus Workspaces](OSAURUS_WORKSPACES.md).
 
 ## Data Handling
 
@@ -40,10 +42,14 @@ residue as two decimals (`"7250037"` -> `72,500.37 credits`), and shows
 `<1 credit` for non-zero legacy charges below one credit. Cloud media costs
 held as USD doubles convert through `OsaurusRouter.formatUSDAsCredits`.
 
-Dollars appear in exactly one place: the Stripe top-up flow (`$` presets, the
-`$5.00` minimum, and the payment amount), because that is a real-money
-purchase. The top-up sheet shows the credits the user receives alongside the
-`$` amount they pay. Model pricing in the picker prefers the router's
+Dollars appear only where real money changes hands: the Stripe top-up flow
+(`$` presets, the `$5.00` minimum, and the payment amount), the Workspaces
+subscription price (`$20/month` / `$200/year` per workspace, formatted from
+`price_usd_micro` by `OsaurusRouterWorkspacePrice.formatUSD`), and the
+workspace pool's top-up / auto-reload amounts (presets and bounds in
+`OsaurusRouterWorkspacePoolCredits`; see
+[Osaurus Workspaces](OSAURUS_WORKSPACES.md)). The top-up sheet shows the
+credits the user receives alongside the `$` amount they pay. Model pricing in the picker prefers the router's
 ready-to-show `input_credits_display` / `output_credits_display` strings and
 falls back to the legacy `$` display fields when a server doesn't ship them.
 
@@ -262,6 +268,9 @@ Keep tests close to the contract:
 - `RouterBillingDatabaseTests`, `RouterBillingLedgerTests`, and
   `RouterBillingOutcomeTests` cover local metadata persistence and outcome
   classification.
+- `OsaurusWorkspacesTests` covers the Workspaces wire types, API client,
+  service (create / Checkout / reactivate / return polling), and workspace-billed
+  inference; see [Osaurus Workspaces](OSAURUS_WORKSPACES.md#regression-coverage).
 
 When a regression is shared by multiple OpenAI-compatible providers, add it to
 the shared parser tests first. Router-specific tests should only cover Router

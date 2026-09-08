@@ -2882,7 +2882,7 @@ public struct SystemPromptComposer: Sendable {
         // regardless of the target agent's own spawnable configuration.
         // `ChatSession.send` rebinds `currentSessionSource` from the
         // session's persisted source on every turn, so the strip holds for
-        // follow-up turns (notch quick replies) too, keeping the schema
+        // follow-up turns (background-task quick replies) too, keeping the schema
         // stable across the whole delegated session.
         if ChatExecutionContext.currentSessionSource == .delegation {
             visibleDelegation.subtract(SubagentCapabilityRegistry.spawn.toolNames)

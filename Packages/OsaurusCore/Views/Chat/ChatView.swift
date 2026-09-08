@@ -70,6 +70,8 @@ private struct EmptyStateContent: View, Equatable {
     let remoteAgentDescription: String?
     let remoteAgentQuickActions: [AgentQuickAction]?
     let isConnecting: Bool
+    let sharedAgent: SharedAgentIdentity?
+    let sharedAgentStatus: SharedAgentStatus?
 
     let onOpenModelManager: () -> Void
     let onUseFoundation: (() -> Void)?
@@ -92,6 +94,8 @@ private struct EmptyStateContent: View, Equatable {
             && lhs.remoteAgentDescription == rhs.remoteAgentDescription
             && lhs.remoteAgentQuickActions == rhs.remoteAgentQuickActions
             && lhs.isConnecting == rhs.isConnecting
+            && lhs.sharedAgent == rhs.sharedAgent
+            && lhs.sharedAgentStatus == rhs.sharedAgentStatus
     }
 
     var body: some View {
@@ -113,7 +117,9 @@ private struct EmptyStateContent: View, Equatable {
             remoteAgentAvatar: remoteAgentAvatar,
             remoteAgentDescription: remoteAgentDescription,
             remoteAgentQuickActions: remoteAgentQuickActions,
-            isConnecting: isConnecting
+            isConnecting: isConnecting,
+            sharedAgent: sharedAgent,
+            sharedAgentStatus: sharedAgentStatus
         )
     }
 }
@@ -407,6 +413,12 @@ final class ChatSession: ObservableObject {
     /// as `archived`. Published because the toolbar's back-to-project
     /// button shows/hides with it across chat switches.
     @Published var projectId: UUID?
+    /// Mirrors `ChatSessionData.workspace`: set when this tab is a chat with
+    /// a workspace teammate's shared agent (client side) so the session is
+    /// keyed under that agent's history rather than the hosting local
+    /// agent. Published because the sidebar's selected row and the composer
+    /// lock both follow it.
+    @Published var workspaceContext: WorkspaceSessionContext?
 
     /// Tracks if session has unsaved content changes
     private var isDirty: Bool = false
@@ -1011,17 +1023,26 @@ final class ChatSession: ObservableObject {
                 guard let self = self, !self.isLoadingModel else { return }
                 guard let model = newModel else { return }
                 let previousModel = self.selectedModel
+                // A shared-agent tab is remote for the whole switch, not only
+                // once the provider is bound: `adoptAgent` clears the provider
+                // id and applies the local default model before the rebind
+                // pins the remote one, and a pairing repair swaps providers
+                // mid-connect. The stamped workspace context is the stable
+                // signal, so those pin transitions never read as a user
+                // switching models.
+                let isRemoteAgentTarget = self.isRemoteAgentTarget || self.workspaceContext != nil
                 if Self.shouldWarnAboutModelSwitch(
                     previousModel: previousModel,
                     newModel: model,
-                    hasConversation: self.hasVisibleThreadMessages
+                    hasConversation: self.hasVisibleThreadMessages,
+                    isRemoteAgentTarget: isRemoteAgentTarget
                 ), let previousModel
                 {
                     self.modelSwitchContinuityWarning = ModelSwitchContinuityWarning(
                         previousModelId: previousModel,
                         newModelId: model
                     )
-                } else if previousModel == nil || !self.hasVisibleThreadMessages {
+                } else if isRemoteAgentTarget || previousModel == nil || !self.hasVisibleThreadMessages {
                     self.modelSwitchContinuityWarning = nil
                 }
                 self.lastManualModelSelection = model
@@ -1151,12 +1172,19 @@ final class ChatSession: ObservableObject {
         }
     }
 
+    /// Whether a `selectedModel` change mid-conversation deserves the cache /
+    /// continuity advisory. Never in Mode 2 (`isRemoteAgentTarget`): the chip
+    /// there is pinned to whatever the remote workspace/shared agent reports
+    /// as its effective model, the user didn't pick anything, and inference
+    /// (and any cache) lives on the remote host — so a pin refresh, or the
+    /// host owner changing their agent's model, is not a local model switch.
     nonisolated static func shouldWarnAboutModelSwitch(
         previousModel: String?,
         newModel: String,
-        hasConversation: Bool
+        hasConversation: Bool,
+        isRemoteAgentTarget: Bool = false
     ) -> Bool {
-        guard hasConversation, let previousModel else { return false }
+        guard !isRemoteAgentTarget, hasConversation, let previousModel else { return false }
         return previousModel.caseInsensitiveCompare(newModel) != .orderedSame
     }
 
@@ -2612,6 +2640,30 @@ final class ChatSession: ObservableObject {
         rebuildVisibleBlocks()
     }
 
+    /// Replace the transcript of a hosted conversation (a remote caller's
+    /// run of one of this instance's shared agents, mirrored here read-only
+    /// by `InboundSharedRunBridge`). The caller's request carries the whole
+    /// conversation, so each new run re-syncs the transcript instead of
+    /// appending blindly. No inference or per-turn UI state is touched.
+    func replaceHostedTranscript(_ data: [ChatTurnData]) {
+        turns = data.map { ChatTurn(from: $0) }
+        isDirty = true
+        rebuildVisibleBlocks()
+    }
+
+    /// Mark streamed host output for the next persistence checkpoint.
+    func markHostedTranscriptChanged() { isDirty = true }
+
+    /// Append turns the host produced while serving a hosted conversation
+    /// (assistant step, tool calls, tool results). See
+    /// `replaceHostedTranscript`.
+    func appendHostedTurns(_ data: [ChatTurnData]) {
+        guard !data.isEmpty else { return }
+        turns.append(contentsOf: data.map { ChatTurn(from: $0) })
+        isDirty = true
+        rebuildVisibleBlocks()
+    }
+
     /// Append the clarify question as a visible assistant turn when the
     /// user dismisses the prompt card without answering. The card was
     /// the only readable surface for the question (the recorded tool
@@ -2788,6 +2840,8 @@ final class ChatSession: ObservableObject {
         // Cleared like the other per-session flags; the sidebar's New Chat
         // path re-stamps the active project right after startNewChat().
         projectId = nil
+        // Kept: a fresh chat inside a team-agent tab stays with that agent
+        // (`ChatWindowState.adoptWorkspaceAgent` / `adoptAgent` own the change).
         isDirty = false
         // A new chat starts folder-less; the outgoing session's folder stays
         // persisted on its own row and does not leak into the fresh one.
@@ -3143,7 +3197,8 @@ final class ChatSession: ObservableObject {
             folderBookmark: folderState.persistedBookmark,
             folderPath: folderState.persistedPath,
             conversationSummary: conversationSummary,
-            projectId: projectId
+            projectId: projectId,
+            workspace: workspaceContext
         )
     }
 
@@ -3207,6 +3262,7 @@ final class ChatSession: ObservableObject {
         archived = data.archived
         pinned = data.pinned
         projectId = data.projectId
+        workspaceContext = data.workspace
 
         // Restore THIS session's persisted folder (fire-and-forget: the
         // bookmark resolve + context build happen off the main actor and
@@ -7033,7 +7089,8 @@ final class ChatSession: ObservableObject {
                                 // content.
                                 let toolTurn = recordToolTurn(execution.result, callId: call.callId)
                                 let newAssistantTurn = ChatTurn(role: .assistant, content: "")
-                                self.turns.append(contentsOf: [toolTurn, newAssistantTurn])
+                                self.turns.append(contentsOf: [toolTurn, newAssistantTurn,
+                                                                ])
                                 assistantTurn = newAssistantTurn
                             }
                             self.rebuildVisibleBlocks()
@@ -8521,8 +8578,10 @@ struct ChatView: View {
     /// the agent's. Returns nil when no remote agent is selected (the chip is
     /// interactive then and resolves its own label).
     private var pinnedModelChipLabel: String? {
-        guard let providerId = windowState.selectedDiscoveredAgentProviderId else { return nil }
-        if let effective = windowState.pinnedRemoteAgentEffectiveModel, !effective.isEmpty {
+        guard isRemoteAgentChrome else { return nil }
+        if let providerId = windowState.selectedDiscoveredAgentProviderId,
+            let effective = windowState.pinnedRemoteAgentEffectiveModel, !effective.isEmpty
+        {
             if let item = session.pickerItems.first(where: {
                 Self.isProviderItem($0, providerId: providerId)
                     && Self.unprefixedModelTail($0.id) == effective
@@ -8531,26 +8590,245 @@ struct ChatView: View {
             }
             return effective
         }
+        // Not resolved yet (connecting / unpaired): show the agent's own
+        // identity — the paired name last, so a workspace agent reads by its
+        // router display name even before its provider exists.
+        if let identity = windowState.sharedAgentIdentity {
+            return identity.modelLabel ?? identity.name
+        }
         return windowState.selectedDiscoveredAgent?.name
             ?? windowState.selectedRelayAgent?.name
             ?? L("Default")
+    }
+
+    /// Remote-agent mode for CHROME purposes (pinned model chip, hidden
+    /// context ring, remote hero/badge). True for any tab stamped with a
+    /// workspace agent — paired or not, connecting or failed — and for legacy
+    /// Mode 2 pins; false for read-only teammate conversations served here,
+    /// which render as ordinary (locked) local transcripts.
+    private var isRemoteAgentChrome: Bool {
+        if let context = observedSession.workspaceContext { return !context.isServedForTeammate }
+        return windowState.selectedDiscoveredAgentProviderId != nil
+    }
+
+    /// Workspace name for the composer's "Workspace pool" spend chip when the
+    /// active tab chats with a teammate's shared agent; nil for local agents
+    /// and for read-only teammate conversations served by this host.
+    private var workspacePoolLabel: String? {
+        // Agents shared directly (invite link) carry no workspace id and
+        // bill nothing to a pool.
+        guard let workspaceId = activeWorkspaceId else { return nil }
+        return rosterStore.rosters.first(where: { $0.id == workspaceId })?.workspace.name
+            ?? L("Workspace")
+    }
+
+    /// Where the composer lock's settings shortcut lands: the workspace
+    /// roster for a team agent, the Agents tab (where the pairing lives) for
+    /// an agent shared directly outside any workspace.
+    private var composerLockSettingsTab: ManagementTab {
+        (observedSession.workspaceContext?.workspaceId.isEmpty ?? false) ? .agents : .workspaces
+    }
+
+    /// The workspace this tab's shared agent belongs to, when it is a
+    /// workspace share (nil for local tabs and invite-link shares).
+    private var activeWorkspaceId: String? {
+        guard let context = observedSession.workspaceContext, !context.isServedForTeammate,
+            !context.workspaceId.isEmpty
+        else { return nil }
+        return context.workspaceId
+    }
+
+    /// Composer lock shortcut: the agent's own workspace roster (Shared
+    /// Agents tab) for a team agent; the Agents tab for a direct share.
+    private func openComposerLockSettings() {
+        if let workspaceId = activeWorkspaceId {
+            WorkspacesService.shared.openInSettings(workspaceId: workspaceId, tab: .sharedAgents)
+        } else {
+            AppDelegate.shared?.showManagementWindow(initialTab: composerLockSettingsTab)
+        }
+    }
+
+    /// Why the composer is locked for the active tab (workspace team agent
+    /// offline / unpaired / connecting, or a read-only teammate conversation
+    /// served by this host). Re-evaluated on roster, pairing, and connection
+    /// changes through the observed stores above.
+    private var composerLock: ComposerLock? {
+        // Touch the observed stores so SwiftUI tracks them for this view.
+        _ = rosterStore.rosters
+        _ = rosterStore.forcedOffline
+        _ = remoteAgentManager.remoteAgents
+        _ = workspaceConnectService.connectingAddresses
+        _ = workspaceConnectService.connectFailures
+        _ = observedSession.workspaceContext
+        return windowState.composerLock
+    }
+
+    /// One-line explanation of the composer lock with its action (Retry /
+    /// Open Workspaces), in the style of `remoteAgentConnectionNotice`. Auto-
+    /// clears when the lock lifts (presence flips online, connect lands).
+    @ViewBuilder
+    private var composerLockNotice: some View {
+        if let lock = composerLock, let status = windowState.sharedAgentStatus,
+            let identity = windowState.sharedAgentIdentity,
+            // On an empty thread the hero badge already reads "Securing
+            // connection…"; one connecting indicator is enough.
+            !(status == .connecting && !observedSession.hasVisibleThreadMessages)
+        {
+            if case .teammateConversation(let callerName, let agentName, let isWorkspace) = lock {
+                // Own subview: it observes the task registry for the live
+                // step / Stop so the rest of the chat doesn't re-render on
+                // every background-task tick.
+                HostedRunNotice(
+                    sessionId: observedSession.sessionId,
+                    callerName: callerName,
+                    agentName: agentName,
+                    isWorkspace: isWorkspace
+                )
+            } else {
+                sharedAgentStatusNotice(status, identity: identity)
+            }
+        }
+    }
+
+    /// Theme color for a `SharedAgentStatus` tint role.
+    private func statusTint(_ tint: SharedAgentStatus.Tint) -> Color {
+        switch tint {
+        case .success: return theme.successColor
+        case .accent: return theme.accentColor
+        case .warning: return theme.warningColor
+        case .muted: return theme.secondaryText
+        }
+    }
+
+    /// One layout for every shared-agent lock state: a status glyph (spinner
+    /// while connecting), a one-line title with the reason as a caption
+    /// beneath it, and the status' actions in a trailing group that never
+    /// compresses — so a long reason can't push `Retry` off the chip. Neutral
+    /// chrome (input background + hairline) with only the glyph and primary
+    /// action carrying the status tint, so the notice reads as part of the
+    /// composer rather than a warning banner.
+    private func sharedAgentStatusNotice(_ status: SharedAgentStatus, identity: SharedAgentIdentity) -> some View {
+        let tint = statusTint(status.tint)
+        let title = status.title(agentName: identity.name)
+        let detail = status.detail(agentName: identity.name, hostName: identity.ownerName)
+        return HStack(alignment: .center, spacing: 10) {
+            Group {
+                if status == .connecting || status == .checking {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: status.symbolName)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(tint)
+                }
+            }
+            .frame(width: 24, height: 24)
+            .background(Circle().fill(tint.opacity(theme.isDark ? 0.16 : 0.12)))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(theme.font(size: CGFloat(theme.captionSize) + 1, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                if let detail {
+                    Text(detail)
+                        .font(theme.font(size: CGFloat(theme.captionSize)))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .help(detail)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 6) {
+                if let action = status.actionLabel {
+                    Button(action: { windowState.retryWorkspaceAgentConnection() }) {
+                        Text(action)
+                    }
+                    .buttonStyle(PrimaryButtonStyle(size: .compact))
+                }
+                switch status {
+                case .notConnected:
+                    Button(action: openComposerLockSettings) {
+                        Text(composerLockSettingsTab == .agents ? L("Open Agents") : L("Open Workspace"))
+                    }
+                    .buttonStyle(SecondaryButtonStyle(size: .compact))
+                case .unavailable(_, let fix):
+                    switch fix {
+                    case .enableRouter:
+                        Button(action: { RemoteProviderManager.shared.setOsaurusRouterEnabled(true) }) {
+                            Text(L("Turn on Router"))
+                        }
+                        .buttonStyle(PrimaryButtonStyle(size: .compact))
+                    case .openWorkspaces:
+                        // Unavailable = unshared / we left: the workspace may
+                        // no longer list it, so the list is the right landing.
+                        Button(action: { AppDelegate.shared?.showManagementWindow(initialTab: .workspaces) }) {
+                            Text(L("Open Workspaces"))
+                        }
+                        .buttonStyle(SecondaryButtonStyle(size: .compact))
+                    case .none:
+                        EmptyView()
+                    }
+                case .ready, .checking, .connecting, .offline, .readOnlyTeammate:
+                    EmptyView()
+                }
+            }
+            .fixedSize()
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 8)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(theme.inputBackground.opacity(theme.isDark ? 0.9 : 1))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(theme.primaryText.opacity(theme.isDark ? 0.08 : 0.06), lineWidth: 1)
+        )
+        .padding(.bottom, 8)
+        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(verbatim: status.message(agentName: identity.name, hostName: identity.ownerName)))
+    }
+
+    /// "Research Agent is offline — you can read this conversation, but new
+    /// messages can't be sent until Alice's Osaurus is back online."
+    nonisolated static func offlineLockMessage(agentName: String, ownerName: String?, lastSeen: Date?) -> String {
+        SharedAgentStatus.offline(lastSeen: lastSeen).message(agentName: agentName, hostName: ownerName)
     }
 
     /// Compact Mode 2 connection status shown above the composer: an actionable
     /// error with Retry on failure. The connecting affordance lives in the
     /// empty-state security badge (which morphs "Securing connection…" -> lock),
     /// so this row only surfaces on `.failed`; it's empty otherwise and when
-    /// not in remote-agent mode.
+    /// not in remote-agent mode. A workspace team agent's failure is reported
+    /// by `composerLockNotice` instead, so this stays empty while it's locked.
     @ViewBuilder
     private var remoteAgentConnectionNotice: some View {
-        if windowState.selectedDiscoveredAgentProviderId != nil {
+        if windowState.selectedDiscoveredAgentProviderId != nil, composerLock == nil {
             switch windowState.remoteAgentConnectionPhase {
             case .failed(let message):
                 connectionFailedNotice(message)
+            case .connecting where observedSession.hasVisibleThreadMessages:
+                // With a transcript the empty-state badge isn't on screen, so
+                // the gated send needs its own explanation here.
+                remoteAgentNoticeRow(tint: theme.accentColor) {
+                    ProgressView().controlSize(.small)
+                    Text(
+                        String(
+                            format: L("Connecting to %@…"),
+                            windowState.selectedDiscoveredAgent?.name
+                                ?? windowState.selectedRelayAgent?.name ?? L("the remote agent")
+                        )
+                    )
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                }
             case .idle, .connected, .connecting:
-                // The connecting affordance now lives in the empty-state
-                // security badge (it morphs "Securing connection…" -> lock),
-                // so there's no separate connecting chip above the composer.
+                // On an empty thread the connecting affordance lives in the
+                // empty-state security badge ("Securing connection…" → lock).
                 EmptyView()
             }
         }
@@ -8680,6 +8958,13 @@ struct ChatView: View {
 
     /// Observed session - needed to properly propagate @Published changes from ChatSession
     @ObservedObject private var observedSession: ChatSession
+
+    /// Workspace stores the composer lock derives from (presence, pairing,
+    /// auto-connect progress). Observed so the lock notice clears the moment
+    /// a teammate's host comes back or the pairing lands.
+    @ObservedObject private var rosterStore = WorkspaceRosterStore.shared
+    @ObservedObject private var remoteAgentManager = RemoteAgentManager.shared
+    @ObservedObject private var workspaceConnectService = WorkspaceAgentConnectService.shared
 
     /// Convenience accessor for the session (uses observedSession for proper SwiftUI updates)
     private var session: ChatSession { observedSession }
@@ -9030,6 +9315,13 @@ struct ChatView: View {
                             },
                             onSelectAgent: { newAgentId in
                                 windowState.switchAgent(to: newAgentId)
+                            },
+                            workspaceAgentAddress: windowState.workspaceAgentAddress,
+                            workspaceAgentWorkspaceId: observedSession.workspaceContext?.workspaceId,
+                            onSelectWorkspaceAgent: { address, workspaceId in
+                                windowState.openProjectId = nil
+                                windowState.enteredChatFromProjectPage = false
+                                windowState.switchToWorkspaceAgent(address: address, workspaceId: workspaceId)
                             }
                         )
                     }
@@ -9074,15 +9366,43 @@ struct ChatView: View {
                             // Mode 2 connection status (connecting / error +
                             // Retry) shown directly above the composer so the
                             // gated send has a visible explanation.
+                            // Every notice above the composer shares the input
+                            // card's 20 pt horizontal inset (see
+                            // `FloatingInputCard.inputCard`) so they read as
+                            // one stacked group with the same left/right edges.
                             remoteAgentConnectionNotice
+                                .padding(.horizontal, Self.composerHorizontalInset)
                                 .frame(maxWidth: 1100)
                                 .frame(maxWidth: .infinity)
                                 .animation(theme.springAnimation(), value: windowState.remoteAgentConnectionPhase)
+
+                            // Workspace team agent offline / unpaired /
+                            // connecting, or a read-only teammate
+                            // conversation: explains the locked composer and
+                            // offers Retry / Connect.
+                            if observedSession.workspaceContext?.isServedForTeammate == false {
+                                Text("The agent owner can review this conversation and its history.", bundle: .module)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, Self.composerHorizontalInset)
+                            }
+
+                            ChatPersistenceNotice(sessionId: observedSession.sessionId)
+                                .padding(.horizontal, Self.composerHorizontalInset)
+                                .frame(maxWidth: 1100)
+                                .frame(maxWidth: .infinity)
+
+                            composerLockNotice
+                                .padding(.horizontal, Self.composerHorizontalInset)
+                                .frame(maxWidth: 1100)
+                                .frame(maxWidth: .infinity)
+                                .animation(theme.springAnimation(), value: composerLock)
 
                             // Run-liveness notice (slow / stalled) so a run
                             // with no visible progress reads as a knowable
                             // state with a recovery action, not a hang.
                             runProgressNotice
+                                .padding(.horizontal, Self.composerHorizontalInset)
                                 .frame(maxWidth: 1100)
                                 .frame(maxWidth: .infinity)
                                 .animation(
@@ -9126,6 +9446,8 @@ struct ChatView: View {
                                 contextBreakdown: observedSession.estimatedContextBreakdown,
                                 sessionSpendMicro: observedSession.sessionRouterSpendMicro,
                                 isRouterBilledSession: observedSession.isOsaurusRouterSession,
+                                workspacePoolLabel: workspacePoolLabel,
+                                workspacePoolId: activeWorkspaceId,
                                 imageComposerSettings: $observedSession.imageComposerSettings,
                                 onSend: { manualText in
                                     if let manualText = manualText {
@@ -9163,12 +9485,12 @@ struct ChatView: View {
                                 onSendNow: { observedSession.sendNowInterrupting() },
                                 onCancelQueued: { observedSession.cancelQueuedSend() },
                                 onAddCredits: { showTopUpSheet = true },
-                                isModelPinned: windowState.selectedDiscoveredAgentProviderId != nil,
+                                isModelPinned: isRemoteAgentChrome,
                                 pinnedModelLabel: pinnedModelChipLabel,
                                 remoteConnectionPending: windowState.remoteAgentConnectionPhase
                                     == .connecting,
-                                isRemoteAgentRun: windowState.selectedDiscoveredAgentProviderId
-                                    != nil,
+                                composerLock: composerLock,
+                                isRemoteAgentRun: isRemoteAgentChrome,
                                 inputHistoryProvider: { [weak observedSession] in
                                     guard let observedSession else { return [] }
                                     return ChatInputHistory.entries(from: observedSession.turns)
@@ -9323,12 +9645,8 @@ struct ChatView: View {
             else { return }
             selectDiscoveredAgent(agent)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .chatToolbarSelectRelayAgent)) { notification in
-            guard let targetWindowId = notification.userInfo?["windowId"] as? UUID,
-                targetWindowId == windowState.windowId,
-                let relay = notification.object as? PairedRelayAgent
-            else { return }
-            connectToRelayAgent(relay)
+        .onChange(of: windowState.pendingRelayConnect) { _, _ in
+            consumePendingRelayConnect()
         }
         .onReceive(NotificationCenter.default.publisher(for: .vadStartNewSession)) { notification in
             // VAD requested a new session for a specific agent
@@ -9343,6 +9661,9 @@ struct ChatView: View {
         .onAppear {
             setupKeyMonitor()
             observedSession.notifySessionBecameActive()
+            // A team-agent tab may have queued its connect before this view
+            // mounted (tab remount swaps the `ChatView` instance).
+            consumePendingRelayConnect()
 
             // Register close callback with ChatWindowManager
             ChatWindowManager.shared.setCloseCallback(for: windowState.windowId) { [weak windowState] in
@@ -9669,7 +9990,21 @@ struct ChatView: View {
             $0.id == providerId
         }
         windowState.remoteAgentConnectionPhase = .connecting
+        // The lock notice's "Connecting…" has no cancel; if the connect never
+        // resolves (relay hang, dropped socket), give the user a Retry after
+        // a bounded wait instead of a permanent spinner.
+        let timeoutTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(Self.remoteConnectTimeout))
+            guard !Task.isCancelled,
+                windowState.selectedDiscoveredAgentProviderId == providerId,
+                windowState.remoteAgentConnectionPhase == .connecting
+            else { return }
+            windowState.remoteAgentConnectionPhase = .failed(
+                L("The connection timed out. The agent's host may be asleep or offline.")
+            )
+        }
         Task {
+            defer { timeoutTask.cancel() }
             // Ensure the provider is connected before refreshing models /
             // resolving the pin, so the first refresh sees the connected
             // provider's model list rather than an empty one. `connect` is
@@ -9680,6 +10015,16 @@ struct ChatView: View {
             do {
                 try await RemoteProviderManager.shared.connect(providerId: providerId)
             } catch {
+                guard windowState.selectedDiscoveredAgentProviderId == providerId else { return }
+                // The host refused our key: for a workspace pairing that is a
+                // stale attestation, not a dead agent. Re-handshake once and
+                // let the rebind run this flow again with the fresh provider;
+                // only a second refusal surfaces as a failure.
+                if RemoteProviderService.isPeerRejection(error),
+                    await windowState.repairWorkspacePairingAfterRejection()
+                {
+                    return
+                }
                 guard windowState.selectedDiscoveredAgentProviderId == providerId else { return }
                 windowState.remoteAgentConnectionPhase = .failed(
                     ChatErrorMessages.remoteConnectFailure(error)
@@ -9706,7 +10051,8 @@ struct ChatView: View {
                         forAddress: address,
                         name: metadata?.name,
                         description: metadata?.description,
-                        avatar: metadata?.avatar
+                        avatar: metadata?.avatar,
+                        providerId: providerId
                     )
                 }
             }
@@ -9716,11 +10062,32 @@ struct ChatView: View {
         }
     }
 
-    private func connectToRelayAgent(_ relay: PairedRelayAgent) {
+    /// `preserveSession` keeps the current transcript (a workspace agent's
+    /// history reopened from the sidebar / History) instead of starting a
+    /// fresh chat — the connect itself is identical.
+    /// Upper bound on the Mode 2 connect + model-pin handshake before the
+    /// lock notice offers Retry.
+    static let remoteConnectTimeout: TimeInterval = 30
+
+    /// Horizontal inset of the floating input card
+    /// (`FloatingInputCard.inputCard`), shared by the notices stacked above
+    /// it so their edges line up with the composer's.
+    static let composerHorizontalInset: CGFloat = 20
+
+    private func connectToRelayAgent(_ relay: PairedRelayAgent, preserveSession: Bool = false) {
         let relayHost = "\(relay.remoteAgentAddress).agent.osaurus.ai"
         let manager = RemoteProviderManager.shared
 
         guard let existing = manager.configuration.providers.first(where: { $0.id == relay.providerId }) else {
+            // The pairing's provider is gone (removed under us). Drop the
+            // orphaned pairing record so the lock reads "not connected" with a
+            // Connect action (and auto-connect can re-pair), instead of
+            // sitting on "Connecting…" forever.
+            if let orphan = RemoteAgentManager.shared.remoteAgent(forAddress: relay.remoteAgentAddress) {
+                _ = RemoteAgentManager.shared.remove(id: orphan.id)
+            }
+            windowState.remoteAgentConnectionPhase = .idle
+            windowState.refreshPairedRelayAgents()
             return
         }
 
@@ -9738,8 +10105,16 @@ struct ChatView: View {
         windowState.pinnedRemoteAgentEffectiveModel = nil
         windowState.pinnedRemoteAgentAvatar = nil
         windowState.pinnedRemoteAgentQuickActions = nil
-        session.reset()
+        if !preserveSession { session.reset() }
         pinRemoteAgentModelAfterConnect(providerId: relay.providerId)
+    }
+
+    /// Run a connect the window state queued (`switchToWorkspaceAgent`,
+    /// tab switch back onto a team-agent tab, Retry). Consumed once.
+    private func consumePendingRelayConnect() {
+        guard let request = windowState.pendingRelayConnect else { return }
+        windowState.pendingRelayConnect = nil
+        connectToRelayAgent(request.relay, preserveSession: request.preserveSession)
     }
 
     // MARK: - Empty State
@@ -9797,6 +10172,8 @@ struct ChatView: View {
             remoteAgentDescription: remoteAgentDescriptionForEmptyState,
             remoteAgentQuickActions: windowState.pinnedRemoteAgentQuickActions,
             isConnecting: windowState.remoteAgentConnectionPhase == .connecting,
+            sharedAgent: isRemoteAgentChrome ? windowState.sharedAgentIdentity : nil,
+            sharedAgentStatus: isRemoteAgentChrome ? windowState.sharedAgentStatus : nil,
             onOpenModelManager: {
                 AppDelegate.shared?.showManagementWindow(initialTab: .models)
             },

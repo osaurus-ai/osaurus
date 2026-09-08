@@ -33,7 +33,36 @@ struct AgentSheetHeader: View {
     let icon: String
     let title: LocalizedStringKey
     let subtitle: LocalizedStringKey?
+    /// Verbatim (already-localized or user-provided) subtitle, for dynamic
+    /// text like a workspace name that must not go through the catalog.
+    var subtitleText: String?
     let onClose: () -> Void
+
+    init(
+        icon: String,
+        title: LocalizedStringKey,
+        subtitle: LocalizedStringKey?,
+        onClose: @escaping () -> Void
+    ) {
+        self.icon = icon
+        self.title = title
+        self.subtitle = subtitle
+        self.subtitleText = nil
+        self.onClose = onClose
+    }
+
+    init(
+        icon: String,
+        title: LocalizedStringKey,
+        subtitleText: String?,
+        onClose: @escaping () -> Void
+    ) {
+        self.icon = icon
+        self.title = title
+        self.subtitle = nil
+        self.subtitleText = subtitleText
+        self.onClose = onClose
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,6 +78,11 @@ struct AgentSheetHeader: View {
                         .foregroundColor(theme.primaryText)
                     if let subtitle {
                         Text(subtitle, bundle: .module)
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.secondaryText)
+                            .lineLimit(2)
+                    } else if let subtitleText, !subtitleText.isEmpty {
+                        Text(subtitleText)
                             .font(.system(size: 12))
                             .foregroundColor(theme.secondaryText)
                             .lineLimit(2)
@@ -234,16 +268,36 @@ struct AgentSectionEmptyState: View {
         self.action = action
     }
 
+    /// Loading variant: spinner in place of the icon, `title` as the label
+    /// ("Loading members…"). Same footprint as the empty state so a section
+    /// doesn't jump when the data lands.
+    init(loading title: LocalizedStringKey) {
+        self.icon = ""
+        self.title = title
+        self.hint = nil
+        self.actionLabel = nil
+        self.action = nil
+    }
+
+    private var isLoading: Bool { icon.isEmpty }
+
     var body: some View {
         VStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 22, weight: .light))
-                .foregroundColor(theme.tertiaryText)
-                .frame(width: 36, height: 36)
-                .background(
-                    Circle().fill(theme.inputBackground.opacity(0.6))
-                )
-                .padding(.bottom, 2)
+            Group {
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: icon)
+                        .font(.system(size: 22, weight: .light))
+                        .foregroundColor(theme.tertiaryText)
+                }
+            }
+            .frame(width: 36, height: 36)
+            .background(
+                Circle().fill(theme.inputBackground.opacity(0.6))
+            )
+            .padding(.bottom, 2)
 
             Text(title, bundle: .module)
                 .font(.system(size: 12, weight: .semibold))
@@ -276,18 +330,73 @@ struct AgentSectionEmptyState: View {
 
 // MARK: - Button Styles
 
+/// Size variants shared by the three action button styles. `.regular` is
+/// the sheet/footer size; `.compact` is the in-row size (section trailing
+/// slots, list rows) that used to be hand-rolled per feature.
+enum ActionButtonSize {
+    case regular
+    case compact
+
+    var font: Font {
+        switch self {
+        case .regular: return .system(size: 13, weight: .medium)
+        case .compact: return .system(size: 12, weight: .semibold)
+        }
+    }
+    var horizontalPadding: CGFloat {
+        switch self {
+        case .regular: return 16
+        case .compact: return 12
+        }
+    }
+    var verticalPadding: CGFloat {
+        switch self {
+        case .regular: return 10
+        case .compact: return 6.5
+        }
+    }
+}
+
+/// Label wrapper shared by the button styles: when `isLoading`, a mini
+/// spinner leads the (still visible) title so a button never collapses to
+/// a bare spinner and the row keeps its width.
+private struct LoadingLabel<Label: View>: View {
+    let isLoading: Bool
+    let tint: Color
+    let label: Label
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if isLoading {
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(tint)
+            }
+            label
+        }
+    }
+}
+
 /// Accent-tinted commit button. Replaces hand-rolled `Capsule().fill(accent)`
 /// patterns scattered across share / incoming / remote views.
 struct PrimaryButtonStyle: ButtonStyle {
     @Environment(\.theme) private var theme
     @Environment(\.isEnabled) private var isEnabled
 
+    var isLoading: Bool = false
+    var size: ActionButtonSize = .regular
+
+    init(isLoading: Bool = false, size: ActionButtonSize = .regular) {
+        self.isLoading = isLoading
+        self.size = size
+    }
+
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .medium))
+        LoadingLabel(isLoading: isLoading, tint: .white, label: configuration.label)
+            .font(size.font)
             .foregroundColor(.white)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.horizontal, size.horizontalPadding)
+            .padding(.vertical, size.verticalPadding)
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(theme.accentColor)
@@ -296,7 +405,7 @@ struct PrimaryButtonStyle: ButtonStyle {
     }
 
     private func opacity(for configuration: Configuration) -> Double {
-        if !isEnabled { return 0.45 }
+        if !isEnabled { return isLoading ? 0.8 : 0.45 }
         return configuration.isPressed ? 0.8 : 1.0
     }
 }
@@ -306,12 +415,20 @@ struct SecondaryButtonStyle: ButtonStyle {
     @Environment(\.theme) private var theme
     @Environment(\.isEnabled) private var isEnabled
 
+    var isLoading: Bool = false
+    var size: ActionButtonSize = .regular
+
+    init(isLoading: Bool = false, size: ActionButtonSize = .regular) {
+        self.isLoading = isLoading
+        self.size = size
+    }
+
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .medium))
+        LoadingLabel(isLoading: isLoading, tint: theme.primaryText, label: configuration.label)
+            .font(size.font)
             .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.horizontal, size.horizontalPadding)
+            .padding(.vertical, size.verticalPadding)
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(theme.tertiaryBackground)
@@ -324,7 +441,7 @@ struct SecondaryButtonStyle: ButtonStyle {
     }
 
     private func opacity(for configuration: Configuration) -> Double {
-        if !isEnabled { return 0.45 }
+        if !isEnabled { return isLoading ? 0.8 : 0.45 }
         return configuration.isPressed ? 0.8 : 1.0
     }
 }
@@ -337,12 +454,20 @@ struct DestructiveButtonStyle: ButtonStyle {
     @Environment(\.theme) private var theme
     @Environment(\.isEnabled) private var isEnabled
 
+    var isLoading: Bool = false
+    var size: ActionButtonSize = .regular
+
+    init(isLoading: Bool = false, size: ActionButtonSize = .regular) {
+        self.isLoading = isLoading
+        self.size = size
+    }
+
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .medium))
+        LoadingLabel(isLoading: isLoading, tint: theme.errorColor, label: configuration.label)
+            .font(size.font)
             .foregroundColor(theme.errorColor)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.horizontal, size.horizontalPadding)
+            .padding(.vertical, size.verticalPadding)
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(theme.errorColor.opacity(0.10))
@@ -355,7 +480,7 @@ struct DestructiveButtonStyle: ButtonStyle {
     }
 
     private func opacity(for configuration: Configuration) -> Double {
-        if !isEnabled { return 0.45 }
+        if !isEnabled { return isLoading ? 0.8 : 0.45 }
         return configuration.isPressed ? 0.8 : 1.0
     }
 }
@@ -374,21 +499,35 @@ struct StyledTextField: View {
     let icon: String?
     let axis: Axis
     let lineLimit: Int?
+    /// Monospaced value font for codes, addresses, and links.
+    let monospaced: Bool
+    /// Focus the field when it first appears (single-line only) — for the
+    /// one field a sheet exists to fill in.
+    let autofocus: Bool
 
     @State private var isFocused = false
+    @FocusState private var singleLineFocused: Bool
 
     init(
         placeholder: String,
         text: Binding<String>,
         icon: String? = nil,
         axis: Axis = .horizontal,
-        lineLimit: Int? = nil
+        lineLimit: Int? = nil,
+        monospaced: Bool = false,
+        autofocus: Bool = false
     ) {
         self.placeholder = placeholder
         self._text = text
         self.icon = icon
         self.axis = axis
         self.lineLimit = lineLimit
+        self.monospaced = monospaced
+        self.autofocus = autofocus
+    }
+
+    private var valueFont: Font {
+        .system(size: 13, design: monospaced ? .monospaced : .default)
     }
 
     var body: some View {
@@ -442,8 +581,14 @@ struct StyledTextField: View {
             }
         )
         .textFieldStyle(.plain)
-        .font(.system(size: 13))
+        .font(valueFont)
         .foregroundColor(theme.primaryText)
+        .focused($singleLineFocused)
+        .onAppear {
+            guard autofocus else { return }
+            // Defer one runloop turn so the sheet is on screen first.
+            DispatchQueue.main.async { singleLineFocused = true }
+        }
     }
 
     @ViewBuilder
@@ -454,6 +599,7 @@ struct StyledTextField: View {
             text: $text,
             isFocused: $isFocused,
             lineLimit: lineLimit,
+            font: valueFont,
             theme: theme
         )
     }
@@ -463,6 +609,7 @@ private struct MultilineFocusable: View {
     @Binding var text: String
     @Binding var isFocused: Bool
     let lineLimit: Int?
+    let font: Font
     let theme: ThemeProtocol
 
     @FocusState private var fieldFocused: Bool
@@ -477,7 +624,7 @@ private struct MultilineFocusable: View {
             }
         }
         .textFieldStyle(.plain)
-        .font(.system(size: 13))
+        .font(font)
         .foregroundColor(theme.primaryText)
         .focused($fieldFocused)
         .onChange(of: fieldFocused) { _, newValue in

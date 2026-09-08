@@ -31,8 +31,8 @@ public protocol SubagentKind: Sendable {
     /// True when this run executes as a real dispatched chat session that
     /// registers its own background task (true agent delegation) — the
     /// host then marks the feed so `SubagentBackgroundTaskBridge` does not
-    /// mirror it into a duplicate notch row. Defaults to false.
-    var suppressNotchMirror: Bool { get }
+    /// mirror it into a duplicate Activity row. Defaults to false.
+    var suppressActivityMirror: Bool { get }
 
     /// Bounded request facts for RAM-admission pricing: the seed/input size
     /// and configured max output THIS run will actually ask the child model
@@ -114,8 +114,8 @@ extension SubagentKind {
 
     public var feedTitle: String { capability.id }
 
-    /// Default: ordinary in-memory subagent runs are mirrored to the notch.
-    public var suppressNotchMirror: Bool { false }
+    /// Default: ordinary in-memory subagent runs are mirrored to the Activity section.
+    public var suppressActivityMirror: Bool { false }
 
     /// Default: no residency change. Model-swapping kinds override.
     public func makeHandoff() -> SubagentHandoff { PassthroughHandoff() }

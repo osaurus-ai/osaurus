@@ -27,7 +27,7 @@ final class ToastPassThroughView: NSView {
 // MARK: - Toast Container View
 
 /// Container that positions and animates toasts based on configuration.
-/// Note: Background tasks are now rendered by the NotchView (via NotchWindowController),
+/// Note: Background tasks are rendered by the chat sidebar's Activity section,
 /// not by this container. This only handles regular toasts.
 public struct ToastContainerView: View {
     private var toastManager = ToastManager.shared

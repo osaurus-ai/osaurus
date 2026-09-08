@@ -766,6 +766,34 @@ public enum SettingsSearchIndex {
                 "cryptographic identity", "keys",
             ]
         ),
+        .init(
+            id: "workspaces.overview",
+            tab: .workspaces,
+            title: "Workspaces",
+            keywords: [
+                "workspace", "workspaces", "new workspace", "create workspace", "team", "teams",
+                "collaboration", "share agents",
+            ]
+        ),
+        .init(
+            id: "workspaces.invites",
+            tab: .workspaces,
+            section: "Members",
+            title: "Invites & Members",
+            keywords: [
+                "invite", "invite link", "join", "join code", "member", "role", "admin",
+                "owner", "viewer", "join workspace", "join team",
+            ]
+        ),
+        .init(
+            id: "workspaces.agents",
+            tab: .workspaces,
+            section: "Shared Agents",
+            title: "Shared Agents",
+            keywords: [
+                "share agent", "shared agent", "relay", "presence", "workspace billing", "team billing",
+            ]
+        ),
         // The standalone Storage tab is gone: the models directory +
         // external sources live on the General tab, and the encryption
         // panel lives on the Privacy tab's Storage sub-tab.

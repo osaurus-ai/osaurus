@@ -6,11 +6,11 @@
 //  `ChatWindowState` + `BackgroundTaskManager`:
 //
 //  - Starting a new chat / loading another session / switching agent while
-//    a run is streaming hands the running `ChatSession` to the registry
-//    (execution continues) and installs a replacement session — it never
-//    stops the run.
-//  - The detached run's output lands only in its own session; the window's
-//    new session never sees it.
+//    a run is streaming keeps the running `ChatSession` in its own tab
+//    (execution continues, the tab still owns it) and opens the new chat in
+//    a fresh tab — it never stops the run.
+//  - The run's output lands only in its own session; the window's new
+//    session never sees it.
 //  - Reopening a chat the registry is still running re-attaches the SAME
 //    in-memory `ChatSession` instance (subsequent deltas keep landing in
 //    it) instead of hydrating a stale copy from disk.
@@ -172,21 +172,24 @@ struct ChatWindowSessionDetachTests {
             )
             window.loadSession(target)
 
-            // The target loaded into a brand-new session; the old run is
-            // registry-owned and still streaming.
+            // The target loaded into a NEW tab; the old run keeps its own
+            // tab (browser-style, like New Chat / agent switch), still
+            // window-owned and streaming — no registry hand-off.
             #expect(window.session !== running)
             #expect(window.session.sessionId == targetId)
             #expect(window.session.turns.map(\.content) == ["old question", "old answer"])
             #expect(running.isStreaming)
+            #expect(window.tabs.count == 2)
+            #expect(window.tabSessions.contains { $0 === running })
+            #expect(running.windowState === window)
             let runningId = try #require(running.sessionId)
-            #expect(mgr.liveTask(forSessionId: runningId) != nil)
+            #expect(mgr.liveTask(forSessionId: runningId) == nil, "the tab owns the run")
 
             // Background completion stays out of the loaded conversation.
             try await waitUntil { !running.isStreaming }
             #expect(window.session.turns.count == 2)
             #expect(running.turns.contains { $0.role == .assistant && $0.content.contains("background answer") })
 
-            finalizeTask(ownedBy: running)
             window.cleanup()
         }
     }

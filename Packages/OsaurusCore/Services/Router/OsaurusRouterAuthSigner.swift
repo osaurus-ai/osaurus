@@ -63,6 +63,7 @@ struct OsaurusRouterAuthSigner: Sendable {
         for (name, value) in headers.values {
             request.setValue(value, forHTTPHeaderField: name)
         }
+        OsaurusRouterWalletCache.record(headers.address)
     }
 
     static func signHeaders(
@@ -118,5 +119,27 @@ struct OsaurusRouterAuthSigner: Sendable {
             path += "?\(query)"
         }
         return path
+    }
+}
+
+/// The wallet address (lowercase) this process most recently signed a router
+/// request with. Deriving the address needs the master key — and therefore a
+/// biometric prompt — so UI that must answer "is this roster row me?" reads
+/// this side effect of signing instead. Empty until the first signed call.
+enum OsaurusRouterWalletCache {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var address: String?
+
+    static var lastSignedAddress: String? {
+        lock.withLock { address }
+    }
+
+    static func record(_ value: String) {
+        lock.withLock { address = value.lowercased() }
+    }
+
+    /// Test seam.
+    static func reset(to value: String? = nil) {
+        lock.withLock { address = value?.lowercased() }
     }
 }

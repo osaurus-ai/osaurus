@@ -6,7 +6,7 @@
 //  session that dispatched it. A `background: true` spawn returns an
 //  acknowledgment as its tool result, so the digest cannot travel the
 //  normal tool-result channel — instead it lands here as a follow-up
-//  user-role turn (`session.send`), the same canonical path the notch
+//  user-role turn (`session.send`), the same canonical path background-task
 //  quick-reply and plugin interrupts use, so the orchestrator narrates
 //  the result in a fresh turn.
 //
@@ -32,7 +32,7 @@ enum SubagentReportBack {
     /// not streaming and not paused on a clarify prompt (sending during a
     /// clarify would wrongly answer it). The weak box is re-read on every
     /// tick so this loop never extends the session's lifetime; if the chat
-    /// is gone, the report is dropped and the notch background-task row
+    /// is gone, the report is dropped and the Activity row
     /// remains the durable record of the digest.
     static func deliver(
         title: String,

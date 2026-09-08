@@ -468,7 +468,7 @@ public final class ScheduleManager {
     // MARK: - Result Handling
 
     /// Update schedule metadata after task completion.
-    /// Result UI is handled by the NotchView.
+    /// Result UI is handled by the chat sidebar's Activity section.
     private func handleResult(_ result: DispatchResult, schedule: Schedule, request: DispatchRequest) {
         defer {
             executionTasks.removeValue(forKey: schedule.id)

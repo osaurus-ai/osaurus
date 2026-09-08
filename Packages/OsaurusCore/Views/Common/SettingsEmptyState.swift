@@ -149,7 +149,9 @@ struct SettingsEmptyState: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .frame(maxWidth: .infinity)
+                // Stretch to the row's height so a card whose copy wraps
+                // doesn't stand taller than its neighbours.
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 16)
                 .background(
@@ -162,6 +164,8 @@ struct SettingsEmptyState: View {
                 )
             }
         }
+        // The row is as tall as its tallest card, never taller.
+        .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: 540)
     }
 

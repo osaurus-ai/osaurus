@@ -153,7 +153,7 @@ struct ChatTabStripView: View {
             // remounts for the fresh session.
             .animation(
                 windowState.theme.animationQuick(),
-                value: windowState.tabs.map(\.id)
+                value: windowState.scopedTabs.map(\.id)
             )
             // Fixed width once measured (see `stripWidth`): the toolbar item
             // must not resize mid-animation. Content-hugging is only the
@@ -211,9 +211,11 @@ struct ChatTabStripView: View {
     private static let overflowButtonReserve: CGFloat = 40
 
     /// How many tabs fit at the floor width, keeping the active tab visible.
-    /// While unmeasured every tab is visible (the first layout pass).
+    /// While unmeasured every tab is visible (the first layout pass). Only
+    /// the active agent's tabs are candidates: the strip is scoped per agent
+    /// (other agents' tabs stay live but out of sight until selected).
     private var visibleTabs: [ChatTab] {
-        let tabs = windowState.tabs
+        let tabs = windowState.scopedTabs
         guard let stripWidth else { return tabs }
         let fitsAll = stripWidth - Self.plusButtonReserve - CGFloat(tabs.count - 1)
             >= CGFloat(tabs.count) * Self.minTabWidth
@@ -233,7 +235,7 @@ struct ChatTabStripView: View {
 
     private var hiddenTabs: [ChatTab] {
         let visibleIds = Set(visibleTabs.map(\.id))
-        return windowState.tabs.filter { !visibleIds.contains($0.id) }
+        return windowState.scopedTabs.filter { !visibleIds.contains($0.id) }
     }
 
 
@@ -257,7 +259,8 @@ struct ChatTabStripView: View {
                     roundsLeading: index == 0 || shown[index - 1].id == windowState.activeTabId,
                     roundsTrailing: index == shown.count - 1
                         || shown[index + 1].id == windowState.activeTabId,
-                    canClose: windowState.tabs.count > 1,
+                    hasSiblings: shown.count + hiddenTabs.count > 1,
+                    isHibernated: tab.isHibernated,
                     width: maxTabWidth,
                     isDragging: draggingTabId == tab.id,
                     dragOffset: draggingTabId == tab.id ? dragOffset : 0,
@@ -320,8 +323,11 @@ struct ChatTabStripView: View {
             swappedDistance = 0
             windowState.selectTab(id: id)
         }
-        guard var index = windowState.tabs.firstIndex(where: { $0.id == id }) else { return }
-        let last = windowState.tabs.count - 1
+        // Slots are scoped-strip positions (what the user sees); `moveTab`
+        // takes the same coordinate.
+        let scoped = windowState.scopedTabs
+        guard var index = scoped.firstIndex(where: { $0.id == id }) else { return }
+        let last = scoped.count - 1
         // `translation` is cumulative from the press; subtract the slots
         // already swapped so the chip stays glued to the pointer. Each
         // crossing of a neighbour's midpoint swaps one slot and re-bases.
@@ -456,9 +462,18 @@ private struct ChatTabItemView: View {
     /// inactive tabs merge into a single surface.
     var roundsLeading: Bool = true
     var roundsTrailing: Bool = true
-    /// False while this is the window's only tab — `closeTab` refuses to
-    /// close the last tab, so the × is hidden rather than dead.
-    let canClose: Bool
+    /// Whether the active agent has other tabs. A lone tab can still be
+    /// closed when it holds a conversation (it is replaced by a blank chat);
+    /// a lone BLANK tab has nothing to close — `closeTab` refuses, so the ×
+    /// is hidden rather than dead. Evaluated here (not in the strip) because
+    /// the blank test reads session state only this view observes.
+    let hasSiblings: Bool
+    let isHibernated: Bool
+
+    private var canClose: Bool {
+        hasSiblings || isHibernated || !session.turns.isEmpty || session.isStreaming
+            || session.awaitingClarify != nil
+    }
     /// Fixed width computed by the strip: every tab renders the SAME width
     /// (Chrome-style), shrinking together as tabs multiply, so the strip
     /// reads as a uniform band rather than a ragged row of hugged chips.
@@ -482,13 +497,42 @@ private struct ChatTabItemView: View {
     @ObservedObject private var activityMonitor = SessionActivityMonitor.shared
     @ObservedObject private var projectManager = ProjectManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
+    /// Workspace/shared agent tabs take their avatar and name from the shared
+    /// agent's identity (a workspace tab is stamped with the Default agent
+    /// locally, so the local agent would misrepresent it).
+    @ObservedObject private var rosterStore = WorkspaceRosterStore.shared
+    @ObservedObject private var remoteAgentManager = RemoteAgentManager.shared
 
     /// The feet of the active tab's shape; content is inset past them.
     private static let footRadius: CGFloat = 8
     private static let avatarDiameter: CGFloat = 16
 
     private var title: String {
-        session.turns.isEmpty ? L("New Chat") : session.title
+        let stored = session.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A dispatched run carries its task title (schedule name, channel
+        // thread…) before its first turn lands; a user's untouched tab is a
+        // "New Chat".
+        if stored.isEmpty || (session.turns.isEmpty && session.source == .chat) {
+            return L("New Chat")
+        }
+        return stored
+    }
+
+    /// Origin glyph for runs that didn't start from the composer (scheduled,
+    /// via API / channel, delegated…), so a background run's tab reads as
+    /// such at a glance. Nil for ordinary chats.
+    private var originIconName: String? {
+        session.source == .chat ? nil : session.source.iconName
+    }
+
+    private var originLabel: String? {
+        guard session.source != .chat else { return nil }
+        // A run hosted for a remote caller names them ("for Alice · Workspace").
+        if session.source == .workspace, let context = session.workspaceContext, context.isServedForTeammate {
+            return session.source.originLabel(workspace: context)
+        }
+        let pluginName = session.sourcePluginId.map(PluginDisplayNameResolver.displayName(for:))
+        return session.source.originLabel(pluginDisplayName: pluginName)
     }
 
     /// Below this width the title is dropped (avatar + × only).
@@ -498,6 +542,23 @@ private struct ChatTabItemView: View {
 
     private var agent: Agent {
         agentManager.agent(for: session.agentId ?? Agent.defaultId) ?? .default
+    }
+
+    /// Identity of the shared agent this tab talks to, when it is one. Read-
+    /// only teammate conversations are local transcripts and keep the local
+    /// agent's chip.
+    private var sharedAgent: SharedAgentIdentity? {
+        guard let context = session.workspaceContext, !context.isServedForTeammate else { return nil }
+        _ = rosterStore.rosters
+        _ = remoteAgentManager.remoteAgents
+        return SharedAgentIdentity.resolve(address: context.agentAddress)
+    }
+
+    private var avatarMascotId: String? { sharedAgent.map(\.avatar) ?? agent.avatar }
+    private var avatarName: String { sharedAgent?.name ?? agent.displayName }
+    private var avatarCustomImageURL: URL? {
+        if let sharedAgent { return sharedAgent.customAvatarURL }
+        return agent.customAvatarURL
     }
 
     private var activityStatus: SessionActivityMonitor.Status? {
@@ -511,11 +572,11 @@ private struct ChatTabItemView: View {
                 closeButton
             } else {
             AgentAvatarView(
-                mascotId: agent.avatar,
-                name: agent.displayName,
+                mascotId: avatarMascotId,
+                name: avatarName,
                 tint: theme.accentColor,
                 diameter: Self.avatarDiameter,
-                customImageURL: agent.customAvatarURL,
+                customImageURL: avatarCustomImageURL,
                 monogramFontSize: 9,
                 borderWidth: 0
             )
@@ -547,6 +608,16 @@ private struct ChatTabItemView: View {
                 }
                 .buttonStyle(.plain)
                 .help(Text(verbatim: project.name))
+            }
+
+            // Background-run origin ("scheduled", "via API"…) as a glyph
+            // ahead of the title; the tooltip spells it out.
+            if !isNarrow, let originIconName {
+                Image(systemName: originIconName)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
+                    .frame(width: 12, height: 12)
+                    .accessibilityHidden(true)
             }
 
             if !isNarrow {
@@ -646,8 +717,16 @@ private struct ChatTabItemView: View {
         // The title is hidden on narrow chips and truncated on medium ones,
         // so the tooltip is how a tab is recognised in a small window. It
         // carries the agent name too, since avatars alone don't identify a
-        // chat once several tabs share an agent.
-        .help(Text(verbatim: "\(title) · \(agent.displayName)"))
+        // chat once several tabs share an agent, and the origin for runs
+        // that didn't start from the composer.
+        .help(Text(verbatim: helpText))
+    }
+
+    private var helpText: String {
+        var parts = [title, avatarName]
+        if let workspace = sharedAgent?.workspaceName { parts.append(workspace) }
+        if let originLabel { parts.append(originLabel) }
+        return parts.joined(separator: " · ")
     }
 }
 

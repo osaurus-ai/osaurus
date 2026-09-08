@@ -4,7 +4,7 @@
 //
 //  Pins the `background: true` spawn contract: the tool call returns an
 //  acknowledgment immediately while the prepared run continues detached;
-//  the pre-registered feed drives the notch mirror; a local-model helper
+//  the pre-registered feed drives the Activity mirror; a local-model helper
 //  defers its start behind the injectable gate; Stop reaches the detached
 //  run through the interrupt center; and the terminal digest is delivered
 //  to the launching session as a follow-up turn once that session is idle
@@ -147,7 +147,7 @@ struct SubagentBackgroundDispatchTests {
         }
 
         #expect(ToolEnvelope.isError(envelope))
-        // The pre-registered feed finished as a failure so the notch row
+        // The pre-registered feed finished as a failure so the Activity row
         // can't spin forever behind a dead dispatch.
         if let feed = SubagentFeedRegistry.shared.feed(for: toolCallId) {
             #expect(feed.currentStatus() != .running)
@@ -271,8 +271,8 @@ struct SubagentBackgroundDispatchTests {
         SubagentFeedRegistry.shared.removeNow(toolCallId: toolCallId)
     }
 
-    @Test("notch Stop aborts a detached helper through its mirror row")
-    func notchCancelAbortsDetachedRun() async throws {
+    @Test("Activity Stop aborts a detached helper through its mirror row")
+    func activityStopAbortsDetachedRun() async throws {
         let manager = BackgroundTaskManager.makeForTesting()
         let bridge = SubagentBackgroundTaskBridge(
             manager: manager,

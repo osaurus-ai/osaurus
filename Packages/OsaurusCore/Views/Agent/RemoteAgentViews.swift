@@ -29,8 +29,17 @@ struct RemoteAgentCard: View {
 
     @State private var isHovered: Bool = false
     @State private var showRemoveConfirm: Bool = false
+    @ObservedObject private var workspacesService = WorkspacesService.shared
 
     private var color: Color { agentColorFor(remote.name) }
+
+    /// Workspace this pairing is managed by, when the roster/pairing recorded
+    /// one. A workspace-managed agent can't be meaningfully "removed" here —
+    /// auto-connect re-pairs it within the refresh window — so the card offers
+    /// `Open workspace` instead of `Remove`.
+    private var sharingWorkspace: OsaurusRouterWorkspaceSummary? {
+        RemoteAgentWorkspaceAttribution.workspace(for: remote, in: workspacesService.workspaces)
+    }
 
     var body: some View {
         Button(action: onSelect) {
@@ -87,7 +96,7 @@ struct RemoteAgentCard: View {
         .themedAlert(
             "Remove this remote agent?",
             isPresented: $showRemoveConfirm,
-            message: "You'll lose access to \"\(remote.name)\" via this share link. You can be re-invited later.",
+            message: RemoteAgentWorkspaceAttribution.removeMessage(for: remote),
             primaryButton: .destructive("Remove") {
                 onRemove()
             },
@@ -129,22 +138,24 @@ struct RemoteAgentCard: View {
                     .foregroundColor(theme.primaryText)
                     .lineLimit(1)
 
-                // Pill metrics match local AgentCard's "Active" badge so the
-                // grid's status chips read at the same weight/size.
-                HStack(spacing: 3) {
-                    Image(systemName: "antenna.radiowaves.left.and.right")
-                        .font(.system(size: 8, weight: .bold))
-                    Text("Remote", bundle: .module)
-                        .font(.system(size: 10, weight: .semibold))
-                }
-                .foregroundColor(theme.accentColor)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(theme.accentColor.opacity(0.12)))
+                // Same chip recipe as the local AgentCard's "Active" badge so
+                // the grid's status chips read at the same weight/size.
+                CapsuleBadge(L("Remote"), tint: theme.accentColor, icon: "antenna.radiowaves.left.and.right")
             }
-            Text(remote.shortAddress)
-                .font(.system(size: 10, design: .monospaced))
+            if let workspace = sharingWorkspace {
+                HStack(spacing: 4) {
+                    Image(systemName: "rectangle.3.group.fill")
+                        .font(.system(size: 9))
+                    Text(String(format: L("Shared via %@"), workspace.name))
+                        .lineLimit(1)
+                }
+                .font(.system(size: 10, weight: .medium))
                 .foregroundColor(theme.tertiaryText)
+            } else {
+                Text(remote.shortAddress)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+            }
         }
     }
 
@@ -167,13 +178,25 @@ struct RemoteAgentCard: View {
                 }
             }
             Divider()
-            Button(role: .destructive) {
-                showRemoveConfirm = true
-            } label: {
-                Label {
-                    Text("Remove", bundle: .module)
-                } icon: {
-                    Image(systemName: "trash")
+            if let workspace = sharingWorkspace {
+                Button {
+                    RemoteAgentWorkspaceAttribution.openWorkspace(id: workspace.id)
+                } label: {
+                    Label {
+                        Text("Open workspace", bundle: .module)
+                    } icon: {
+                        Image(systemName: "rectangle.3.group")
+                    }
+                }
+            } else {
+                Button(role: .destructive) {
+                    showRemoveConfirm = true
+                } label: {
+                    Label {
+                        Text("Remove", bundle: .module)
+                    } icon: {
+                        Image(systemName: "trash")
+                    }
                 }
             }
         } label: {
@@ -265,6 +288,7 @@ struct RemoteAgentDetailView: View {
     @ObservedObject private var manager = RemoteAgentManager.shared
     @ObservedObject private var providerManager = RemoteProviderManager.shared
     @ObservedObject private var insights = InsightsService.shared
+    @ObservedObject private var workspacesService = WorkspacesService.shared
 
     let remoteId: UUID
     let onBack: () -> Void
@@ -303,6 +327,12 @@ struct RemoteAgentDetailView: View {
 
     private var remote: RemoteAgent? { manager.remoteAgent(for: remoteId) }
     private var color: Color { agentColorFor(remote?.name ?? "") }
+
+    /// Workspace that manages this pairing, if any (see `RemoteAgentCard`).
+    private var sharingWorkspace: OsaurusRouterWorkspaceSummary? {
+        guard let remote else { return nil }
+        return RemoteAgentWorkspaceAttribution.workspace(for: remote, in: workspacesService.workspaces)
+    }
 
     /// The two content tabs for a paired remote agent. Kept deliberately small
     /// — the remote surface is read-only-ish — but mirrors the local detail
@@ -373,7 +403,7 @@ struct RemoteAgentDetailView: View {
         .themedAlert(
             "Remove this remote agent?",
             isPresented: $showRemoveConfirm,
-            message: "You'll lose access via this share link. You can be re-invited later.",
+            message: remote.map(RemoteAgentWorkspaceAttribution.removeMessage) ?? "",
             primaryButton: .destructive("Remove") {
                 _ = manager.remove(id: remoteId)
                 onRemoved()
@@ -434,12 +464,21 @@ struct RemoteAgentDetailView: View {
                         help: "Chat with this Agent",
                         action: { onChat(remote) }
                     )
-                    AgentDetailHeaderActionButton(
-                        icon: "trash",
-                        tint: theme.errorColor,
-                        help: "Remove",
-                        action: { showRemoveConfirm = true }
-                    )
+                    if let workspace = sharingWorkspace {
+                        AgentDetailHeaderActionButton(
+                            icon: "rectangle.3.group",
+                            tint: theme.secondaryText,
+                            help: "Open workspace",
+                            action: { RemoteAgentWorkspaceAttribution.openWorkspace(id: workspace.id) }
+                        )
+                    } else {
+                        AgentDetailHeaderActionButton(
+                            icon: "trash",
+                            tint: theme.errorColor,
+                            help: "Remove",
+                            action: { showRemoveConfirm = true }
+                        )
+                    }
                 }
             }
         )
@@ -612,6 +651,7 @@ struct RemoteAgentDetailView: View {
             AgentDetailMetadataRow(
                 label: "Model",
                 value: liveEffectiveModel
+                    ?? remote.model
                     ?? NSLocalizedString("Default (agent decides)", bundle: .module, comment: "")
             )
 
@@ -762,6 +802,35 @@ struct RemoteAgentDetailView: View {
 
     private func sourceCard(for remote: RemoteAgent) -> some View {
         AgentDetailSection(title: L("Source"), icon: "globe") {
+            if let workspace = sharingWorkspace {
+                HStack(spacing: 8) {
+                    AgentDetailMetadataRow(label: "Shared via", value: workspace.name)
+                    Button {
+                        RemoteAgentWorkspaceAttribution.openWorkspace(id: workspace.id)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("Open workspace", bundle: .module)
+                                .font(.system(size: 11, weight: .medium))
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .foregroundColor(theme.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Text(
+                    "Managed by the workspace: it re-pairs automatically while it stays shared. Leave the workspace or ask the owner to unshare it to remove it.",
+                    bundle: .module
+                )
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            } else if remote.isWorkspaceManaged {
+                AgentDetailMetadataRow(
+                    label: "Shared via",
+                    value: NSLocalizedString("A workspace you're no longer in", bundle: .module, comment: "")
+                )
+            }
             AgentDetailMetadataRow(label: "Address", value: remote.agentAddress, mono: true)
             AgentDetailMetadataRow(label: "Relay URL", value: remote.relayBaseURL, mono: true)
             AgentDetailMetadataRow(
@@ -824,4 +893,51 @@ struct RemoteAgentDetailView: View {
         }
     }
 
+}
+
+// MARK: - Workspace attribution
+
+/// Shared helpers for the remote card and detail: which workspace manages a
+/// pairing, the matching Remove copy, and the deep link into that workspace.
+enum RemoteAgentWorkspaceAttribution {
+    /// The managing workspace when the pairing recorded a `workspaceId` that
+    /// the user is still a member of. Falls back to the roster so a pairing
+    /// made before `workspaceId` was persisted still attributes correctly.
+    @MainActor
+    static func workspace(
+        for remote: RemoteAgent,
+        in workspaces: [OsaurusRouterWorkspaceSummary]
+    ) -> OsaurusRouterWorkspaceSummary? {
+        if let id = remote.workspaceId, !id.isEmpty,
+            let match = workspaces.first(where: { $0.id == id })
+        {
+            return match
+        }
+        return WorkspaceRosterStore.shared.workspacesSharing(agentAddress: remote.agentAddress).first
+    }
+
+    /// Remove-confirmation body. Link-shared agents were paired through a
+    /// share link; workspace-managed ones through the roster (and will
+    /// re-pair while shared).
+    static func removeMessage(for remote: RemoteAgent) -> String {
+        if remote.isWorkspaceManaged {
+            return String(
+                format: L(
+                    "\"%@\" is shared through a workspace, so it reconnects automatically while it stays shared. Leave the workspace to remove it for good."
+                ),
+                remote.name
+            )
+        }
+        return String(
+            format: L("You'll lose access to \"%@\" via this share link. You can be re-invited later."),
+            remote.name
+        )
+    }
+
+    /// From an agent's attribution the destination is the roster that lists
+    /// it: the workspace's Shared Agents tab.
+    @MainActor
+    static func openWorkspace(id: String) {
+        WorkspacesService.shared.openInSettings(workspaceId: id, tab: .sharedAgents)
+    }
 }

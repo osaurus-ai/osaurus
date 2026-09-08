@@ -48,6 +48,14 @@ struct FloatingInputCard: View {
     /// low/empty escalation and the wallet panel's session-spend row; the chip
     /// itself is shown in every session where the router is usable.
     var isRouterBilledSession: Bool = false
+    /// Workspace name when this tab chats with a teammate's shared agent. The
+    /// run is billed to that workspace's pool (relayed by the host), so the
+    /// composer shows a dedicated "Workspace pool" spend chip that ticks live
+    /// instead of attributing the charge to the personal wallet.
+    var workspacePoolLabel: String? = nil
+    /// Router id of that workspace, so the chip opens *this* workspace's
+    /// detail (its pool lives on Overview) rather than the workspace list.
+    var workspacePoolId: String?
     @Binding var imageComposerSettings: ImageComposerSettings
     let onSend: (String?) -> Void
     let onStop: () -> Void
@@ -110,6 +118,13 @@ struct FloatingInputCard: View {
     /// async connect and fail with a misleading "model not found"; the parent
     /// shows a "connecting" notice for the duration.
     var remoteConnectionPending: Bool = false
+    /// Why the composer refuses input right now (workspace team agent offline
+    /// / unpaired / connecting, or a host-side read-only copy of a teammate's
+    /// conversation). Non-nil makes the text view read-only and disables
+    /// send, attachments, voice, and slash commands; the card keeps its
+    /// shape so the layout doesn't jump. The parent renders the explanation
+    /// and any Retry action above the card.
+    var composerLock: ComposerLock? = nil
     /// Mode 2 (remote agent run): the conversation targets a discovered remote
     /// agent that executes its own tool loop, system prompt, and generation
     /// config server-side. Hides the composer's local-only affordances —
@@ -155,6 +170,8 @@ struct FloatingInputCard: View {
         contextBreakdown: ContextBreakdown = .zero,
         sessionSpendMicro: Int = 0,
         isRouterBilledSession: Bool = false,
+        workspacePoolLabel: String? = nil,
+        workspacePoolId: String? = nil,
         imageComposerSettings: Binding<ImageComposerSettings> = .constant(ImageComposerSettings()),
         onSend: @escaping (String?) -> Void,
         onStop: @escaping () -> Void,
@@ -178,6 +195,7 @@ struct FloatingInputCard: View {
         isModelPinned: Bool = false,
         pinnedModelLabel: String? = nil,
         remoteConnectionPending: Bool = false,
+        composerLock: ComposerLock? = nil,
         isRemoteAgentRun: Bool = false,
         inputHistoryProvider: (() -> [String])? = nil,
         inputHistoryKey: UUID? = nil,
@@ -203,6 +221,8 @@ struct FloatingInputCard: View {
         self.contextBreakdown = contextBreakdown
         self.sessionSpendMicro = sessionSpendMicro
         self.isRouterBilledSession = isRouterBilledSession
+        self.workspacePoolLabel = workspacePoolLabel
+        self.workspacePoolId = workspacePoolId
         self._imageComposerSettings = imageComposerSettings
         self.onSend = onSend
         self.onStop = onStop
@@ -226,6 +246,7 @@ struct FloatingInputCard: View {
         self.isModelPinned = isModelPinned
         self.pinnedModelLabel = pinnedModelLabel
         self.remoteConnectionPending = remoteConnectionPending
+        self.composerLock = composerLock
         self.isRemoteAgentRun = isRemoteAgentRun
         self.inputHistoryProvider = inputHistoryProvider
         self.inputHistoryKey = inputHistoryKey
@@ -553,6 +574,10 @@ struct FloatingInputCard: View {
         // a misleading "model not found". The parent shows a connecting notice.
         guard !remoteConnectionPending else { return false }
 
+        // Locked composer (offline team agent, read-only teammate chat):
+        // nothing sends until the lock clears.
+        guard composerLock == nil else { return false }
+
         // Hard token gate: when the NON-compactable prefix alone (system
         // prompt + tools + memory + input + response reservation) can't
         // fit the model window, the request would fail no matter how much
@@ -719,7 +744,7 @@ struct FloatingInputCard: View {
         // Hide the whole selector row (pinned model chip + balance) while a
         // remote agent is still connecting — the chat isn't usable yet — then
         // ease it back in on connect with the resolved pinned-model chip.
-        guard !remoteConnectionPending else { return false }
+        guard !remoteConnectionPending, composerLock == nil else { return false }
         return pickerItems.count > 1
             || isModelPinned
             || (displayContextTokens > 0 && !isRemoteAgentRun)
@@ -727,6 +752,7 @@ struct FloatingInputCard: View {
             || isDefaultConfigAgent
             || (appConfig.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent)
             || showCreditsChip
+            || workspacePoolLabel != nil
     }
 
     /// Whether the credits chip (and its wallet panel) is available at all:
@@ -824,12 +850,19 @@ struct FloatingInputCard: View {
                 ComposerTextObservationScope(model: composerText) {
                     composerContent
                 }
+                // Locked: every control inert, text read-only (see
+                // `EditableTextView.isEditable`), quietly dimmed. The card
+                // keeps its full size so the notice above it doesn't shove
+                // the transcript around when the lock toggles.
+                .disabled(composerLock != nil)
+                .opacity(composerLock != nil ? 0.55 : 1)
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: showVoiceOverlay)
         // Smoothly collapse/reveal the selector row (model chip + balance) as
         // the remote-agent connection resolves, so the composer doesn't snap.
         .animation(theme.springAnimation(), value: remoteConnectionPending)
+        .animation(theme.springAnimation(), value: composerLock == nil)
     }
 
     private var composerContent: some View {
@@ -2847,8 +2880,21 @@ extension FloatingInputCard {
     private var metaCluster: some View {
         // Hide the balance/credits chip while a remote agent is connecting —
         // it's not actionable yet and competes with the connect affordance.
-        let showCredits = showCreditsChip && !remoteConnectionPending
-        if showCredits {
+        // A remote agent's run (workspace or directly shared) never draws
+        // from this Mac's wallet, so the personal balance is noise there.
+        let showCredits = showCreditsChip && !remoteConnectionPending && !isRemoteAgentRun
+        // Team-agent chat: the run is billed to the workspace pool (relayed
+        // live by the host), so show that spend explicitly rather than the
+        // personal wallet, which this session never draws from.
+        if let workspacePoolLabel, !remoteConnectionPending {
+            FloatingWorkspacePoolChip(
+                workspaceName: workspacePoolLabel,
+                workspaceId: workspacePoolId,
+                spendMicro: sessionSpendMicro,
+                metaCompact: metaCompact,
+                metaUltraCompact: metaUltraCompact
+            )
+        } else if showCredits {
             FloatingCreditsChip(
                 isRouterBilledSession: isRouterBilledSession,
                 sessionSpendMicro: sessionSpendMicro,
@@ -3021,7 +3067,7 @@ extension FloatingInputCard {
             Image(systemName: "lock.fill")
                 .font(theme.font(size: CGFloat(theme.captionSize) - 2))
                 .foregroundColor(theme.tertiaryText)
-            Text(pinnedModelLabel ?? selectedPickerItem?.displayName ?? "Default")
+            Text(pinnedModelLabel ?? selectedPickerItem?.displayName ?? L("Default"))
                 .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                 .foregroundColor(theme.secondaryText)
                 .lineLimit(1)
@@ -5924,6 +5970,7 @@ extension FloatingInputCard {
             isComposing: $isComposing,
             maxHeight: maxHeight,
             focusController: textViewFocusController,
+            isEditable: composerLock == nil,
             onCommit: { handleInputCommit() },
             onShiftCommit: nil,
             onArrowUp: { handleInputArrowUp() },
@@ -8535,6 +8582,84 @@ private struct SendNowButton: View {
 
 /// Balance indicator shown in every session where the router is usable.
 /// Extracted from `FloatingInputCard` so wallet-panel hover/pin state and
+/// Spend chip for a chat with a teammate's shared agent. The host relays the
+/// router's per-step billing summary over the run stream, so this session's
+/// spend ticks live — but it is drawn from the workspace's pool, not this
+/// device's wallet. Reads as passive status in the meta cluster (same
+/// `SelectorChip` chrome as the credits chip); clicking opens Workspaces.
+private struct FloatingWorkspacePoolChip: View {
+    let workspaceName: String
+    /// nil only when the tab's workspace is unknown; the click then falls
+    /// back to the workspace list.
+    let workspaceId: String?
+    /// Total micro-USD billed to the pool by this session's turns.
+    let spendMicro: Int
+    let metaCompact: Bool
+    let metaUltraCompact: Bool
+
+    @Environment(\.theme) private var theme
+
+    private var spendDisplay: String {
+        OsaurusRouter.formatMicroAsCredits(String(spendMicro))
+    }
+
+    /// Names the workspace, not a generic "Workspace pool": a bare
+    /// "0 credits" beside a teammate's agent read as *your* balance. The
+    /// name is the context that makes the number legible, so it survives
+    /// compact (truncated) and only ultra-compact drops it.
+    var body: some View {
+        let caption = CGFloat(theme.captionSize)
+        SelectorChip(isActive: false) {
+            if let workspaceId {
+                WorkspacesService.shared.openInSettings(workspaceId: workspaceId, tab: .overview)
+            } else {
+                AppDelegate.shared?.showManagementWindow(initialTab: .workspaces)
+            }
+        } content: {
+            HStack(spacing: 4) {
+                Image(systemName: "person.2.fill")
+                    .font(.system(size: caption - 2))
+                    .foregroundColor(theme.tertiaryText)
+                if !metaUltraCompact {
+                    Text(verbatim: workspaceName)
+                        .font(theme.font(size: caption - 1, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: metaCompact ? 96 : 160, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if !metaCompact {
+                        Text("pool", bundle: .module)
+                            .font(theme.font(size: caption - 1, weight: .medium))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    Text(verbatim: "·")
+                        .font(.system(size: caption - 1))
+                        .foregroundColor(theme.tertiaryText)
+                    Text(verbatim: spendDisplay)
+                        .font(.system(size: caption - 1, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .contentTransition(.numericText())
+                }
+            }
+        }
+        .help(
+            Text(
+                "\(spendDisplay) spent from \(workspaceName)'s pool this session — billed to the workspace, not your wallet. Click to open \(workspaceName).",
+                bundle: .module
+            )
+        )
+        .accessibilityLabel(
+            Text("\(spendDisplay) spent from \(workspaceName)'s workspace pool this session.", bundle: .module)
+        )
+        .animation(.easeOut(duration: 0.2), value: spendMicro)
+    }
+}
+
 /// account-service updates re-render only this chip, never the whole card.
 /// Hovering previews the wallet panel; clicking pins it so its actions
 /// (Add credits → top-up sheet, View all → Credits tab) are reachable.

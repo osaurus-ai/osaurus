@@ -100,6 +100,19 @@ final class ChatSessionsManager: ObservableObject {
                     self?.refresh()
                 }
                 .store(in: &cancellables)
+
+            // Rows written by the HTTP / plugin / workspace-served paths
+            // bypass `save()`; pull the single row into the in-memory list
+            // so the sidebar and History reflect it live (a workspace
+            // teammate's conversation appears under the shared agent as it
+            // lands). Debounced: an agent loop can persist several times.
+            NotificationCenter.default.publisher(for: ChatHistoryWriter.didPersistExternallyNotification)
+                .receive(on: DispatchQueue.main)
+                .debounce(for: .milliseconds(250), scheduler: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    self?.refresh()
+                }
+                .store(in: &cancellables)
         }
     }
 
@@ -135,12 +148,25 @@ final class ChatSessionsManager: ObservableObject {
     ///   When Default agent (or nil) is selected, returns ALL sessions from all agents.
     ///   Otherwise returns only sessions belonging to the specified agent.
     func sessions(for agentId: UUID?) -> [ChatSessionData] {
+        // Chats the user had WITH a workspace teammate's shared agent are
+        // keyed by that agent's address (see `sessions(forRemoteAgentAddress:)`),
+        // never by the local agent whose tab hosted them. Host-side rows
+        // served FOR a teammate (`source == .workspace`) stay under the
+        // local shared agent, tagged with the caller.
+        let local = sessions.filter { !$0.isWorkspaceAgentChat }
         // When Default agent is selected, show ALL sessions
         if agentId == nil || agentId == Agent.defaultId {
-            return sessions
+            return local
         }
         // Otherwise filter by agent
-        return sessions.filter { $0.agentId == agentId }
+        return local.filter { $0.agentId == agentId }
+    }
+
+    /// History with a workspace teammate's shared agent, keyed by its
+    /// lowercased address.
+    func sessions(forRemoteAgentAddress address: String) -> [ChatSessionData] {
+        let lowered = address.lowercased()
+        return sessions.filter { $0.isWorkspaceAgentChat && $0.workspace?.agentAddress == lowered }
     }
 
     /// Save a session (updates the in-memory list without full disk reload)

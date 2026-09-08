@@ -47,6 +47,17 @@ public struct RemoteAgent: Codable, Identifiable, Sendable, Equatable {
     public var lastUsedAt: Date?
     /// User-supplied note (e.g. "Alice's research agent"). Optional.
     public var note: String?
+    /// The model the agent runs on its owner's Mac, as reported by the host
+    /// during the Workspaces handshake (e.g. `anthropic/claude-sonnet-4-5`
+    /// or a local bundle id). Informational; refreshed with the access key.
+    /// Absent for pairings made through other paths or older hosts.
+    public var model: String?
+    /// The workspace this pairing was minted through, when the agent reached
+    /// us via a Workspaces roster rather than a direct share link. Lets the
+    /// sidebar, Agents tab, and Remove flow know the pairing is workspace-
+    /// managed without waiting for a roster fetch. nil = shared directly.
+    /// Backfilled from the roster for pairings that predate this field.
+    public var workspaceId: String?
 
     public init(
         id: UUID = UUID(),
@@ -58,7 +69,9 @@ public struct RemoteAgent: Codable, Identifiable, Sendable, Equatable {
         providerId: UUID,
         pairedAt: Date = Date(),
         lastUsedAt: Date? = nil,
-        note: String? = nil
+        note: String? = nil,
+        model: String? = nil,
+        workspaceId: String? = nil
     ) {
         self.id = id
         self.agentAddress = agentAddress
@@ -70,12 +83,31 @@ public struct RemoteAgent: Codable, Identifiable, Sendable, Equatable {
         self.pairedAt = pairedAt
         self.lastUsedAt = lastUsedAt
         self.note = note
+        self.model = model
+        self.workspaceId = workspaceId
+    }
+
+    /// True when this pairing is managed by a workspace roster (auto-connect
+    /// re-pairs it while the agent stays shared), false for direct shares.
+    public var isWorkspaceManaged: Bool {
+        guard let workspaceId else { return false }
+        return !workspaceId.isEmpty
     }
 }
 
 // MARK: - Display Helpers
 
 extension RemoteAgent {
+    /// Short model label for badges: the last path component of a
+    /// `provider/model` id, so `anthropic/claude-sonnet-4-5` reads as
+    /// `claude-sonnet-4-5` and a bare local id passes through.
+    public static func shortModelLabel(_ model: String) -> String {
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let slash = trimmed.lastIndex(of: "/"), slash < trimmed.index(before: trimmed.endIndex)
+        else { return trimmed }
+        return String(trimmed[trimmed.index(after: slash)...])
+    }
+
     /// Truncated address for compact UI: `0xABCD…F291`.
     public var shortAddress: String {
         let raw = agentAddress

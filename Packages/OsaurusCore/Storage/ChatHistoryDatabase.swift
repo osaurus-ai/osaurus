@@ -172,7 +172,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// Highest schema version this build knows how to produce.
     /// Internal (not private) so migration-repair tests assert "reconciled
     /// to the latest" against the real constant instead of a stale literal.
-    static let latestSchemaVersion = 15
+    static let latestSchemaVersion = 16
 
     /// Forward-compatibility invariant. Every chat-history migration is
     /// **additive** — it only `ADD COLUMN`s, `CREATE INDEX`es, or `CREATE
@@ -224,6 +224,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if current < 13 { try runMigrationStep(13, migrateToV13) }
         if current < 14 { try runMigrationStep(14, migrateToV14) }
         if current < 15 { try runMigrationStep(15, migrateToV15) }
+        if current < 16 { try runMigrationStep(16, migrateToV16) }
     }
 
     /// Run one migration body atomically. Called only from `runMigrations`,
@@ -483,6 +484,21 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         try setSchemaVersion(15)
     }
 
+    /// v16: Workspaces. `workspace_context` is the JSON
+    /// `WorkspaceSessionContext` (workspace id, shared-agent address, and —
+    /// host side — the teammate caller); `remote_agent_address` duplicates
+    /// the lowercased address as a plain indexed column so the sidebar can
+    /// list a team agent's history without parsing JSON. Both nullable —
+    /// legacy rows are local chats.
+    private func migrateToV16() throws {
+        try addColumnIfMissing("sessions", "workspace_context", "TEXT")
+        try addColumnIfMissing("sessions", "remote_agent_address", "TEXT")
+        try executeRaw(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_remote_agent ON sessions (remote_agent_address)"
+        )
+        try setSchemaVersion(16)
+    }
+
     // MARK: - Public API: sessions
 
     /// Insert or replace the session row and incrementally upsert its
@@ -532,6 +548,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// Callers use it to requeue the snapshot as a deferred save.
     public func saveSessionAsync(
         _ session: ChatSessionData,
+        onSaved: (@Sendable () -> Void)? = nil,
         onDropped: (@Sendable (ChatSessionData) -> Void)? = nil
     ) {
         queue.async { [weak self] in
@@ -555,9 +572,11 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
                     Self.bindText(stmt, index: 3, value: prepared.id.uuidString)
                 }
                 try self.executeRaw("COMMIT")
+                onSaved?()
             } catch {
                 try? self.executeRaw("ROLLBACK")
                 print("[ChatHistoryDatabase] async saveSession failed for \(prepared.id): \(error)")
+                onDropped?(session)
             }
         }
     }
@@ -1249,6 +1268,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             Self.bindText(stmt, index: 14, value: session.folderPath)
             sqlite3_bind_int(stmt, 15, session.pinned ? 1 : 0)
             Self.bindText(stmt, index: 16, value: session.projectId?.uuidString)
+            Self.bindText(stmt, index: 17, value: session.workspace?.encodedJSON())
+            Self.bindText(stmt, index: 18, value: session.workspace?.agentAddress)
         }
     }
 
@@ -1465,7 +1486,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         SELECT id, title, created_at, updated_at, selected_model, agent_id,
                source, source_plugin_id, external_session_key, dispatch_task_id,
                archived, capabilities, folder_bookmark, folder_path, pinned,
-               project_id
+               project_id, workspace_context
         FROM sessions
         """
 
@@ -1476,8 +1497,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             (id, title, created_at, updated_at, selected_model, agent_id,
              source, source_plugin_id, external_session_key, dispatch_task_id,
              archived, capabilities, folder_bookmark, folder_path, pinned,
-             project_id)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+             project_id, workspace_context, remote_agent_address)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
         ON CONFLICT(id) DO UPDATE SET
             title                = excluded.title,
             updated_at           = excluded.updated_at,
@@ -1492,7 +1513,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             folder_bookmark      = excluded.folder_bookmark,
             folder_path          = excluded.folder_path,
             pinned               = excluded.pinned,
-            project_id           = excluded.project_id
+            project_id           = excluded.project_id,
+            workspace_context    = excluded.workspace_context,
+            remote_agent_address = excluded.remote_agent_address
         """
 
     private static let insertTurnSQL = """
@@ -1559,6 +1582,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         let folderPath = sqlite3_column_text(stmt, 13).map { String(cString: $0) }
         let pinned = sqlite3_column_int(stmt, 14) != 0
         let projectId = sqlite3_column_text(stmt, 15).map { String(cString: $0) }.flatMap { UUID(uuidString: $0) }
+        let workspace = WorkspaceSessionContext.decode(
+            json: sqlite3_column_text(stmt, 16).map { String(cString: $0) })
         return ChatSessionData(
             id: UUID(uuidString: idStr) ?? UUID(),
             title: title,
@@ -1576,7 +1601,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             capabilities: SessionCapability.decode(capabilitiesRaw),
             folderBookmark: folderBookmark,
             folderPath: folderPath,
-            projectId: projectId
+            projectId: projectId,
+            workspace: workspace
         )
     }
 
@@ -1760,6 +1786,12 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             sqlite3_bind_null(stmt, Int32(index))
         }
     }
+
+    #if DEBUG
+        func executeForTesting(_ sql: String) throws {
+            try queue.sync { try executeRaw(sql) }
+        }
+    #endif
 
     private func executeRaw(_ sql: String) throws {
         guard let connection = db else { throw ChatHistoryDatabaseError.notOpen }

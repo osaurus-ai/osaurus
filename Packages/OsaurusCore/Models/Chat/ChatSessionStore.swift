@@ -6,7 +6,14 @@
 //  `ChatHistoryDatabase`.
 //
 
+import Combine
 import Foundation
+
+@MainActor
+final class ChatPersistenceStatus: ObservableObject {
+    static let shared = ChatPersistenceStatus()
+    @Published var unsaved: Set<UUID> = []
+}
 
 @MainActor
 enum ChatSessionStore {
@@ -36,6 +43,7 @@ enum ChatSessionStore {
     /// Load a specific session by ID
     static func load(id: UUID) -> ChatSessionData? {
         ensureOpen()
+        if let pending = pendingSaves[id] { return pending }
         guard let session = ChatHistoryDatabase.shared.loadSession(id: id) else { return nil }
         let recovered = recoverTranscriptTurnsIfNeeded(session)
         // When turns were re-derived from the Memory transcript (the #1737
@@ -91,20 +99,55 @@ enum ChatSessionStore {
     /// queue and returns immediately so a main-actor caller never stalls on the
     /// encode + transaction. Falls back to the same deferred-save queue when the
     /// DB isn't open yet, so no write is lost across a key rotation.
+    private static var saveVersions: [UUID: UUID] = [:]
+    private static var retryTask: Task<Void, Never>?
+
     static func saveAsync(_ session: ChatSessionData) {
         guard !pendingDeletes.contains(session.id) else { return }
+        let version = UUID()
+        saveVersions[session.id] = version
+        pendingSaves[session.id] = session
         ensureOpen()
         guard didOpen else {
-            pendingSaves[session.id] = session
+            ChatPersistenceStatus.shared.unsaved.insert(session.id)
+            scheduleSaveRetry()
             return
         }
-        // The enqueue-time open check above races key rotation: the DB can
-        // close before the queued write runs. Requeue such drops as deferred
-        // saves so the write survives to the next readiness flush (and the
-        // `loadAll` pending overlay keeps the row visible meanwhile).
-        ChatHistoryDatabase.shared.saveSessionAsync(session) { dropped in
-            Task { @MainActor in
-                requeueDroppedAsyncSave(dropped)
+        ChatHistoryDatabase.shared.saveSessionAsync(
+            session,
+            onSaved: {
+                Task { @MainActor in
+                    guard saveVersions[session.id] == version else { return }
+                    pendingSaves.removeValue(forKey: session.id)
+                    saveVersions.removeValue(forKey: session.id)
+                    ChatPersistenceStatus.shared.unsaved.remove(session.id)
+                }
+            },
+            onDropped: { dropped in
+                Task { @MainActor in
+                    guard saveVersions[session.id] == version else { return }
+                    requeueDroppedAsyncSave(dropped)
+                    ChatPersistenceStatus.shared.unsaved.insert(session.id)
+                    scheduleSaveRetry()
+                }
+            }
+        )
+    }
+
+    private static func scheduleSaveRetry() {
+        guard retryTask == nil else { return }
+        retryTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            retryTask = nil
+            retryUnsaved()
+        }
+    }
+
+    static func retryUnsaved() {
+        for id in ChatPersistenceStatus.shared.unsaved {
+            if let data = pendingSaves[id] {
+                saveAsync(data)
             }
         }
     }
@@ -123,41 +166,45 @@ enum ChatSessionStore {
     /// Title-only async update for the auto-title path. Never routes through
     /// `saveSession`, whose incremental turn upsert would interpret a
     /// metadata-only session copy (empty `turns`) as "delete every turn".
-    /// While the DB is deferred, retitles the pending snapshot if one is
-    /// queued; otherwise the rename is dropped, matching `saveAsync`'s
-    /// best-effort contract (the preview title simply stands).
+    ///
+    /// The pending snapshot (if any) is always retitled, not only while the DB
+    /// is deferred: `saveAsync` keeps a session in `pendingSaves` until its
+    /// write is acknowledged, and `load(id:)` serves that overlay first. A
+    /// rename that only reached SQLite would otherwise read back stale until
+    /// the acknowledgement lands — and a later retry of the stale snapshot
+    /// would clobber the rename on disk. While the DB is deferred and nothing
+    /// is queued, the rename is dropped, matching `saveAsync`'s best-effort
+    /// contract (the preview title simply stands).
     static func renameTitleAsync(id: UUID, title: String, updatedAt: Date? = nil) {
         guard !pendingDeletes.contains(id) else { return }
+        pendingSaves[id]?.title = title
+        if let updatedAt { pendingSaves[id]?.updatedAt = updatedAt }
         ensureOpen()
-        guard didOpen else {
-            pendingSaves[id]?.title = title
-            if let updatedAt { pendingSaves[id]?.updatedAt = updatedAt }
-            return
-        }
+        guard didOpen else { return }
         ChatHistoryDatabase.shared.updateSessionTitleAsync(
-            id: id, title: title, updatedAt: updatedAt)
+            id: id,
+            title: title,
+            updatedAt: updatedAt
+        )
     }
 
     /// Flag-only async updates for the sidebar's archive/pin toggles. Same
     /// contract as `renameTitleAsync`: a targeted UPDATE that can never touch
-    /// turn rows, handed to the database's serial queue.
+    /// turn rows, handed to the database's serial queue, with the in-flight
+    /// pending snapshot patched to match.
     static func setArchivedAsync(id: UUID, archived: Bool) {
         guard !pendingDeletes.contains(id) else { return }
+        pendingSaves[id]?.archived = archived
         ensureOpen()
-        guard didOpen else {
-            pendingSaves[id]?.archived = archived
-            return
-        }
+        guard didOpen else { return }
         ChatHistoryDatabase.shared.updateSessionArchivedAsync(id: id, archived: archived)
     }
 
     static func setPinnedAsync(id: UUID, pinned: Bool) {
         guard !pendingDeletes.contains(id) else { return }
+        pendingSaves[id]?.pinned = pinned
         ensureOpen()
-        guard didOpen else {
-            pendingSaves[id]?.pinned = pinned
-            return
-        }
+        guard didOpen else { return }
         ChatHistoryDatabase.shared.updateSessionPinnedAsync(id: id, pinned: pinned)
     }
 
@@ -165,24 +212,20 @@ enum ChatSessionStore {
     /// for the same metadata-only-copy reason as `renameTitleAsync`.
     static func setProjectAsync(id: UUID, projectId: UUID?) {
         guard !pendingDeletes.contains(id) else { return }
+        pendingSaves[id]?.projectId = projectId
         ensureOpen()
-        guard didOpen else {
-            pendingSaves[id]?.projectId = projectId
-            return
-        }
+        guard didOpen else { return }
         ChatHistoryDatabase.shared.updateSessionProjectAsync(id: id, projectId: projectId)
     }
 
     /// Detach every session from a deleted project. Deferred-DB best-effort,
     /// matching `setProjectAsync`; pending snapshots are patched in place.
     static func clearProjectAsync(projectId: UUID) {
-        ensureOpen()
-        guard didOpen else {
-            for (id, session) in pendingSaves where session.projectId == projectId {
-                pendingSaves[id]?.projectId = nil
-            }
-            return
+        for (id, session) in pendingSaves where session.projectId == projectId {
+            pendingSaves[id]?.projectId = nil
         }
+        ensureOpen()
+        guard didOpen else { return }
         ChatHistoryDatabase.shared.clearProjectAsync(projectId: projectId)
     }
 
@@ -207,7 +250,11 @@ enum ChatSessionStore {
             guard !pendingDeletes.contains(id) else { continue }
             do {
                 try ChatHistoryDatabase.shared.saveSession(session)
+                saveVersions.removeValue(forKey: id)
+                ChatPersistenceStatus.shared.unsaved.remove(id)
             } catch {
+                ChatPersistenceStatus.shared.unsaved.insert(id)
+                scheduleSaveRetry()
                 print("[ChatSessionStore] Failed to flush deferred save \(id): \(error)")
                 // Keep it queued for the next readiness signal.
                 pendingSaves[id] = session
@@ -218,6 +265,8 @@ enum ChatSessionStore {
     /// Delete a session by ID. Also removes the session's artifacts dir
     /// on disk (best-effort) so old shared artifacts don't accumulate.
     static func delete(id: UUID) {
+        saveVersions.removeValue(forKey: id)
+        ChatPersistenceStatus.shared.unsaved.remove(id)
         pendingSaves.removeValue(forKey: id)
         ensureOpen()
         guard didOpen else {
@@ -452,6 +501,10 @@ enum ChatSessionStore {
     #if DEBUG
         static func _resetForTesting() {
             didOpen = false
+            retryTask?.cancel()
+            retryTask = nil
+            saveVersions.removeAll()
+            ChatPersistenceStatus.shared.unsaved.removeAll()
             pendingSaves.removeAll()
             pendingDeletes.removeAll()
             ChatHistoryDatabase.shared.close()
@@ -473,6 +526,7 @@ enum ChatSessionStore {
         }
 
         static var _pendingSaveCountForTesting: Int { pendingSaves.count }
+        static func _hasPendingSaveForTesting(_ id: UUID) -> Bool { pendingSaves[id] != nil }
         static var _pendingDeleteCountForTesting: Int { pendingDeletes.count }
     #endif
 }

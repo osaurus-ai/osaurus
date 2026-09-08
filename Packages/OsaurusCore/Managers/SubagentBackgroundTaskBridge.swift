@@ -4,7 +4,7 @@
 //
 //  Mirrors live spawned-helper runs (spawn_agent / spawn_model /
 //  spawn_batch) into `BackgroundTaskManager` so they surface in the
-//  notch's background tasks alongside dispatched chats. Helper runs
+//  sidebar Activity section alongside dispatched chats. Helper runs
 //  launched from any chat whose window is closed
 //  were previously invisible outside the launching transcript.
 //
@@ -63,8 +63,8 @@ public final class SubagentBackgroundTaskBridge {
             guard feed.kindId == SubagentCapabilityRegistry.spawn.id else { continue }
             // True agent delegations already register a REAL background
             // task via `dispatchChat` (with a working "Open Chat");
-            // mirroring the feed too would show two notch rows per run.
-            guard !feed.suppressNotchMirror else { continue }
+            // mirroring the feed too would show two Activity rows per run.
+            guard !feed.suppressActivityMirror else { continue }
             adopt(feed)
         }
         // A feed leaving the registry means its run is over (`unregister`

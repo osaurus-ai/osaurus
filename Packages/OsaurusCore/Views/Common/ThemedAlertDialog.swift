@@ -56,6 +56,35 @@ public final class ThemedAlertCenter: ObservableObject {
         stacksByScope[scope] = stack
     }
 
+    /// Present a Cancel / destructive confirmation in `scope`. The common
+    /// shape of every "Delete / Remove / Unshare / Leave?" dialog; keeps
+    /// call sites to one line and guarantees the dismiss bookkeeping.
+    func confirmDestructive(
+        scope: ThemedAlertScope,
+        title: String,
+        message: String?,
+        destructiveTitle: String,
+        cancelTitle: String = L("Cancel"),
+        onConfirm: @escaping () -> Void
+    ) {
+        let requestId = UUID()
+        present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: title,
+                message: message,
+                buttons: [
+                    .cancel(cancelTitle),
+                    .destructive(destructiveTitle) { onConfirm() },
+                ],
+                onDismiss: { [weak self] in
+                    self?.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
+    }
+
     func dismiss(scope: ThemedAlertScope, id: UUID) {
         guard var stack = stacksByScope[scope],
             let index = stack.firstIndex(where: { $0.id == id })
@@ -114,8 +143,6 @@ public enum ThemedAlertScope: Hashable, Sendable {
     case content
     /// Alert scoped to toast overlay panels
     case toastOverlay
-    /// Alert scoped to the notch overlay panel
-    case notchOverlay
     /// Alert scoped to a specific tool permission dialog
     case toolPermission(UUID)
     /// Fallback scope for unspecified contexts

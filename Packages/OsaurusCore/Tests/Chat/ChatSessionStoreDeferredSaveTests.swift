@@ -120,6 +120,65 @@ struct ChatSessionStoreDeferredSaveTests {
         #expect(ChatSessionStore._pendingDeleteCountForTesting == 1)
     }
 
+    /// `saveAsync` keeps the session in the pending overlay until the DB
+    /// acknowledges the write, and `load(id:)` serves that overlay first. A
+    /// targeted metadata update issued while the save is still in flight must
+    /// patch the overlay too, or the caller reads back the pre-rename snapshot
+    /// (BackgroundTaskManager.renameTask on a dehydrated tab hit exactly this).
+    @Test func targetedUpdatesPatchInFlightPendingSnapshot() throws {
+        try withOpenStores {
+            let projectId = UUID()
+            let session = ChatSessionData(
+                id: UUID(),
+                title: "Durable Tabs",
+                turns: [ChatTurnData(role: .user, content: "keep this conversation")],
+                projectId: projectId
+            )
+            ChatSessionStore.saveAsync(session)
+            // No main-actor hop has run yet, so the acknowledgement that clears
+            // the overlay cannot have landed: this is the in-flight window.
+            #expect(ChatSessionStore._hasPendingSaveForTesting(session.id))
+
+            ChatSessionStore.renameTitleAsync(id: session.id, title: "Pinned Work")
+            ChatSessionStore.setPinnedAsync(id: session.id, pinned: true)
+            ChatSessionStore.setArchivedAsync(id: session.id, archived: true)
+            ChatSessionStore.setProjectAsync(id: session.id, projectId: nil)
+
+            let loaded = ChatSessionStore.load(id: session.id)
+            #expect(loaded?.title == "Pinned Work")
+            #expect(loaded?.pinned == true)
+            #expect(loaded?.archived == true)
+            #expect(loaded?.projectId == nil)
+            // The overlay never stands in for the transcript.
+            #expect(loaded?.turns.map(\.content) == ["keep this conversation"])
+        }
+    }
+
+    @Test func clearProjectPatchesInFlightPendingSnapshots() throws {
+        try withOpenStores {
+            let projectId = UUID()
+            let inProject = ChatSessionData(
+                id: UUID(),
+                title: "In project",
+                turns: [],
+                projectId: projectId
+            )
+            let elsewhere = ChatSessionData(
+                id: UUID(),
+                title: "Elsewhere",
+                turns: [],
+                projectId: UUID()
+            )
+            ChatSessionStore.saveAsync(inProject)
+            ChatSessionStore.saveAsync(elsewhere)
+
+            ChatSessionStore.clearProjectAsync(projectId: projectId)
+
+            #expect(ChatSessionStore.load(id: inProject.id)?.projectId == nil)
+            #expect(ChatSessionStore.load(id: elsewhere.id)?.projectId == elsewhere.projectId)
+        }
+    }
+
     @Test func loadHealsOrphanedTurnsBackToDisk() throws {
         try withOpenStores(memory: true) {
             let sessionId = UUID(uuidString: "44444444-5555-6666-7777-888888888888")!

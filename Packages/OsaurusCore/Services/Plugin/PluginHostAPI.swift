@@ -3225,7 +3225,7 @@ extension PluginHostContext {
         case .running, .waitingForInput:
             // v3: chat tasks always serialize as "running". The
             // `.waitingForInput` enum case is still used internally
-            // for UI hints (toast, notch) but never exposed via task_status,
+            // for UI hints (toast, Activity section) but never exposed via task_status,
             // because clarification is handled inline through the `clarify`
             // agent intercept rather than as an out-of-band state.
             result["status"] = "running"

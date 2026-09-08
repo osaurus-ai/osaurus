@@ -50,6 +50,39 @@ struct ChatHistoryDatabaseTests {
         )
     }
 
+    @Test func asyncTransactionFailureReportsUnsavedSnapshotAndRetryCommits() async throws {
+        let db = try openInMemory()
+        defer { db.close() }
+        let session = makeSession(turnCount: 2)
+        try db.executeForTesting(
+            "CREATE TRIGGER reject_save BEFORE INSERT ON sessions BEGIN SELECT RAISE(FAIL, 'test write failure'); END"
+        )
+        let dropped: ChatSessionData = await withCheckedContinuation { continuation in
+            db.saveSessionAsync(
+                session,
+                onSaved: {
+                    Issue.record("failed transaction must not acknowledge a save")
+                },
+                onDropped: { continuation.resume(returning: $0) }
+            )
+        }
+        #expect(dropped.id == session.id)
+        #expect(dropped.turns.count == 2)
+        #expect(db.loadSession(id: session.id) == nil, "failed transaction rolled back")
+        try db.executeForTesting("DROP TRIGGER reject_save")
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            db.saveSessionAsync(
+                dropped,
+                onSaved: { continuation.resume() },
+                onDropped: { _ in
+                    Issue.record("retry should commit")
+                    continuation.resume()
+                }
+            )
+        }
+        #expect(db.loadSession(id: session.id)?.turns.count == 2)
+    }
+
     // MARK: - Tests
 
     @Test

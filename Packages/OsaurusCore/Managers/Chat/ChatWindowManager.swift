@@ -52,9 +52,24 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     private var windowDelegates: [UUID: ChatWindowDelegate] = [:]
     private var windowStates: [UUID: ChatWindowState] = [:]
     private var sessionCallbacks: [UUID: () -> Void] = [:]
+    private var taskRegisteredCancellable: AnyCancellable?
 
     private override init() {
         super.init()
+    }
+
+    /// Start listening for newly registered runs so each becomes a tab of
+    /// its agent in the frontmost chat window (see `surfaceRegisteredTask`).
+    /// Armed on first window creation rather than in `init`: the two
+    /// singletons reference each other, and `BackgroundTaskManager`'s own
+    /// init already consults this manager, so subscribing from `init` could
+    /// re-enter a singleton still being constructed.
+    private func ensureTaskRegistrationObserver() {
+        guard taskRegisteredCancellable == nil else { return }
+        taskRegisteredCancellable = BackgroundTaskManager.shared.taskRegistered
+            .sink { [weak self] state in
+                self?.surfaceRegisteredTask(state)
+            }
     }
 
     // MARK: - Public API
@@ -122,6 +137,10 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         )
 
         nsWindows[windowId] = window
+        ensureTaskRegistrationObserver()
+        if let state = windowStates[windowId] {
+            attachRegistryRuns(to: state)
+        }
 
         // Show the window if requested
         if showImmediately {
@@ -324,37 +343,104 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     /// agents only, matching what `agentId` points at).
     public func cycleAgentInFocusedWindow() {
         guard let state = shortcutTargetState,
-            !state.isProjectPageVisible,
-            state.selectedDiscoveredAgent == nil,
-            state.selectedRelayAgent == nil
+            !state.isProjectPageVisible
         else { return }
-        let agents = state.agents
-        guard agents.count > 1,
-            let index = agents.firstIndex(where: { $0.id == state.agentId })
-        else { return }
-        state.switchAgent(to: agents[(index + 1) % agents.count].id)
+        // Legacy (non-workspace) Mode 2 selections aren't part of the cycle;
+        // team-agent tabs are, in sidebar order after the local agents.
+        if state.workspaceAgentAddress == nil,
+            state.selectedDiscoveredAgent != nil || state.selectedRelayAgent != nil
+        {
+            return
+        }
+        enum Entry: Equatable {
+            case local(UUID)
+            case workspace(String, String)
+        }
+        var entries: [Entry] = state.agents.map { .local($0.id) }
+        let localAgents = state.agents
+        for roster in WorkspaceRosterStore.shared.rosters {
+            for agent in roster.agents
+            where !WorkspaceRosterStore.isOwnAgent(address: agent.agentAddress, localAgents: localAgents)
+            {
+                let entry = Entry.workspace(agent.agentAddress.lowercased(), roster.id)
+                if !entries.contains(entry) { entries.append(entry) }
+            }
+        }
+        guard entries.count > 1 else { return }
+        let current: Entry =
+            state.workspaceAgentAddress.map { .workspace($0, state.session.workspaceContext?.workspaceId ?? "") } ?? .local(state.agentId)
+        let index = entries.firstIndex(of: current) ?? -1
+        switch entries[(index + 1) % entries.count] {
+        case .local(let id): state.switchAgent(to: id)
+        case .workspace(let address, let workspaceId): state.switchToWorkspaceAgent(address: address, workspaceId: workspaceId)
+        }
+    }
+
+    /// Open (or focus) a chat window on a workspace teammate's shared agent,
+    /// the same way the sidebar row does (used by Settings ▸ Workspaces
+    /// "Chat" actions and deep links).
+    public func openChat(withWorkspaceAgentAddress address: String, workspaceId: String? = nil) {
+        let targetId: UUID
+        if let lastId = lastFocusedWindowId, windowStates[lastId] != nil {
+            targetId = lastId
+            showWindow(id: lastId)
+        } else if let firstId = windowStates.keys.first {
+            targetId = firstId
+            showWindow(id: firstId)
+        } else {
+            targetId = createWindow()
+        }
+        guard let state = windowStates[targetId] else { return }
+        state.openProjectId = nil
+        state.switchToWorkspaceAgent(address: address, workspaceId: workspaceId)
+    }
+
+    /// Open (or focus) a chat window on one of THIS Mac's agents (used by
+    /// Settings ▸ Workspaces "Chat" on an own shared agent).
+    public func openChat(withAgentId agentId: UUID) {
+        let targetId: UUID
+        if let lastId = lastFocusedWindowId, windowStates[lastId] != nil {
+            targetId = lastId
+            showWindow(id: lastId)
+        } else if let firstId = windowStates.keys.first {
+            targetId = firstId
+            showWindow(id: firstId)
+        } else {
+            targetId = createWindow()
+        }
+        guard let state = windowStates[targetId] else { return }
+        state.openProjectId = nil
+        state.switchAgent(to: agentId)
+    }
+
+    /// Always open a NEW window on a shared agent (sidebar row context menu
+    /// "Open in New Window"), leaving the current window where it is.
+    public func openNewChatWindow(withWorkspaceAgentAddress address: String, workspaceId: String? = nil) {
+        let id = createWindow()
+        guard let state = windowStates[id] else { return }
+        state.openProjectId = nil
+        state.switchToWorkspaceAgent(address: address, workspaceId: workspaceId)
     }
 
     /// Open (or focus) a chat window and select the paired remote agent that
     /// owns `providerId`, so the conversation routes to that agent instead of
-    /// whatever the window was last pointed at. Mirrors the toolbar's
-    /// relay-agent picker: we resolve the matching `PairedRelayAgent` from the
-    /// target window's state and post `.chatToolbarSelectRelayAgent`, which the
-    /// window's `ChatView` turns into a real connect via `connectToRelayAgent`.
+    /// whatever the window was last pointed at. Every paired agent — a
+    /// workspace teammate's or one shared directly through an invite link —
+    /// takes the shared-agent tab path (`switchToWorkspaceAgent`): history
+    /// keyed by address, the sidebar row selected, connect queued through
+    /// the window state. It is the same path the sidebar's workspace and
+    /// "Shared with you" rows use, so opening an agent from Settings lands
+    /// in the same place as clicking its row.
     public func openChat(withRemoteAgentProviderId providerId: UUID) {
         let targetId: UUID
-        let isNewWindow: Bool
         if let lastId = lastFocusedWindowId, windowStates[lastId] != nil {
             targetId = lastId
-            isNewWindow = false
             showWindow(id: lastId)
         } else if let firstId = windowStates.keys.first {
             targetId = firstId
-            isNewWindow = false
             showWindow(id: firstId)
         } else {
             targetId = createWindow()
-            isNewWindow = true
         }
 
         guard let state = windowStates[targetId] else { return }
@@ -364,18 +450,10 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         guard let relay = state.pairedRelayAgents.first(where: { $0.providerId == providerId })
         else { return }
 
-        // A freshly-created window's `ChatView` registers its
-        // `.chatToolbarSelectRelayAgent` listener a runloop turn or two after
-        // creation, so delay the post for new windows. Existing windows are
-        // already listening, so dispatch on the next tick is enough.
-        let delay: TimeInterval = isNewWindow ? 0.35 : 0.0
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            NotificationCenter.default.post(
-                name: .chatToolbarSelectRelayAgent,
-                object: relay,
-                userInfo: ["windowId": targetId]
-            )
-        }
+        state.openProjectId = nil
+        state.switchToWorkspaceAgent(address: relay.remoteAgentAddress,
+            workspaceId: RemoteAgentManager.shared.remoteAgent(forProviderId: providerId)?.workspaceId ?? ""
+        )
     }
 
     /// Find windows by agent ID
@@ -631,11 +709,71 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         let window = createNSWindowForBackgroundTask(windowId: windowId, windowState: windowState)
         nsWindows[windowId] = window
         windowStates[windowId] = windowState
+        ensureTaskRegistrationObserver()
+        attachRegistryRuns(to: windowState)
 
         if showImmediately { showWindow(id: windowId) }
 
         print("[ChatWindowManager] Created window \(windowId) for context \(context.id)")
         return windowId
+    }
+
+    // MARK: - Background Runs as Tabs
+
+    /// The window new background tabs go to: the last focused one, else any.
+    private func preferredWindowId() -> UUID? {
+        if let lastId = lastFocusedWindowId, windowStates[lastId] != nil { return lastId }
+        return windowStates.keys.first
+    }
+
+    /// A run was just registered: surface it as a tab of its agent in the
+    /// frontmost window, without stealing focus. Runs the user detached by
+    /// closing their tab or window (`.chat` source) are skipped — they were
+    /// hidden deliberately, keep executing, and come back as tabs in the next
+    /// window that opens or when reopened from history. No window is created
+    /// for a headless launch.
+    private func surfaceRegisteredTask(_ state: BackgroundTaskState) {
+        guard state.source != .chat else { return }
+        if findWindow(bySessionId: state.id) != nil { return }
+        guard let targetId = preferredWindowId(), let target = windowStates[targetId] else { return }
+        target.attachBackgroundTab(for: state)
+    }
+
+    /// Surface every registry run not shown in another window as tabs of a
+    /// freshly created window: live runs attach their in-memory session,
+    /// runs retained across relaunch become hibernated tabs.
+    private func attachRegistryRuns(to state: ChatWindowState) {
+        for task in BackgroundTaskManager.shared.tasksForTabs() {
+            if let shownIn = findWindow(bySessionId: task.id), shownIn.id != state.windowId { continue }
+            if task.chatSession != nil {
+                state.attachBackgroundTab(for: task)
+            } else {
+                state.attachRetainedTab(for: task)
+            }
+        }
+    }
+
+    /// Bring a registry run on screen as a tab of its agent: focus the tab
+    /// that already shows it (in whichever window), else attach it to the
+    /// frontmost window and select it, else open a window for it. Mirrors
+    /// have no chat of their own and are ignored.
+    public func revealTask(_ taskId: UUID) {
+        guard let state = BackgroundTaskManager.shared.taskState(for: taskId), !state.isSubagentMirror
+        else { return }
+        if let shownIn = findWindow(bySessionId: state.id), let host = windowStates[shownIn.id] {
+            host.focusTab(forSessionId: state.id)
+            showWindow(id: shownIn.id)
+            return
+        }
+        guard let context = BackgroundTaskManager.shared.executionContextForReveal(taskId) else { return }
+        if let targetId = preferredWindowId(), let target = windowStates[targetId] {
+            target.attachBackgroundTab(for: state)
+            target.focusTab(forSessionId: state.id)
+            showWindow(id: targetId)
+            return
+        }
+        let windowId = createWindowForContext(context, showImmediately: true)
+        BackgroundTaskManager.shared.bindWindow(windowId, toTask: taskId)
     }
 
     /// Create an NSWindow for viewing a background task (reuses existing window state)
@@ -866,9 +1004,10 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         print("[ChatWindowManager] Window \(id) will close")
 
         // A window closing over a live run automatically detaches the
-        // session into the registry (execution continues; progress surfaces
-        // in the notch). No-op when idle or when the session is already
-        // registry-owned.
+        // session into the registry (execution continues; the run comes back
+        // as a tab of its agent in the next window that opens, and its
+        // agent's sidebar row keeps reporting progress meanwhile). No-op when
+        // idle or when the session is already registry-owned.
         BackgroundTaskManager.shared.detachChatWindow(windowId: id)
 
         let isDetachedToBackground = BackgroundTaskManager.shared.isWindowDetachedToBackground(windowId: id)
@@ -960,9 +1099,9 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         // Post notification for VAD resume
         NotificationCenter.default.post(name: .chatViewClosed, object: id)
 
-        // Now that no view shows the task, drop the window→task binding so
-        // the still-running work (and its eventual completion/failure)
-        // surfaces in the notch/toast.
+        // Now that no view shows the task, drop the window→task binding; the
+        // still-running work stays in the registry and is re-surfaced as a
+        // tab by the next window that opens.
         BackgroundTaskManager.shared.unbindWindow(id)
 
         let msg = isDetachedToBackground ? " (detached to background)" : ""
@@ -1028,10 +1167,12 @@ private final class ChatPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 
-    /// ⌘W (the Close menu item) closes the active TAB while more than one is
-    /// open, exactly like a browser; the last tab closes the window.
+    /// ⌘W (the Close menu item) closes the active TAB while the current
+    /// agent has more than one open, exactly like a browser; the agent's
+    /// last tab closes the window (other agents' tabs are saved; mid-run
+    /// ones keep executing in the registry).
     override func performClose(_ sender: Any?) {
-        if let state = chatWindowState, state.tabs.count > 1 {
+        if let state = chatWindowState, state.scopedTabs.count > 1 {
             state.closeTab(id: state.activeTabId)
             return
         }
@@ -1217,7 +1358,6 @@ extension Notification.Name {
     /// Posted by the toolbar's back button to reopen the current chat's
     /// project page in the window identified by `userInfo["windowId"]`.
     static let chatToolbarBackToProject = Notification.Name("chatToolbarBackToProject")
-    static let chatToolbarSelectRelayAgent = Notification.Name("chatToolbarSelectRelayAgent")
     /// Posted by the `/agent` slash command to pop open the toolbar's agent
     /// picker for the window identified in `userInfo["windowId"]`.
     static let chatToolbarOpenAgentPicker = Notification.Name("chatToolbarOpenAgentPicker")

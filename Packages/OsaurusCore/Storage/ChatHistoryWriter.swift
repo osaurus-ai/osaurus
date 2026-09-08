@@ -17,7 +17,8 @@ enum ChatHistoryWriter {
         agentId: UUID?,
         externalKey: String?,
         finalMessages: [ChatMessage],
-        model: String
+        model: String,
+        workspace: WorkspaceSessionContext? = nil
     ) {
         Task.detached(priority: .utility) {
             persist(
@@ -26,10 +27,22 @@ enum ChatHistoryWriter {
                 agentId: agentId,
                 externalKey: externalKey,
                 finalMessages: finalMessages,
-                model: model
+                model: model,
+                workspace: workspace
             )
         }
     }
+
+    /// Plugin-shaped key reserved for workspace-served sessions (host side)
+    /// so `(source_plugin_id, external_session_key)` grouping works per
+    /// teammate conversation without colliding with real plugin ids.
+    static let workspacePseudoPluginId = "__workspace__"
+
+    /// Posted on the main queue after a row written outside the in-app
+    /// `ChatSession.save` path lands (HTTP / plugin / workspace-served), so
+    /// `ChatSessionsManager` can pick it up without polling.
+    static let didPersistExternallyNotification = Notification.Name(
+        "ChatHistoryWriter.didPersistExternally")
 
     /// Persist a completed inference round.
     /// - Parameters:
@@ -43,13 +56,16 @@ enum ChatHistoryWriter {
     ///   - finalMessages: full conversation including the assistant turn.
     ///     System messages are stripped.
     ///   - model: model id used for inference (recorded as `selected_model`).
+    ///   - workspace: set for host-side rows served for a workspace teammate
+    ///     (`source == .workspace`); stamps caller + workspace on the row.
     static func persist(
         source: SessionSource,
         sourcePluginId: String?,
         agentId: UUID?,
         externalKey: String?,
         finalMessages: [ChatMessage],
-        model: String
+        model: String,
+        workspace: WorkspaceSessionContext? = nil
     ) {
         let conversational = finalMessages.filter { $0.role != "system" }
         guard !conversational.isEmpty else { return }
@@ -97,17 +113,7 @@ enum ChatHistoryWriter {
         }
 
         let now = Date()
-        let turns = conversational.map { msg in
-            ChatTurnData(
-                id: UUID(),
-                role: MessageRole(rawValue: msg.role) ?? .assistant,
-                content: msg.content ?? "",
-                toolCalls: msg.tool_calls,
-                toolCallId: msg.tool_call_id,
-                toolResults: [:],
-                thinking: ""
-            )
-        }
+        let turns = turns(from: conversational)
 
         let session: ChatSessionData
         if var hit = existing {
@@ -118,12 +124,14 @@ enum ChatHistoryWriter {
                 hit.title = ChatSessionData.generateTitle(from: turns)
             }
             hit.capabilities = SessionCapability.derive(from: turns)
+            if let workspace { hit.workspace = workspace }
             session = hit
         } else {
             let storedPluginId: String?
             switch source {
             case .plugin: storedPluginId = sourcePluginId
             case .http: storedPluginId = externalKey != nil ? httpPseudoPluginId : nil
+            case .workspace: storedPluginId = externalKey != nil ? workspacePseudoPluginId : nil
             default: storedPluginId = nil
             }
             session = ChatSessionData(
@@ -138,15 +146,45 @@ enum ChatHistoryWriter {
                 sourcePluginId: storedPluginId,
                 externalSessionKey: externalKey,
                 dispatchTaskId: nil,
-                capabilities: SessionCapability.derive(from: turns)
+                capabilities: SessionCapability.derive(from: turns),
+                workspace: workspace
             )
         }
 
         do {
             try db.saveSession(session)
+            let sessionId = session.id
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: didPersistExternallyNotification,
+                    object: nil,
+                    userInfo: ["sessionId": sessionId]
+                )
+            }
         } catch {
             print("[ChatHistoryWriter] Failed to persist session: \(error)")
         }
+    }
+
+    /// Canonical `ChatMessage` → persisted-turn mapping shared by every raw
+    /// inference surface (HTTP / plugin rows written here, and the live
+    /// transcript `InboundSharedRunBridge` keeps for a remote caller's run of
+    /// a shared agent). System messages are dropped; tool results stay as
+    /// their own `.tool` turns, keyed by `tool_call_id`.
+    static func turns(from messages: [ChatMessage]) -> [ChatTurnData] {
+        messages
+            .filter { $0.role != "system" }
+            .map { msg in
+                ChatTurnData(
+                    id: UUID(),
+                    role: MessageRole(rawValue: msg.role) ?? .assistant,
+                    content: msg.content ?? "",
+                    toolCalls: msg.tool_calls,
+                    toolCallId: msg.tool_call_id,
+                    toolResults: [:],
+                    thinking: ""
+                )
+            }
     }
 
     /// Plugin-shaped key reserved for HTTP-origin sessions so they share

@@ -1,8 +1,8 @@
 //
-//  NotchAgentActionsTests.swift
+//  BackgroundTaskAgentActionsTests.swift
 //  osaurusTests
 //
-//  Lifecycle tests for the notch's agent-tab actions on
+//  Lifecycle tests for the background-task agent-group actions on
 //  `BackgroundTaskManager`:
 //
 //  - `closeAgentTaskGroup(agentId:)` cancels every active task for the
@@ -10,7 +10,7 @@
 //    queued work must never briefly start mid-close (its deferred start
 //    is dropped BEFORE cancellation can pump the queue), and other
 //    agents' tasks are untouched.
-//  - `submitQuickReply(_:text:)` routes a notch reply through the task's
+//  - `submitQuickReply(_:text:)` routes a quick reply through the task's
 //    retained `ChatSession.send` (the canonical answer channel): a
 //    waiting task resumes from its clarify pause, a completed task is
 //    revived off its auto-finalize timer, and non-replyable states /
@@ -61,13 +61,13 @@ private func waitUntil(
         if await predicate() { return }
         try await Task.sleep(for: .milliseconds(20))
     }
-    throw NSError(domain: "NotchAgentActionsTests", code: 1)
+    throw NSError(domain: "BackgroundTaskAgentActionsTests", code: 1)
 }
 
 // MARK: - Agent Group Close
 
 @MainActor
-struct NotchAgentGroupCloseTests {
+struct BackgroundTaskAgentGroupCloseTests {
 
     /// Isolated manager: these tests cancel/finalize whole agent groups,
     /// which must not touch tasks registered by concurrently-running
@@ -147,7 +147,7 @@ struct NotchAgentGroupCloseTests {
 
 @Suite(.serialized)
 @MainActor
-struct NotchQuickReplyTests {
+struct BackgroundTaskQuickReplyTests {
 
     private let mgr = BackgroundTaskManager.makeForTesting()
 
@@ -276,7 +276,7 @@ struct NotchQuickReplyTests {
 
     @Test func retainedTabs_restoreAcrossManagerRelaunchWithoutLiveSession() async throws {
         try await ChatHistoryTestStorage.run {
-            let suiteName = "NotchAgentActionsTests.\(UUID().uuidString)"
+            let suiteName = "BackgroundTaskAgentActionsTests.\(UUID().uuidString)"
             let defaults = try #require(UserDefaults(suiteName: suiteName))
             defer { defaults.removePersistentDomain(forName: suiteName) }
 

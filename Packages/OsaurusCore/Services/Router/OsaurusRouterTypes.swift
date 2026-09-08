@@ -192,8 +192,21 @@ enum OsaurusRouter {
     /// streaming path surfaces the raw server body inside a
     /// `RemoteProviderServiceError.requestFailed("HTTP 402: {json}")` string,
     /// so match the stable server error code rather than a localized message.
+    /// A workspace-pool 402 (`WORKSPACE_INSUFFICIENT_FUNDS`) contains this
+    /// substring but must NOT trigger the personal top-up flow — there is no
+    /// fallback from workspace billing to personal credits — so it is
+    /// explicitly excluded.
     static func isInsufficientFundsError(_ message: String) -> Bool {
         message.range(of: "INSUFFICIENT_FUNDS", options: .caseInsensitive) != nil
+            && !isWorkspaceInsufficientFundsError(message)
+    }
+
+    /// True when a chat/stream error string carries the workspace-pool 402
+    /// (`WORKSPACE_INSUFFICIENT_FUNDS`, or the pre-rename `TEAM_…`): the
+    /// shared pool is dry. Surface "workspace is out of credits", never a
+    /// personal top-up prompt.
+    static func isWorkspaceInsufficientFundsError(_ message: String) -> Bool {
+        OsaurusRouterWorkspaceErrorCode.insufficientFunds.appears(in: message)
     }
 }
 
@@ -399,6 +412,11 @@ struct OsaurusRouterUsageResponse: Decodable, Sendable {
 }
 
 struct OsaurusRouterUsageItem: Decodable, Identifiable, Equatable, Sendable {
+    /// Who spent from the pool — present only on workspace usage rows
+    /// (`GET /workspaces/:id/credits/usage`), which otherwise share the personal
+    /// usage shape.
+    typealias Actor = OsaurusRouterWorkspacePerson
+
     let id: String
     let requestId: String?
     let model: String
@@ -409,15 +427,49 @@ struct OsaurusRouterUsageItem: Decodable, Identifiable, Equatable, Sendable {
     let status: String
     let tokenSource: String
     let createdAt: String
+    let actor: Actor?
+    /// The attested teammate who invoked the agent (workspace usage rows only;
+    /// requires the host to have sent `caller_attestation`). `actor` is
+    /// whose instance billed; `caller` is who asked. `nil` when the request
+    /// carried no attestation.
+    let caller: Actor?
 
     enum CodingKeys: String, CodingKey {
-        case id, model, provider, status
+        case id, model, provider, status, actor, caller
         case requestId = "request_id"
         case inputTokens = "input_tokens"
         case outputTokens = "output_tokens"
         case costMicro = "cost_micro"
         case tokenSource = "token_source"
         case createdAt = "created_at"
+    }
+
+    init(
+        id: String,
+        requestId: String?,
+        model: String,
+        provider: String,
+        inputTokens: Int,
+        outputTokens: Int,
+        costMicro: String,
+        status: String,
+        tokenSource: String,
+        createdAt: String,
+        actor: Actor? = nil,
+        caller: Actor? = nil
+    ) {
+        self.id = id
+        self.requestId = requestId
+        self.model = model
+        self.provider = provider
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.costMicro = costMicro
+        self.status = status
+        self.tokenSource = tokenSource
+        self.createdAt = createdAt
+        self.actor = actor
+        self.caller = caller
     }
 }
 
@@ -467,6 +519,10 @@ struct OsaurusRouterSummaryEvent: Decodable, Equatable, Sendable {
         let tokenSource: String
         let inputTokens: Int
         let outputTokens: Int
+        /// `"workspace:<workspace_id>"` when the turn was charged to a
+        /// workspace pool (request carried `workspace_context`); absent for
+        /// personal spend. Pre-rename routers emitted `"team:<id>"`.
+        let billedTo: String?
 
         enum CodingKeys: String, CodingKey {
             case requestId = "request_id"
@@ -475,6 +531,17 @@ struct OsaurusRouterSummaryEvent: Decodable, Equatable, Sendable {
             case tokenSource = "token_source"
             case inputTokens = "input_tokens"
             case outputTokens = "output_tokens"
+            case billedTo = "billed_to"
+        }
+
+        /// The workspace id when this summary billed a workspace pool, nil otherwise.
+        var billedWorkspaceId: String? {
+            guard let billedTo else { return nil }
+            for prefix in ["workspace:", "team:"] where billedTo.hasPrefix(prefix) {
+                let id = String(billedTo.dropFirst(prefix.count))
+                return id.isEmpty ? nil : id
+            }
+            return nil
         }
     }
 
@@ -494,6 +561,9 @@ public struct RouterBillingSummary: Codable, Equatable, Sendable {
     public var tokenSource: String
     public var inputTokens: Int
     public var outputTokens: Int
+    /// `"workspace:<workspace_id>"` for pool spend; nil = personal. Optional so
+    /// ledger entries persisted before Workspaces existed keep decoding.
+    public var billedTo: String?
 
     public init(
         requestId: String? = nil,
@@ -501,7 +571,8 @@ public struct RouterBillingSummary: Codable, Equatable, Sendable {
         status: String,
         tokenSource: String,
         inputTokens: Int,
-        outputTokens: Int
+        outputTokens: Int,
+        billedTo: String? = nil
     ) {
         self.requestId = requestId
         self.costMicro = costMicro
@@ -509,6 +580,7 @@ public struct RouterBillingSummary: Codable, Equatable, Sendable {
         self.tokenSource = tokenSource
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
+        self.billedTo = billedTo
     }
 
     init(_ summary: OsaurusRouterSummaryEvent.Summary) {
@@ -518,6 +590,7 @@ public struct RouterBillingSummary: Codable, Equatable, Sendable {
         self.tokenSource = summary.tokenSource
         self.inputTokens = summary.inputTokens
         self.outputTokens = summary.outputTokens
+        self.billedTo = summary.billedTo
     }
 }
 

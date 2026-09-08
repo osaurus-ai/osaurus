@@ -38,12 +38,17 @@ public enum SessionSource: String, Codable, CaseIterable, Sendable {
     /// under the TARGET agent's own settings and persists in its chat
     /// history. One fresh session per delegation call.
     case delegation
+    /// A shared agent run served by THIS instance for a workspace teammate
+    /// (`/agents/{id}/run` authenticated with a workspace-minted key). The
+    /// conversation is the teammate's; the host keeps a local, read-only
+    /// copy under the shared agent tagged with the caller.
+    case workspace
 }
 
 // MARK: - UI Helpers
 
 /// Shared formatting used by the sidebar source badge, the toast header
-/// subtitle, and the notch expanded subtitle. Keeping these in one place
+/// subtitle, and the Activity row subtitle. Keeping these in one place
 /// guarantees the audit dimension reads identically across every surface.
 extension SessionSource {
 
@@ -77,7 +82,20 @@ extension SessionSource {
             return "imported"
         case .delegation:
             return "delegated"
+        case .workspace:
+            return "via workspace"
         }
+    }
+
+    /// Origin clause for a row served for a remote caller that names them:
+    /// "for Alice · Workspace" for a workspace teammate, "for Alice · Shared"
+    /// for an invite-link peer (no workspace). Falls back to the plain
+    /// origin label.
+    public func originLabel(workspace: WorkspaceSessionContext?) -> String? {
+        if self == .workspace, let workspace, let caller = workspace.callerLabel {
+            return workspace.isDirectShare ? "for \(caller) · Shared" : "for \(caller) · Workspace"
+        }
+        return originLabel()
     }
 
     /// SF Symbol used by the sidebar source badge.
@@ -92,6 +110,7 @@ extension SessionSource {
         case .selfSchedule: return "alarm.fill"
         case .imported: return "square.and.arrow.down.fill"
         case .delegation: return "arrow.triangle.branch"
+        case .workspace: return "rectangle.3.group.fill"
         }
     }
 
@@ -107,6 +126,7 @@ extension SessionSource {
         case .selfSchedule: return "Self-scheduled"
         case .imported: return "Imported"
         case .delegation: return "Delegated"
+        case .workspace: return "Workspace"
         }
     }
 }
@@ -116,7 +136,7 @@ extension SessionSource {
 /// Resolves a user-facing label for a plugin id. Falls back to the raw id
 /// (or the suffix of `sandbox:<user>` pseudo-ids used by the bridge).
 ///
-/// Lives next to `SessionSource` so the toast / notch / sidebar can share
+/// Lives next to `SessionSource` so the toast / Activity section / sidebar can share
 /// one canonical implementation instead of three near-identical copies.
 @MainActor
 public enum PluginDisplayNameResolver {
@@ -158,7 +178,9 @@ extension SessionSource {
         // exactly the class that restore may evict; a `.scheduled` owner
         // would be protected and block the parent's reload.
         case .chat, .imported, .delegation: return .chatUI
-        case .http: return .httpAPI
+        // A teammate's run arrives over the same authenticated HTTP surface
+        // as any API caller and carries no chat-window residency intent.
+        case .http, .workspace: return .httpAPI
         case .plugin: return .plugin
         case .channel: return .channel
         case .schedule: return .schedule

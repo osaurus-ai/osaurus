@@ -73,6 +73,7 @@ public final class ManagementBadgeStore: ObservableObject {
             SandboxPluginLibrary.shared.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             SpeechModelManager.shared.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             ThemeManager.shared.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
+            WorkspacesService.shared.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
         ]
         Publishers.MergeMany(publishers)
             .throttle(for: .milliseconds(150), scheduler: DispatchQueue.main, latest: true)
@@ -149,6 +150,11 @@ public final class ManagementBadgeStore: ObservableObject {
         counts[.knowledge] = KnowledgeManager.shared.collections.count
         counts[.voice] = SpeechModelManager.shared.downloadedModelsCount
         counts[.themes] = ThemeManager.shared.installedThemes.filter { !$0.isBuiltIn }.count
+        // A staged Workspaces deep link (subscription activation or invite link)
+        // is waiting for the user's confirmation tap — highlight until it's
+        // redeemed or discarded.
+        let workspacesActionPending =
+            WorkspacesService.shared.pendingActivation != nil || WorkspacesService.shared.pendingJoin != nil
 
         // Preserve previously-known values for the metrics we'll refresh
         // off-MainActor; otherwise the badge would flicker to 0 every
@@ -164,6 +170,9 @@ public final class ManagementBadgeStore: ObservableObject {
         }
 
         var highlights: Set<ManagementTab> = []
+        if workspacesActionPending {
+            highlights.insert(.workspaces)
+        }
         if snapshot.highlights.contains(.identity) {
             highlights.insert(.identity)
         }

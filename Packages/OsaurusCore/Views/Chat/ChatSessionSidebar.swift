@@ -57,6 +57,18 @@ struct ChatSessionSidebar: View {
     /// replaces the removed agent-selector pill; same effect as picking an
     /// agent from it).
     var onSelectAgent: ((UUID) -> Void)? = nil
+    /// Lowercased address of the workspace teammate's agent the window's
+    /// active tab is chatting with, or nil for a local chat. While set, the
+    /// matching team-agent row is the selected one (no local row is).
+    var workspaceAgentAddress: String? = nil
+    /// Workspace id stamped on the active team-agent tab, so that when the
+    /// same agent is shared into two workspaces only the row under the tab's
+    /// workspace highlights. Empty/nil = no workspace (direct share) or
+    /// stamped before the roster loaded (then any matching row highlights).
+    var workspaceAgentWorkspaceId: String?
+    /// Select a workspace teammate's shared agent (by address) for this
+    /// window — same effect as picking a local agent.
+    var onSelectWorkspaceAgent: ((String, String) -> Void)? = nil
 
     enum ExportFormat {
         case markdown
@@ -72,6 +84,24 @@ struct ChatSessionSidebar: View {
     /// animated avatar ring, the status metadata line, the per-row Stop
     /// control, and floating active rows to the top of the list.
     @ObservedObject private var activityMonitor = SessionActivityMonitor.shared
+    /// Observed for the agent rows' live step text (registry `currentStep`
+    /// changes ride the manager's `objectWillChange`).
+    @ObservedObject private var taskManager = BackgroundTaskManager.shared
+    /// Workspace rosters + presence for the team-agent sections. The store
+    /// polls while any chat window is open (`ChatWindowState` holds the
+    /// observer lease), so presence keeps flowing with the sidebar hidden.
+    @ObservedObject private var rosterStore = WorkspaceRosterStore.shared
+    /// Paired `RemoteAgent` records supply avatar / model for team rows.
+    @ObservedObject private var remoteAgentManager = RemoteAgentManager.shared
+    /// Auto-connect progress / failure per team agent.
+    @ObservedObject private var connectService = WorkspaceAgentConnectService.shared
+    /// Router on/off (the workspace sections explain themselves while off).
+    @ObservedObject private var remoteProviderManager = RemoteProviderManager.shared
+    /// Workspace list Settings knows (names for orphaned sections, and the
+    /// "Router off but you have workspaces" explainer) + share/unshare.
+    @ObservedObject private var workspacesService = WorkspacesService.shared
+    /// Relay tunnel state for the user's own shared agents' rows.
+    @ObservedObject private var relayManager = RelayTunnelManager.shared
     /// Freshly imported session ids; their rows glow briefly and the list
     /// scrolls the first one into view so the user can see where the
     /// imports landed (they sort by original date, not to the top).
@@ -1025,18 +1055,34 @@ struct ChatSessionSidebar: View {
             // Plain VStack: every row needs a live frame for drag-to-reorder
             // hit testing, and the agent list is small.
             VStack(spacing: 2) {
+                // Background runs (scheduled / API / channel / delegated)
+                // are tabs of their agent, not rows here; each agent row
+                // rolls its live work up into a ring + status line.
                 ForEach(displayedAgents) { agent in
+                    let activity = activityStatus(for: agent)
                     AgentSidebarRow(
                         agent: agent,
-                        isSelected: agent.id == agentId,
+                        // A team-agent tab owns the selection: no local row
+                        // is highlighted while one is active.
+                        isSelected: agent.id == agentId && workspaceAgentAddress == nil,
                         // The selected agent's row reflects the session the
                         // window is showing (the active tab's chat), so the
                         // sidebar always answers "which chat is this?".
-                        currentSessionTitle: agent.id == agentId
+                        currentSessionTitle: agent.id == agentId && workspaceAgentAddress == nil
                             ? sessions.first(where: { $0.id == currentSessionId })?.title
                             : nil,
-                        activityStatus: activityStatus(for: agent),
+                        activityStatus: activity,
+                        activityStep: activity == nil ? nil : activityStep(for: agent),
+                        sharedWorkspaceNames: sharedWorkspaceNames(for: agent),
+                        shareableWorkspaces: shareableWorkspaces(for: agent),
+                        sharedWorkspaces: sharedWorkspaces(for: agent),
+                        onShareToWorkspace: { workspace in openWorkspaceInSettings(id: workspace.id) },
+                        onUnshareFromWorkspace: { workspace in
+                            guard let address = agent.agentAddress else { return }
+                            unshare(SharedAgentIdentity.resolve(address: address, workspaceId: workspace.id), from: workspace)
+                        },
                         onSelect: { onSelectAgent?(agent.id) },
+                        onStop: activity == nil ? nil : { stopActivity(for: agent) },
                         isReorderable: !agent.isBuiltIn,
                         isDragging: draggingAgentId == agent.id,
                         dragOffset: draggingAgentId == agent.id ? agentDragOffset : 0,
@@ -1051,14 +1097,447 @@ struct ChatSessionSidebar: View {
                         }
                     )
                 }
+
+                // Workspaces: one section per team the user belongs to,
+                // listing every shared agent — teammates' (chat over the
+                // relay) and the user's own (badged "local", routed to the
+                // local agent so the team roster reads complete). Before the
+                // first roster lands / when the router can't be reached /
+                // when Router is off, a single explanatory section stands in.
+                workspaceSections
+
+                // Agents shared with the user directly (an invite link, not a
+                // workspace). They live in the same paired-agent store as
+                // team agents but sit on no roster, so they get their own
+                // section — otherwise the only way to reach them from a chat
+                // window is Settings ▸ Agents.
+                if !directlySharedAgents.isEmpty {
+                    sharedAgentsSection(directlySharedAgents)
+                }
             }
             .padding(.vertical, 8)
             .padding(.horizontal, 8)
             .coordinateSpace(name: "agentList")
             .onPreferenceChange(AgentRowFramesKey.self) { agentRowFrames = $0 }
             .animation(theme.animationQuick(), value: displayedAgents.map(\.id))
+            .animation(theme.animationQuick(), value: rosterStore.rosters.map(\.id))
+            .animation(theme.animationQuick(), value: directlySharedAgents.map(\.id))
         }
         .scrollIndicators(.hidden)
+    }
+
+    // MARK: Directly shared agents
+
+    /// Paired remote agents shared through an invite link: no workspace
+    /// attribution on the pairing (`workspaceId` nil), and not one of the
+    /// user's own agents. Partitioned by the PERSISTED attribution, not by
+    /// live roster membership, so a workspace agent never flashes under
+    /// "Shared with you" before the roster loads or while Router is off.
+    private var directlySharedAgents: [RemoteAgent] {
+        remoteAgentManager.remoteAgents
+            .filter { remote in
+                let address = remote.agentAddress.lowercased()
+                return Self.isDirectlyShared(
+                    remote,
+                    onRoster: rosterStore.agent(forAddress: address) != nil,
+                    isOwn: localAgent(sharedAs: address) != nil
+                )
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// Pure partition rule (testable): a pairing is "shared with you"
+    /// directly when it isn't attributed to a workspace, isn't currently on
+    /// any roster (a roster-listed agent renders under its workspace even if
+    /// its attribution is still being backfilled), and isn't the user's own.
+    nonisolated static func isDirectlyShared(_ remote: RemoteAgent, onRoster: Bool, isOwn: Bool) -> Bool {
+        !remote.isWorkspaceManaged && !onRoster && !isOwn
+    }
+
+    @ViewBuilder
+    private func sharedAgentsSection(_ agents: [RemoteAgent]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            sidebarSectionHeader(
+                icon: "person.2.fill",
+                title: L("Shared with you"),
+                help: L("Agents shared with you directly, outside any workspace")
+            )
+
+            ForEach(agents) { remote in
+                let address = remote.agentAddress.lowercased()
+                RemoteAgentSidebarRow(
+                    agent: remote,
+                    isSelected: isWorkspaceRowSelected(address: address, workspaceId: ""),
+                    currentSessionTitle: isWorkspaceRowSelected(address: address, workspaceId: "")
+                        ? sessions.first(where: { $0.id == currentSessionId })?.title
+                        : nil,
+                    activityStatus: activityStatus(forRemoteAgentAddress: address, workspaceId: ""),
+                    // Same tab / history / connect flow as a team agent; the
+                    // session context simply carries no workspace id.
+                    onSelect: { onSelectWorkspaceAgent?(address, "") },
+                    onRemove: { removeDirectShare(remote) }
+                )
+            }
+        }
+    }
+
+    private func removeDirectShare(_ remote: RemoteAgent) {
+        ThemedAlertCenter.shared.confirmDestructive(
+            scope: alertScope,
+            title: L("Remove shared agent?"),
+            message: String(
+                format: L("%@ will disappear from this Mac. The owner can share it with you again with a new link."),
+                remote.name
+            ),
+            destructiveTitle: L("Remove")
+        ) {
+            _ = RemoteAgentManager.shared.remove(id: remote.id)
+        }
+    }
+
+    // MARK: Workspace sections
+
+    /// Uppercase section header shared by every sidebar section.
+    private func sidebarSectionHeader(icon: String, title: String, help: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .semibold))
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.4)
+                .lineLimit(1)
+        }
+        .foregroundColor(theme.secondaryText.opacity(0.85))
+        .padding(.horizontal, 10)
+        .padding(.top, 14)
+        .padding(.bottom, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .help(help)
+    }
+
+    /// Workspace-managed pairings whose workspace isn't on a loaded roster
+    /// yet (roster loading, router unreachable, Router off). Grouped under a
+    /// section for their workspace so they stay reachable — never demoted to
+    /// "Shared with you".
+    private var orphanedWorkspacePairings: [String: [RemoteAgent]] {
+        Self.orphanedWorkspacePairings(
+            remoteAgentManager.remoteAgents,
+            loadedRosterIds: Set(rosterStore.rosters.map(\.id))
+        )
+    }
+
+    /// Pure partition rule (testable): workspace-attributed pairings grouped
+    /// by workspace id, keeping only workspaces without a loaded roster.
+    nonisolated static func orphanedWorkspacePairings(
+        _ remotes: [RemoteAgent],
+        loadedRosterIds: Set<String>
+    ) -> [String: [RemoteAgent]] {
+        var out: [String: [RemoteAgent]] = [:]
+        for remote in remotes {
+            guard let workspaceId = remote.workspaceId, !workspaceId.isEmpty,
+                !loadedRosterIds.contains(workspaceId)
+            else { continue }
+            out[workspaceId, default: []].append(remote)
+        }
+        return out
+    }
+
+    @ViewBuilder
+    private var workspaceSections: some View {
+        let routerOn = remoteProviderManager.isOsaurusRouterEnabled
+        ForEach(rosterStore.rosters) { roster in
+            workspaceSection(roster)
+        }
+        // Orphaned workspace pairings (no loaded roster): one section each,
+        // named after the workspace when Settings knows it.
+        ForEach(orphanedWorkspacePairings.keys.sorted(), id: \.self) { workspaceId in
+            let pairings = orphanedWorkspacePairings[workspaceId] ?? []
+            let name = workspacesService.workspaces.first { $0.id == workspaceId }?.name
+            VStack(alignment: .leading, spacing: 2) {
+                sidebarSectionHeader(
+                    icon: "rectangle.3.group.fill",
+                    title: name ?? L("Workspace"),
+                    help: L("Workspace")
+                )
+                if !routerOn {
+                    workspaceStateRow(
+                        icon: "bolt.slash.fill",
+                        text: L("Osaurus Router is off — shared agents can't be reached."),
+                        actionTitle: L("Turn on"),
+                        action: { remoteProviderManager.setOsaurusRouterEnabled(true) }
+                    )
+                }
+                ForEach(pairings) { remote in
+                    let address = remote.agentAddress.lowercased()
+                    RemoteAgentSidebarRow(
+                        agent: remote,
+                        isSelected: isWorkspaceRowSelected(address: address, workspaceId: workspaceId),
+                        currentSessionTitle: isWorkspaceRowSelected(address: address, workspaceId: workspaceId)
+                            ? sessions.first(where: { $0.id == currentSessionId })?.title
+                            : nil,
+                        activityStatus: activityStatus(forRemoteAgentAddress: address, workspaceId: workspaceId),
+                        onSelect: { onSelectWorkspaceAgent?(address, workspaceId) },
+                        onOpenWorkspace: { openWorkspaceInSettings(id: workspaceId) }
+                    )
+                }
+            }
+        }
+        // Section-level states when there is no roster to show.
+        if rosterStore.rosters.isEmpty {
+            if !routerOn, !workspacesService.workspaces.isEmpty || !orphanedWorkspacePairings.isEmpty {
+                // Router off but Settings knows workspaces: explain once
+                // (orphan sections above already carry the row).
+                if orphanedWorkspacePairings.isEmpty {
+                    VStack(alignment: .leading, spacing: 2) {
+                        sidebarSectionHeader(
+                            icon: "rectangle.3.group.fill", title: L("Workspaces"), help: L("Workspaces")
+                        )
+                        workspaceStateRow(
+                            icon: "bolt.slash.fill",
+                            text: L("Osaurus Router is off — shared agents can't be reached."),
+                            actionTitle: L("Turn on"),
+                            action: { remoteProviderManager.setOsaurusRouterEnabled(true) }
+                        )
+                    }
+                }
+            } else if routerOn, rosterStore.isLoading {
+                VStack(alignment: .leading, spacing: 2) {
+                    sidebarSectionHeader(icon: "rectangle.3.group.fill", title: L("Workspaces"), help: L("Workspaces"))
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.mini)
+                        Text("Loading workspaces…", bundle: .module)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else if routerOn, let error = rosterStore.lastError {
+                VStack(alignment: .leading, spacing: 2) {
+                    sidebarSectionHeader(icon: "rectangle.3.group.fill", title: L("Workspaces"), help: L("Workspaces"))
+                    workspaceStateRow(
+                        icon: "exclamationmark.triangle.fill",
+                        text: error,
+                        tint: theme.warningColor,
+                        actionTitle: L("Retry"),
+                        action: { Task { await rosterStore.refresh(reason: .manual) } }
+                    )
+                }
+            }
+        } else if let error = rosterStore.lastError {
+            // Rosters shown are stale: say so under them, with Retry.
+            workspaceStateRow(
+                icon: "exclamationmark.triangle.fill",
+                text: error,
+                tint: theme.warningColor,
+                actionTitle: L("Retry"),
+                action: { Task { await rosterStore.refresh(reason: .manual) } }
+            )
+            .padding(.top, 6)
+        }
+    }
+
+    /// Compact explanatory row inside a workspace section (loading / error /
+    /// Router off / empty) with one inline action.
+    private func workspaceStateRow(
+        icon: String,
+        text: String,
+        tint: Color? = nil,
+        actionTitle: String? = nil,
+        action: (() -> Void)? = nil
+    ) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(tint ?? theme.tertiaryText)
+                .frame(width: 14)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(text)
+                    .font(.system(size: 11))
+                    .foregroundColor(tint == nil ? theme.tertiaryText : theme.secondaryText)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let actionTitle, let action {
+                    Button(action: action) {
+                        Text(actionTitle)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(theme.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                    .pointingHandCursor()
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private func workspaceSection(_ roster: WorkspaceRosterStore.WorkspaceRoster) -> some View {
+        let members = roster.agents
+        let workspace = roster.workspace
+        VStack(alignment: .leading, spacing: 2) {
+            sidebarSectionHeader(
+                icon: "rectangle.3.group.fill",
+                title: workspace.name,
+                help: String(format: L("Workspace: %@"), workspace.name)
+            )
+
+            if members.isEmpty {
+                let canShare = workspace.typedRole?.canShareAgents ?? false
+                workspaceStateRow(
+                    icon: "person.2.fill",
+                    text: L("No shared agents yet"),
+                    actionTitle: canShare ? L("Share an agent…") : nil,
+                    action: canShare ? { openWorkspaceInSettings(id: workspace.id) } : nil
+                )
+            } else {
+                ForEach(members) { agent in
+                    let address = agent.agentAddress.lowercased()
+                    let identity = SharedAgentIdentity.resolve(address: address, workspaceId: workspace.id)
+                    if let mine = identity.localAgent {
+                        // The user's own shared agent: same row shape, a
+                        // "local" badge instead of relay presence, and
+                        // selection routes to the local agent itself. The
+                        // canonical row in the Agents list above carries the
+                        // current-session title; this mirror highlights when
+                        // the agent is active so both read as one selection.
+                        WorkspaceAgentSidebarRow(
+                            identity: identity,
+                            workspaceId: workspace.id,
+                            status: ownAgentStatus(mine),
+                            isSelected: mine.id == agentId && workspaceAgentAddress == nil,
+                            currentSessionTitle: nil,
+                            activityStatus: activityStatus(for: mine),
+                            onSelect: { onSelectAgent?(mine.id) },
+                            onOpenSettings: {
+                                AppDelegate.shared?.showManagementWindow(
+                                    initialTab: .agents, deeplinkAgentId: mine.id)
+                            },
+                            onOpenWorkspace: { openWorkspaceInSettings(id: workspace.id) },
+                            onUnshare: { unshare(identity, from: workspace) },
+                            onTurnOnRelay: { RelayTunnelManager.shared.setTunnelEnabled(true, for: mine.id) }
+                        )
+                    } else {
+                        let selected = isWorkspaceRowSelected(address: address, workspaceId: workspace.id)
+                        WorkspaceAgentSidebarRow(
+                            identity: identity,
+                            workspaceId: workspace.id,
+                            status: teammateAgentStatus(address: address, workspaceId: workspace.id),
+                            isSelected: selected,
+                            currentSessionTitle: selected
+                                ? sessions.first(where: { $0.id == currentSessionId })?.title
+                                : nil,
+                            activityStatus: activityStatus(forRemoteAgentAddress: address, workspaceId: workspace.id),
+                            onSelect: { onSelectWorkspaceAgent?(address, workspace.id) },
+                            onOpenInNewWindow: {
+                                ChatWindowManager.shared.openNewChatWindow(withWorkspaceAgentAddress: address,
+                                    workspaceId: workspace.id
+                                )
+                            },
+                            onOpenWorkspace: { openWorkspaceInSettings(id: workspace.id) },
+                            onUnshare: identity.isMine ? { unshare(identity, from: workspace) } : nil
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /// Only the row whose workspace matches the active tab's stamped
+    /// workspace highlights when an agent is shared into several.
+    private func isWorkspaceRowSelected(address: String, workspaceId: String) -> Bool {
+        guard workspaceAgentAddress == address else { return false }
+        return (workspaceAgentWorkspaceId ?? "") == workspaceId
+    }
+
+    /// Status for a teammate's roster agent as the sidebar row shows it
+    /// (shared with the Workspaces panel via `SharedAgentStatus`).
+    private func teammateAgentStatus(address: String, workspaceId: String) -> SharedAgentStatus {
+        // Read the observed stores so SwiftUI re-renders on pairing/presence
+        // changes; the derivation itself lives on the status type.
+        _ = remoteAgentManager.remoteAgents
+        _ = rosterStore.rosters
+        _ = connectService.connectingAddresses
+        _ = remoteProviderManager.isOsaurusRouterEnabled
+        return SharedAgentStatus.forTeammateRow(address: address, workspaceId: workspaceId)
+    }
+
+    /// The user's own shared agent is "ready" for teammates only while its
+    /// relay tunnel is up; otherwise the row says so instead of a hard-coded
+    /// online dot.
+    private func ownAgentStatus(_ agent: Agent) -> SharedAgentStatus {
+        SharedAgentStatus.forOwnAgent(relayStatus: relayManager.agentStatuses[agent.id])
+    }
+
+    /// Every workspace affordance in the sidebar is about its agents (open
+    /// a teammate's agent row, share one of ours), so land on that
+    /// workspace's Shared Agents tab, not the workspace list.
+    private func openWorkspaceInSettings(id: String) {
+        workspacesService.openInSettings(workspaceId: id, tab: .sharedAgents)
+    }
+
+    private func unshare(_ identity: SharedAgentIdentity, from workspace: OsaurusRouterWorkspaceSummary) {
+        ThemedAlertCenter.shared.confirmDestructive(
+            scope: alertScope,
+            title: String(format: L("Unshare %@?"), identity.name),
+            message: String(
+                format: L("Teammates in %@ will lose access immediately; their conversations stay readable."),
+                workspace.name
+            ),
+            destructiveTitle: L("Unshare")
+        ) {
+            Task {
+                _ = await workspacesService.unshareAgent(
+                    workspaceId: workspace.id, agentAddress: identity.address
+                )
+            }
+        }
+    }
+
+    /// The local agent behind a roster entry when it is one of the user's
+    /// own shared agents; nil for teammates' agents.
+    private func localAgent(sharedAs address: String) -> Agent? {
+        agentManager.agents.first { $0.agentAddress?.lowercased() == address }
+    }
+
+    /// Workspaces one of the user's own agents is shared into (for the
+    /// "shared" glyph on its local row). Empty for unshared agents.
+    private func sharedWorkspaceNames(for agent: Agent) -> [String] {
+        sharedWorkspaces(for: agent).map(\.name)
+    }
+
+    private func sharedWorkspaces(for agent: Agent) -> [OsaurusRouterWorkspaceSummary] {
+        guard let address = agent.agentAddress, rosterStore.hasWorkspaces else { return [] }
+        return rosterStore.workspacesSharing(agentAddress: address)
+    }
+
+    /// Workspaces the agent could still be shared into (user's role allows
+    /// it; not already shared there). Built-ins have no address to share.
+    private func shareableWorkspaces(for agent: Agent) -> [OsaurusRouterWorkspaceSummary] {
+        guard agent.agentAddress != nil, !agent.isBuiltIn else { return [] }
+        let shared = Set(sharedWorkspaces(for: agent).map(\.id))
+        return rosterStore.rosters.map(\.workspace).filter {
+            !shared.contains($0.id) && ($0.typedRole?.canShareAgents ?? false) && $0.isActive
+        }
+    }
+
+    /// Roll live activity up to a team agent: sessions this user has with
+    /// that agent (by address) that are streaming / waiting.
+    private func activityStatus(forRemoteAgentAddress address: String, workspaceId: String) -> SessionActivityMonitor.Status? {
+        let statuses = activityMonitor.statuses
+        guard !statuses.isEmpty else { return nil }
+        var rolledUp: SessionActivityMonitor.Status?
+        for session in ChatSessionsManager.shared.sessions(forRemoteAgentAddress: address) {
+            guard session.workspace?.workspaceId == workspaceId,
+                let status = statuses[session.id] else { continue }
+            if status == .working { return .working }
+            rolledUp = rolledUp ?? status
+        }
+        return rolledUp
     }
 
     // MARK: Agent drag-to-reorder
@@ -1137,17 +1616,83 @@ struct ChatSessionSidebar: View {
     /// Roll the per-session activity up to the agent: `.working` wins over
     /// `.waitingForInput`; nil when none of the agent's sessions are live.
     private func activityStatus(for agent: Agent) -> SessionActivityMonitor.Status? {
+        // Helper runs (spawned subagents whose launching chat is no longer
+        // on screen): mirrors without a chat of their own. Inbound
+        // shared-agent runs are ordinary session-backed tasks and roll up
+        // through the per-session map below like any other run.
+        if mirrorTask(for: agent) != nil { return .working }
+        var rolledUp: SessionActivityMonitor.Status? = nil
         let statuses = activityMonitor.statuses
-        guard !statuses.isEmpty else { return nil }
-        var rolledUp: SessionActivityMonitor.Status?
+        guard !statuses.isEmpty else { return rolledUp }
         for session in ChatSessionsManager.shared.sessions {
-            guard (session.agentId ?? Agent.defaultId) == agent.id,
+            // Chats with a teammate's shared agent roll up to that agent's
+            // row, not to the local agent whose tab hosted them.
+            guard !session.isWorkspaceAgentChat,
+                (session.agentId ?? Agent.defaultId) == agent.id,
                 let status = statuses[session.id]
             else { continue }
             if status == .working { return .working }
             rolledUp = rolledUp ?? status
         }
         return rolledUp
+    }
+
+    /// Session ids of this agent's live (non-workspace-chat) sessions, in
+    /// sidebar recency order.
+    private func liveSessionIds(for agent: Agent) -> [UUID] {
+        let statuses = activityMonitor.statuses
+        guard !statuses.isEmpty else { return [] }
+        return ChatSessionsManager.shared.sessions.compactMap { session in
+            guard !session.isWorkspaceAgentChat,
+                (session.agentId ?? Agent.defaultId) == agent.id,
+                statuses[session.id] != nil
+            else { return nil }
+            return session.id
+        }
+    }
+
+    /// An active spawned-helper mirror on this agent (a `spawn_agent`-style
+    /// run whose launching chat isn't in any window). Mirrors have no chat
+    /// and therefore no tab; the agent row is their only surface.
+    private func mirrorTask(for agent: Agent) -> BackgroundTaskState? {
+        taskManager.backgroundTasks.values.first {
+            $0.isSubagentMirror && $0.agentId == agent.id && $0.status.isActive
+        }
+    }
+
+    /// One-line current step for the agent row's live status line. Detached
+    /// registry runs (including runs hosted for a remote caller, prefixed
+    /// with the caller's name) expose their step; a windowed run in another
+    /// window reports no step and falls back to "Working…".
+    private func activityStep(for agent: Agent) -> String? {
+        if let mirror = mirrorTask(for: agent) {
+            if let step = mirror.currentStep, !step.isEmpty {
+                return "\(mirror.taskTitle) · \(step)"
+            }
+            return mirror.taskTitle
+        }
+        for sessionId in liveSessionIds(for: agent) {
+            guard let task = BackgroundTaskManager.shared.liveTask(forSessionId: sessionId) else { continue }
+            let step = task.currentStep?.isEmpty == false ? task.currentStep : nil
+            if task.isInboundRun {
+                let caller = task.externalSessionKey ?? L("a teammate")
+                return step.map { "\(caller) · \($0)" } ?? caller
+            }
+            if let step { return step }
+        }
+        return nil
+    }
+
+    /// Stop everything live on this agent: its windowed/detached sessions
+    /// (via the monitor, which prefers the registry task — for a run hosted
+    /// for a remote caller that ends the SSE run) and any helper mirror.
+    private func stopActivity(for agent: Agent) {
+        for sessionId in liveSessionIds(for: agent) {
+            onStop?(sessionId)
+        }
+        if let mirror = mirrorTask(for: agent) {
+            taskManager.cancelTask(mirror.id)
+        }
     }
 
     // MARK: - Session List
@@ -1253,7 +1798,25 @@ private struct AgentSidebarRow: View {
     /// Live activity rolled up from the agent's sessions: `.working`
     /// animates the avatar ring exactly like the old session rows.
     var activityStatus: SessionActivityMonitor.Status? = nil
+    /// One-line current step for the live status subtitle ("Reading
+    /// files…"); nil falls back to a generic "Working…".
+    var activityStep: String? = nil
+    /// Workspaces this agent is shared into. Non-empty draws a small
+    /// "shared" glyph after the name (tooltip names the workspaces) so the
+    /// user's own shared agents are recognisable without a duplicate row
+    /// in the workspace section.
+    var sharedWorkspaceNames: [String] = []
+    /// Workspaces the user can share this agent into (role allows sharing,
+    /// not yet shared there). Drives the "Share to Workspace" submenu.
+    var shareableWorkspaces: [OsaurusRouterWorkspaceSummary] = []
+    /// Workspaces this agent is currently shared into, for "Unshare from…".
+    var sharedWorkspaces: [OsaurusRouterWorkspaceSummary] = []
+    var onShareToWorkspace: ((OsaurusRouterWorkspaceSummary) -> Void)?
+    var onUnshareFromWorkspace: ((OsaurusRouterWorkspaceSummary) -> Void)?
     let onSelect: () -> Void
+    /// Stop every live run on this agent. Shown on hover while
+    /// `activityStatus` is non-nil.
+    var onStop: (() -> Void)? = nil
     /// Drag-to-reorder (custom agents only; built-ins are pinned to the
     /// top). The list owns the state; the row just reports translation.
     var isReorderable: Bool = false
@@ -1287,13 +1850,37 @@ private struct AgentSidebarRow: View {
             .animation(theme.springAnimation(responseMultiplier: 0.8), value: activityStatus)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(agent.displayName)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 4) {
+                    Text(agent.displayName)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                    if !sharedWorkspaceNames.isEmpty {
+                        Image(systemName: "person.2.fill")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundColor(theme.accentColor.opacity(0.85))
+                            .help(
+                                String(
+                                    format: L("Shared with %@"),
+                                    sharedWorkspaceNames.joined(separator: ", ")
+                                )
+                            )
+                            .accessibilityLabel(Text("Shared with workspace", bundle: .module))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                if let currentSessionTitle {
+                // Live status wins over the session title / role caption:
+                // the row is the agents bar's real-time readout.
+                if let activityStatus {
+                    Text(liveStatusLine(activityStatus))
+                        .font(.system(size: 10, weight: activityStatus == .waitingForInput ? .semibold : .regular))
+                        .foregroundColor(
+                            activityStatus == .waitingForInput ? theme.warningColor : theme.accentColor.opacity(0.9)
+                        )
+                        .lineLimit(1)
+                        .contentTransition(.opacity)
+                } else if let currentSessionTitle {
                     Text(currentSessionTitle)
                         .font(.system(size: 10))
                         .foregroundColor(theme.accentColor.opacity(0.9))
@@ -1307,11 +1894,17 @@ private struct AgentSidebarRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
+            // Hover-only Stop while a run is live on this agent; takes the
+            // gear's slot so the row doesn't widen.
+            if isHovered, activityStatus != nil, let onStop {
+                SessionStopButton(action: onStop)
+                    .transition(.opacity)
+            }
             // Hover-only gear opening this agent's detail page in the
             // management window. The selected row is already signalled by
             // its background, so no checkmark. Built-ins (the default
             // Osaurus agent) have no editable detail page, so no gear.
-            if isHovered, !agent.isBuiltIn {
+            else if isHovered, !agent.isBuiltIn {
                 Button {
                     AppDelegate.shared?.showManagementWindow(
                         initialTab: .agents, deeplinkAgentId: agent.id)
@@ -1337,6 +1930,7 @@ private struct AgentSidebarRow: View {
         .zIndex(isDragging ? 1 : 0)
         .shadow(color: .black.opacity(isDragging ? 0.18 : 0), radius: 8, y: 2)
         .onTapGesture(perform: onSelect)
+        .contextMenu { agentContextMenu }
         // Same threshold as the tab strip: a short travel keeps clicks as
         // taps; beyond it the press becomes a reorder drag.
         .gesture(
@@ -1351,6 +1945,498 @@ private struct AgentSidebarRow: View {
             }
         }
         .animation(theme.springAnimation(responseMultiplier: 0.8), value: isSelected)
+    }
+
+    /// Parity with session / project rows: settings, address, and the
+    /// share/unshare actions that otherwise live only in Settings.
+    @ViewBuilder
+    private var agentContextMenu: some View {
+        if !agent.isBuiltIn {
+            Button {
+                AppDelegate.shared?.showManagementWindow(initialTab: .agents, deeplinkAgentId: agent.id)
+            } label: {
+                Label(L("Open Settings"), systemImage: "gearshape")
+            }
+        }
+        if let address = agent.agentAddress, !address.isEmpty {
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(address, forType: .string)
+            } label: {
+                Label(L("Copy Address"), systemImage: "doc.on.doc")
+            }
+        }
+        if !shareableWorkspaces.isEmpty, let onShareToWorkspace {
+            Menu {
+                ForEach(shareableWorkspaces) { workspace in
+                    Button(workspace.name) { onShareToWorkspace(workspace) }
+                }
+            } label: {
+                Label(L("Share to Workspace…"), systemImage: "person.2.fill")
+            }
+        }
+        if !sharedWorkspaces.isEmpty, let onUnshareFromWorkspace {
+            Divider()
+            ForEach(sharedWorkspaces) { workspace in
+                Button(role: .destructive) {
+                    onUnshareFromWorkspace(workspace)
+                } label: {
+                    Label(String(format: L("Unshare from %@"), workspace.name), systemImage: "person.2.slash")
+                }
+            }
+        }
+    }
+
+    /// "Working · Reading files…" / "Working…" / "Needs your input".
+    private func liveStatusLine(_ status: SessionActivityMonitor.Status) -> String {
+        switch status {
+        case .waitingForInput:
+            return L("Needs your input")
+        case .working:
+            if let step = activityStep?.trimmingCharacters(in: .whitespacesAndNewlines), !step.isEmpty {
+                return "\(L("Working")) · \(step)"
+            }
+            return L("Working…")
+        }
+    }
+}
+
+// MARK: - Workspace Agent Row
+
+/// Row for a shared agent on a workspace roster — a teammate's (chat over the
+/// relay) or the user's own (routes to the local agent). Same shape as
+/// `AgentSidebarRow` (avatar, name, subtitle, hover gear) plus a status dot on
+/// the avatar driven by `SharedAgentStatus`, the same vocabulary the composer
+/// lock and Workspaces roster use. Offline rows dim their text but stay
+/// clickable so the user can read the history.
+private struct WorkspaceAgentSidebarRow: View {
+    let identity: SharedAgentIdentity
+    let workspaceId: String
+    let status: SharedAgentStatus
+    let isSelected: Bool
+    var currentSessionTitle: String? = nil
+    var activityStatus: SessionActivityMonitor.Status? = nil
+    let onSelect: () -> Void
+    /// Own agent: open its Settings ▸ Agents detail (the gear).
+    var onOpenSettings: (() -> Void)?
+    /// Teammate agent: a second chat window on it.
+    var onOpenInNewWindow: (() -> Void)?
+    /// Settings ▸ Workspaces on this row's workspace (the gear for teammate
+    /// rows; a menu item for own rows).
+    var onOpenWorkspace: (() -> Void)?
+    /// Own agent only: revoke the share.
+    var onUnshare: (() -> Void)?
+    /// Own agent whose relay is off: turn it on so teammates can reach it.
+    var onTurnOnRelay: (() -> Void)?
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
+
+    private var isMine: Bool { identity.isMine }
+    private var isOffline: Bool {
+        if case .offline = status { return true }
+        return false
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            AgentAvatarView(
+                mascotId: identity.avatar,
+                name: identity.name,
+                tint: agentColorFor(identity.localAgent?.name ?? identity.name),
+                diameter: 26,
+                customImageURL: identity.customAvatarURL,
+                monogramFontSize: 12,
+                borderWidth: 0
+            )
+            .overlay(
+                Group {
+                    if let activityStatus {
+                        SessionActivityRing(status: activityStatus)
+                    }
+                }
+                .allowsHitTesting(false)
+            )
+            // One presence dot for own and teammate rows alike — own rows
+            // read relay reachability, teammate rows the connect verdict —
+            // so the section scans as one list instead of two glyph systems.
+            .overlay(alignment: .bottomTrailing) {
+                SharedAgentStatusDot(status: status)
+                    .padding(1.5)
+                    .background(Circle().fill(theme.sidebarBackground))
+                    .offset(x: 2, y: 2)
+                    .help(isMine ? ownPresenceHelp : status.shortLabel)
+            }
+            .opacity(isOffline ? 0.7 : 1)
+            .animation(theme.springAnimation(responseMultiplier: 0.8), value: activityStatus)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(identity.name)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                subtitle
+                    .font(.system(size: 10))
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .opacity(isOffline ? 0.6 : 1)
+
+            // Hover-only gear: own agent → its Agents detail; teammate agent →
+            // Settings ▸ Workspaces on this workspace (the roster owns
+            // connect / unshare; the chat only consumes).
+            if isHovered, let open = isMine ? onOpenSettings : onOpenWorkspace {
+                Button(action: open) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointingHandCursor()
+                .help(isMine ? L("Agent Settings") : L("Open Workspace"))
+                .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
+        .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        .onTapGesture(perform: onSelect)
+        .contextMenu { contextMenuItems }
+        .onHover { hovering in
+            withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
+                isHovered = hovering
+            }
+        }
+        .animation(theme.springAnimation(responseMultiplier: 0.8), value: isSelected)
+        .help(helpText)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(verbatim: "\(identity.name), \(accessibilityStatus)"))
+    }
+
+    @ViewBuilder
+    private var contextMenuItems: some View {
+        Button(action: onSelect) {
+            Label(isMine ? L("Open Settings") : L("Chat"), systemImage: isMine ? "gearshape" : "bubble.left")
+        }
+        if let onOpenInNewWindow {
+            Button(action: onOpenInNewWindow) {
+                Label(L("Open in New Window"), systemImage: "macwindow.badge.plus")
+            }
+        }
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(identity.address, forType: .string)
+        } label: {
+            Label(L("Copy Address"), systemImage: "doc.on.doc")
+        }
+        if let onOpenWorkspace {
+            Button(action: onOpenWorkspace) {
+                Label(L("Open Workspace"), systemImage: "rectangle.3.group")
+            }
+        }
+        if isMine, onTurnOnRelay != nil, status != .ready, status != .connecting, let onTurnOnRelay {
+            Button(action: onTurnOnRelay) {
+                Label(L("Turn On Relay"), systemImage: "antenna.radiowaves.left.and.right")
+            }
+        }
+        if let onUnshare {
+            Divider()
+            Button(role: .destructive, action: onUnshare) {
+                Label(
+                    identity.workspaceName.map { String(format: L("Unshare from %@"), $0) } ?? L("Unshare"),
+                    systemImage: "person.2.slash"
+                )
+            }
+        }
+    }
+
+    /// Subtitle priority is status-first: offline → connecting → failed
+    /// (short label; the full reason is in the tooltip) → the open chat's
+    /// title → "owner · model" (teammate) / "Your agent · model" (own).
+    @ViewBuilder
+    private var subtitle: some View {
+        switch status {
+        case .offline:
+            Text(verbatim: status.shortLabel)
+                .foregroundColor(theme.secondaryText.opacity(0.85))
+        case .checking, .connecting:
+            Text(verbatim: isMine ? L("Relay connecting…") : status.shortLabel)
+                .foregroundColor(theme.secondaryText.opacity(0.85))
+        case .notConnected(let reason, _):
+            if isMine {
+                Text("Relay off — teammates can't reach it", bundle: .module)
+                    .foregroundColor(theme.warningColor.opacity(0.9))
+            } else if reason != nil {
+                Text("Couldn't connect", bundle: .module)
+                    .foregroundColor(theme.warningColor.opacity(0.9))
+            } else if let currentSessionTitle {
+                Text(currentSessionTitle)
+                    .foregroundColor(theme.accentColor.opacity(0.9))
+            } else {
+                Text(verbatim: status.shortLabel)
+                    .foregroundColor(theme.secondaryText.opacity(0.85))
+            }
+        case .unavailable:
+            Text(verbatim: status.shortLabel)
+                .foregroundColor(theme.secondaryText.opacity(0.85))
+        case .ready, .readOnlyTeammate:
+            if let currentSessionTitle {
+                Text(currentSessionTitle)
+                    .foregroundColor(theme.accentColor.opacity(0.9))
+            } else {
+                Text(verbatim: isMine ? localLabel : ownerAndModelLabel)
+                    .foregroundColor(theme.secondaryText.opacity(0.85))
+            }
+        }
+    }
+
+    private var ownerAndModelLabel: String {
+        var parts: [String] = []
+        if let owner = identity.ownerName, !owner.isEmpty { parts.append(owner) }
+        if let model = identity.modelLabel { parts.append(model) }
+        if parts.isEmpty { parts.append(L("Shared agent")) }
+        return parts.joined(separator: " · ")
+    }
+
+    /// "Your agent · model" for the user's own shared agent.
+    private var localLabel: String {
+        var parts: [String] = [L("Your agent")]
+        if let model = identity.modelLabel { parts.append(model) }
+        return parts.joined(separator: " · ")
+    }
+
+    private var accessibilityStatus: String {
+        if isMine {
+            return status == .ready
+                ? L("your agent, runs on this Mac")
+                : L("your agent, relay off")
+        }
+        return status.shortLabel
+    }
+
+    private var ownPresenceHelp: String {
+        switch status {
+        case .ready: return L("Your agent — runs on this Mac, reachable by teammates")
+        case .connecting: return L("Your agent — relay connecting")
+        default: return L("Your agent — relay off, teammates can't reach it")
+        }
+    }
+
+    private var helpText: String {
+        var lines: [String] = [identity.name]
+        if isMine {
+            lines.append(
+                identity.workspaceName.map {
+                    String(format: L("Your agent — shared with %@, runs on this Mac"), $0)
+                } ?? L("Your agent — shared with this workspace, runs on this Mac")
+            )
+            if let sharedAs = identity.sharedAsName {
+                lines.append(String(format: L("shared as “%@”"), sharedAs))
+            }
+        } else if let owner = identity.ownerName, !owner.isEmpty {
+            lines.append(String(format: L("Shared by %@"), owner))
+        }
+        if let description = identity.description, !description.isEmpty {
+            lines.append(description)
+        }
+        if case .notConnected(let reason?, _) = status, !isMine {
+            lines.append(reason)
+        }
+        lines.append(identity.shortAddress)
+        return lines.joined(separator: "\n")
+    }
+
+    nonisolated static func offlineLabel(lastSeen: Date?, now: Date = Date()) -> String {
+        guard let lastSeen else { return L("Offline") }
+        return String(format: L("Offline · last seen %@"), SharedAgentStatus.relative(lastSeen, now: now))
+    }
+
+    nonisolated static func shortAddress(_ address: String) -> String {
+        SharedAgentIdentity.shortAddress(address)
+    }
+}
+
+/// Avatar corner dot for a teammate's shared agent: green when ready, accent
+/// while connecting, warning when a connect failed, muted when offline /
+/// unavailable, and an outline for unknown ("not connected yet, no
+/// verdict"). One mapping with `SharedAgentStatus.tint`.
+private struct SharedAgentStatusDot: View {
+    @Environment(\.theme) private var theme
+    let status: SharedAgentStatus
+
+    var body: some View {
+        Group {
+            switch status {
+            case .ready:
+                Circle().fill(theme.successColor)
+            case .checking, .connecting:
+                Circle().fill(theme.accentColor)
+            case .notConnected(let reason, _):
+                if reason == nil {
+                    Circle().strokeBorder(theme.tertiaryText.opacity(0.6), lineWidth: 1.5)
+                } else {
+                    Circle().fill(theme.warningColor)
+                }
+            case .offline, .unavailable, .readOnlyTeammate:
+                Circle().fill(theme.tertiaryText.opacity(0.5))
+            }
+        }
+        .frame(width: 8, height: 8)
+        .help(status.shortLabel)
+    }
+}
+
+// MARK: - Directly Shared Agent Row
+
+/// Row for an agent someone shared with the user through an invite link
+/// (paired, but on no workspace roster), and for a workspace pairing whose
+/// roster isn't loaded. Same shape as the workspace rows; there is no router
+/// presence for these, so the avatar carries no dot and the subtitle reads
+/// "note · model" or falls back to "Shared with you".
+private struct RemoteAgentSidebarRow: View {
+    let agent: RemoteAgent
+    let isSelected: Bool
+    var currentSessionTitle: String? = nil
+    var activityStatus: SessionActivityMonitor.Status? = nil
+    let onSelect: () -> Void
+    /// Direct share: forget the pairing.
+    var onRemove: (() -> Void)?
+    /// Workspace pairing: open its workspace in Settings.
+    var onOpenWorkspace: (() -> Void)?
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            AgentAvatarView(
+                mascotId: agent.avatar,
+                name: agent.name,
+                tint: agentColorFor(agent.name),
+                diameter: 26,
+                customImageURL: nil,
+                monogramFontSize: 12,
+                borderWidth: 0
+            )
+            .overlay(
+                Group {
+                    if let activityStatus {
+                        SessionActivityRing(status: activityStatus)
+                    }
+                }
+                .allowsHitTesting(false)
+            )
+            .animation(theme.springAnimation(responseMultiplier: 0.8), value: activityStatus)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(agent.name)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                // The section header already says "Shared with you"; a row
+                // with no note or model shows no subtitle, like a local
+                // custom agent without a role caption.
+                if let currentSessionTitle {
+                    Text(currentSessionTitle)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.accentColor.opacity(0.9))
+                        .lineLimit(1)
+                } else if let subtitleLabel {
+                    Text(verbatim: subtitleLabel)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.secondaryText.opacity(0.85))
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Hover-only gear → where the pairing is managed: Settings ▸
+            // Agents (direct share) or Settings ▸ Workspaces (workspace).
+            if isHovered {
+                Button(action: openSettings) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointingHandCursor()
+                .help(onOpenWorkspace == nil ? L("Agent Settings") : L("Open Workspace"))
+                .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
+        .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        .onTapGesture(perform: onSelect)
+        .contextMenu {
+            Button(action: onSelect) { Label(L("Chat"), systemImage: "bubble.left") }
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(agent.agentAddress, forType: .string)
+            } label: {
+                Label(L("Copy Address"), systemImage: "doc.on.doc")
+            }
+            if let onOpenWorkspace {
+                Button(action: onOpenWorkspace) {
+                    Label(L("Open Workspace"), systemImage: "rectangle.3.group")
+                }
+            }
+            if let onRemove {
+                Divider()
+                Button(role: .destructive, action: onRemove) {
+                    Label(L("Remove"), systemImage: "trash")
+                }
+            }
+        }
+        .onHover { hovering in
+            withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
+                isHovered = hovering
+            }
+        }
+        .animation(theme.springAnimation(responseMultiplier: 0.8), value: isSelected)
+        .help(helpText)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(verbatim: "\(agent.name), \(L("shared with you"))"))
+    }
+
+    private func openSettings() {
+        if let onOpenWorkspace {
+            onOpenWorkspace()
+        } else {
+            AppDelegate.shared?.showManagementWindow(initialTab: .agents, deeplinkRemoteAgentId: agent.id)
+        }
+    }
+
+    /// "note · model", either alone, or nil when neither is known.
+    private var subtitleLabel: String? {
+        var parts: [String] = []
+        if let note = agent.note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+            parts.append(note)
+        }
+        if let model = agent.model, !model.isEmpty {
+            parts.append(RemoteAgent.shortModelLabel(model))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private var helpText: String {
+        var lines: [String] = [agent.name]
+        let description = agent.description.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !description.isEmpty { lines.append(description) }
+        lines.append(agent.shortAddress)
+        return lines.joined(separator: "\n")
     }
 }
 
@@ -1971,6 +3057,7 @@ private struct SessionRow: View {
         case .selfSchedule: return theme.warningColor.opacity(0.9)
         case .imported: return theme.accentColorLight.opacity(0.7)
         case .delegation: return theme.accentColor.opacity(0.8)
+        case .workspace: return theme.accentColor
         }
     }
 
@@ -1997,6 +3084,11 @@ private struct SessionRow: View {
             return Text("Imported", bundle: .module)
         case .delegation:
             return Text("Delegated", bundle: .module)
+        case .workspace:
+            if let caller = session.workspace?.callerLabel {
+                return Text(verbatim: "Workspace · \(caller)")
+            }
+            return Text("Workspace", bundle: .module)
         }
     }
 
@@ -2165,7 +3257,7 @@ private struct ActionsPopoverButton: View {
 /// Reduce Motion); `.waitingForInput` renders a steady warning ring with a
 /// question-mark badge, matching `BackgroundTaskStatus.waitingForInput`'s
 /// iconography.
-private struct SessionActivityRing: View {
+struct SessionActivityRing: View {
     let status: SessionActivityMonitor.Status
 
     @Environment(\.theme) private var theme
@@ -2231,7 +3323,7 @@ private struct SessionActivityRing: View {
 /// Persistent (non-hover-gated) stop control for a row whose run is live.
 /// Styled like `SidebarRowActionButton` but tinted with the error color on
 /// hover to telegraph that it halts execution.
-private struct SessionStopButton: View {
+struct SessionStopButton: View {
     let action: () -> Void
 
     @Environment(\.theme) private var theme

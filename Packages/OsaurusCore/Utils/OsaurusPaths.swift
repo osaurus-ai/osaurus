@@ -101,6 +101,18 @@ public enum OsaurusPaths {
         root().appendingPathComponent("remote-agents", isDirectory: true)
     }
 
+    /// Workspaces (shared-agent) host state: minted teammate key records and
+    /// the per-workspace audit trail.
+    public static func workspaces() -> URL {
+        root().appendingPathComponent("workspaces", isDirectory: true)
+    }
+
+    /// Append-only, hash-chained per-workspace audit logs
+    /// (`<workspaceId>.jsonl` + `<workspaceId>.head`).
+    public static func workspaceAudit() -> URL {
+        workspaces().appendingPathComponent("audit", isDirectory: true)
+    }
+
     /// Projects directory (one JSON file per project)
     public static func projects() -> URL {
         root().appendingPathComponent("projects", isDirectory: true)

@@ -170,7 +170,7 @@ public enum SubagentSession {
             title: kind.feedTitle,
             agentId: scope.agentId,
             parentSessionId: scope.sessionId,
-            suppressNotchMirror: kind.suppressNotchMirror
+            suppressActivityMirror: kind.suppressActivityMirror
         )
         let interrupt = InterruptToken()
         SubagentFeedRegistry.shared.register(feed)
@@ -212,7 +212,7 @@ public enum SubagentSession {
     /// unstructured task that outlives the parent turn, and this call
     /// returns an acknowledgment envelope at once.
     ///
-    /// The pre-registered feed drives the notch background-task row (via
+    /// The pre-registered feed drives the Activity row (via
     /// `SubagentBackgroundTaskBridge`) and the interrupt token backs its
     /// Stop control. The terminal digest never travels this tool call's
     /// result channel — `SubagentReportBack` delivers it to the launching
@@ -235,7 +235,7 @@ public enum SubagentSession {
             title: kind.feedTitle,
             agentId: scope.agentId,
             parentSessionId: scope.sessionId,
-            suppressNotchMirror: kind.suppressNotchMirror
+            suppressActivityMirror: kind.suppressActivityMirror
         )
         let interrupt = InterruptToken()
         SubagentFeedRegistry.shared.register(feed)
@@ -513,7 +513,7 @@ public enum SubagentSession {
                     title: prepared.kind.feedTitle,
                     agentId: prepared.scope.agentId,
                     parentSessionId: prepared.scope.sessionId,
-                    suppressNotchMirror: prepared.kind.suppressNotchMirror
+                    suppressActivityMirror: prepared.kind.suppressActivityMirror
                 ),
                 interrupt: InterruptToken(),
                 registerWithUI: true

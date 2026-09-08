@@ -159,7 +159,7 @@ public struct ProviderCredentialRequest: Sendable {
 /// Borderless panels refuse key status by default (`canBecomeKey` is only
 /// true for windows with a title or resize bar), which silently breaks
 /// keyboard focus for the credential text fields. Opt in explicitly — same
-/// pattern as `ChatPanel` and `NotchPanel`. Internal (not private) so the
+/// pattern as `ChatPanel`. Internal (not private) so the
 /// regression test can pin the key-capability contract.
 final class CredentialPromptPanel: NSPanel {
     override var canBecomeKey: Bool { true }

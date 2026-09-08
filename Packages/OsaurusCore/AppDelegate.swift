@@ -309,7 +309,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // NSWorkspace activation observer.
         FrontmostAppTracker.shared.start()
 
-        // Mirror spawned-helper runs into the notch's background tasks so
+        // Mirror spawned-helper runs into the sidebar Activity section so
         // orchestrated dispatches are visible and stoppable outside the
         // launching transcript.
         SubagentBackgroundTaskBridge.shared.start()
@@ -622,6 +622,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             NextRunScheduler.shared.start()
         }
 
+        // Workspaces: pair with every shared agent the user hasn't connected
+        // to yet, so a teammate who opens Osaurus finds the roster ready to
+        // chat without visiting the tab. Deferred past the launch burst; the
+        // sweep itself is a no-op without the Router or an identity, and
+        // re-runs (throttled) on app activation.
+        if !keychainDisabledTestMode {
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(8))
+                WorkspaceSyncService.shared.start()
+            }
+        }
+
         // Start sandbox tool registrar. Internally awaits container
         // auto-start before the initial `registerTools` call, so the first
         // compose for the active agent sees real sandbox tools instead of
@@ -640,10 +652,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         //    `NSPanel`/`orderFrontRegardless` calls don't share a frame
         //    with the onboarding/chat window, which is when stray "old
         //    window" flashes surface.
-        //  - `ToastWindowController` and `NotchWindowController` `setup()`
-        //    both build transparent overlay panels and order them front;
-        //    we run them *after* the user-facing window in the same Task
-        //    so they can't paint in its place during launch.
+        //  - `ToastWindowController` `setup()`
+        //    builds a transparent overlay panel and orders it front;
+        //    we run it *after* the user-facing window in the same Task
+        //    so it can't paint in its place during launch.
         //  - The SwiftUI Settings-placeholder key observer
         //    (`suppressSwiftUISettingsPlaceholder`) is torn down here. By
         //    the time our window is on screen, Cmd+, routes through
@@ -685,7 +697,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
             if !keychainDisabledTestMode {
                 ToastWindowController.shared.setup()
-                NotchWindowController.shared.setup()
             }
 
             // Existing users who upgraded from a build without the onboarding
@@ -1497,7 +1508,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         NSLog("Osaurus server app terminating")
         PluginRepositoryService.shared.stopBackgroundRefresh()
         ToastWindowController.shared.teardown()
-        NotchWindowController.shared.teardown()
         // Detach live browser WebViews and close their windows so WebKit's
         // networking XPC processes wind down before `_exit` (stored profiles
         // and the session catalog survive for the next run).
@@ -2156,6 +2166,9 @@ extension AppDelegate {
     /// `osaurus://<addr>?pair=<base64url(invite)>` — incoming agent share link.
     /// `osaurus://plugins-install?tool=<plugin_id>` — open Plugins tab on a plugin's detail page.
     /// `osaurus://themes-install?hash=<sha256>` — open Themes tab and install a shared theme.
+    /// `osaurus://workspaces/activate?code=<code>` — activate a Workspaces subscription purchased on osaurus.ai.
+    /// `osaurus://workspaces/join?code=<code>` — join a workspace through an invite link.
+    /// (`osaurus://teams/...` is the pre-rename host and is still routed to Workspaces.)
     /// `osaurus://settings?tab=<tab>` — open the management window on a tab
     /// (used by the in-chat osaurus_config result card's "Open in Settings"
     /// links for rows the user must finish by hand).
@@ -2179,6 +2192,12 @@ extension AppDelegate {
             if url.host?.lowercased() == ThemeShareService.deepLinkHost {
                 showManagementWindow(initialTab: .themes)
                 _ = ThemesDeepLinkRouter.handle(url)
+                return
+            }
+
+            if WorkspacesDeepLinkRouter.claims(url) {
+                showManagementWindow(initialTab: .workspaces)
+                _ = WorkspacesDeepLinkRouter.handle(url)
                 return
             }
 

@@ -133,7 +133,7 @@ public struct BackgroundTaskActivityItem: Identifiable, Equatable, Sendable {
 
 // MARK: - Background Task State
 
-/// Small transcript excerpt retained by a completed notch tab after its live
+/// Small transcript excerpt retained by a completed Activity tab after its live
 /// `ChatSession` has been released. Enough context remains visible to decide
 /// whether and how to follow up; the full persisted session is rehydrated only
 /// when the user replies or opens Chat.
@@ -193,7 +193,7 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     /// When the background task was created
     public let createdAt: Date
 
-    /// Recent conversational context used by the notch follow-up UI. This is
+    /// Recent conversational context used by follow-up (quick reply) callers. This is
     /// captured at completion and persisted with retained tabs, allowing the
     /// live ChatSession and its observers to be released without reducing the
     /// tab to an unhelpful "Chat completed" summary.
@@ -208,13 +208,13 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     public var source: SessionSource = .plugin
 
     /// External grouping key (e.g. Telegram chat id). Mirrors
-    /// `DispatchRequest.externalSessionKey` so the toast / notch can show
+    /// `DispatchRequest.externalSessionKey` so the toast / Activity section can show
     /// it inline and the manager can debounce duplicate dispatches.
     public var externalSessionKey: String?
 
-    /// Whether the toast/notch UI should surface this task. Headless callers
+    /// Whether the toast/Activity UI should surface this task. Headless callers
     /// (e.g. webhooks responding inline) set this to `false` to keep the
-    /// notch quiet while the task still lives in `backgroundTasks` for
+    /// Activity section quiet while the task still lives in `backgroundTasks` for
     /// completion signaling.
     public var showToast: Bool = true
 
@@ -256,13 +256,25 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     public let subagentToolCallId: String?
 
     /// The parent chat session (uuid string) whose turn launched the
-    /// mirrored spawn, when known. Used to suppress the notch row while
+    /// mirrored spawn, when known. Used to suppress the Activity row while
     /// that chat is visible in a window (the in-chat spawn card already
     /// reports the run there).
     public let subagentParentSessionId: String?
 
     /// Whether this task is a spawned-helper mirror (see `subagentToolCallId`).
     public var isSubagentMirror: Bool { subagentToolCallId != nil }
+
+    /// True when this task hosts a remote caller's run of one of this
+    /// instance's shared agents (`/agents/{id}/run` from a workspace teammate
+    /// or an invite-link peer). The run's inference is admitted by the HTTP
+    /// surface, so the task never consumes a dispatch execution slot; the
+    /// `ChatSession` is a read-only live transcript written by
+    /// `InboundSharedRunBridge`, and Stop routes through that bridge so the
+    /// host actually ends the SSE run. Unlike mirrors these are real
+    /// session-backed tasks: they surface as tabs, persist as retained tabs
+    /// across relaunch, and are dismissed by closing the tab. Settable so a
+    /// retained tab revived by a follow-up remote turn regains the marker.
+    public internal(set) var isInboundRun: Bool = false
 
     /// Returns the first budget dimension that's been exceeded, or
     /// nil when usage is still under all configured caps.
@@ -334,6 +346,34 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
         self.showToast = true
         self.subagentToolCallId = toolCallId
         self.subagentParentSessionId = parentSessionId
+    }
+
+    /// A remote caller's run of a shared agent, hosted here as a real
+    /// session-backed task (see `isInboundRun`). `id` doubles as the persisted
+    /// session id so retained-tab hydration and history deep links resolve.
+    init(
+        inboundRunId id: UUID,
+        taskTitle: String,
+        agentId: UUID,
+        chatSession: ChatSession,
+        executionContext: ExecutionContext,
+        externalSessionKey: String?
+    ) {
+        self.id = id
+        self.taskTitle = taskTitle
+        self.agentId = agentId
+        self.chatSession = chatSession
+        self.executionContext = executionContext
+        self.status = .running
+        self.currentStep = "Starting…"
+        self.createdAt = Date()
+        self.source = .workspace
+        self.sourcePluginId = nil
+        self.externalSessionKey = externalSessionKey
+        self.showToast = true
+        self.subagentToolCallId = nil
+        self.subagentParentSessionId = nil
+        self.isInboundRun = true
     }
 
     /// Restore a lightweight terminal tab from durable metadata. No live

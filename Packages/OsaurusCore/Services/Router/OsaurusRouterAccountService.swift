@@ -238,6 +238,13 @@ final class OsaurusRouterAccountService: ObservableObject {
     }
 
     func noteRouterSummary(_ summary: OsaurusRouterSummaryEvent.Summary) {
+        // `billed_to: "workspace:<id>"` means the charge hit that workspace pool, not
+        // the personal wallet — deducting locally would show a phantom spend.
+        // Let the Workspaces surface refresh the right ledger instead.
+        if let workspaceId = summary.billedWorkspaceId {
+            WorkspacesService.shared.noteWorkspaceBilled(workspaceId: workspaceId)
+            return
+        }
         guard let current = balance, let currentMicro = Int64(current.balanceMicro),
             let costMicro = Int64(summary.costMicro)
         else {

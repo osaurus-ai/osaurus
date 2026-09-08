@@ -421,6 +421,7 @@ enum FeatureTelemetry {
         case .permissions: return "permissions"
         case .identity: return "identity"
         case .credits: return "credits"
+        case .workspaces: return "workspaces"
         case .insights: return "insights"
         }
     }

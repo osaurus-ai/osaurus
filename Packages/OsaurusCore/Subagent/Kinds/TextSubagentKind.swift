@@ -371,8 +371,8 @@ final class TextSubagentKind:
 
     /// A delegated run registers its own real background task (with a
     /// working "Open Chat"), so the subagent feed must not be mirrored
-    /// into a second notch row.
-    var suppressNotchMirror: Bool { isDelegatedAgentTarget }
+    /// into a second Activity row.
+    var suppressActivityMirror: Bool { isDelegatedAgentTarget }
 
     func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel {
         let resolved = try await resolveCurrentModel(scope)

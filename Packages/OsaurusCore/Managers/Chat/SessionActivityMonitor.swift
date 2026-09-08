@@ -47,7 +47,9 @@ final class SessionActivityMonitor: ObservableObject {
         statuses[sessionId]
     }
 
-    /// Called by `ChatSession` whenever its own activity changes.
+    /// Called by `ChatSession` whenever its own activity changes, and by
+    /// `InboundSharedRunBridge` for the read-only transcript of a run hosted
+    /// for a remote caller (that session never streams itself).
     /// `nil` clears the session's contribution (run finished / stopped).
     func reportSession(_ sessionId: UUID, status: Status?) {
         if sessionReported[sessionId] == status { return }

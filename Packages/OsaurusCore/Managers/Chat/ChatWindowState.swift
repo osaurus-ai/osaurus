@@ -39,6 +39,56 @@ public struct ChatThreadIdentity: Equatable, Sendable {
     public let isRemote: Bool
 }
 
+/// Why the composer refuses input right now. nil = the user can type and
+/// send. Rendered by `ChatView` as a notice above the (disabled) composer;
+/// the card keeps its shape so the layout doesn't jump.
+public enum ComposerLock: Equatable, Sendable {
+    /// The teammate's Osaurus that hosts this shared agent isn't reachable.
+    /// History stays readable; new messages wait for the host to come back.
+    case agentOffline(agentName: String, ownerName: String?, lastSeen: Date?)
+    /// The shared agent hasn't been paired on this device yet (auto-connect
+    /// failed or hasn't run); carries the last failure reason, if any.
+    case agentNotConnected(agentName: String, reason: String?)
+    /// The Mode 2 connect + model pin is in flight.
+    case connecting(agentName: String)
+    /// This is a remote caller's conversation that this instance served for
+    /// them (host side) — a workspace teammate (`isWorkspace`) or an
+    /// invite-link peer. Read-only: replying here would inject into their
+    /// chat. While the run is live the notice shows its step and a Stop.
+    case teammateConversation(callerName: String?, agentName: String, isWorkspace: Bool)
+    /// The agent is no longer reachable through the workspace at all: its
+    /// owner unshared it, or the user is no longer a member. History stays
+    /// readable; there is nothing to retry.
+    case agentUnavailable(agentName: String, reason: String)
+
+    /// Whether the user may retry a connection from the notice.
+    public var offersRetry: Bool {
+        switch self {
+        case .agentOffline, .agentNotConnected: return true
+        case .connecting, .teammateConversation, .agentUnavailable: return false
+        }
+    }
+}
+
+/// A Mode 2 connect the window state asked the view layer to perform. The
+/// connect flow (provider update → connect → effective-model pin) lives in
+/// `ChatView` because it drives the session's picker; the window state only
+/// records the intent so a freshly mounted `ChatView` (tab remount) can pick
+/// it up on appear instead of racing a notification.
+struct PendingRelayConnect: Equatable {
+    let id: UUID
+    let relay: PairedRelayAgent
+    /// Keep the current transcript (reopening history) instead of resetting
+    /// the session for a fresh chat.
+    let preserveSession: Bool
+
+    init(relay: PairedRelayAgent, preserveSession: Bool) {
+        self.id = UUID()
+        self.relay = relay
+        self.preserveSession = preserveSession
+    }
+}
+
 /// One browser-style tab in a chat window. Identity is the tab's own id —
 /// the session it holds is replaceable (in-tab chat switches swap it, just
 /// like the window's single session used to be swapped).
@@ -55,6 +105,25 @@ struct ChatTab: Identifiable, Equatable {
 
     static func == (lhs: ChatTab, rhs: ChatTab) -> Bool {
         lhs.id == rhs.id && lhs.session === rhs.session
+    }
+}
+
+/// Which agent a tab belongs to. The tab strip is scoped to the window's
+/// active agent: only tabs in the same scope are visible, and the sidebar's
+/// agent rows switch between scopes. A local agent's chats (including the
+/// host-side read-only copies of a teammate's chats with a shared local
+/// agent) scope by agent id; a chat with a teammate's shared agent scopes
+/// by that agent's workspace address.
+enum ChatTabScope: Hashable {
+    case local(UUID)
+    case workspace(String, workspaceId: String = "")
+
+    @MainActor
+    static func of(_ session: ChatSession) -> ChatTabScope {
+        if let context = session.workspaceContext, !context.isServedForTeammate {
+            return .workspace(context.agentAddress.lowercased(), workspaceId: context.workspaceId)
+        }
+        return .local(session.agentId ?? Agent.defaultId)
     }
 }
 
@@ -84,6 +153,27 @@ final class ChatWindowState: ObservableObject {
     /// registry.
     @Published private(set) var tabs: [ChatTab] = []
     @Published private(set) var activeTabId: UUID = UUID()
+
+    /// The agent whose tabs the strip currently shows: the workspace agent
+    /// the window's remote mode is bound to, else the window's local agent.
+    /// Both follow the active tab (`adoptTabSession` / `reconcileRemoteMode`).
+    var activeScope: ChatTabScope {
+        if let address = workspaceAgentAddress { return .workspace(address.lowercased(), workspaceId: session.workspaceContext?.workspaceId ?? "") }
+        return .local(agentId)
+    }
+
+    /// The tabs visible in the strip: those belonging to the active agent,
+    /// in global order. The active tab is always included so the strip can
+    /// never show a selection it doesn't contain.
+    var scopedTabs: [ChatTab] {
+        let scope = activeScope
+        return tabs.filter { $0.id == activeTabId || ChatTabScope.of($0.session) == scope }
+    }
+
+    /// Tabs in `scope` (any agent), in global order.
+    func tabs(in scope: ChatTabScope) -> [ChatTab] {
+        tabs.filter { ChatTabScope.of($0.session) == scope }
+    }
 
     // MARK: - View State
 
@@ -172,7 +262,49 @@ final class ChatWindowState: ObservableObject {
     /// message races the async connect and fails with a misleading "model not
     /// found"). Driven by `pinRemoteAgentModelAfterConnect` and kept in sync
     /// with later disconnects via the `.remoteProviderStatusChanged` observer.
-    @Published var remoteAgentConnectionPhase: RemoteAgentConnectionPhase = .idle
+    @Published var remoteAgentConnectionPhase: RemoteAgentConnectionPhase = .idle {
+        didSet { mirrorPhaseToConnectService() }
+    }
+
+    /// Keep `WorkspaceAgentConnectService.connectFailures` — the one failure
+    /// map every list row reads — in step with THIS window's relay connect
+    /// for a workspace agent. Without this the sidebar/Workspaces rows show a
+    /// paired agent as ready (green dot, "owner · model") while the composer
+    /// says the connect was rejected: two surfaces, two verdicts.
+    private func mirrorPhaseToConnectService() {
+        guard let address = workspaceAgentAddress else { return }
+        let connect = WorkspaceAgentConnectService.shared
+        switch remoteAgentConnectionPhase {
+        case .failed(let message):
+            connect.recordFailure(message, for: address, workspaceId: session.workspaceContext?.workspaceId)
+        case .connected:
+            connect.clearFailure(for: address, workspaceId: session.workspaceContext?.workspaceId)
+            // A later key expiry may be repaired again.
+            pairingRepairAttemptedFor = nil
+        case .connecting:
+            // A fresh attempt supersedes the previous verdict; a failure
+            // re-records above if it comes back.
+            connect.clearFailure(for: address, workspaceId: session.workspaceContext?.workspaceId)
+        case .idle:
+            break
+        }
+    }
+
+    // MARK: - Workspace (team) agent state
+
+    /// Lowercased address of the workspace teammate's shared agent the
+    /// window's remote mode is currently bound to, or nil when the active
+    /// tab is a local chat (or a legacy Bonjour/relay Mode 2 chat). Drives
+    /// the sidebar's selected row and the composer lock; kept in step with
+    /// the active tab's `session.workspaceContext` by `reconcileRemoteMode`.
+    @Published private(set) var workspaceAgentAddress: String?
+
+    /// A connect the view layer should run (see `PendingRelayConnect`).
+    /// `ChatView` consumes and clears it on appear / change.
+    @Published var pendingRelayConnect: PendingRelayConnect?
+    /// Whether this window holds a `WorkspaceRosterStore` observer (poll
+    /// lease); released in `cleanup()`.
+    private var isObservingRoster = false
 
     /// The window's content width, pushed by `ChatWindowDelegate` on every
     /// resize. The tab strip sizes itself from this — it must come through
@@ -226,6 +358,7 @@ final class ChatWindowState: ObservableObject {
     private var bonjourCancellable: AnyCancellable?
     private var agentsCancellable: AnyCancellable?
     private var sessionsCancellable: AnyCancellable?
+    private var workspaceCancellables: Set<AnyCancellable> = []
 
     // MARK: - Initialization
 
@@ -287,8 +420,10 @@ final class ChatWindowState: ObservableObject {
         observeBonjourBrowser()
         observeAgentManager()
         observeSessionsManager()
+        observeWorkspaceState()
         refreshPairedRelayAgents()
         refreshSandboxChanges()
+        reconcileRemoteMode()
     }
 
     /// Wrap an existing `ExecutionContext`, reusing its sessions without duplication.
@@ -323,8 +458,10 @@ final class ChatWindowState: ObservableObject {
         observeBonjourBrowser()
         observeAgentManager()
         observeSessionsManager()
+        observeWorkspaceState()
         refreshPairedRelayAgents()
         refreshSandboxChanges()
+        reconcileRemoteMode()
     }
 
     deinit {
@@ -334,6 +471,11 @@ final class ChatWindowState: ObservableObject {
 
     /// Stops any running execution and breaks reference chains — call when window is closing.
     func cleanup() {
+        if isObservingRoster {
+            isObservingRoster = false
+            WorkspaceRosterStore.shared.endObserving()
+        }
+        pendingRelayConnect = nil
         removeEphemeralProviderIfNeeded()
         selectedDiscoveredAgent = nil
         selectedDiscoveredAgentProviderId = nil
@@ -348,6 +490,14 @@ final class ChatWindowState: ObservableObject {
         if LiveChatSessionRegistry.shared.isShared(session) {
             if !session.turns.isEmpty { session.save() }
             releaseSharedSessionIfNeeded()
+            return
+        }
+        // Same for a registry-owned run on screen: the registry keeps
+        // executing (and finalizing) it; this window only stops viewing.
+        if BackgroundTaskManager.shared.task(owning: session) != nil {
+            if !session.turns.isEmpty { session.save() }
+            session.windowState = nil
+            session.onSessionChanged = nil
             return
         }
         // Persist BEFORE stop(), exactly like switchAgent/startNewChat do:
@@ -376,33 +526,338 @@ final class ChatWindowState: ObservableObject {
         AgentManager.shared.themeId(for: agentId)
     }
 
-    /// Pick another agent. Browser-style: the current tab is only reused
-    /// when it is a blank chat; otherwise the conversation stays put in its
-    /// tab and the new agent opens in its own tab (or an existing blank tab
-    /// of that agent is focused). The fresh chat does NOT inherit the
-    /// outgoing chat's project: it is a different agent's new conversation,
-    /// so the project pill only shows for chats that belong to a project.
+    /// Pick another agent: show that agent's tabs. When the agent already
+    /// has tabs in this window, the one that needs input (else the most
+    /// recently used) is focused and a blank tab left behind in the outgoing
+    /// agent's scope is dropped. Otherwise a blank active tab is repurposed,
+    /// else the conversation stays put in its tab and the new agent opens in
+    /// a fresh tab. The fresh chat does NOT inherit the outgoing chat's
+    /// project: it is a different agent's new conversation, so the project
+    /// pill only shows for chats that belong to a project.
     func switchAgent(to newAgentId: UUID) {
         TTSService.shared.stop()
+        let scope = ChatTabScope.local(newAgentId)
+        if scope == activeScope { return }
+        if focusExistingTab(in: scope) { return }
         if isBlank(session) {
             adoptAgent(newAgentId)
             if releaseSharedSessionIfNeeded() || detachRunningSessionIfNeeded() {
                 installFreshSession(agentId: newAgentId)
             } else {
                 session.reset(for: newAgentId)
+                // A blank team-agent tab repurposed for a local agent drops
+                // its workspace identity (reset keeps it for New Chat).
+                session.workspaceContext = nil
             }
+            reconcileRemoteMode()
             refreshSessions()
             refreshSandboxChanges()
             return
         }
-        if let blank = tabs.first(where: {
-            $0.id != activeTabId && !$0.isHibernated && isBlank($0.session)
-                && ($0.session.agentId ?? Agent.defaultId) == newAgentId
-        }) {
-            selectTab(id: blank.id)
+        newTab(agentId: newAgentId)
+    }
+
+    /// Pick a workspace teammate's shared agent from the sidebar, exactly
+    /// like picking a local agent: the agent's existing tabs are shown when
+    /// it has any; otherwise a blank active tab is repurposed, else a new
+    /// tab opens. The tab's session is stamped with the agent's
+    /// `WorkspaceSessionContext` (so its history lives under that agent) and
+    /// the window's remote mode is bound to the agent's paired provider.
+    /// Offline / unpaired agents still open — history stays browsable and
+    /// the composer explains why sending is locked.
+    ///
+    /// Also the path for agents shared directly through an invite link (on
+    /// no workspace roster): the stamped context then carries an empty
+    /// workspace id, which the composer lock and pool chip treat as "no
+    /// workspace" rather than "workspace lost".
+    func switchToWorkspaceAgent(address rawAddress: String, workspaceId requestedWorkspaceId: String? = nil) {
+        let address = rawAddress.lowercased()
+        TTSService.shared.stop()
+        let matches = WorkspaceRosterStore.shared.workspacesSharing(agentAddress: address)
+        let workspaceId = requestedWorkspaceId ?? (matches.count == 1 ? matches.first?.id : nil) ?? ""
+        let scope = ChatTabScope.workspace(address, workspaceId: workspaceId)
+        if scope == activeScope { return }
+        if focusExistingTab(in: scope) { return }
+        if isBlank(session) {
+            if agentId != Agent.defaultId { adoptAgent(Agent.defaultId) }
+            if releaseSharedSessionIfNeeded() || detachRunningSessionIfNeeded() {
+                installFreshSession(agentId: Agent.defaultId)
+            } else {
+                session.reset(for: Agent.defaultId)
+            }
+            stampWorkspaceContext(address: address, workspaceId: workspaceId, on: session)
+            reconcileRemoteMode()
+            refreshSessions()
+            refreshSandboxChanges()
             return
         }
-        newTab(agentId: newAgentId)
+        newTab(agentId: Agent.defaultId)
+        stampWorkspaceContext(address: address, workspaceId: workspaceId, on: session)
+        reconcileRemoteMode()
+        refreshSessions()
+    }
+
+    /// Show an agent's existing tabs: focus the one waiting for input, else
+    /// the most recently activated one. A blank tab left behind in the
+    /// outgoing scope is dropped so switching back and forth never litters
+    /// the strip with empty chats. Returns false when the scope has no tabs
+    /// (the caller then opens one).
+    private func focusExistingTab(in scope: ChatTabScope) -> Bool {
+        let candidates = tabs.filter { $0.id != activeTabId && ChatTabScope.of($0.session) == scope }
+        guard !candidates.isEmpty else { return false }
+        let target =
+            candidates.first { !$0.isHibernated && $0.session.awaitingClarify != nil }
+            ?? candidates.max { $0.lastActivatedAt < $1.lastActivatedAt }
+        guard let target else { return false }
+        let outgoing = tabs.first { $0.id == activeTabId }
+        selectTab(id: target.id)
+        if let outgoing, !outgoing.isHibernated, isBlank(outgoing.session),
+            ChatTabScope.of(outgoing.session) != scope
+        {
+            dropTab(outgoing)
+        }
+        return true
+    }
+
+    /// Remove an INACTIVE tab from the strip and dispose of its session.
+    private func dropTab(_ tab: ChatTab) {
+        guard tab.id != activeTabId, tabs.contains(where: { $0.id == tab.id }) else { return }
+        tabs.removeAll { $0.id == tab.id }
+        teardownTabSession(tab.session)
+    }
+
+    /// A fresh blank tab for `scope` (not yet inserted): a local agent's
+    /// chat, or a chat stamped with a workspace agent's context.
+    private func makeBlankTab(in scope: ChatTabScope) -> ChatTab {
+        switch scope {
+        case .local(let id):
+            return ChatTab(id: UUID(), session: makeFreshSession(agentId: id))
+        case .workspace(let address, let workspaceId):
+            let fresh = makeFreshSession(agentId: Agent.defaultId)
+            stampWorkspaceContext(address: address, workspaceId: workspaceId, on: fresh)
+            return ChatTab(id: UUID(), session: fresh)
+        }
+    }
+
+    /// Re-run the Mode 2 connect for the active team-agent tab (Retry on
+    /// the composer lock notice). Refreshes presence first so a host that
+    /// came back is picked up without waiting for the poll.
+    func retryWorkspaceAgentConnection() {
+        guard let context = session.workspaceContext else { return }
+        let address = context.agentAddress
+        let originalSession = session
+        Task { @MainActor [weak self] in
+            await WorkspaceRosterStore.shared.refresh(reason: .manual)
+            guard let self, self.session === originalSession,
+                self.session.workspaceContext == context else { return }
+            // A manual Retry re-runs the workspace handshake even for an
+            // agent that is already paired: the usual reason a paired agent
+            // fails is a stale attested key (the host refuses it), and
+            // reconnecting the same provider with the same key can never
+            // recover from that. Direct shares (no workspace) have no
+            // handshake to re-run and just reconnect.
+            if let workspaceId = self.workspaceId(forRetry: address) {
+                let roster = WorkspaceRosterStore.shared.agent(forAddress: address, workspaceId: workspaceId)
+                await WorkspaceAgentConnectService.shared.connect(
+                    workspaceId: workspaceId,
+                    agentAddress: roster?.agentAddress ?? address,
+                    displayName: roster?.displayName
+                )
+                guard self.session === originalSession, self.session.workspaceContext == context else { return }
+                self.refreshPairedRelayAgents()
+            }
+            self.pairingRepairAttemptedFor = nil
+            self.bindRemoteMode(toWorkspaceAgent: address, preserveSession: true, force: true)
+        }
+    }
+
+    /// The workspace to handshake against for `address`: the roster that
+    /// lists it, else the id stamped on the tab. nil for direct shares.
+    private func workspaceId(forRetry address: String) -> String? {
+        guard let context = session.workspaceContext, context.agentAddress == address,
+            !context.workspaceId.isEmpty
+        else { return nil }
+        return context.workspaceId
+    }
+
+    /// Address for which an automatic pairing repair already ran during the
+    /// current bind, so a host that keeps refusing us gets one silent repair
+    /// and then a visible failure — never a connect/repair loop.
+    private var pairingRepairAttemptedFor: String?
+
+    /// The host answered but refused our credentials. For a workspace pairing
+    /// that means the attested key expired or was revoked (the refresh loop
+    /// only re-arms after a connect in this process, so a key can silently
+    /// die across a relaunch). Re-run the handshake to mint a fresh key and
+    /// provider, then rebind so the connect runs again. Returns false when
+    /// there is nothing to repair or a repair already ran for this bind —
+    /// the caller then surfaces the failure.
+    func repairWorkspacePairingAfterRejection() async -> Bool {
+        guard let address = workspaceAgentAddress, pairingRepairAttemptedFor != address else { return false }
+        let context = session.workspaceContext
+        let originalSession = session
+        pairingRepairAttemptedFor = address
+        guard let workspaceId = workspaceId(forRetry: address) else { return false }
+        let roster = WorkspaceRosterStore.shared.agent(forAddress: address, workspaceId: workspaceId)
+        let repaired = await WorkspaceAgentConnectService.shared.connect(
+            workspaceId: workspaceId,
+            agentAddress: roster?.agentAddress ?? address,
+            displayName: roster?.displayName
+        )
+        guard repaired != nil, session === originalSession, session.workspaceContext == context else { return false }
+        refreshPairedRelayAgents()
+        bindRemoteMode(toWorkspaceAgent: address, preserveSession: true, force: true)
+        return true
+    }
+
+    private func stampWorkspaceContext(address: String, workspaceId: String, on target: ChatSession) {
+        target.workspaceContext = WorkspaceSessionContext(workspaceId: workspaceId, agentAddress: address)
+    }
+
+    /// Keep the window's remote mode in step with the ACTIVE session's
+    /// workspace identity. A team-agent tab binds remote mode to that agent's
+    /// paired provider (and asks the view to connect); a local tab that
+    /// follows a team-agent tab clears it, so a send can never route to the
+    /// wrong agent after a tab switch. Legacy (non-workspace) Mode 2
+    /// selections are left alone — they carry no per-session marker.
+    func reconcileRemoteMode() {
+        if let context = session.workspaceContext, !context.isServedForTeammate {
+            bindRemoteMode(toWorkspaceAgent: context.agentAddress, preserveSession: !session.turns.isEmpty)
+        } else if workspaceAgentAddress != nil {
+            clearRemoteMode()
+        }
+        refreshSandboxChanges()
+    }
+
+    /// Bind remote mode to a workspace agent's paired provider. No-op when
+    /// already bound to the same address unless `force`.
+    private func bindRemoteMode(toWorkspaceAgent address: String, preserveSession: Bool, force: Bool = false) {
+        let workspaceId = session.workspaceContext?.workspaceId
+        let paired = RemoteAgentManager.shared.remoteAgent(
+            forAddress: address,
+            workspaceId: workspaceId?.isEmpty == false ? workspaceId : nil
+        )
+        if !force, workspaceAgentAddress == address,
+            selectedDiscoveredAgentProviderId == paired?.providerId
+        { return }
+        workspaceAgentAddress = address
+        removeEphemeralProviderIfNeeded()
+        selectedDiscoveredAgent = nil
+        refreshPairedRelayAgents()
+        guard let relay = pairedRelayAgents.first(where: {
+            $0.providerId == paired?.providerId
+            }) else {
+            // Not paired yet: the composer lock explains; auto-connect or
+            // Retry will pair it, after which `reconcileRemoteMode` re-runs.
+            selectedRelayAgent = nil
+            selectedDiscoveredAgentProviderId = nil
+            pinnedRemoteAgentEffectiveModel = nil
+            pinnedRemoteAgentAvatar = nil
+            pinnedRemoteAgentQuickActions = nil
+            remoteAgentConnectionPhase = .idle
+            return
+        }
+        // Route sends to the agent even before the connect resolves; the
+        // composer stays locked until the phase reaches `.connected`.
+        selectedRelayAgent = relay
+        selectedDiscoveredAgentProviderId = relay.providerId
+        if WorkspaceRosterStore.shared.presence(forAddress: address, workspaceId: workspaceId).isOffline {
+            // Don't hammer a host the router says is down; Retry / the
+            // presence poll flipping online re-issues the connect.
+            remoteAgentConnectionPhase = .idle
+            return
+        }
+        pendingRelayConnect = PendingRelayConnect(relay: relay, preserveSession: preserveSession)
+    }
+
+    /// Leave remote mode (the same fields `adoptAgent` clears).
+    private func clearRemoteMode() {
+        workspaceAgentAddress = nil
+        pendingRelayConnect = nil
+        removeEphemeralProviderIfNeeded()
+        selectedDiscoveredAgent = nil
+        selectedDiscoveredAgentProviderId = nil
+        selectedRelayAgent = nil
+        pinnedRemoteAgentEffectiveModel = nil
+        pinnedRemoteAgentAvatar = nil
+        pinnedRemoteAgentQuickActions = nil
+        remoteAgentConnectionPhase = .idle
+    }
+
+    /// Why the composer is locked for the active tab, or nil when the user
+    /// can send. Evaluated by the view on every relevant publisher change
+    /// (roster presence, pairing, connection phase, session swap).
+    var composerLock: ComposerLock? {
+        guard let context = session.workspaceContext, let status = sharedAgentStatus else { return nil }
+        let identity = sharedAgentIdentity ?? SharedAgentIdentity.resolve(address: context.agentAddress)
+        let agentName = identity.name
+        switch status {
+        case .ready:
+            return nil
+        case .checking, .connecting:
+            return .connecting(agentName: agentName)
+        case .offline(let lastSeen):
+            return .agentOffline(agentName: agentName, ownerName: identity.ownerName, lastSeen: lastSeen)
+        case .notConnected(let reason, _):
+            return .agentNotConnected(agentName: agentName, reason: reason)
+        case .unavailable(let reason, _):
+            return .agentUnavailable(agentName: agentName, reason: reason)
+        case .readOnlyTeammate(let callerName):
+            // Hosted here for a remote caller: the agent is one of ours. An
+            // invite-link row may carry no resolvable address, so fall back
+            // to the row's agent id before the identity's short address.
+            let resolvedName = identity.name == identity.shortAddress ? nil : identity.name
+            let hostedName =
+                identity.localAgent?.displayName
+                ?? resolvedName
+                ?? session.agentId.flatMap { AgentManager.shared.agent(for: $0)?.displayName }
+                ?? agentName
+            return .teammateConversation(
+                callerName: callerName,
+                agentName: hostedName,
+                isWorkspace: !context.isDirectShare
+            )
+        }
+    }
+
+    /// Identity of the shared agent the ACTIVE tab talks to, or nil for a
+    /// local tab. Resolved live (cheap) so a rename/re-pair shows at once.
+    var sharedAgentIdentity: SharedAgentIdentity? {
+        guard let context = session.workspaceContext else { return nil }
+        return SharedAgentIdentity.resolve(
+            address: context.agentAddress,
+            workspaceId: context.workspaceId,
+            liveEffectiveModel: remoteAgentConnectionPhase == .connected ? pinnedRemoteAgentEffectiveModel : nil
+        )
+    }
+
+    /// Connection status of the shared agent the ACTIVE tab talks to, or
+    /// nil for a local tab. The single derivation every surface renders
+    /// (composer lock notice, empty-state badge, sidebar row); the pure
+    /// `SharedAgentStatus.derive` carries the precedence rules.
+    var sharedAgentStatus: SharedAgentStatus? {
+        guard let context = session.workspaceContext else { return nil }
+        let roster = WorkspaceRosterStore.shared
+        let connect = WorkspaceAgentConnectService.shared
+        let address = context.agentAddress
+        return SharedAgentStatus.derive(
+            isServedForTeammate: context.isServedForTeammate,
+            callerLabel: context.callerLabel,
+            workspaceId: context.workspaceId,
+            rosterLists: roster.agent(forAddress: address, workspaceId: context.workspaceId) != nil,
+            rosterHasLoaded: roster.lastRefreshedAt != nil,
+            routerEnabled: OsaurusRouter.isEnabled,
+            workspaceName: roster.rosters.first(where: { $0.id == context.workspaceId })?.workspace.name,
+            presence: roster.presence(forAddress: address, workspaceId: context.workspaceId),
+            isPaired: RemoteAgentManager.shared.remoteAgent(forAddress: address,
+                workspaceId: context.workspaceId.isEmpty ? nil : context.workspaceId
+            ) != nil,
+            isBoundToProvider: selectedDiscoveredAgentProviderId != nil,
+            isPairing: connect.isConnecting(address, workspaceId: context.workspaceId),
+            connectFailure: connect.connectFailure(for: address, workspaceId: context.workspaceId),
+            hasAttempted: connect.hasAttempted(address, workspaceId: context.workspaceId),
+            phase: remoteAgentConnectionPhase
+        )
     }
 
     /// An untouched chat: nothing sent, nothing running, nothing pending.
@@ -514,11 +969,17 @@ final class ChatWindowState: ObservableObject {
         TTSService.shared.stop()
         if !session.turns.isEmpty { session.save() }
         flushCurrentSession()
+        // A new chat inside a team-agent tab stays with that agent ("as if
+        // local"); a host-side read-only copy of a teammate's chat does not
+        // carry over — New Chat there is a plain chat with the local agent.
+        let carriedWorkspace = session.workspaceContext.flatMap { $0.isServedForTeammate ? nil : $0 }
         if releaseSharedSessionIfNeeded() || detachRunningSessionIfNeeded() {
             installFreshSession(agentId: agentId)
         } else {
             session.reset(for: agentId)
         }
+        session.workspaceContext = carriedWorkspace
+        reconcileRemoteMode()
         refreshSessions()
         refreshSandboxChanges()
         // KPI: user started a new chat conversation. Count only.
@@ -580,6 +1041,16 @@ final class ChatWindowState: ObservableObject {
         let resolvedData = ChatSessionStore.load(id: sessionData.id) ?? sessionData
         let targetAgentId = resolvedData.agentId ?? Agent.defaultId
 
+        // Browser-style, like `startNewChat` / `switchAgent`: a run in flight
+        // (or paused on a clarify prompt) keeps its own tab, still owned by
+        // this window and still visible under its agent; the target loads
+        // into a fresh tab instead of pushing the run out of the strip.
+        if session.isStreaming || session.awaitingClarify != nil,
+            !LiveChatSessionRegistry.shared.isShared(session)
+        {
+            newTab(agentId: targetAgentId, startsConversation: false)
+        }
+
         // Sync the window's active agent with the loaded session so the
         // chat header, theme, dropdown, sidebar filter, and downstream
         // save()/reset() calls all reflect the conversation's true agent
@@ -616,6 +1087,7 @@ final class ChatWindowState: ObservableObject {
         } else {
             session.load(from: resolvedData)
         }
+        reconcileRemoteMode()
         refreshSessions()
         refreshSandboxChanges()
     }
@@ -632,7 +1104,7 @@ final class ChatWindowState: ObservableObject {
     /// Open a new tab with a fresh empty chat and make it active. The
     /// outgoing tab keeps its session untouched (no detach — the tab still
     /// owns it).
-    func newTab(agentId newAgentId: UUID? = nil) {
+    func newTab(agentId newAgentId: UUID? = nil, startsConversation: Bool = true) {
         persistActiveSessionForTabSwitch()
         if let newAgentId, newAgentId != agentId {
             adoptAgent(newAgentId)
@@ -650,26 +1122,36 @@ final class ChatWindowState: ObservableObject {
             activeTabId = tab.id
             session = fresh
         }
+        reconcileRemoteMode()
         refreshSessions()
         refreshSandboxChanges()
         hibernateColdTabsIfNeeded()
-        // KPI: a new tab starts a new conversation, same as sidebar New Chat.
-        FeatureTelemetry.chatSessionStarted()
+        // KPI: a new tab starts a new conversation, same as sidebar New Chat
+        // (not counted when the tab is about to load an existing chat).
+        if startsConversation {
+            FeatureTelemetry.chatSessionStarted()
+        }
+    }
+
+    /// Reorder a tab (drag-to-reorder in the strip). `newIndex` is the
+    /// target slot within the tab's OWN scope (the strip only shows one
+    /// agent's tabs); tabs of other agents keep their relative positions.
+    /// Pure array move; the active tab and its session are untouched.
+    func moveTab(id: UUID, to newIndex: Int) {
+        guard let from = tabs.firstIndex(where: { $0.id == id }) else { return }
+        let scopedIds = tabs(in: ChatTabScope.of(tabs[from].session)).map(\.id)
+        guard let fromScoped = scopedIds.firstIndex(of: id) else { return }
+        let toScoped = min(max(newIndex, 0), scopedIds.count - 1)
+        guard fromScoped != toScoped,
+            let to = tabs.firstIndex(where: { $0.id == scopedIds[toScoped] })
+        else { return }
+        let tab = tabs.remove(at: from)
+        tabs.insert(tab, at: to)
     }
 
     /// Switch the visible chat to another tab. Unlike `loadSession`, the
     /// outgoing session is neither detached nor released — its tab keeps it
     /// live, so an in-flight stream keeps rendering into that tab.
-    /// Reorder a tab (drag-to-reorder in the strip). Pure array move; the
-    /// active tab and its session are untouched.
-    func moveTab(id: UUID, to newIndex: Int) {
-        guard let from = tabs.firstIndex(where: { $0.id == id }) else { return }
-        let to = min(max(newIndex, 0), tabs.count - 1)
-        guard from != to else { return }
-        let tab = tabs.remove(at: from)
-        tabs.insert(tab, at: to)
-    }
-
     func selectTab(id: UUID) {
         guard id != activeTabId, let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
         persistActiveSessionForTabSwitch()
@@ -682,32 +1164,62 @@ final class ChatWindowState: ObservableObject {
         hibernateColdTabsIfNeeded()
     }
 
-    /// Cycle to the next (+1) or previous (-1) tab, wrapping around.
+    /// Cycle to the next (+1) or previous (-1) tab of the active agent,
+    /// wrapping around.
     func selectAdjacentTab(offset: Int) {
-        guard tabs.count > 1,
-            let idx = tabs.firstIndex(where: { $0.id == activeTabId })
+        let scoped = scopedTabs
+        guard scoped.count > 1,
+            let idx = scoped.firstIndex(where: { $0.id == activeTabId })
         else { return }
-        let next = ((idx + offset) % tabs.count + tabs.count) % tabs.count
-        selectTab(id: tabs[next].id)
+        let next = ((idx + offset) % scoped.count + scoped.count) % scoped.count
+        selectTab(id: scoped[next].id)
     }
 
-    /// Close a tab. The last remaining tab never closes here — the caller
-    /// (⌘W / close button) falls through to closing the window instead.
-    /// A closing tab's session follows the window-close rules: shared →
-    /// unlink only; mid-run → detach to the background registry; idle →
-    /// save and stop.
+    /// Close a tab. Closing stays within the tab's agent: the neighbor that
+    /// takes over is the next tab of the same agent, and closing an agent's
+    /// last tab replaces it with a blank chat for that agent (so the agent
+    /// stays selected) — unless that tab is already blank, in which case
+    /// nothing happens and the caller (⌘W) falls through to closing the
+    /// window. A closing tab's session follows the window-close rules:
+    /// shared / registry-owned → unlink only; mid-run → detach to the
+    /// background registry; idle → save and stop.
     func closeTab(id: UUID) {
-        guard tabs.count > 1, let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
+        guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
         let closing = tabs[idx]
-        rememberClosedTab(closing, at: idx)
+        let scope = ChatTabScope.of(closing.session)
+        let scoped = tabs(in: scope)
+        let scopedIdx = scoped.firstIndex(where: { $0.id == id }) ?? 0
+        let siblings = scoped.filter { $0.id != id }
+        // A lone blank tab has nothing to close.
+        if id == activeTabId, siblings.isEmpty, !closing.isHibernated, isBlank(closing.session) { return }
+
+        rememberClosedTab(closing, at: scopedIdx)
+        if id != activeTabId {
+            tabs.remove(at: idx)
+            teardownTabSession(closing.session)
+            return
+        }
+
         // The removal itself animates (the strip keys a layout animation on
         // the tab ids, so neighbors slide over); the session swap below is
         // wrapped un-animated so ChatView's remount doesn't interpolate.
-        tabs.remove(at: idx)
-        if activeTabId == id {
-            let neighbor = tabs[min(idx, tabs.count - 1)]
-            var transaction = Transaction(animation: nil)
-            transaction.disablesAnimations = true
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+
+        if siblings.isEmpty {
+            let replacement = makeBlankTab(in: scope)
+            withTransaction(transaction) {
+                tabs[idx] = replacement
+                activeTabId = replacement.id
+                adoptTabSession(replacement.session)
+            }
+        } else {
+            tabs.remove(at: idx)
+            let neighborId = siblings[min(scopedIdx, siblings.count - 1)].id
+            guard let neighborIdx = tabs.firstIndex(where: { $0.id == neighborId }) else { return }
+            if tabs[neighborIdx].isHibernated { wake(tabAt: neighborIdx) }
+            tabs[neighborIdx].lastActivatedAt = Date()
+            let neighbor = tabs[neighborIdx]
             withTransaction(transaction) {
                 activeTabId = neighbor.id
                 adoptTabSession(neighbor.session)
@@ -727,9 +1239,63 @@ final class ChatWindowState: ObservableObject {
         // behind as a blank tab next to the one we just opened.
         let activeIsBlank = session.turns.isEmpty && !session.isStreaming
         if !activeIsBlank {
-            newTab()
+            newTab(startsConversation: false)
         }
         loadSession(sessionData)
+    }
+
+    // MARK: Background runs as tabs
+
+    /// Surface a registry-owned run (scheduled / API / channel / delegated /
+    /// detached) as a tab of its agent WITHOUT taking focus: the live
+    /// `ChatSession` is linked to this window the way `attachSession` does
+    /// and appended as an inactive tab, so the run shows up under its agent
+    /// in the strip while the user keeps working. Execution ownership stays
+    /// with the registry. No-op for mirrors, for runs without a session, and
+    /// when the session already has a tab here. Returns whether a tab was
+    /// added.
+    @discardableResult
+    func attachBackgroundTab(for task: BackgroundTaskState) -> Bool {
+        guard !task.isSubagentMirror, let live = task.chatSession else { return false }
+        let alreadyShown = tabs.contains {
+            $0.session === live || ($0.session.sessionId != nil && $0.session.sessionId == live.sessionId)
+        }
+        guard !alreadyShown else { return false }
+        live.windowState = self
+        live.onSessionChanged = { [weak self] in
+            self?.refreshSessionsDebounced()
+        }
+        tabs.append(ChatTab(id: UUID(), session: live))
+        refreshSessions()
+        return true
+    }
+
+    /// Surface a finished run the registry retained across relaunch (no
+    /// live session any more) as a hibernated tab of its agent, so a run
+    /// that completed while the app was closed is still there to review.
+    /// The transcript loads from disk when the tab is selected; closing the
+    /// tab dismisses the retained task. Returns whether a tab was added.
+    @discardableResult
+    func attachRetainedTab(for task: BackgroundTaskState) -> Bool {
+        guard !task.isSubagentMirror, task.chatSession == nil, !task.status.isActive else { return false }
+        guard !tabs.contains(where: { $0.session.sessionId == task.id }) else { return false }
+        guard var snapshot = ChatSessionStore.load(id: task.id) else { return false }
+        snapshot.turns = []
+        let cold = makeFreshSession(agentId: snapshot.agentId ?? task.agentId, loading: snapshot)
+        var tab = ChatTab(id: UUID(), session: cold)
+        tab.isHibernated = true
+        tab.lastActivatedAt = task.createdAt
+        tabs.append(tab)
+        return true
+    }
+
+    /// Bring a registry run's tab to the front (waking it if hibernated).
+    /// Returns false when no tab here shows that run.
+    @discardableResult
+    func focusTab(forSessionId sessionId: UUID) -> Bool {
+        guard let tab = tabs.first(where: { $0.session.sessionId == sessionId }) else { return false }
+        selectTab(id: tab.id)
+        return true
     }
 
     /// Tear down every tab except the active one. `cleanup()` calls this on
@@ -753,6 +1319,14 @@ final class ChatWindowState: ObservableObject {
             adoptAgent(targetAgentId)
         }
         session = target
+        // Window→task binding follows the visible session: a registry-owned
+        // run on screen makes closing this window detach (not stop) it.
+        if let task = BackgroundTaskManager.shared.task(owning: target), task.status.isActive {
+            BackgroundTaskManager.shared.bindWindow(windowId, toTask: task.id)
+        } else {
+            BackgroundTaskManager.shared.unbindWindow(windowId)
+        }
+        reconcileRemoteMode()
         refreshSessions()
         refreshSandboxChanges()
     }
@@ -776,6 +1350,19 @@ final class ChatWindowState: ObservableObject {
             closingSession.onSessionChanged = nil
             return
         }
+        // A registry-owned run (dispatched / scheduled / previously detached)
+        // shown in this tab: execution belongs to the registry, so closing
+        // the tab only unlinks the view. Closing the tab of a FINISHED run
+        // is how the user dismisses it — the task leaves the registry.
+        if let task = BackgroundTaskManager.shared.task(owning: closingSession) {
+            closingSession.windowState = nil
+            closingSession.onSessionChanged = nil
+            if !task.status.isActive {
+                if !closingSession.turns.isEmpty { closingSession.save() }
+                BackgroundTaskManager.shared.finalizeTask(task.id)
+            }
+            return
+        }
         // A mid-run (or clarify-paused) session survives its tab closing the
         // same way it survives its window closing: adopted into the
         // background registry, execution untouched.
@@ -797,6 +1384,7 @@ final class ChatWindowState: ObservableObject {
 
     private struct ClosedTab {
         let sessionId: UUID
+        /// Slot within the chat's agent scope at the time it closed.
         let index: Int
     }
 
@@ -829,9 +1417,11 @@ final class ChatWindowState: ObservableObject {
             guard let data = ChatSessionStore.load(id: sessionId) else { continue }
             // Always its own tab (a blank active tab is left alone), like a
             // browser restoring a closed tab.
-            newTab(agentId: data.agentId ?? Agent.defaultId)
+            newTab(agentId: data.agentId ?? Agent.defaultId, startsConversation: false)
             loadSession(data)
-            moveTab(id: activeTabId, to: min(closed.index, tabs.count - 1))
+            // `closed.index` is the slot within the chat's agent scope, the
+            // same coordinate `moveTab` takes.
+            moveTab(id: activeTabId, to: closed.index)
             return
         }
     }
@@ -859,8 +1449,13 @@ final class ChatWindowState: ObservableObject {
     }
 
     private func canHibernate(_ s: ChatSession) -> Bool {
-        s.sessionId != nil && !s.turns.isEmpty && !s.isStreaming && s.awaitingClarify == nil
-            && !LiveChatSessionRegistry.shared.isShared(s)
+        guard let sessionId = s.sessionId, !s.turns.isEmpty, !s.isStreaming, s.awaitingClarify == nil,
+            !LiveChatSessionRegistry.shared.isShared(s)
+        else { return false }
+        // A registry run that hasn't started yet (queued) has no turns to
+        // reload; swapping it for a cold stand-in would divorce the tab from
+        // the session the run is about to stream into.
+        return BackgroundTaskManager.shared.liveTask(forSessionId: sessionId) == nil
     }
 
     /// Save the tab's session, then swap it for a metadata-only stand-in
@@ -1010,7 +1605,7 @@ final class ChatWindowState: ObservableObject {
     /// the user sees the in-flight stream. Execution ownership stays with
     /// the registry; the window is only a view. The window→task binding
     /// makes close/switch detach instead of stop, and suppresses the
-    /// duplicate notch/toast surface while the chat is visible.
+    /// duplicate Activity section/toast surface while the chat is visible.
     private func attachSession(_ liveSession: ChatSession, registryTaskId: UUID) {
         liveSession.windowState = self
         liveSession.onSessionChanged = { [weak self] in
@@ -1027,6 +1622,10 @@ final class ChatWindowState: ObservableObject {
     /// session for a brand-new chat; `loadSession` calls it before
     /// loading turns from disk.
     private func adoptAgent(_ newAgentId: UUID) {
+        // Leaving remote mode wholesale; `reconcileRemoteMode` re-binds a
+        // team-agent tab afterwards from its session's workspace context.
+        workspaceAgentAddress = nil
+        pendingRelayConnect = nil
         removeEphemeralProviderIfNeeded()
         selectedDiscoveredAgent = nil
         selectedDiscoveredAgentProviderId = nil
@@ -1060,7 +1659,14 @@ final class ChatWindowState: ObservableObject {
     }
 
     func refreshSessions() {
-        filteredSessions = ChatSessionsManager.shared.sessions(for: agentId)
+        // A team-agent tab lists that agent's history (keyed by address);
+        // everything else lists the local agent's.
+        if let context = session.workspaceContext, !context.isServedForTeammate {
+            filteredSessions = ChatSessionsManager.shared.sessions(
+                forRemoteAgentAddress: context.agentAddress).filter { $0.workspace?.workspaceId == context.workspaceId }
+        } else {
+            filteredSessions = ChatSessionsManager.shared.sessions(for: agentId)
+        }
     }
 
     /// Coalesces rapid `refreshSessions()` calls (e.g. during streaming saves).
@@ -1189,6 +1795,69 @@ final class ChatWindowState: ObservableObject {
             .sink { [weak self] latest in
                 self?.applyAgentsUpdate(latest)
             }
+    }
+
+    /// A team-agent tab opened before its agent was paired (auto-connect
+    /// still running) or while its host was offline must come alive on its
+    /// own once the pairing lands / presence flips online — without the user
+    /// clicking the row again. Both signals re-run the remote-mode binding
+    /// for the active tab; `bindRemoteMode` is idempotent for an already
+    /// connected tab (`force` only when something actually changed).
+    private func observeWorkspaceState() {
+        // The roster/presence poll runs while any chat window is open — not
+        // only while its sidebar is showing — so a team-agent tab's composer
+        // lock tracks presence even with the sidebar collapsed.
+        // Skipped under tests: the poll would hit the router (or, with no
+        // identity, wipe the fixture rosters suites install on the store).
+        if !isObservingRoster, !RuntimeEnvironment.isUnderTests {
+            isObservingRoster = true
+            WorkspaceRosterStore.shared.beginObserving()
+        }
+        RemoteAgentManager.shared.$remoteAgents
+            .dropFirst()
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, let address = self.workspaceAgentAddress,
+                        self.selectedDiscoveredAgentProviderId == nil
+                    else { return }
+                    self.refreshPairedRelayAgents()
+                    self.bindRemoteMode(
+                        toWorkspaceAgent: address,
+                        preserveSession: !self.session.turns.isEmpty,
+                        force: true
+                    )
+                }
+            }
+            .store(in: &workspaceCancellables)
+        // Presence can flip back online two ways: a poll changes the
+        // roster, or a poll clears the local force-offline mark while the
+        // router's roster is unchanged. Watch both so a parked tab reconnects
+        // either way.
+        WorkspaceRosterStore.shared.objectWillChange
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, let address = self.workspaceAgentAddress else { return }
+                    // Only a tab that was parked (offline / unpaired → phase
+                    // idle) needs a fresh connect when presence returns.
+                    self.objectWillChange.send()
+                    guard
+                        WorkspaceRosterStore.shared.presence(
+                            forAddress: address,
+                            workspaceId: self.session.workspaceContext?.workspaceId
+                        ) == .online
+                    else { return }
+                    switch self.remoteAgentConnectionPhase {
+                    case .idle, .failed: break
+                    case .connecting, .connected: return }
+                    self.refreshPairedRelayAgents()
+                    self.bindRemoteMode(
+                        toWorkspaceAgent: address,
+                        preserveSession: !self.session.turns.isEmpty,
+                        force: true
+                    )
+                }
+            }
+            .store(in: &workspaceCancellables)
     }
 
     private func observeSessionsManager() {
@@ -1461,7 +2130,9 @@ final class ChatWindowState: ObservableObject {
                         if let lastError = state.lastError, !lastError.isEmpty,
                             !state.isConnected, !state.isConnecting
                         {
-                            self.remoteAgentConnectionPhase = .failed(lastError)
+                            self.remoteAgentConnectionPhase = .failed(
+                                ChatErrorMessages.remoteConnectFailure(message: lastError)
+                            )
                         } else if state.isConnected {
                             // Don't pre-empt the in-flight connect+pin: while
                             // we're still `.connecting`, the pin flow owns the

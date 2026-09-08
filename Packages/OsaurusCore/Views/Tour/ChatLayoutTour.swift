@@ -55,7 +55,7 @@ extension ChatTourStop {
                 anchor: .tabStrip,
                 title: L("Every chat is a tab"),
                 body: L(
-                    "Open multiple chats and switch between them like browser tabs, without interrupting responses in progress."
+                    "Each agent has its own tabs. Scheduled and background runs open here too, so you can switch between chats like browser tabs without interrupting responses in progress."
                 )
             ),
             ChatTourStop(
@@ -284,22 +284,9 @@ public final class ChatLayoutTour: ObservableObject {
     // MARK: Anchors
 
     /// Called by `TourAnchorMarker` whenever an anchored view lays out.
-    func report(anchor: ChatTourAnchor, frame: CGRect, in window: NSWindow) {
-        guard let id = ChatWindowManager.shared.windowId(for: window) else { return }
-        var perWindow = anchors[id] ?? [:]
-        if let existing = perWindow[anchor], existing.equalTo(frame) { return }
-        perWindow[anchor] = frame
-        anchors[id] = perWindow
-    }
-
-    func clear(anchor: ChatTourAnchor, in window: NSWindow) {
-        guard let id = ChatWindowManager.shared.windowId(for: window) else { return }
-        clear(anchor: anchor, windowId: id)
-    }
-
-    /// Id-keyed variants for callers that must not hold the window: the
-    /// anchor marker resolves the id synchronously while the window is still
-    /// valid and defers only the id (see `MarkerView`).
+    /// Takes the window id, not the `NSWindow`: the marker resolves the id
+    /// synchronously and hops to the next run-loop turn, by which time the
+    /// window may already be deallocated (see `MarkerView.viewWillMove`).
     func report(anchor: ChatTourAnchor, frame: CGRect, windowId id: UUID) {
         var perWindow = anchors[id] ?? [:]
         if let existing = perWindow[anchor], existing.equalTo(frame) { return }

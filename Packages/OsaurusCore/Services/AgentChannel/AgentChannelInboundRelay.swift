@@ -225,7 +225,7 @@ final class AgentChannelInboundRelay {
                 prompt: prompt,
                 agentId: agentId,
                 title: request.providerRoute.displayName ?? "Channel conversation",
-                // Channel turns surface in the notch like any other background
+                // Channel turns surface in the Activity section like any other background
                 // work so the user can watch (and cancel) remote-triggered runs.
                 showToast: true,
                 source: .channel,

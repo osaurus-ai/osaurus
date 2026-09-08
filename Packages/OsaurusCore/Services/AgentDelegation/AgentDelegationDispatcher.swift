@@ -11,7 +11,7 @@
 //     `SubagentBudgets` turn/tool-call/token caps do not apply;
 //   • one fresh persisted session per delegation call (`source:
 //     .delegation`), visible in the target agent's chat history;
-//   • the dispatched run is a real background task, so the notch row's
+//   • the dispatched run is a real background task, so the Activity row's
 //     "Open Chat" opens the live child chat mid-run.
 //
 //  The caller (`TextSubagentKind.run`) still owns the full host lifecycle:
@@ -138,7 +138,7 @@ enum AgentDelegationDispatcher {
     /// Why the awaited child run was cancelled by this dispatcher (as
     /// opposed to failing or completing on its own).
     private enum CancelReason: Sendable {
-        /// The spawn card / notch Stop button tripped the interrupt token.
+        /// The spawn card / Activity Stop button tripped the interrupt token.
         case interrupt
         /// The launcher's wall-clock budget (`maxElapsedSeconds`) expired
         /// while the child was actually executing.
@@ -425,7 +425,7 @@ enum AgentDelegationDispatcher {
                     retryable: false
                 )
             case .none:
-                // Cancelled from outside this dispatcher (notch Stop on the
+                // Cancelled from outside this dispatcher (Activity Stop on the
                 // child task itself, app shutdown).
                 throw SubagentError.userDenied(
                     "Delegated run for '\(targetAgentName)' was stopped."

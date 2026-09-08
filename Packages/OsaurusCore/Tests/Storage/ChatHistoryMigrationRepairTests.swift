@@ -277,8 +277,13 @@ struct ChatHistoryMigrationRepairTests {
             statements +=
                 Self.alterV2 + Self.alterV5 + Self.alterV6 + Self.alterV7
                 + Self.alterV8 + Self.alterV12 + Self.alterV13 + Self.alterV14
-            // A hypothetical newer (v15) additive column this build never reads.
-            statements += ["ALTER TABLE sessions ADD COLUMN project_id TEXT"]
+            statements += [
+                "ALTER TABLE sessions ADD COLUMN project_id TEXT",
+                "ALTER TABLE sessions ADD COLUMN workspace_context TEXT",
+                "ALTER TABLE sessions ADD COLUMN remote_agent_address TEXT",
+            ]
+            // A hypothetical newer (v17) additive column this build never reads.
+            statements += ["ALTER TABLE sessions ADD COLUMN future_only_column TEXT"]
             statements += [
                 """
                 INSERT INTO sessions (id, title, created_at, updated_at, source, turn_count, archived, capabilities)
@@ -288,7 +293,7 @@ struct ChatHistoryMigrationRepairTests {
                 INSERT INTO turns (id, session_id, seq, role, content)
                 VALUES ('\(UUID().uuidString)', '\(sid.uuidString)', 0, 'user', 'written before the downgrade')
                 """,
-                "PRAGMA user_version = 15",
+                "PRAGMA user_version = 17",
             ]
             try self.seedChatHistoryDB(statements)
 
@@ -297,7 +302,7 @@ struct ChatHistoryMigrationRepairTests {
             defer { db.close() }
 
             // Version stamp is left intact so a future newer build still owns it.
-            #expect(self.diskUserVersion() == 15)
+            #expect(self.diskUserVersion() == 17)
 
             // Existing history is readable, not lost.
             let loaded = db.loadSession(id: sid)

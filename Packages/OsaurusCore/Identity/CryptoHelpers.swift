@@ -216,7 +216,17 @@ func recoverAddress(payload: Data, signature: Data, domainPrefix: String) throws
     let hash = try domainHash(payload: payload, prefix: domainPrefix)
 
     let compactSig = signature.prefix(64)
-    let v = Int32(signature[signature.startIndex + 64]) - 27
+    // libsecp256k1 aborts the whole process (illegal-argument callback) when
+    // the recovery id is outside 0...3, so the byte must be validated before
+    // it reaches the parser: every remote handshake (`/pair`, `/pair-invite`,
+    // `/secure/session`) feeds attacker-controlled bytes into this function.
+    // Accept the EIP-191 form (27/28, plus 29/30 for completeness) and the raw
+    // 0...3 form some signers emit.
+    let rawV = Int32(signature[signature.startIndex + 64])
+    let v = rawV >= 27 ? rawV - 27 : rawV
+    guard (0 ... 3).contains(v) else {
+        throw OsaurusIdentityError.signingFailed
+    }
     let recoverySig = try P256K.Recovery.ECDSASignature(
         compactRepresentation: compactSig,
         recoveryId: v

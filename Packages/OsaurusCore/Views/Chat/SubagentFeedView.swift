@@ -323,7 +323,7 @@ struct SubagentFeedView: View {
     }
 
     /// Open the delegated child's chat session: attach to the live
-    /// background task mid-run (same window-binding path as the notch's
+    /// background task mid-run (same window-binding path as the Activity section's
     /// Open Chat), else focus an already-open window, else hydrate the
     /// persisted session from the store.
     @MainActor
