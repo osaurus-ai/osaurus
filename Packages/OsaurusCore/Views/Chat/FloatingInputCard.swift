@@ -4169,6 +4169,7 @@ extension FloatingInputCard {
             swapTextButton(String(localized: "Choose Another Model", bundle: .module)) {
                 showModelPicker = true
             }
+            .frame(maxWidth: .infinity, alignment: .center)
         }
         .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
         .fixedSize(horizontal: false, vertical: true)
