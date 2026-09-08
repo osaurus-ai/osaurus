@@ -279,6 +279,9 @@ enum IMessageRPCSecurity {
         }
 
         private var process: Process?
+        /// Each launch owns its callbacks, even after an actor hop. Internal
+        /// read access supports deterministic delayed-callback regressions.
+        private(set) var processGeneration: UUID?
         private var stdinHandle: FileHandle?
         private var nextRequestId = 1
         private var pending: [Int: PendingCall] = [:]
@@ -383,11 +386,7 @@ enum IMessageRPCSecurity {
         }
 
         func shutdown() async {
-            let running = process
-            process = nil
-            try? stdinHandle?.close()
-            stdinHandle = nil
-            failAllPending(with: IMessageRPCError.notRunning)
+            let running = retireCurrentProcess()
             if let running, running.isRunning {
                 running.terminate()
                 let deadline = Date().addingTimeInterval(2)
@@ -400,10 +399,31 @@ enum IMessageRPCSecurity {
             }
         }
 
+        /// Detach before suspension so a replacement cannot be retired by
+        /// the old child's delayed termination handler. Notify the watch
+        /// consumer once here, including timeout-driven shutdowns, rather
+        /// than depending on a callback that may arrive after replacement.
+        private func retireCurrentProcess() -> Process? {
+            let running = process
+            process = nil
+            processGeneration = nil
+            try? stdinHandle?.close()
+            stdinHandle = nil
+            readBuffer.removeAll()
+            failAllPending(with: IMessageRPCError.notRunning)
+            if running != nil {
+                notificationHandler?(IMessageRPCNotification.helperTerminated, Data("{}".utf8))
+            }
+            return running
+        }
+
         // MARK: - Lifecycle
 
         private func ensureRunning() async throws {
             if let process, process.isRunning { return }
+            // A dead child may be observed before its termination Task runs.
+            // Retire its pending calls/buffer before installing another one.
+            if process != nil { _ = retireCurrentProcess() }
             let verification = IMessageRuntimeAssets.verifyBundledExecutable()
             guard let executableURL = verification.trustedURL else {
                 switch verification {
@@ -435,6 +455,7 @@ enum IMessageRPCSecurity {
             let process = Process()
             process.executableURL = executableURL
             process.arguments = ["rpc"]
+            let generation = UUID()
             let stdin = Pipe()
             let stdout = Pipe()
             let stderr = Pipe()
@@ -456,10 +477,10 @@ enum IMessageRPCSecurity {
                     handle.readabilityHandler = nil
                     return
                 }
-                Task { await self?.ingest(data) }
+                Task { await self?.ingest(data, generation: generation) }
             }
             process.terminationHandler = { [weak self] _ in
-                Task { await self?.handleTermination() }
+                Task { await self?.handleTermination(generation: generation) }
             }
 
             do {
@@ -468,23 +489,19 @@ enum IMessageRPCSecurity {
                 throw IMessageRPCError.spawnFailed(error.localizedDescription)
             }
             self.process = process
+            self.processGeneration = generation
             self.stdinHandle = stdin.fileHandleForWriting
         }
 
-        private func handleTermination() {
-            process = nil
-            try? stdinHandle?.close()
-            stdinHandle = nil
-            readBuffer.removeAll()
-            failAllPending(with: IMessageRPCError.notRunning)
-            // Tell the watch consumer its session died so it can resubscribe
-            // from the persisted cursor (backfill makes the restart lossless).
-            notificationHandler?(IMessageRPCNotification.helperTerminated, Data("{}".utf8))
+        func handleTermination(generation: UUID) {
+            guard generation == processGeneration else { return }
+            _ = retireCurrentProcess()
         }
 
         // MARK: - Reader
 
-        private func ingest(_ data: Data) {
+        func ingest(_ data: Data, generation: UUID) {
+            guard generation == processGeneration else { return }
             readBuffer.append(data)
             while let newlineIndex = readBuffer.firstIndex(of: 0x0A) {
                 let line = readBuffer[readBuffer.startIndex ..< newlineIndex]
@@ -518,7 +535,7 @@ enum IMessageRPCSecurity {
                 }
             }
             if readBuffer.count > Self.maxReadBufferBytes {
-                Task { await self.killWedgedProcess() }
+                Task { await self.killWedgedProcess(generation: generation) }
             }
         }
 
@@ -531,17 +548,18 @@ enum IMessageRPCSecurity {
 
         private func resolveTimeout(id: Int, method: String) async {
             guard let call = pending.removeValue(forKey: id) else { return }
+            let generation = processGeneration
             call.timeoutTask?.cancel()
             call.continuation.resume(throwing: IMessageRPCError.timeout(method: method))
             // The helper answers strictly sequentially: a request that missed
             // its deadline is still occupying the process, and every queued
             // call behind it would time out too. Kill the process so the next
             // call gets a fresh helper instead of a permanently wedged one.
-            await killWedgedProcess()
+            if let generation { await killWedgedProcess(generation: generation) }
         }
 
-        private func killWedgedProcess() async {
-            guard process != nil else { return }
+        private func killWedgedProcess(generation: UUID) async {
+            guard process != nil, generation == processGeneration else { return }
             await shutdown()
         }
 
