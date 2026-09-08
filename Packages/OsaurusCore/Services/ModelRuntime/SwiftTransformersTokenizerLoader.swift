@@ -215,6 +215,24 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             }
         }
 
+        // Osaurus uses this bridge, not the engine's tokenizer macro. Shared
+        // BOS/ChatML tokens do not make MiniCPM a Nemotron tool dialect.
+        // Preserve its configured grammar, native omitted/on/off tail and
+        // render errors before considering sentinel-based fallbacks.
+        if MiniCPM5ToolCallParser.matchesTemplate(
+            upstream.configuredChatTemplate(forTools: !(tools?.isEmpty ?? true))
+        ) {
+            return try upstream.applyChatTemplate(
+                messages: messages,
+                chatTemplate: nil,
+                addGenerationPrompt: addGenerationPrompt,
+                truncation: false,
+                maxLength: nil,
+                tools: chatTemplateTools,
+                additionalContext: additionalContext
+            )
+        }
+
         let lagunaEos =
             String(UnicodeScalar(0x3008)!)
             + "|EOS|"
