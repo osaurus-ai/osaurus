@@ -950,3 +950,40 @@ struct ProjectMemoryTranscriptTests {
         #expect(counts.isEmpty)
     }
 }
+
+// MARK: - Consolidator scheduling
+
+/// Regression for the "consolidator never runs" report: the old loop slept
+/// for the full interval before its first pass and kept `lastRun` only in
+/// memory, so every relaunch restarted a 24h countdown. The scheduler now
+/// ticks frequently and asks `isDue`, which must treat "never ran" as due
+/// and compare wall-clock elapsed time against the interval.
+struct MemoryConsolidatorScheduleTests {
+    private let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+    @Test func neverRanIsDue() {
+        #expect(MemoryConsolidator.isDue(lastRun: nil, intervalHours: 24, now: now))
+    }
+
+    @Test func recentRunIsNotDue() {
+        let last = now.addingTimeInterval(-23 * 3600)
+        #expect(!MemoryConsolidator.isDue(lastRun: last, intervalHours: 24, now: now))
+    }
+
+    @Test func exactIntervalIsDue() {
+        let last = now.addingTimeInterval(-24 * 3600)
+        #expect(MemoryConsolidator.isDue(lastRun: last, intervalHours: 24, now: now))
+    }
+
+    @Test func overdueAfterRestartIsDue() {
+        // Three days since the persisted run, regardless of process uptime.
+        let last = now.addingTimeInterval(-72 * 3600)
+        #expect(MemoryConsolidator.isDue(lastRun: last, intervalHours: 24, now: now))
+    }
+
+    @Test func nonPositiveIntervalClampsToOneHour() {
+        let last = now.addingTimeInterval(-3600)
+        #expect(MemoryConsolidator.isDue(lastRun: last, intervalHours: 0, now: now))
+        #expect(!MemoryConsolidator.isDue(lastRun: now.addingTimeInterval(-60), intervalHours: -5, now: now))
+    }
+}

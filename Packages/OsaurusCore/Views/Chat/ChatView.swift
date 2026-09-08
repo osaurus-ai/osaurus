@@ -3962,11 +3962,9 @@ final class ChatSession: ObservableObject {
         let folder = activeFolderContext(for: agentId)
         let config = AgentManager.shared.effectiveAutonomousExec(for: agentId)
         let autonomous = config?.enabled == true
-        let hostWrites = config?.allowHostFolderWrites == true
         let resolved = ToolRegistry.shared.resolveExecutionMode(
             folderContext: folder,
-            autonomousEnabled: autonomous,
-            allowHostFolderWrites: hostWrites
+            autonomousEnabled: autonomous
         )
         // Optimistic estimate: when autonomous is on but sandbox tools haven't
         // registered yet, report `.sandbox` so the budget preview matches what
@@ -4523,8 +4521,7 @@ final class ChatSession: ObservableObject {
         }
         return resolveExecutionModeForSend(
             agentId: agentId,
-            autonomousEnabled: autonomous,
-            allowHostFolderWrites: config?.allowHostFolderWrites == true
+            autonomousEnabled: autonomous
         )
     }
 
@@ -4537,13 +4534,11 @@ final class ChatSession: ObservableObject {
     /// Interactive folders keep sandbox priority.
     func resolveExecutionModeForSend(
         agentId: UUID,
-        autonomousEnabled: Bool,
-        allowHostFolderWrites: Bool = false
+        autonomousEnabled: Bool
     ) -> ExecutionMode {
         ToolRegistry.shared.resolveExecutionMode(
             folderContext: activeFolderContext(for: agentId),
             autonomousEnabled: autonomousEnabled,
-            allowHostFolderWrites: allowHostFolderWrites,
             preferHostFolder: folderContextFromDispatchBookmark
         )
     }

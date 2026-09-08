@@ -2142,10 +2142,10 @@ public final class ToolRegistry: ObservableObject {
         "file_read", "file_search",
     ]
 
-    /// The write subset of the folder tools that joins the schema in
-    /// WRITABLE combined mode (`allowHostFolderWrites` opt-in). Only the
-    /// file writers — never `shell_run` / git / `file_undo`, so exec
-    /// stays sandbox-only and undo stays in the Changes sheet.
+    /// The write subset of the folder tools that joined the schema in
+    /// legacy WRITABLE combined mode. Only the file writers — never
+    /// `shell_run` / git / `file_undo`, so exec stayed sandbox-only and
+    /// undo stayed in the Changes sheet.
     static let folderWriteToolNames: Set<String> = [
         "file_write", "file_edit",
     ]
@@ -2155,7 +2155,8 @@ public final class ToolRegistry: ObservableObject {
     /// plain folder mode (shell `cp` covers host-side copies) and in plain
     /// sandbox mode (no workspace). Visible in BOTH read-only and writable
     /// combined mode; host-bound destinations are gated at execute time on
-    /// the `allowHostFolderWrites` grant, not by hiding the tool.
+    /// the `ChatExecutionContext.allowHostFolderWrites` task-local (always
+    /// false now that combined mode is gone), not by hiding the tool.
     static let combinedModeBridgeToolNames: Set<String> = [
         "file_copy"
     ]
@@ -2370,7 +2371,6 @@ public final class ToolRegistry: ObservableObject {
     func resolveExecutionMode(
         folderContext: FolderContext?,
         autonomousEnabled: Bool,
-        allowHostFolderWrites _: Bool = false,
         preferHostFolder: Bool = false
     ) -> ExecutionMode {
         // `preferHostFolder` honors an explicitly-targeted host folder over the

@@ -43,8 +43,25 @@ struct ThemeEditorView: View {
     @State private var rawThemeJSON: String
     @State private var rawThemeJSONError: String?
     @State private var rawThemeJSONIsDirty = false
+    /// Pending debounced re-encode of the Raw JSON text. A color-picker drag
+    /// mutates `editingTheme` many times per second, and pretty-printing the
+    /// whole theme plus replacing the TextEditor text on every tick made the
+    /// picker stutter.
+    @State private var rawThemeJSONSyncTask: Task<Void, Never>?
+    /// True when the user has edited the Raw JSON text and then changed a
+    /// control, so the JSON no longer reflects the theme. Surfaced as a
+    /// warning because Apply JSON would silently revert those changes.
+    @State private var rawThemeJSONIsStale = false
+    /// Error surfaced when a background image fails to import.
+    @State private var imageImportError: String?
+    @State private var showImageImportError = false
+    /// Accent hex set by Apply JSON, so the accent-derivation hook can tell
+    /// a JSON apply apart from a color-row edit.
+    @State private var accentHexFromRawJSON: String?
 
     let onDismiss: () -> Void
+
+    private var isSaving: Bool { showSaveConfirmation }
 
     init(theme: CustomTheme, onDismiss: @escaping () -> Void) {
         _editingTheme = State(initialValue: theme)
@@ -66,9 +83,26 @@ struct ThemeEditorView: View {
         .task(id: editingTheme.background.imageData) {
             backgroundPreviewImage = await decodeThemeBackgroundImage(editingTheme.background.imageData)
         }
-        .onChange(of: editingTheme) { _, newTheme in
-            syncRawThemeJSONIfNeeded(newTheme)
+        .onChange(of: editingTheme) { _, _ in
+            if rawThemeJSONIsDirty {
+                rawThemeJSONIsStale = true
+            }
+            scheduleRawThemeJSONSync()
         }
+        .onChange(of: editingTheme.colors.accentColor) { oldHex, newHex in
+            rederiveAccentColors(from: oldHex, to: newHex)
+        }
+        .onDisappear {
+            rawThemeJSONSyncTask?.cancel()
+        }
+        .themedAlert(
+            L("Couldn't Import Image"),
+            isPresented: $showImageImportError,
+            message: imageImportError,
+            primaryButton: .primary(L("OK")) {
+                imageImportError = nil
+            }
+        )
         .fileImporter(
             isPresented: $showImagePicker,
             allowedContentTypes: [.image],
@@ -183,6 +217,9 @@ struct ThemeEditorView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
+                // Save stays visible for the "Saved!" confirmation, and a
+                // second click in that window used to mint another copy.
+                .disabled(isSaving)
             }
         }
         .padding(16)
@@ -193,8 +230,21 @@ struct ThemeEditorView: View {
 
     private var appearanceSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            editorSection(L("Appearance")) {
+            editorSection("Appearance") {
+                toggleRow("Follow System Accent", isOn: $editingTheme.followsSystemAccent)
+
+                // The app substitutes the macOS accent at runtime when the
+                // theme follows it, so an edited accent would never show
+                // outside the editor. Make that visible instead of silently
+                // ignoring the pick.
                 colorRow("Accent Color", hex: $editingTheme.colors.accentColor)
+                    .disabled(editingTheme.followsSystemAccent)
+                    .opacity(editingTheme.followsSystemAccent ? 0.5 : 1)
+                if editingTheme.followsSystemAccent {
+                    Text("Turn off Follow System Accent to choose a custom accent color.", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(currentTheme.tertiaryText)
+                }
 
                 HStack {
                     Text("Mode", bundle: .module)
@@ -229,7 +279,7 @@ struct ThemeEditorView: View {
 
     private var glassSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            editorSection(L("Glass")) {
+            editorSection("Glass") {
                 glassToggleRow(
                     label: "Chat Area",
                     isOn: Binding(
@@ -312,7 +362,7 @@ struct ThemeEditorView: View {
 
     private var codeSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            editorSection(L("Code")) {
+            editorSection("Code") {
                 codeHighlightThemePicker
                 colorRow("Code Block BG", hex: $editingTheme.colors.codeBlockBackground)
                 colorRow("Text Selection", hex: $editingTheme.colors.selectionColor)
@@ -326,7 +376,7 @@ struct ThemeEditorView: View {
 
     private var colorsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            editorSection(L("Colors")) {
+            editorSection("Colors") {
                 colorRow("Primary Text", hex: $editingTheme.colors.primaryText)
                 colorRow("Secondary Text", hex: $editingTheme.colors.secondaryText)
                 colorRow("Tertiary Text", hex: $editingTheme.colors.tertiaryText)
@@ -338,7 +388,7 @@ struct ThemeEditorView: View {
                 colorRow("Tertiary BG", hex: $editingTheme.colors.tertiaryBackground)
             }
 
-            editorSection(L("Advanced Colors"), itemCount: 7) {
+            editorSection("Advanced Colors", itemCount: 7) {
                 colorRowOptional("Placeholder", hex: $editingTheme.colors.placeholderText)
 
                 Text("Status", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
@@ -367,7 +417,7 @@ struct ThemeEditorView: View {
 
     private var messagesSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            editorSection(L("Messages")) {
+            editorSection("Messages") {
                 Text("User Bubble", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
                 ).textCase(.uppercase)
@@ -387,14 +437,17 @@ struct ThemeEditorView: View {
                 Text("Agent Avatar", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
                 ).textCase(.uppercase)
+                toggleRow("Show in chat", isOn: $editingTheme.messages.showInlineAvatar)
                 sliderRow("Size", value: $editingTheme.messages.inlineAvatarSize, range: 16 ... 108)
+                    .disabled(!editingTheme.messages.showInlineAvatar)
+                    .opacity(editingTheme.messages.showInlineAvatar ? 1 : 0.5)
 
                 Divider().opacity(0.3)
 
                 Text("Agent Name", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
                 ).textCase(.uppercase)
-                showAgentNameToggleRow
+                toggleRow("Show in chat", isOn: $editingTheme.messages.showAgentName)
                 sliderRow("Name Size", value: $editingTheme.messages.agentNameSize, range: 12.5 ... 18)
                     .disabled(!editingTheme.messages.showAgentName)
                     .opacity(editingTheme.messages.showAgentName ? 1 : 0.5)
@@ -402,13 +455,13 @@ struct ThemeEditorView: View {
         }
     }
 
-    private var showAgentNameToggleRow: some View {
+    private func toggleRow(_ label: LocalizedStringKey, isOn: Binding<Bool>) -> some View {
         HStack {
-            Text("Show in chat", bundle: .module)
+            Text(label, bundle: .module)
                 .font(.system(size: 13))
                 .foregroundColor(currentTheme.primaryText)
             Spacer()
-            Toggle("", isOn: $editingTheme.messages.showAgentName)
+            Toggle("", isOn: isOn)
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .tint(currentTheme.accentColor)
@@ -419,7 +472,7 @@ struct ThemeEditorView: View {
 
     private var textAndFontsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            editorSection(L("Text & Fonts")) {
+            editorSection("Text & Fonts") {
                 fontPicker("Primary Font", fontName: $editingTheme.typography.primaryFont, isMono: false)
                 fontPicker("Mono Font", fontName: $editingTheme.typography.monoFont, isMono: true)
 
@@ -438,7 +491,7 @@ struct ThemeEditorView: View {
 
     private var bordersAndEffectsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            editorSection(L("Borders & Effects")) {
+            editorSection("Borders & Effects") {
                 Picker("Input Box", selection: $editingTheme.inputStyle) {
                     Text("Gradient", bundle: .module).tag(ThemeInputStyle.gradient)
                     Text("Shadow", bundle: .module).tag(ThemeInputStyle.shadow)
@@ -548,6 +601,23 @@ struct ThemeEditorView: View {
                 Text("Fit", bundle: .module)
             }
             .pickerStyle(.segmented)
+
+            Divider().opacity(0.3)
+
+            Text("Overlay", bundle: .module).font(.system(size: 11, weight: .semibold))
+                .foregroundColor(currentTheme.tertiaryText)
+                .textCase(.uppercase)
+            colorRowOptional("Overlay Color", hex: $editingTheme.background.overlayColor)
+            if editingTheme.background.overlayColor != nil {
+                sliderRow(
+                    "Overlay Opacity",
+                    value: Binding(
+                        get: { editingTheme.background.overlayOpacity ?? 0.5 },
+                        set: { editingTheme.background.overlayOpacity = $0 }
+                    ),
+                    range: 0 ... 1
+                )
+            }
         }
     }
 
@@ -555,7 +625,7 @@ struct ThemeEditorView: View {
 
     private var advancedSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            editorSection(L("Advanced")) {
+            editorSection("Advanced") {
                 Text("Animation", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
                 )
@@ -621,7 +691,7 @@ struct ThemeEditorView: View {
                             id: \.offset
                         ) { index, _ in
                             colorRow(
-                                "Color \(index + 1)",
+                                L("Color \(index + 1)"),
                                 hex: Binding(
                                     get: {
                                         let colors = editingTheme.background.gradientColors ?? ["#000000", "#333333"]
@@ -683,7 +753,7 @@ struct ThemeEditorView: View {
 
     private var rawJSONSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            editorSection(L("Raw JSON")) {
+            editorSection("Raw JSON") {
                 VStack(alignment: .leading, spacing: 10) {
                     TextEditor(text: rawThemeJSONBinding)
                         .font(.system(size: 11, design: .monospaced))
@@ -701,6 +771,10 @@ struct ThemeEditorView: View {
 
                     if let rawThemeJSONError {
                         rawJSONErrorView(rawThemeJSONError)
+                    }
+
+                    if rawThemeJSONIsStale {
+                        rawJSONStaleView
                     }
 
                     HStack(spacing: 8) {
@@ -745,6 +819,30 @@ struct ThemeEditorView: View {
         )
     }
 
+    /// Shown when the JSON text has unapplied edits and a control was changed
+    /// afterwards. Without this, Apply JSON would quietly undo the control
+    /// change and Refresh would quietly discard the typed edits.
+    private var rawJSONStaleView: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(currentTheme.warningColor)
+            Text(
+                "The controls changed after you edited this JSON. Apply JSON will overwrite those control changes, and Refresh will discard your JSON edits.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(currentTheme.warningColor)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(currentTheme.warningColor.opacity(0.12))
+        )
+    }
+
     private func rawJSONErrorView(_ message: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
@@ -783,12 +881,25 @@ struct ThemeEditorView: View {
                 transparencyBackdrop
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
 
-                ThemeChatPreview(theme: editingTheme)
+                ThemeChatPreview(theme: previewTheme)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .padding(6)
             }
             .padding(20)
         }
+    }
+
+    /// The theme as the app will actually render it. When the theme follows
+    /// the system accent the runtime substitutes the macOS accent, so the
+    /// preview does the same rather than showing the stored accent.
+    private var previewTheme: CustomTheme {
+        var theme = editingTheme
+        if theme.followsSystemAccent,
+            let accentHex = SystemAccentColor.currentAccentHex(isDark: theme.isDark)
+        {
+            theme.colors = theme.colors.applyingAccent(accentHex, isDark: theme.isDark)
+        }
+        return theme
     }
 
     /// gradient backdrop behind the preview card
@@ -819,6 +930,9 @@ struct ThemeEditorView: View {
 
     // MARK: - Reusable Editor Components
 
+    /// `title` is the English section name. It doubles as the stable key for
+    /// `collapsedSections` (so the collapsed-by-default set matches in every
+    /// locale) and is localized only for display.
     private func editorSection<Content: View>(
         _ title: String,
         itemCount: Int? = nil,
@@ -833,7 +947,7 @@ struct ThemeEditorView: View {
                 }
             }) {
                 HStack(spacing: 6) {
-                    Text(title)
+                    Text(LocalizedStringKey(title), bundle: .module)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(currentTheme.secondaryText)
                         .textCase(.uppercase)
@@ -904,12 +1018,7 @@ struct ThemeEditorView: View {
 
             colorSwatch(hex: hex.wrappedValue)
 
-            colorPickerButton(
-                selection: Binding(
-                    get: { Color(themeHex: hex.wrappedValue) },
-                    set: { hex.wrappedValue = $0.toHex(includeAlpha: true) }
-                )
-            )
+            colorPickerButton(hex: hex)
         }
     }
 
@@ -932,9 +1041,9 @@ struct ThemeEditorView: View {
                 colorSwatch(hex: hex.wrappedValue ?? "#000000")
 
                 colorPickerButton(
-                    selection: Binding(
-                        get: { Color(themeHex: hex.wrappedValue ?? "#000000") },
-                        set: { hex.wrappedValue = $0.toHex(includeAlpha: true) }
+                    hex: Binding(
+                        get: { hex.wrappedValue ?? "#000000" },
+                        set: { hex.wrappedValue = $0 }
                     )
                 )
 
@@ -958,21 +1067,7 @@ struct ThemeEditorView: View {
     // MARK: - Shared Primitives
 
     private func hexTextField(hex: Binding<String>) -> some View {
-        TextField(
-            "",
-            text: Binding(
-                get: { hex.wrappedValue.uppercased() },
-                set: { newValue in
-                    let cleaned = newValue.hasPrefix("#") ? newValue : "#" + newValue
-                    if cleaned.count <= 9 { hex.wrappedValue = cleaned }
-                }
-            )
-        )
-        .textFieldStyle(.plain)
-        .font(.system(size: 11, design: .monospaced))
-        .foregroundColor(currentTheme.tertiaryText)
-        .multilineTextAlignment(.trailing)
-        .frame(width: 72)
+        ThemeHexTextField(hex: hex, textColor: currentTheme.tertiaryText)
     }
 
     private func colorSwatch(hex: String) -> some View {
@@ -982,10 +1077,8 @@ struct ThemeEditorView: View {
             .overlay(RoundedRectangle(cornerRadius: 4).stroke(currentTheme.primaryBorder, lineWidth: 1))
     }
 
-    private func colorPickerButton(selection: Binding<Color>) -> some View {
-        ColorPicker("", selection: selection, supportsOpacity: true)
-            .labelsHidden()
-            .frame(width: 44)
+    private func colorPickerButton(hex: Binding<String>) -> some View {
+        ThemeColorPickerButton(hex: hex)
     }
 
     private func themeTextField(
@@ -1059,6 +1152,16 @@ struct ThemeEditorView: View {
 
     // MARK: - Actions
 
+    private func scheduleRawThemeJSONSync() {
+        guard !rawThemeJSONIsDirty else { return }
+        rawThemeJSONSyncTask?.cancel()
+        rawThemeJSONSyncTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            syncRawThemeJSONIfNeeded(editingTheme)
+        }
+    }
+
     private func syncRawThemeJSONIfNeeded(_ theme: CustomTheme) {
         guard !rawThemeJSONIsDirty else { return }
         let encoded = encodedThemeJSON(theme, fallback: rawThemeJSON)
@@ -1073,6 +1176,7 @@ struct ThemeEditorView: View {
         rawThemeJSON = encodedThemeJSON(editingTheme, fallback: rawThemeJSON)
         rawThemeJSONError = nil
         rawThemeJSONIsDirty = false
+        rawThemeJSONIsStale = false
     }
 
     private func applyRawThemeJSON() {
@@ -1081,10 +1185,14 @@ struct ThemeEditorView: View {
                 rawThemeJSON,
                 currentTheme: editingTheme
             )
+            if decoded.colors.accentColor != editingTheme.colors.accentColor {
+                accentHexFromRawJSON = decoded.colors.accentColor
+            }
             editingTheme = decoded
             rawThemeJSON = encodedThemeJSON(decoded, fallback: rawThemeJSON)
             rawThemeJSONError = nil
             rawThemeJSONIsDirty = false
+            rawThemeJSONIsStale = false
         } catch {
             rawThemeJSONError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
@@ -1094,7 +1202,31 @@ struct ThemeEditorView: View {
         (try? ThemeJSONEditorCodec.encodeForEditor(theme)) ?? fallback
     }
 
+    /// Re-derives the accent-adjacent colors (light accent, selection,
+    /// cursor, focus border, info, selected sidebar row) when the accent row
+    /// changes, so they track the new accent instead of staying tied to the
+    /// old one. `applyingAccent` is a no-op when the hex matches the stored
+    /// accent, so the old value is put back first to force the derivation.
+    private func rederiveAccentColors(from oldHex: String, to newHex: String) {
+        guard oldHex != newHex else { return }
+        // Apply JSON sets every color explicitly; don't overwrite the
+        // accent-adjacent values the JSON spelled out.
+        if let suppressed = accentHexFromRawJSON, suppressed == newHex {
+            accentHexFromRawJSON = nil
+            return
+        }
+        var colors = editingTheme.colors
+        colors.accentColor = oldHex
+        let derived = colors.applyingAccent(String(newHex.prefix(7)), isDark: editingTheme.isDark)
+        guard derived != colors else { return }
+        var updated = derived
+        // Keep exactly what the user picked, alpha included.
+        updated.accentColor = newHex
+        editingTheme.colors = updated
+    }
+
     private func saveTheme() {
+        guard !isSaving else { return }
         var themeToSave = editingTheme
 
         if editingTheme.isBuiltIn {
@@ -1108,9 +1240,7 @@ struct ThemeEditorView: View {
 
         themeToSave.metadata.updatedAt = Date()
 
-        print("[Osaurus] ThemeEditor: Saving theme '\(themeToSave.metadata.name)' (id: \(themeToSave.metadata.id))")
         themeManager.saveTheme(themeToSave)
-        print("[Osaurus] ThemeEditor: Theme saved successfully")
 
         withAnimation { showSaveConfirmation = true }
 
@@ -1137,15 +1267,25 @@ struct ThemeEditorView: View {
                     return resized.base64EncodedString()
                 }.value
                 guard let encoded else {
-                    print("[Osaurus] Failed to import image")
+                    presentImageImportError(
+                        String(
+                            localized: "The file could not be read as an image. Try a PNG or JPEG.",
+                            bundle: .module
+                        )
+                    )
                     return
                 }
                 editingTheme.background.imageData = encoded
                 editingTheme.background.type = .image
             }
         case .failure(let error):
-            print("[Osaurus] Image import failed: \(error)")
+            presentImageImportError(error.localizedDescription)
         }
+    }
+
+    private func presentImageImportError(_ message: String) {
+        imageImportError = message
+        showImageImportError = true
     }
 
     /// Off-main-actor helper: drawing into an offscreen `NSImage` and
@@ -1174,6 +1314,149 @@ struct ThemeEditorView: View {
             let pngData = bitmapRep.representation(using: .png, properties: [:])
         else { return nil }
         return pngData
+    }
+}
+
+// MARK: - Hex Text Field
+
+/// Hex entry that keeps what the user is typing in local state and only
+/// commits complete, valid values (#RGB, #RRGGBB, #RRGGBBAA) to the theme.
+///
+/// Binding the field straight to the theme hex pushed every keystroke into
+/// the theme: partial input like "#FF000" parsed as black, so the swatch
+/// and live preview flashed black on each key, and saving mid-edit
+/// persisted an invalid color. The getter also uppercased on every
+/// keystroke, rewriting lowercase input under the cursor.
+private struct ThemeHexTextField: View {
+    @Binding var hex: String
+    let textColor: Color
+
+    @State private var text: String
+    @FocusState private var isFocused: Bool
+
+    init(hex: Binding<String>, textColor: Color) {
+        _hex = hex
+        self.textColor = textColor
+        _text = State(initialValue: hex.wrappedValue.uppercased())
+    }
+
+    var body: some View {
+        TextField("", text: $text)
+            .textFieldStyle(.plain)
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundColor(textColor)
+            .multilineTextAlignment(.trailing)
+            .frame(width: 72)
+            .focused($isFocused)
+            .onChange(of: text) { _, newValue in
+                let normalized = Self.normalize(newValue)
+                if normalized != newValue {
+                    text = normalized
+                    return
+                }
+                if Self.isCompleteHex(normalized), normalized.caseInsensitiveCompare(hex) != .orderedSame {
+                    hex = normalized
+                }
+            }
+            .onChange(of: hex) { _, newHex in
+                // External change (picker drag, Apply JSON): mirror it unless
+                // the field is showing the same value already.
+                if newHex.caseInsensitiveCompare(text) != .orderedSame {
+                    text = newHex.uppercased()
+                }
+            }
+            .onChange(of: isFocused) { _, focused in
+                // Leaving the field with an incomplete value restores the
+                // last committed hex instead of leaving junk on screen.
+                if !focused, !Self.isCompleteHex(text) {
+                    text = hex.uppercased()
+                }
+            }
+            .onSubmit {
+                if !Self.isCompleteHex(text) {
+                    text = hex.uppercased()
+                }
+            }
+    }
+
+    /// Forces a leading "#", drops non-hex characters, uppercases, and caps
+    /// the length at eight digits.
+    private static func normalize(_ raw: String) -> String {
+        let digits = String(raw.filter(\.isHexDigit).uppercased().prefix(8))
+        return "#" + digits
+    }
+
+    private static func isCompleteHex(_ value: String) -> Bool {
+        let digits = value.hasPrefix("#") ? String(value.dropFirst()) : value
+        return [3, 6, 8].contains(digits.count) && digits.allSatisfy(\.isHexDigit)
+    }
+}
+
+// MARK: - Color Picker Button
+
+/// System color picker that owns its own `Color` state and mirrors it to a
+/// hex string, instead of binding the picker straight to the hex.
+///
+/// Binding the picker to `Color(themeHex:)` / `toHex()` directly meant every
+/// drag tick was quantized to 8 bits per channel and handed back to the
+/// picker as a brand-new color. NSColorPanel re-derives its wheel and slider
+/// positions from that color, so at low saturation or brightness (where the
+/// hue is lost in the round-trip) the pointer snapped away from where the
+/// user was dragging. Keeping the picker's color local and only pushing the
+/// hex outward avoids the feedback loop. The hex is pulled back into the
+/// picker only when it changes from elsewhere (the hex text field, Apply
+/// JSON).
+private struct ThemeColorPickerButton: View {
+    @Binding var hex: String
+
+    @State private var color: Color
+    /// The last hex this view wrote to the binding, so the echo of our own
+    /// write coming back through `onChange(of: hex)` is not re-applied to
+    /// the picker.
+    @State private var lastEmittedHex: String
+
+    init(hex: Binding<String>) {
+        _hex = hex
+        _color = State(initialValue: Color(themeHex: hex.wrappedValue))
+        _lastEmittedHex = State(initialValue: hex.wrappedValue)
+    }
+
+    var body: some View {
+        ColorPicker("", selection: $color, supportsOpacity: true)
+            .labelsHidden()
+            .frame(width: 44)
+            .onChange(of: color) { _, newColor in
+                let newHex = newColor.toHex(includeAlpha: true)
+                guard !Self.isSameHex(newHex, lastEmittedHex) else { return }
+                lastEmittedHex = newHex
+                if !Self.isSameHex(newHex, hex) {
+                    hex = newHex
+                }
+            }
+            .onChange(of: hex) { _, newHex in
+                guard !Self.isSameHex(newHex, lastEmittedHex) else { return }
+                // Ignore partial input from the hex text field ("#FF000"
+                // mid-typing). It would parse as black, and pushing that
+                // into the picker would echo "#000000" back over what the
+                // user is typing.
+                guard Self.isCompleteHex(newHex) else { return }
+                let parsed = Color(themeHex: newHex)
+                // Record the hex the picker will report for this color so
+                // the onChange(of: color) echo is treated as our own write
+                // and never rewrites the text field.
+                lastEmittedHex = parsed.toHex(includeAlpha: true)
+                color = parsed
+            }
+    }
+
+    private static func isSameHex(_ a: String, _ b: String) -> Bool {
+        a.caseInsensitiveCompare(b) == .orderedSame
+    }
+
+    private static func isCompleteHex(_ value: String) -> Bool {
+        let digits = value.hasPrefix("#") ? String(value.dropFirst()) : value
+        guard [3, 6, 8].contains(digits.count) else { return false }
+        return digits.allSatisfy(\.isHexDigit)
     }
 }
 
@@ -1360,8 +1643,10 @@ struct ThemeChatPreview: View {
             "    func render() { print(accent) }",
             "}",
         ].joined(separator: "\n")
-        ensureHighlightrTheme(for: themeProtocol)
-        let bgColor = highlightrThemeBackgroundColor()
+        // Read the code background for the edited theme without switching
+        // the shared highlighter during body evaluation. Switching here
+        // left the chat window's code blocks on the editor's theme.
+        let bgColor = highlightrThemeBackgroundColor(for: themeProtocol)
 
         return VStack(alignment: .leading, spacing: 0) {
             // Header bar
@@ -1457,10 +1742,11 @@ struct ThemeChatPreview: View {
             case .solid:
                 c(theme.background.solidColor ?? theme.colors.primaryBackground)
             case .gradient:
+                let points = theme.background.gradientUnitPoints
                 LinearGradient(
                     colors: (theme.background.gradientColors ?? ["#000000", "#333333"]).map { c($0) },
-                    startPoint: .top,
-                    endPoint: .bottom
+                    startPoint: points.start,
+                    endPoint: points.end
                 )
             case .image:
                 if let nsImage = backgroundImage {

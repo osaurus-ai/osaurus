@@ -985,8 +985,6 @@ final class PluginHostContext: @unchecked Sendable {
             let mode = ToolRegistry.shared.resolveExecutionMode(
                 folderContext: sessionFolderContext,
                 autonomousEnabled: resolved.autonomousEnabled,
-                allowHostFolderWrites: AgentManager.shared.effectiveAutonomousExec(for: agentId)?
-                    .allowHostFolderWrites == true,
                 preferHostFolder: sessionFolder.fromDispatch
             )
             // Snapshot the agent's effective model so it can ride along to

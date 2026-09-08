@@ -42,10 +42,11 @@ struct ThemedBackgroundLayer: View {
             case .gradient:
                 let colors = (customTheme.background.gradientColors ?? ["#000000", "#333333"])
                     .map { Color(themeHex: $0) }
+                let points = customTheme.background.gradientUnitPoints
                 LinearGradient(
                     colors: colors,
-                    startPoint: .top,
-                    endPoint: .bottom
+                    startPoint: points.start,
+                    endPoint: points.end
                 )
 
             case .image:

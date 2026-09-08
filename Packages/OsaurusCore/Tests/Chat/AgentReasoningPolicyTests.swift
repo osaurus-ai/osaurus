@@ -9,6 +9,43 @@ import Testing
 
 @Suite("Agent reasoning policy")
 struct AgentReasoningPolicyTests {
+    @Test("Native three-state thinking stays omitted unless explicitly chosen")
+    func nativeOmissionSurvivesAgentPolicy() {
+        let capability = LocalReasoningCapability.Capability(
+            supportsThinking: true,
+            hasEnableThinkingKwarg: true,
+            templateInjectsThinkTag: true,
+            defaultThinkingOn: false,
+            preservesOmittedThinking: true
+        )
+        for agent in [false, true] {
+            for explicit: Bool? in [nil, false, true] {
+                #expect(
+                    AgentReasoningPolicy.defaultEnableThinking(
+                        isAgentOrToolRequest: agent,
+                        explicitEnableThinking: explicit,
+                        explicitReasoningEffort: nil,
+                        modelOptions: [:],
+                        usesReasoningEffortControl: false,
+                        capability: capability
+                    ) == explicit
+                )
+            }
+            for disabled in [false, true] {
+                #expect(
+                    AgentReasoningPolicy.defaultEnableThinking(
+                        isAgentOrToolRequest: agent,
+                        explicitEnableThinking: nil,
+                        explicitReasoningEffort: nil,
+                        modelOptions: ["disableThinking": .bool(disabled)],
+                        usesReasoningEffortControl: false,
+                        capability: capability
+                    ) == !disabled
+                )
+            }
+        }
+    }
+
     private let toggleableDefaultOn = LocalReasoningCapability.Capability(
         supportsThinking: true,
         hasEnableThinkingKwarg: true,

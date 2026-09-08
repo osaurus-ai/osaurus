@@ -704,6 +704,326 @@
     },
     "Claude Code isn't signed in. Open `claude` in a terminal, sign in, then try again.": {
     },
+    "Couldn't Import Image": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bild konnte nicht importiert werden"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't Import Image"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이미지를 가져올 수 없음"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось импортировать изображение"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法导入图片"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法匯入圖片"
+          }
+        }
+      }
+    },
+    "Follow System Accent": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Systemakzentfarbe verwenden"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Follow System Accent"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시스템 강조 색상 따르기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Использовать системный акцент"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "跟随系统强调色"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "跟隨系統強調色"
+          }
+        }
+      }
+    },
+    "Turn off Follow System Accent to choose a custom accent color.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deaktiviere „Systemakzentfarbe verwenden“, um eine eigene Akzentfarbe zu wählen."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turn off Follow System Accent to choose a custom accent color."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "사용자 지정 강조 색상을 선택하려면 시스템 강조 색상 따르기를 끄세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отключите «Использовать системный акцент», чтобы выбрать свой цвет акцента."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭“跟随系统强调色”以选择自定义强调色。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "關閉「跟隨系統強調色」以選擇自訂強調色。"
+          }
+        }
+      }
+    },
+    "Overlay": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Überlagerung"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Overlay"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "오버레이"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Наложение"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "叠加层"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "疊加層"
+          }
+        }
+      }
+    },
+    "Overlay Color": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Überlagerungsfarbe"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Overlay Color"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "오버레이 색상"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Цвет наложения"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "叠加层颜色"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "疊加層顏色"
+          }
+        }
+      }
+    },
+    "Overlay Opacity": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Überlagerungsdeckkraft"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Overlay Opacity"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "오버레이 불투명도"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Непрозрачность наложения"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "叠加层不透明度"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "疊加層不透明度"
+          }
+        }
+      }
+    },
+    "The controls changed after you edited this JSON. Apply JSON will overwrite those control changes, and Refresh will discard your JSON edits.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Steuerelemente wurden nach dem Bearbeiten dieses JSON geändert. „JSON anwenden“ überschreibt diese Änderungen, „Aktualisieren“ verwirft deine JSON-Bearbeitungen."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The controls changed after you edited this JSON. Apply JSON will overwrite those control changes, and Refresh will discard your JSON edits."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 JSON을 편집한 후 컨트롤이 변경되었습니다. JSON 적용은 해당 컨트롤 변경 사항을 덮어쓰고, 새로 고침은 JSON 편집 내용을 버립니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Элементы управления изменились после редактирования этого JSON. «Применить JSON» перезапишет эти изменения, а «Обновить» отменит ваши правки JSON."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "编辑此 JSON 后控件已更改。“应用 JSON”将覆盖这些控件更改，“刷新”将丢弃你的 JSON 编辑。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "編輯此 JSON 後控制項已變更。「套用 JSON」將覆寫這些控制項變更，「重新整理」將捨棄你的 JSON 編輯。"
+          }
+        }
+      }
+    },
+    "The file could not be read as an image. Try a PNG or JPEG.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Datei konnte nicht als Bild gelesen werden. Versuche es mit PNG oder JPEG."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The file could not be read as an image. Try a PNG or JPEG."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "파일을 이미지로 읽을 수 없습니다. PNG 또는 JPEG를 사용해 보세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось прочитать файл как изображение. Попробуйте PNG или JPEG."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法将该文件读取为图片。请尝试 PNG 或 JPEG。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法將該檔案讀取為圖片。請嘗試 PNG 或 JPEG。"
+          }
+        }
+      }
+    },
     "Couldn't start Claude Code: %@": {
     },
     "Execution mode": {
@@ -48846,6 +49166,48 @@
           "stringUnit": {
             "state": "translated",
             "value": "顏色"
+          }
+        }
+      }
+    },
+    "Color %lld": {
+      "comment": "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Farbe %lld"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Color %lld"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "색상 %lld"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Цвет %lld"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "颜色 %lld"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顏色 %lld"
           }
         }
       }
@@ -123329,36 +123691,36 @@
         }
       }
     },
-    "New chats in this project open with this folder.": {
+    "New chats in this project open with this folder. Their agent's sandbox is turned off, since a chat uses either a folder or the sandbox.": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Neue Chats in diesem Projekt öffnen mit diesem Ordner."
+            "value": "Neue Chats in diesem Projekt öffnen mit diesem Ordner. Die Sandbox ihres Agenten wird ausgeschaltet, da ein Chat entweder einen Ordner oder die Sandbox verwendet."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "이 프로젝트의 새 채팅은 이 폴더로 시작합니다."
+            "value": "이 프로젝트의 새 채팅은 이 폴더로 시작합니다. 채팅은 폴더 또는 샌드박스 중 하나만 사용하므로 해당 에이전트의 샌드박스는 꺼집니다."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Новые чаты в этом проекте открываются с этой папкой."
+            "value": "Новые чаты в этом проекте открываются с этой папкой. Песочница их агента отключается, так как чат использует либо папку, либо песочницу."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "此项目中的新聊天将以此文件夹打开。"
+            "value": "此项目中的新聊天将以此文件夹打开。由于聊天只能使用文件夹或沙盒之一，其代理的沙盒将被关闭。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "此專案中的新聊天將以此資料夾開啟。"
+            "value": "此專案中的新聊天將以此資料夾開啟。由於聊天只能使用資料夾或沙盒之一，其代理的沙盒將被關閉。"
           }
         }
       }
@@ -237668,6 +238030,15 @@
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "此設定將在沙箱啟動時生效。" } }
       }
     },
+    "While on, chats ignore their working folder. Picking a folder in a chat or project turns the sandbox off again.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Solange aktiv, ignorieren Chats ihren Arbeitsordner. Die Auswahl eines Ordners in einem Chat oder Projekt schaltet die Sandbox wieder aus." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "켜져 있는 동안 채팅은 작업 폴더를 무시합니다. 채팅이나 프로젝트에서 폴더를 선택하면 샌드박스가 다시 꺼집니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Пока включено, чаты игнорируют свою рабочую папку. Выбор папки в чате или проекте снова отключает песочницу." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "开启时，聊天会忽略其工作文件夹。在聊天或项目中选择文件夹会再次关闭沙盒。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "開啟時，聊天會忽略其工作資料夾。在聊天或專案中選擇資料夾會再次關閉沙箱。" } }
+      }
+    },
     "This sign-in isn't a Pro or Max subscription, so requests bill through whatever credential Claude Code is configured with.": {
       "localizations": {
         "de": { "stringUnit": { "state": "translated", "value": "Diese Anmeldung ist kein Pro- oder Max-Abo, daher werden Anfragen über die Zugangsdaten abgerechnet, mit denen Claude Code konfiguriert ist." } },
@@ -237762,6 +238133,51 @@
         "ru": { "stringUnit": { "state": "translated", "value": "Этот документ знаний больше не существует в своей коллекции." } },
         "zh-Hans": { "stringUnit": { "state": "translated", "value": "该知识文档已不存在于其集合中。" } },
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "此知識文件已不存在於其集合中。" } }
+      }
+    },
+    "Consolidation is already running": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Konsolidierung läuft bereits" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "통합이 이미 실행 중입니다" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Консолидация уже выполняется" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "整合已在运行" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "整合已在執行" } }
+      }
+    },
+    "Enable memory to run consolidation": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Aktiviere das Gedächtnis, um die Konsolidierung auszuführen" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "통합을 실행하려면 메모리를 활성화하세요" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Включите память, чтобы запустить консолидацию" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "启用记忆以运行整合" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "啟用記憶以執行整合" } }
+      }
+    },
+    "Memory database is not open": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Gedächtnisdatenbank ist nicht geöffnet" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "메모리 데이터베이스가 열려 있지 않습니다" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "База данных памяти не открыта" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "记忆数据库未打开" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "記憶資料庫未開啟" } }
+      }
+    },
+    "Last run:": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Letzter Lauf:" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "마지막 실행:" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Последний запуск:" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "上次运行：" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "上次執行：" } }
+      }
+    },
+    "ago": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "her" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "전" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "назад" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "前" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "前" } }
       }
     }
   },

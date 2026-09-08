@@ -62,37 +62,17 @@ struct ResolveExecutionModeTests {
     }
 
     @Test
-    func legacyWriteGrant_neverBridgesFolderIntoSandbox() async {
+    func plainFolderMode_isNativeHostFolderNotCombined() async {
         await SandboxTestLock.shared.run {
             registerSandboxExec()
             defer { ToolRegistry.shared.unregisterAllSandboxTools() }
 
-            // A legacy host-write grant is inert in sandbox mode.
-            let writable = ToolRegistry.shared.resolveExecutionMode(
-                folderContext: sampleFolderContext(),
-                autonomousEnabled: true,
-                allowHostFolderWrites: true
-            )
-            #expect(writable.usesSandboxTools)
-            #expect(!writable.allowsHostReadTools)
-            #expect(!writable.allowsHostWriteTools)
-
-            // Grant without a folder is inert (nothing to write).
-            let noFolder = ToolRegistry.shared.resolveExecutionMode(
-                folderContext: nil,
-                autonomousEnabled: true,
-                allowHostFolderWrites: true
-            )
-            #expect(noFolder.usesSandboxTools)
-            #expect(!noFolder.allowsHostWriteTools)
-
-            // Grant in plain folder mode (autonomous off) resolves to
-            // `.hostFolder`, which is natively writable — the combined
-            // write grant never applies there.
+            // Autonomous off with a folder resolves to `.hostFolder`, which
+            // is natively writable via the Changes sheet — never the removed
+            // combined-mode write surface.
             let plainFolder = ToolRegistry.shared.resolveExecutionMode(
                 folderContext: sampleFolderContext(),
-                autonomousEnabled: false,
-                allowHostFolderWrites: true
+                autonomousEnabled: false
             )
             #expect(plainFolder.usesHostFolderTools)
             #expect(!plainFolder.allowsHostWriteTools)
@@ -250,12 +230,12 @@ struct ResolveExecutionModeTests {
         }
     }
 
-    /// A legacy host-WRITE grant does not silently upgrade the honored folder
-    /// into combined mode: `preferHostFolder` yields plain `.hostFolder`
-    /// (natively read-write via the Changes sheet), never `.sandbox` with a
-    /// host bridge — the removed combined-mode surface stays removed.
+    /// An honored dispatch folder never upgrades into combined mode:
+    /// `preferHostFolder` yields plain `.hostFolder` (natively read-write
+    /// via the Changes sheet), never `.sandbox` with a host bridge — the
+    /// removed combined-mode surface stays removed.
     @Test
-    func preferHostFolder_withWriteGrant_isPlainHostFolderNotCombined() async {
+    func preferHostFolder_isPlainHostFolderNotCombined() async {
         await SandboxTestLock.shared.run {
             registerSandboxExec()
             defer { ToolRegistry.shared.unregisterAllSandboxTools() }
@@ -263,7 +243,6 @@ struct ResolveExecutionModeTests {
             let mode = ToolRegistry.shared.resolveExecutionMode(
                 folderContext: sampleFolderContext(),
                 autonomousEnabled: true,
-                allowHostFolderWrites: true,
                 preferHostFolder: true
             )
             #expect(mode.usesHostFolderTools)

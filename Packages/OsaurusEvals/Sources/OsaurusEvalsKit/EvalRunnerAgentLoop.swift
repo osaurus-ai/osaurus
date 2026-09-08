@@ -1048,8 +1048,6 @@ extension EvalRunner {
             enabled: true,
             maxCommandsPerTurn: fixture.maxCommandsPerTurn ?? 10,
             pluginCreate: fixture.pluginCreate ?? true,
-            allowHostSecretReads: fixture.allowHostSecretReads ?? false,
-            allowHostFolderWrites: fixture.allowHostFolderWrites ?? false,
             sandboxNetworkEnabled: fixture.networkEnabled ?? true,
             backgroundProcessEnabled: fixture.backgroundProcessEnabled ?? false
         )

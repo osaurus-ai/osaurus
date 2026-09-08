@@ -1515,9 +1515,11 @@ public struct SystemPromptComposer: Sendable {
             if !state.isEmpty {
                 sandboxStateSection = state
             }
-            // Combined mode: a host workspace rides alongside the sandbox
-            // (read-only, or writable via the `allowHostFolderWrites`
-            // opt-in). Append the workspace section + the `## Files`
+            // Legacy combined mode (a host workspace riding alongside the
+            // sandbox). `resolveExecutionMode` never produces a host-read
+            // context any more, so this branch is inert; kept for callers
+            // that still construct the mode directly. Append the workspace
+            // section + the `## Files`
             // path-routing block AFTER the sandbox section so the agent
             // reads sandbox framing first, then learns the workspace is a
             // separate filesystem. Static so it joins the cached prefix.
@@ -1529,7 +1531,7 @@ public struct SystemPromptComposer: Sendable {
                         label: writable ? L("Host Workspace") : L("Host Workspace (read-only)"),
                         content: SystemPromptTemplates.combinedHostRead(
                             from: hostRead,
-                            allowSecretReads: snapshot.autonomousConfig?.allowHostSecretReads ?? false,
+                            allowSecretReads: false,
                             writable: writable
                         )
                     )

@@ -17,6 +17,7 @@
 
 import Foundation
 import Darwin
+import MLXLMCommon
 
 enum LocalReasoningCapability {
     struct Capability: Sendable, Equatable {
@@ -36,8 +37,13 @@ enum LocalReasoningCapability {
         ///     false (`enable_thinking is false`) → absent kwarg ⇒ thinking ON.
         ///   • Gemma-4: the thinking branch is gated on an explicit truthy value
         ///     (`... and enable_thinking`) → absent kwarg ⇒ thinking OFF.
-        /// Only meaningful when `isToggleableThinking` is true.
+        /// Only meaningful when `isToggleableThinking` is true and
+        /// `preservesOmittedThinking` is false. A native third mode must be
+        /// presented as Default, not as either boolean.
         let defaultThinkingOn: Bool
+        /// Omission is a distinct native mode, not equivalent to either bool.
+        /// Explicit user choices still use enable_thinking true/false.
+        let preservesOmittedThinking: Bool
         /// The serving default the PUBLISHER explicitly stamped into
         /// `generation_config.json > default_chat_template_kwargs >
         /// enable_thinking` — the same key HF transformers honors when the
@@ -56,13 +62,15 @@ enum LocalReasoningCapability {
             hasEnableThinkingKwarg: Bool,
             templateInjectsThinkTag: Bool,
             defaultThinkingOn: Bool,
-            declaredDefaultThinkingOn: Bool? = nil
+            declaredDefaultThinkingOn: Bool? = nil,
+            preservesOmittedThinking: Bool = false
         ) {
             self.supportsThinking = supportsThinking
             self.hasEnableThinkingKwarg = hasEnableThinkingKwarg
             self.templateInjectsThinkTag = templateInjectsThinkTag
             self.defaultThinkingOn = defaultThinkingOn
             self.declaredDefaultThinkingOn = declaredDefaultThinkingOn
+            self.preservesOmittedThinking = preservesOmittedThinking
         }
 
         static let none = Capability(
@@ -240,7 +248,8 @@ enum LocalReasoningCapability {
             hasEnableThinkingKwarg: templateCapability.hasEnableThinkingKwarg,
             templateInjectsThinkTag: templateCapability.templateInjectsThinkTag,
             defaultThinkingOn: templateCapability.defaultThinkingOn,
-            declaredDefaultThinkingOn: templateCapability.declaredDefaultThinkingOn
+            declaredDefaultThinkingOn: templateCapability.declaredDefaultThinkingOn,
+            preservesOmittedThinking: templateCapability.preservesOmittedThinking
         )
     }
 
@@ -279,8 +288,17 @@ enum LocalReasoningCapability {
             supportsThinking: hasOpen || hasClose,
             hasEnableThinkingKwarg: hasKwarg,
             templateInjectsThinkTag: injects,
-            defaultThinkingOn: detectDefaultThinkingOn(lower)
+            defaultThinkingOn: detectDefaultThinkingOn(lower),
+            preservesOmittedThinking: hasExplicitOnlyThinkingTail(lower)
         )
+    }
+
+    /// Recognize a generation tail that emits either native thinking prefill
+    /// only inside an `is defined` guard with no absent-kwarg fallback. The
+    /// guard must own BOTH explicit bool branches; a negative-only Qwen gate
+    /// or a Bailing normalization fallback does not have this contract.
+    static func hasExplicitOnlyThinkingTail(_ lower: String) -> Bool {
+        ThinkingTemplateContract.preservesOmittedThinking(lower)
     }
 
     /// Resolve the template's default thinking state (thinking when the
@@ -408,7 +426,8 @@ enum LocalReasoningCapability {
             #"set\s+[a-z0-9_]*(think|reason)[a-z0-9_]*\s*=\s*(true|false|['"]([a-z_]+)['"])"#
         if let regex = try? NSRegularExpression(pattern: assignment),
             let match = regex.firstMatch(
-                in: branch, range: NSRange(location: 0, length: (branch as NSString).length)
+                in: branch,
+                range: NSRange(location: 0, length: (branch as NSString).length)
             )
         {
             let ns = branch as NSString
