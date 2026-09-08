@@ -171,6 +171,20 @@ enum SeatbeltExecutor {
         return drained
     }
 
+    /// EOF remains readable until the handler is detached. Keeping it installed
+    /// schedules empty reads repeatedly and can saturate Foundation's worker pool.
+    static func consumeAvailableData(
+        from handle: FileHandle,
+        append: (Data) -> Void
+    ) {
+        let chunk = handle.availableData
+        if chunk.isEmpty {
+            handle.readabilityHandler = nil
+        } else {
+            append(chunk)
+        }
+    }
+
     private final class ActivityClock: @unchecked Sendable {
         private let lock = NSLock()
         private var last = Date()
@@ -239,10 +253,14 @@ enum SeatbeltExecutor {
         process.standardError = stderrPipe
         process.standardInput = FileHandle.nullDevice
         stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-            stdoutCollector.append(handle.availableData)
+            consumeAvailableData(from: handle, append: stdoutCollector.append)
         }
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-            stderrCollector.append(handle.availableData)
+            consumeAvailableData(from: handle, append: stderrCollector.append)
+        }
+        defer {
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
         }
 
         do {
@@ -290,20 +308,16 @@ enum SeatbeltExecutor {
                 break
             }
         }
-        // Reap the child — but only wait unconditionally when it exited on
-        // its own. On the timeout path the child can be wedged in an
-        // uninterruptible kernel wait (observed: sandbox checks against a
-        // broken sandboxd/XPC service on CI runners), where even SIGKILL
-        // does not take effect until the syscall returns. A bare
-        // `waitUntilExit()` there blocks forever, defeating the enforced
-        // timeout. Give the SIGKILL a bounded window to land, then abandon
-        // the process; launchd reaps it when the kernel finally releases it.
+        // Foundation observes/reaps its child independently. Once isRunning
+        // is false, terminationStatus is available; a second synchronous
+        // waitUntilExit can still hang pumping Foundation's run loop (observed
+        // in CI after this polling loop completed). Never introduce that
+        // unbounded wait onto the cooperative executor. After a timeout, keep
+        // the existing bounded grace period for SIGKILL to take effect.
         if timedOut {
             for _ in 0..<20 where process.isRunning {
                 try? await Task.sleep(nanoseconds: 100_000_000)
             }
-        } else {
-            process.waitUntilExit()
         }
 
         // Detach the handlers, then drain any bytes still buffered in the
