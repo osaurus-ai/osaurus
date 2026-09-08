@@ -1,6 +1,70 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Loading %@ may cause swapping or run out of memory.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Das Laden von %@ kann Auslagerung verursachen oder den verfügbaren Speicher erschöpfen." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "%@ 모델을 로드하면 스왑이 발생하거나 메모리가 부족해질 수 있습니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Загрузка %@ может вызвать подкачку или нехватку памяти." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "加载 %@ 可能导致交换内存使用或内存不足。" } }
+      }
+    },
+    "Memory-risk prediction (simulated). No model is loaded by this warning.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Speicherrisiko-Prognose (simuliert). Diese Warnung lädt kein Modell." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "메모리 위험 예측(시뮬레이션). 이 경고는 모델을 로드하지 않습니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Прогноз риска нехватки памяти (симуляция). Это предупреждение не загружает модель." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "内存风险预测（模拟）。此警告不会加载模型。" } }
+      }
+    },
+    "Estimated load and cache allowance: ~%@ GB. Close other apps or choose a smaller model.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Geschätzter Bedarf für Laden und Cache: ~%@ GB. Schließe andere Apps oder wähle ein kleineres Modell." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "예상 로드 및 캐시 메모리: 약 %@ GB. 다른 앱을 닫거나 더 작은 모델을 선택하세요." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Оценка памяти для загрузки и кеша: ~%@ ГБ. Закройте другие приложения или выберите модель меньшего размера." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "预计加载和缓存所需内存：约 %@ GB。请关闭其他应用或选择更小的模型。" } }
+      }
+    },
+    "Use Anyway keeps this selection. Loading starts only when you send; runtime safety settings still apply.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "„Trotzdem verwenden“ behält diese Auswahl bei. Das Laden beginnt erst beim Senden; die Sicherheitseinstellungen der Laufzeit gelten weiterhin." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "계속 사용은 현재 선택을 유지합니다. 전송할 때만 로드가 시작되며 런타임 안전 설정은 계속 적용됩니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "«Всё равно использовать» сохраняет выбор. Загрузка начнётся только при отправке; настройки безопасности среды выполнения остаются в силе." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "“仍然使用”会保留此选择。仅在发送消息时开始加载；运行时安全设置仍然生效。" } }
+      }
+    },
+    "Use Anyway": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Trotzdem verwenden" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "계속 사용" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Всё равно использовать" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "仍然使用" } }
+      }
+    },
+    "Choose Another Model": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Anderes Modell wählen" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "다른 모델 선택" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Выбрать другую модель" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "选择其他模型" } }
+      }
+    },
+    "Cancel Loading": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Laden abbrechen" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "로드 취소" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Отменить загрузку" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "取消加载" } }
+      }
+    },
+    "Continue Loading": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Laden fortsetzen" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "로드 계속" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Продолжить загрузку" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "继续加载" } }
+      }
+    },
     "All Chats": {
       "localizations": {
         "de": { "stringUnit": { "state": "translated", "value": "Alle Chats" } },

@@ -301,6 +301,20 @@ public actor ModelRuntime {
         Array(loadingTasks.keys)
     }
 
+    /// Cache-only state for a canonical installed name resolved by the picker.
+    /// No directory scan, model load, warmup, or policy mutation.
+    func memoryWarningPhase(forCanonicalName name: String) -> MemoryWarningState.Phase {
+        if modelCache.keys.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
+            return .resident
+        }
+        if loadingTasks.keys.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame })
+            || inflightLoadWeights.keys.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame })
+        {
+            return .loading
+        }
+        return .unloaded
+    }
+
     /// By-weight MTP inspection for one model id. `nonisolated` + file-only I/O
     /// (config + safetensors headers, no weight load), so a caller can run it on
     /// a background task while a load holds the actor. Returns `nil` if the
@@ -2695,18 +2709,16 @@ public actor ModelRuntime {
         public enum LoadPressureSeverity: String, Sendable, Equatable {
             /// Comfortably within budget — no banner.
             case none
-            /// The model is large relative to this Mac: show the disclaimer
-            /// but allow sending.
+            /// Elevated load estimate: show an advisory acknowledgement.
             case warn
-            /// Above the hard ceiling, or the load can never fit in physical
-            /// memory: block sending until memory frees.
+            /// High-risk estimate (legacy case name). The composer offers
+            /// Use Anyway; independent runtime admission still applies.
             case block
         }
 
-        /// Maps the assessment to the chat input's disclaimer/send-gate
-        /// severity. Pure so it can be unit-tested without UI. This is a
-        /// UI-layer gate only — the runtime load path stays advisory (see
-        /// `checkRAMFeasibility`).
+        /// Maps the assessment to advisory severity, not a runtime refusal.
+        /// The composer also surfaces the existing low-available tight verdict;
+        /// neither presentation changes the runtime's independent load policy.
         public var loadPressureSeverity: LoadPressureSeverity {
             // Judge the hard ceiling on the resident working set (weights of
             // everything resident plus the incoming footprint), NOT on the

@@ -3944,8 +3944,9 @@ struct RuntimePolicySourceTests {
             "The Unload control must be single-flight while the runtime drains leases"
         )
         #expect(
-            banner.contains("let target = swap.emulated ? selectedModel : (swap.modelName ?? selectedModel)"),
-            "An emulated banner names a placeholder model; its Unload must target the chat's selected model (the live proof pressed Unload against \"Simulated Model\" and nothing was unloaded)"
+            banner.contains("let target = memoryWarningModel")
+                && banner.contains("?.name == target"),
+            "Unload and Cancel Loading must use the selected model's canonical runtime key, never a simulation label or another model's pressure episode"
         )
         let buttonsStart = bannerEnd.lowerBound
         let buttons = String(floatingInput[buttonsStart...].prefix(2600))

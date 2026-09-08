@@ -425,15 +425,9 @@ struct FloatingInputCard: View {
     // MARK: - RAM Tight-Fit State
 
     /// Latest candidate-load RAM projection for the selected local model.
-    /// Non-nil only when the projection crosses the soft threshold (warn) or
-    /// hard ceiling (block). `nil` = resident model, remote model, or a
-    /// comfortable fit — no banner, no gate.
+    /// Nil when no fresh local load is projected. Kept separately from
+    /// runtime phase: a queued chat run does not establish a load.
     @State private var pendingLoadFeasibility: ModelRuntime.RAMFeasibility?
-    /// Host memory usage captured alongside the feasibility refresh so the
-    /// banner shows a live percentage without this (large) view observing
-    /// `SystemMonitorService` and re-rendering on every 2s tick.
-    @State private var ramBannerUsagePercent: Int = 0
-    @State private var ramBannerTotalGB: Int = 0
     /// Live swap-pressure classification for the resident model's episode.
     /// Fed by the same 2 s memory tick as the tight-fit banner; advisory
     /// only — never alters model, sampler, or cache behavior.
@@ -448,10 +442,12 @@ struct FloatingInputCard: View {
     /// A refused unload (the model stayed resident behind an active request
     /// after the lease-drain timeout) is reported in the banner, not dropped.
     @State private var swapUnloadFailure: String?
-    /// Model the user hid the tight-fit banner for via its dismiss button.
-    /// The banner stays hidden for that selection but returns when the pick
-    /// changes or the projection escalates to a hard block.
-    @State private var ramBannerDismissedForModel: String?
+    @State private var memoryWarningPhase: MemoryWarningState.Phase = .unloaded
+    @State private var memoryWarningModel: String?
+    @State private var memoryPredictionAcknowledged: MemoryWarningState.Prediction?
+    @State private var memorySendCheckInFlight = false
+    @State private var memoryAssessmentTicket = UUID()
+    @State private var memoryContextGeneration = UUID()
 
     // MARK: - MTP Bundle-Layout Advisory State
 
@@ -585,12 +581,9 @@ struct FloatingInputCard: View {
         // tool-less chat that can't configure anything.
         guard !configContextTooSmall else { return false }
 
-        // RAM gate: loading the selected model would cross the hard RAM
-        // ceiling (documented `modelLoadRAMHardThreshold` setting). Block the
-        // send and let the floating banner explain; the periodic feasibility
-        // re-check lifts the block as memory frees. UI-only — the HTTP API
-        // and the runtime load path stay advisory.
-        guard !ramBlocked else { return false }
+        // Estimates require an explicit acknowledgement, not a permanent
+        // disabled Send button. Runtime admission remains authoritative.
+        guard !memorySendCheckInFlight else { return false }
 
         let hasText = !localText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasContent = hasText || !pendingAttachments.isEmpty
@@ -922,6 +915,14 @@ struct FloatingInputCard: View {
             .modifier(
                 MTPLayoutAdvisoryRearmModifier(rearm: rearmMTPLayoutAdvisory)
             )
+            .onChange(of: selectedModel) { _, _ in
+                memoryContextGeneration = UUID()
+                memoryPredictionAcknowledged = nil
+            }
+            .onChange(of: inputHistoryKey) { _, _ in
+                memoryContextGeneration = UUID()
+                memoryPredictionAcknowledged = nil
+            }
             .onAppear {
                 // Execution choices are mutually exclusive in both behavior
                 // and presentation. Clear a restored folder if this agent
@@ -1755,23 +1756,12 @@ extension FloatingInputCard {
                     pendingAttachments.append(voiceAttachment)
                 }
 
-                // try to paste. if it fails (permissions), we fall back to direct text setting
-                if KeyboardSimulationService.shared.pasteText(visibleMessage) {
-                    // success: clear UI state immediately
-                    localText = ""
-                    text = ""
-                    // small delay before sending to let UI breathe before model starts streaming
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        localText = ""
-                        text = ""
-                        onSend(fullMessage)
-                    }
-                } else {
-                    // failed (no permission): set text and clear local buffer before sending
-                    localText = ""
-                    text = ""
-                    onSend(fullMessage)
-                }
+                // Voice auto-send takes the same admission/acknowledgement
+                // path as typed Send, retaining its transcript and audio
+                // attachment if a warning needs user acknowledgement.
+                localText = fullMessage
+                text = fullMessage
+                syncAndSend()
                 cancelLiveVoicePreencodeSession(removeRegistryEntry: voiceAudioData == nil)
             }
         }
@@ -1829,6 +1819,37 @@ extension FloatingInputCard {
     private func syncAndSend() {
         guard canSend else { return }
         let message = localText
+        let selection = selectedModel
+        let session = inputHistoryKey
+        let contextGeneration = memoryContextGeneration
+        let attachments = pendingAttachments.map(\.id)
+        guard localMemoryWarningsApplyToSelectedModel, let model = selection,
+            let canonical = ModelManager.findInstalledMLXModelFromCache(named: model)?.name
+        else {
+            commitSend(message)
+            return
+        }
+        memorySendCheckInFlight = true
+        memoryAssessmentTicket = UUID()
+        Task { @MainActor in
+            let assessment = await ModelRuntime.shared.projectedLoadFeasibility(for: model)
+            let phase = await ModelRuntime.shared.memoryWarningPhase(forCanonicalName: canonical)
+            memorySendCheckInFlight = false
+            // A delayed check must never send a different selection, edited
+            // draft, changed attachments, or a different conversation.
+            guard selectedModel == selection, inputHistoryKey == session,
+                memoryContextGeneration == contextGeneration,
+                localText == message, pendingAttachments.map(\.id) == attachments,
+                canSend
+            else { return }
+            applyMemoryAssessment(assessment, phase: phase, canonical: canonical)
+            refreshSwapPressure()
+            if case .predicted = resolvedMemoryWarning { return }
+            commitSend(message)
+        }
+    }
+
+    private func commitSend(_ message: String) {
         // Hold first responder through the binding-flush cascade
         // (clearing local + bound text, parent reconcile, optional
         // new run kickoff). 300 ms covers the longest observed
@@ -3338,14 +3359,43 @@ extension FloatingInputCard {
     // MARK: - RAM Tight-Fit Gate
 
     private var ramPressureSeverity: ModelRuntime.RAMFeasibility.LoadPressureSeverity {
-        pendingLoadFeasibility?.loadPressureSeverity ?? .none
+        if case .predicted(let prediction) = resolvedMemoryWarning { return prediction.severity }
+        return .none
     }
 
-    /// Send is blocked while loading the selected model would cross the hard
-    /// RAM ceiling. Cleared automatically by the periodic feasibility
-    /// re-check as memory frees (or when the user picks a smaller model).
-    private var ramBlocked: Bool {
-        ramPressureSeverity == .block
+    private var resolvedMemoryWarning: MemoryWarningState {
+        guard localMemoryWarningsApplyToSelectedModel,
+            let canonical = ModelManager.findInstalledMLXModelFromCache(named: selectedModel ?? "")?.name,
+            memoryWarningModel == canonical
+        else { return .none }
+        return MemoryWarningState.resolve(
+            canonicalModel: canonical, phase: memoryWarningPhase,
+            assessment: pendingLoadFeasibility, swap: swapPressure,
+            acknowledged: memoryPredictionAcknowledged,
+            dismissedSwapSeverity: swapBannerDismissedAtSeverity)
+    }
+
+    private func applyMemoryAssessment(
+        _ assessment: ModelRuntime.RAMFeasibility?, phase: MemoryWarningState.Phase, canonical: String
+    ) {
+        if memoryWarningModel != canonical || memoryWarningPhase != phase {
+            memoryPredictionAcknowledged = nil
+            swapBannerDismissedAtSeverity = nil
+            swapUnloadFailure = nil
+        }
+        memoryWarningModel = canonical
+        memoryWarningPhase = phase
+        // Ignore timestamp-only churn from the two-second monitor tick.
+        if MemoryWarningState.predictionSeverity(pendingLoadFeasibility)
+            != MemoryWarningState.predictionSeverity(assessment)
+            || pendingLoadFeasibility?.requiredAvailableBytes != assessment?.requiredAvailableBytes
+            || pendingLoadFeasibility?.availableMemoryBytes != assessment?.availableMemoryBytes
+            || pendingLoadFeasibility?.hardLimitBytes != assessment?.hardLimitBytes
+            || pendingLoadFeasibility?.modelName != assessment?.modelName
+        { pendingLoadFeasibility = assessment }
+        if MemoryWarningState.predictionSeverity(assessment) == .none && swapPressure?.emulated != true {
+            memoryPredictionAcknowledged = nil
+        }
     }
 
     /// Re-project the selected model's load feasibility. Called on appear,
@@ -3358,42 +3408,26 @@ extension FloatingInputCard {
         // Rides the same triggers (appear, model change, 2s tick); the
         // per-selection memo inside makes tick calls a string compare.
         refreshMTPLayoutAdvisory()
+        guard !memorySendCheckInFlight else { return }
+        let ticket = UUID()
+        memoryAssessmentTicket = ticket
         guard localMemoryWarningsApplyToSelectedModel, let model = selectedModel else {
             if pendingLoadFeasibility != nil { pendingLoadFeasibility = nil }
+            memoryWarningModel = nil
+            memoryPredictionAcknowledged = nil
             return
         }
+        guard let canonical = ModelManager.findInstalledMLXModelFromCache(named: model)?.name else { return }
         Task { @MainActor in
             let assessment = await ModelRuntime.shared.projectedLoadFeasibility(for: model)
+            let phase = await ModelRuntime.shared.memoryWarningPhase(forCanonicalName: canonical)
+            guard memoryAssessmentTicket == ticket else { return }
             // The selection may have moved while we were on the runtime actor.
             guard selectedModel == model, localMemoryWarningsApplyToSelectedModel else {
-                if pendingLoadFeasibility != nil { pendingLoadFeasibility = nil }
+                // Ignore stale work; never clear a newer selection's warning.
                 return
             }
-
-            guard let assessment, assessment.loadPressureSeverity != .none else {
-                if pendingLoadFeasibility != nil { pendingLoadFeasibility = nil }
-                // The tightness episode ended, so a dismissal has served its
-                // purpose; re-arm the banner for the next episode.
-                if ramBannerDismissedForModel != nil { ramBannerDismissedForModel = nil }
-                return
-            }
-            let monitor = SystemMonitorService.shared
-            let usagePercent = Int(monitor.memoryUsage.rounded())
-            let totalGB = Int(monitor.totalMemoryGB.rounded())
-            // Only touch @State when something the banner displays actually
-            // changed, so idle ticks don't re-render the card.
-            let changed =
-                pendingLoadFeasibility?.loadPressureSeverity != assessment.loadPressureSeverity
-                || pendingLoadFeasibility?.modelName != assessment.modelName
-                || pendingLoadFeasibility?.requiredAvailableBytes
-                    != assessment.requiredAvailableBytes
-                || ramBannerUsagePercent != usagePercent
-                || ramBannerTotalGB != totalGB
-            if changed {
-                pendingLoadFeasibility = assessment
-                ramBannerUsagePercent = usagePercent
-                ramBannerTotalGB = totalGB
-            }
+            applyMemoryAssessment(assessment, phase: phase, canonical: canonical)
         }
     }
 
@@ -4082,11 +4116,9 @@ extension FloatingInputCard {
     @ViewBuilder
     private var ramPressureRow: some View {
         if localMemoryWarningsApplyToSelectedModel,
-            !configContextTooSmall, let feasibility = pendingLoadFeasibility,
-            ramBannerDismissedForModel != selectedModel
-                || feasibility.loadPressureSeverity == .block
+            !configContextTooSmall, case .predicted(let prediction) = resolvedMemoryWarning
         {
-            ramPressureBanner(feasibility, pointerCenterX: 28)
+            ramPressureBanner(prediction, pointerCenterX: 28)
                 .frame(width: Self.ramBannerWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 20)
@@ -4099,64 +4131,43 @@ extension FloatingInputCard {
         }
     }
 
-    /// Foundation-style disclaimer shown above the card when loading the
-    /// selected model would be a tight RAM fit. Orange = warn (send allowed),
-    /// red = blocked (send paused until memory frees; the 2s feasibility
-    /// re-check clears it automatically).
+    /// Prediction only; selecting or acknowledging never initiates a load.
     private func ramPressureBanner(
-        _ feasibility: ModelRuntime.RAMFeasibility,
+        _ prediction: MemoryWarningState.Prediction,
         pointerCenterX: CGFloat
     ) -> some View {
-        let blocked = feasibility.loadPressureSeverity == .block
-        let tint: Color = blocked ? .red : .orange
-        let modelName = selectedPickerItem?.displayName ?? feasibility.modelName
-        let neededGB = Self.formatGigabytes(feasibility.requiredAvailableBytes)
-        let usage = "\(ramBannerUsagePercent)"
-        let total = "\(ramBannerTotalGB)"
-
-        // Over the GPU budget, no amount of freed RAM helps: the working set is
-        // a fixed fraction of installed memory. Say so instead of offering
-        // advice that cannot work.
-        let message: Text
-        if feasibility.exceedsGPUBudget {
-            let budgetGB = Self.formatGigabytes(feasibility.gpuBudgetBytes)
-            message = Text(
-                "This model needs ~\(neededGB) GB, but this Mac can only keep ~\(budgetGB) GB on the GPU. macOS will page the weights and generation will be extremely slow — pick a smaller model or a lower-precision build.",
-                bundle: .module
-            )
-        } else if blocked {
-            message = Text(
-                "This model needs ~\(neededGB) GB to load, but memory is at \(usage)% of \(total) GB. Sending is paused until memory frees — close other apps or pick a smaller model.",
-                bundle: .module
-            )
-        } else {
-            message = Text(
-                "This model needs ~\(neededGB) GB to load and memory is at \(usage)% of \(total) GB. Close other apps for best performance.",
-                bundle: .module
-            )
-        }
-
-        // One continuous popover silhouette: the rounded rect and the pointer
-        // triangle are a single shape, so the fill and the border flow around
-        // the combined outline with no seam where they meet.
+        let tint: Color = prediction.severity == .block ? .red : .orange
+        let modelName = selectedPickerItem?.displayName ?? prediction.model
+        let neededGB = Self.formatGigabytes(prediction.requiredBytes)
         let clampedX = min(
             max(pointerCenterX, 14 + RAMBannerShape.pointerWidth / 2),
             Self.ramBannerWidth - 14 - RAMBannerShape.pointerWidth / 2
         )
         let shape = RAMBannerShape(pointerCenterX: clampedX)
 
-        // Icon is concatenated into the text as a first-line prefix (not an
-        // HStack sibling) so wrapped lines use the banner's full width.
-        return
-            (Text(Image(systemName: blocked ? "memorychip.fill" : "memorychip"))
-                .foregroundColor(tint)
-                + Text(verbatim: "  ")
-                + message.foregroundColor(theme.primaryText))
-            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-            .fixedSize(horizontal: false, vertical: true)
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("Loading \(modelName) may cause swapping or run out of memory.", bundle: .module)
+                .foregroundColor(theme.primaryText)
+            if prediction.simulated {
+                Text("Memory-risk prediction (simulated). No model is loaded by this warning.", bundle: .module)
+                    .foregroundColor(theme.secondaryText)
+            } else {
+                Text("Estimated load and cache allowance: ~\(neededGB) GB. Close other apps or choose a smaller model.", bundle: .module)
+                    .foregroundColor(theme.secondaryText)
+            }
+            Text("Use Anyway keeps this selection. Loading starts only when you send; runtime safety settings still apply.", bundle: .module)
+                .foregroundColor(theme.secondaryText)
+            swapPrimaryButton(String(localized: "Use Anyway", bundle: .module), tint: tint) {
+                memoryPredictionAcknowledged = prediction
+            }
+            swapTextButton(String(localized: "Choose Another Model", bundle: .module)) {
+                showModelPicker = true
+            }
+        }
+        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+        .fixedSize(horizontal: false, vertical: true)
         .padding(.leading, 14)
-        // Warn banners reserve room for the dismiss button in the corner.
-        .padding(.trailing, blocked ? 14 : 32)
+        .padding(.trailing, 14)
         .padding(.top, 9)
         // The shape's bottom edge sits above the pointer, so reserve its
         // height inside the frame.
@@ -4168,19 +4179,9 @@ extension FloatingInputCard {
             }
         )
         .overlay(shape.stroke(tint.opacity(0.35), lineWidth: 1))
-        .overlay(alignment: .topTrailing) {
-            // The block banner gates sending, so it cannot be dismissed;
-            // only the warn variant gets the close affordance.
-            if !blocked {
-                dismissButton
-            }
-        }
         .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
-        .accessibilityLabel(
-            blocked
-                ? Text("Sending paused: not enough memory to load \(modelName)", bundle: .module)
-                : Text("Memory is tight for \(modelName)", bundle: .module)
-        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("memory-warning.predicted")
     }
 
     // MARK: - Model-Switch Continuity Banner
@@ -4277,6 +4278,13 @@ extension FloatingInputCard {
             return
         }
         let state = SwapPressureMonitor.shared.currentState()
+        if let old = swapPressure,
+            old.modelName != state.modelName || old.emulated != state.emulated
+                || state.episodeElapsedSeconds < old.episodeElapsedSeconds
+                || state.baselineUsedBytes != old.baselineUsedBytes
+        {
+            swapBannerDismissedAtSeverity = nil
+        }
         if state.severity == .none {
             if swapPressure != nil { swapPressure = nil }
             // Episode ended — a dismissal has served its purpose.
@@ -4294,9 +4302,8 @@ extension FloatingInputCard {
     private var swapPressureRow: some View {
         if localMemoryWarningsApplyToSelectedModel,
             !configContextTooSmall,
-            (pendingLoadFeasibility?.loadPressureSeverity ?? .none) == .none,
             let swap = swapPressure, swap.severity != .none,
-            swapBannerDismissedAtSeverity.map({ swap.severity > $0 }) ?? true
+            showMeasuredMemoryWarning
         {
             swapPressureBanner(swap, pointerCenterX: 28)
                 .frame(width: Self.ramBannerWidth, alignment: .leading)
@@ -4305,6 +4312,13 @@ extension FloatingInputCard {
                 .padding(.top, 8)
                 .padding(.bottom, -16)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+    }
+
+    private var showMeasuredMemoryWarning: Bool {
+        switch resolvedMemoryWarning {
+        case .loading, .loaded: true
+        case .none, .predicted: false
         }
     }
 
@@ -4336,7 +4350,7 @@ extension FloatingInputCard {
         // states exactly that. Severity rides the trailing clause
         // (will/may slow). Translations must keep the GB slot before the
         // model slot — both are %@ and swapping them swaps the VALUES.
-        let loading = swap.phase == .loading
+        let loading = memoryWarningPhase == .loading
         let peakGB = Self.formatGigabytes(max(0, swap.peakGrowthBytes))
         let message: Text
         switch (critical, loading) {
@@ -4386,15 +4400,17 @@ extension FloatingInputCard {
                 swapPrimaryButton(
                     swapUnloadInFlight
                         ? String(localized: "Unloading…", bundle: .module)
-                        : String(localized: "Unload Model", bundle: .module),
+                        : (loading ? String(localized: "Cancel Loading", bundle: .module)
+                            : String(localized: "Unload Model", bundle: .module)),
                     tint: tint
                 ) {
-                    // The monitor's emulated state names a placeholder
-                    // ("Simulated Model"); the only model an emulated banner
-                    // can unload is the chat's selected one. A real episode
-                    // names the resident model it measured.
-                    let target = swap.emulated ? selectedModel : (swap.modelName ?? selectedModel)
+                    // Use the canonical runtime key for BOTH states. A picker
+                    // catalog id can resolve a resident but miss loadingTasks.
+                    // Simulated Model is never a real unload target.
+                    let target = memoryWarningModel
                     guard let target, !swapUnloadInFlight else { return }
+                    guard ModelManager.findInstalledMLXModelFromCache(named: selectedModel ?? "")?.name == target
+                    else { return }
                     swapUnloadInFlight = true
                     swapUnloadFailure = nil
                     Task {
@@ -4406,6 +4422,8 @@ extension FloatingInputCard {
                         // resident and is shown here instead of being dropped.
                         let didUnload = await MLXService.shared.unloadRuntimeModel(named: target)
                         swapUnloadInFlight = false
+                        guard memoryWarningModel == target else { return }
+                        refreshLoadFeasibility()
                         if !didUnload {
                             swapUnloadFailure = String(
                                 localized:
@@ -4423,7 +4441,8 @@ extension FloatingInputCard {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack(spacing: 18) {
-                    swapTextButton(String(localized: "Keep Running", bundle: .module)) {
+                    swapTextButton(loading ? String(localized: "Continue Loading", bundle: .module)
+                        : String(localized: "Keep Running", bundle: .module)) {
                         withAnimation(.easeOut(duration: 0.2)) {
                             swapBannerDismissedAtSeverity = swap.severity
                         }
@@ -4457,15 +4476,8 @@ extension FloatingInputCard {
         // buttons inside keep their own labels (Unload Model / Keep Running /
         // Activity Monitor) instead of inheriting that sentence.
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(
-            critical
-                ? Text(
-                    "Swap increased by \(peakGB) GB while \(modelLabel) is loaded: responses will be slower",
-                    bundle: .module)
-                : Text(
-                    "Swap increased by \(peakGB) GB while \(modelLabel) is loaded: responses may slow down",
-                    bundle: .module)
-        )
+        .accessibilityLabel(message)
+        .accessibilityIdentifier(loading ? "memory-warning.loading" : "memory-warning.loaded")
     }
 
     /// Filled CTA for the swap banner's primary action, tinted to match the
@@ -4586,8 +4598,7 @@ extension FloatingInputCard {
     private var mtpLayoutAdvisoryRow: some View {
         if localMemoryWarningsApplyToSelectedModel,
             !configContextTooSmall,
-            (pendingLoadFeasibility?.loadPressureSeverity ?? .none) == .none,
-            swapPressure == nil,
+            resolvedMemoryWarning == .none,
             modelSwitchContinuityWarning == nil,
             let advisory = mtpLayoutAdvisory
         {
@@ -4722,31 +4733,6 @@ extension FloatingInputCard {
             // the memo here just makes the first re-check immediate.
             mtpAdvisoryEvaluatedForModel = nil
         }
-    }
-
-    /// Close button for the warn-level tight-fit banner. Dismissal is scoped
-    /// to the current model selection; picking another model re-arms the
-    /// banner.
-    private var dismissButton: some View {
-        Button {
-            withAnimation(.easeOut(duration: 0.2)) {
-                ramBannerDismissedForModel = selectedModel
-            }
-        } label: {
-            Image(systemName: "xmark")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundColor(theme.tertiaryText)
-                .padding(5)
-                .background(
-                    Circle().stroke(theme.tertiaryText.opacity(0.35), lineWidth: 1)
-                )
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .padding(.top, 6)
-        .padding(.trailing, 8)
-        .help(Text("Hide this warning for the selected model", bundle: .module))
-        .accessibilityLabel(Text("Dismiss memory warning", bundle: .module))
     }
 
     /// One-decimal GB formatting for the RAM banner (e.g. "12.4").
@@ -6059,12 +6045,40 @@ extension FloatingInputCard {
     /// Streaming + a queued message present: pressing this stops the
     /// current run and dispatches the queued payload immediately.
     private var sendNowButton: some View {
-        SendNowButton {
-            // Stop -> send cascade fans out across more runloop turns
-            // than syncAndSend, hence the longer lock.
-            textViewFocusController.lockFocus(for: 0.4)
-            onSendNow?()
+        SendNowButton(action: checkMemoryAndSendQueuedNow)
+            .disabled(memorySendCheckInFlight)
+    }
+
+    private func checkMemoryAndSendQueuedNow() {
+        guard !memorySendCheckInFlight, let pending = queuedSend else { return }
+        let selection = selectedModel
+        let contextGeneration = memoryContextGeneration
+        guard localMemoryWarningsApplyToSelectedModel, let model = selection,
+            let canonical = ModelManager.findInstalledMLXModelFromCache(named: model)?.name
+        else {
+            dispatchQueuedNow()
+            return
         }
+        memorySendCheckInFlight = true
+        memoryAssessmentTicket = UUID()
+        Task { @MainActor in
+            let assessment = await ModelRuntime.shared.projectedLoadFeasibility(for: model)
+            let phase = await ModelRuntime.shared.memoryWarningPhase(forCanonicalName: canonical)
+            memorySendCheckInFlight = false
+            guard selectedModel == selection, memoryContextGeneration == contextGeneration,
+                queuedSend == pending
+            else { return }
+            applyMemoryAssessment(assessment, phase: phase, canonical: canonical)
+            refreshSwapPressure()
+            if case .predicted = resolvedMemoryWarning { return }
+            dispatchQueuedNow()
+        }
+    }
+
+    private func dispatchQueuedNow() {
+        // Stop -> send has a longer focus-lock cascade than an ordinary Send.
+        textViewFocusController.lockFocus(for: 0.4)
+        onSendNow?()
     }
 
     // MARK: - Card Styling
