@@ -3533,9 +3533,8 @@ struct AgentDetailView: View {
 
     /// Code Execution master switch. Writes through `updateAutonomousExec`
     /// immediately (no debounce) like the sandbox tab's toggles; the
-    /// sub-permissions (plugin creation, network, background processes,
-    /// secret reads) stay in Abilities → Sandbox → Execution, which the
-    /// card links into.
+    /// sub-permissions (plugin creation, network, background processes)
+    /// stay in Abilities → Sandbox → Execution, which the card links into.
     @ViewBuilder
     private var codeExecutionAbilityCard: some View {
         let sandboxAvailable = SandboxManager.State.shared.availability.isAvailable
@@ -3565,7 +3564,20 @@ struct AgentDetailView: View {
                     "This setting will apply when the sandbox starts."
                 )
             }
+            if sandboxAvailable, execConfig?.enabled == true {
+                sandboxFolderSuspensionHint
+            }
         }
+    }
+
+    /// The sandbox and a working folder are mutually exclusive, and the
+    /// sandbox wins. Picking a folder (chat chip or project page) turns the
+    /// sandbox off automatically, but turning it back on here silently
+    /// suspends any folder those chats still show, so say so.
+    private var sandboxFolderSuspensionHint: some View {
+        sandboxFeatureHint(
+            "While on, chats ignore their working folder. Picking a folder in a chat or project turns the sandbox off again."
+        )
     }
 
     /// Whether the agent's effective model resolves to a connected
@@ -5496,6 +5508,8 @@ struct AgentDetailView: View {
         }
 
         if execConfig?.enabled == true {
+            sandboxFolderSuspensionHint
+
             featureCard(
                 title: "Plugin Creation",
                 subtitle: "Let the agent create its own tools as plugins.",

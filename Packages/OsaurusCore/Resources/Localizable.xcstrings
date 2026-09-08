@@ -237604,6 +237604,15 @@
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "此設定將在沙箱啟動時生效。" } }
       }
     },
+    "While on, chats ignore their working folder. Picking a folder in a chat or project turns the sandbox off again.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Solange aktiv, ignorieren Chats ihren Arbeitsordner. Die Auswahl eines Ordners in einem Chat oder Projekt schaltet die Sandbox wieder aus." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "켜져 있는 동안 채팅은 작업 폴더를 무시합니다. 채팅이나 프로젝트에서 폴더를 선택하면 샌드박스가 다시 꺼집니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Пока включено, чаты игнорируют свою рабочую папку. Выбор папки в чате или проекте снова отключает песочницу." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "开启时，聊天会忽略其工作文件夹。在聊天或项目中选择文件夹会再次关闭沙盒。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "開啟時，聊天會忽略其工作資料夾。在聊天或專案中選擇資料夾會再次關閉沙箱。" } }
+      }
+    },
     "This sign-in isn't a Pro or Max subscription, so requests bill through whatever credential Claude Code is configured with.": {
       "localizations": {
         "de": { "stringUnit": { "state": "translated", "value": "Diese Anmeldung ist kein Pro- oder Max-Abo, daher werden Anfragen über die Zugangsdaten abgerechnet, mit denen Claude Code konfiguriert ist." } },
