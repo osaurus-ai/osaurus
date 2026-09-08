@@ -170,6 +170,12 @@ struct MemoryWarningStateTests {
         #expect(!source.contains("guard !ramBlocked"))
         #expect(source.components(separatedBy: "onSend(message)").count == 2)
         #expect(!source.contains("onSend(fullMessage)"))
+        // MLXModel.name is human-readable; the tuple-returning helper is the
+        // runtime's canonical name. A display-name lookup left the live
+        // warning predicted while /health already reported a resident model.
+        #expect(check.contains("findInstalledModelFromCache(named: model)?.name"))
+        #expect(!source.contains("findInstalledMLXModelFromCache(named: model)?.name"))
+        #expect(!source.contains("findInstalledMLXModelFromCache(named: selectedModel ?? \"\")?.name"))
         #expect(source.contains("resolvedMemoryWarning == .none"))
         #expect(!source.contains("(pendingLoadFeasibility?.loadPressureSeverity ?? .none) == .none"))
         let queuedStart = try #require(source.range(of: "private func checkMemoryAndSendQueuedNow()"))

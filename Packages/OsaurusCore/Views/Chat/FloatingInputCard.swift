@@ -919,9 +919,14 @@ struct FloatingInputCard: View {
                 memoryContextGeneration = UUID()
                 memoryPredictionAcknowledged = nil
             }
-            .onChange(of: inputHistoryKey) { _, _ in
+            .onChange(of: inputHistoryKey) { old, _ in
                 memoryContextGeneration = UUID()
-                memoryPredictionAcknowledged = nil
+                // First Send assigns a new session id. That is not navigation
+                // away from the selection the user just acknowledged.
+                if old != nil { memoryPredictionAcknowledged = nil }
+            }
+            .onChange(of: warmupController.selectedModelResident) { _, _ in
+                refreshLoadFeasibility()
             }
             .onAppear {
                 // Execution choices are mutually exclusive in both behavior
@@ -1824,7 +1829,7 @@ extension FloatingInputCard {
         let contextGeneration = memoryContextGeneration
         let attachments = pendingAttachments.map(\.id)
         guard localMemoryWarningsApplyToSelectedModel, let model = selection,
-            let canonical = ModelManager.findInstalledMLXModelFromCache(named: model)?.name
+            let canonical = ModelManager.findInstalledModelFromCache(named: model)?.name
         else {
             commitSend(message)
             return
@@ -3365,7 +3370,7 @@ extension FloatingInputCard {
 
     private var resolvedMemoryWarning: MemoryWarningState {
         guard localMemoryWarningsApplyToSelectedModel,
-            let canonical = ModelManager.findInstalledMLXModelFromCache(named: selectedModel ?? "")?.name,
+            let canonical = ModelManager.findInstalledModelFromCache(named: selectedModel ?? "")?.name,
             memoryWarningModel == canonical
         else { return .none }
         return MemoryWarningState.resolve(
@@ -3379,6 +3384,7 @@ extension FloatingInputCard {
         _ assessment: ModelRuntime.RAMFeasibility?, phase: MemoryWarningState.Phase, canonical: String
     ) {
         if memoryWarningModel != canonical || memoryWarningPhase != phase {
+            print("[Osaurus][MemoryWarning] model=\(canonical) phase=\(phase)")
             memoryPredictionAcknowledged = nil
             swapBannerDismissedAtSeverity = nil
             swapUnloadFailure = nil
@@ -3417,7 +3423,7 @@ extension FloatingInputCard {
             memoryPredictionAcknowledged = nil
             return
         }
-        guard let canonical = ModelManager.findInstalledMLXModelFromCache(named: model)?.name else { return }
+        guard let canonical = ModelManager.findInstalledModelFromCache(named: model)?.name else { return }
         Task { @MainActor in
             let assessment = await ModelRuntime.shared.projectedLoadFeasibility(for: model)
             let phase = await ModelRuntime.shared.memoryWarningPhase(forCanonicalName: canonical)
@@ -4409,7 +4415,7 @@ extension FloatingInputCard {
                     // Simulated Model is never a real unload target.
                     let target = memoryWarningModel
                     guard let target, !swapUnloadInFlight else { return }
-                    guard ModelManager.findInstalledMLXModelFromCache(named: selectedModel ?? "")?.name == target
+                    guard ModelManager.findInstalledModelFromCache(named: selectedModel ?? "")?.name == target
                     else { return }
                     swapUnloadInFlight = true
                     swapUnloadFailure = nil
@@ -6054,7 +6060,7 @@ extension FloatingInputCard {
         let selection = selectedModel
         let contextGeneration = memoryContextGeneration
         guard localMemoryWarningsApplyToSelectedModel, let model = selection,
-            let canonical = ModelManager.findInstalledMLXModelFromCache(named: model)?.name
+            let canonical = ModelManager.findInstalledModelFromCache(named: model)?.name
         else {
             dispatchQueuedNow()
             return
