@@ -376,7 +376,7 @@ struct ServerSettingsTabContent: View {
     private var sectionScroll: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 24) {
                     ConnectionSection(draft: $draft)
                         .id(ServerSettingsSection.connection)
                         .settingsSearchHighlight(landedSection == .connection)
