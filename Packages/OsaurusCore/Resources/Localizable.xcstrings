@@ -237699,6 +237699,51 @@
         "zh-Hans": { "stringUnit": { "state": "translated", "value": "该知识文档已不存在于其集合中。" } },
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "此知識文件已不存在於其集合中。" } }
       }
+    },
+    "Consolidation is already running": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Konsolidierung läuft bereits" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "통합이 이미 실행 중입니다" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Консолидация уже выполняется" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "整合已在运行" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "整合已在執行" } }
+      }
+    },
+    "Enable memory to run consolidation": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Aktiviere das Gedächtnis, um die Konsolidierung auszuführen" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "통합을 실행하려면 메모리를 활성화하세요" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Включите память, чтобы запустить консолидацию" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "启用记忆以运行整合" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "啟用記憶以執行整合" } }
+      }
+    },
+    "Memory database is not open": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Gedächtnisdatenbank ist nicht geöffnet" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "메모리 데이터베이스가 열려 있지 않습니다" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "База данных памяти не открыта" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "记忆数据库未打开" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "記憶資料庫未開啟" } }
+      }
+    },
+    "Last run:": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Letzter Lauf:" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "마지막 실행:" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Последний запуск:" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "上次运行：" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "上次執行：" } }
+      }
+    },
+    "ago": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "her" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "전" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "назад" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "前" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "前" } }
+      }
     }
   },
   "version": "1.1"
