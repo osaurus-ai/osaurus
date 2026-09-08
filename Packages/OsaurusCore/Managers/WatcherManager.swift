@@ -623,19 +623,10 @@ public final class WatcherManager {
                     changedPaths: changedPaths
                 )
 
-                let request = DispatchRequest(
+                let request = self.makeDispatchRequest(
+                    for: watcher,
                     prompt: prompt,
-                    agentId: watcher.agentId,
-                    title: watcher.name,
-                    parameters: watcher.parameters,
-                    folderPath: watcher.watchPath,
-                    folderBookmark: watcher.watchBookmark,
-                    source: .watcher,
-                    externalSessionKey: watcher.id.uuidString,
-                    // A file changed on disk and we reacted. The user did not ask
-                    // for this right now and is not waiting on it, so it must not
-                    // evict the model they are chatting with.
-                    loadIntent: .background
+                    resolvedWatchPath: watchPath
                 )
 
                 guard let handle = await TaskDispatcher.shared.dispatch(request) else {
@@ -716,6 +707,38 @@ public final class WatcherManager {
         case .failed(let error):
             print("[Osaurus] Watcher failed: \(watcher.name) - \(error)")
         }
+    }
+
+    // MARK: - Dispatch Request
+
+    /// Build the dispatch request for one watcher run. The folder travels
+    /// BOTH ways: the picker bookmark (GUI watcher) and the RESOLVED path.
+    /// The resolved path — not the display `watchPath`, which is nil for a
+    /// bookmark-only watcher — is what this engine itself fingerprints and
+    /// watches, so the run's plain-path fallback (`ChatFolderState`) can
+    /// reach exactly the folder whose change fired the trigger when the
+    /// bookmark fails to resolve inside the run.
+    /// Internal (not private) so the folder-threading contract is
+    /// unit-testable.
+    func makeDispatchRequest(
+        for watcher: Watcher,
+        prompt: String,
+        resolvedWatchPath: String?
+    ) -> DispatchRequest {
+        DispatchRequest(
+            prompt: prompt,
+            agentId: watcher.agentId,
+            title: watcher.name,
+            parameters: watcher.parameters,
+            folderPath: resolvedWatchPath ?? watcher.watchPath,
+            folderBookmark: watcher.watchBookmark,
+            source: .watcher,
+            externalSessionKey: watcher.id.uuidString,
+            // A file changed on disk and we reacted. The user did not ask
+            // for this right now and is not waiting on it, so it must not
+            // evict the model they are chatting with.
+            loadIntent: .background
+        )
     }
 
     // MARK: - Prompt Builder

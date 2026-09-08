@@ -53,6 +53,22 @@ enum SearchReadability {
 
     /// Fetch `url` and extract the main content. Always returns a typed status
     /// so tool payloads can explain failures without raw network errors.
+    /// The per-page `timeout` bounds the WHOLE fetch, not only the wait for
+    /// the first byte. `URLRequest.timeoutInterval` is an idle timeout, and a
+    /// session's default resource timeout is seven days, so a host that keeps
+    /// the connection alive and trickles bytes (Ornith research run
+    /// 2026-09-06: the second `search_and_extract` of a blocked page returned
+    /// after ~5 minutes while the tool promised 25 s) held the tool loop for
+    /// the whole time. Both intervals are pinned to `timeout`.
+    static func boundedConfiguration(
+        _ base: URLSessionConfiguration, timeout: TimeInterval
+    ) -> URLSessionConfiguration {
+        let configuration = base
+        configuration.timeoutIntervalForRequest = timeout
+        configuration.timeoutIntervalForResource = timeout
+        return configuration
+    }
+
     static func extract(
         url: String,
         timeout: TimeInterval,
@@ -84,7 +100,9 @@ enum SearchReadability {
         )
 
         let delegate = SearchReadabilityRedirectDelegate()
-        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+        let session = URLSession(
+            configuration: Self.boundedConfiguration(configuration, timeout: timeout),
+            delegate: delegate, delegateQueue: nil)
         defer {
             session.invalidateAndCancel()
         }

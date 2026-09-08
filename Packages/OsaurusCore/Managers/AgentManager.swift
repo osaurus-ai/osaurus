@@ -408,7 +408,22 @@ public final class AgentManager: ObservableObject {
             isBuiltIn: false,
             createdAt: now,
             updatedAt: now,
-            autonomousExec: agent.autonomousExec
+            autonomousExec: agent.autonomousExec,
+            claudeCode: agent.claudeCode,
+            pluginInstructions: agent.pluginInstructions,
+            // Capability configuration is part of what "duplicate" means: a
+            // MANUAL agent's copy used to come back AUTO with the whole
+            // registry, and every grant (memory, tools, knowledge, web…)
+            // reset to the defaults. The fields were added after the copy
+            // list was written and never joined it.
+            toolSelectionMode: agent.toolSelectionMode,
+            manualToolNames: agent.manualToolNames,
+            toolsEnabled: agent.toolsEnabled,
+            memoryEnabled: agent.memoryEnabled,
+            avatar: agent.avatar,
+            autoSpeak: agent.autoSpeak,
+            ttsVoice: agent.ttsVoice,
+            settings: agent.settings
         )
     }
 
@@ -1234,30 +1249,42 @@ extension AgentManager {
     /// been seeded (`manualToolNames != nil`). Triggered by `.toolsListChanged`.
     /// Un-seeded agents are skipped — their semantic is "fall back to global registry"
     /// at the runtime layer, so they pick up new tools automatically without any write.
+    /// The seeded tool list after auto-growing with newly registered tools —
+    /// or nil when nothing should change. MANUAL mode is the user saying
+    /// "only what I ticked": a plugin install, an MCP connect, or a
+    /// declarative config apply must never append its tools to that list
+    /// (it did, for every agent, since the picker seeding landed). Auto
+    /// agents keep growing so a fresh plugin's tools are not silently
+    /// disabled by the seeded picker.
+    static func grownManualToolNames(
+        current: [String]?,
+        mode: ToolSelectionMode?,
+        live liveNames: Set<String>
+    ) -> [String]? {
+        guard var current, mode != .manual else { return nil }
+        let before = current.count
+        for name in liveNames.sorted() where !current.contains(name) { current.append(name) }
+        return current.count != before ? current : nil
+    }
+
     public func growEnabledToolNames(_ liveNames: Set<String>) {
-        var configChanged = false
         var config = DefaultAgentConfigurationStore.load()
-        if var current = config.manualToolNames {
-            let before = current.count
-            for name in liveNames where !current.contains(name) { current.append(name) }
-            if current.count != before {
-                config.manualToolNames = current
-                configChanged = true
-            }
-        }
-        if configChanged {
+        if let grown = Self.grownManualToolNames(
+            current: config.manualToolNames, mode: config.toolSelectionMode, live: liveNames)
+        {
+            config.manualToolNames = grown
             DefaultAgentConfigurationStore.save(config)
             NotificationCenter.default.post(name: .agentUpdated, object: Agent.defaultId)
         }
 
         var anyAgentChanged = false
         for agent in agents where !agent.isBuiltIn {
-            guard var current = agent.manualToolNames else { continue }
-            let before = current.count
-            for name in liveNames where !current.contains(name) { current.append(name) }
-            guard current.count != before else { continue }
+            guard
+                let grown = Self.grownManualToolNames(
+                    current: agent.manualToolNames, mode: agent.toolSelectionMode, live: liveNames)
+            else { continue }
             var updated = agent
-            updated.manualToolNames = current
+            updated.manualToolNames = grown
             updated.updatedAt = Date()
             AgentStore.save(updated)
             anyAgentChanged = true

@@ -19,6 +19,16 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// streaming completion site; nil on user / tool turns and on
     /// assistant turns that were cancelled or errored.
     var completedAt: Date?
+    /// Wall-clock of the last content or reasoning delta the stream
+    /// delivered — the moment the answer was fully visible. `completedAt`
+    /// is stamped only when the stream TERMINATES, and for local models that
+    /// is after vmlx's post-generation cache store, which the runtime adapter
+    /// serialises ahead of the terminal stats: measured 4.3 s (AR) to 12.7 s
+    /// (native MTP) after the last token on a 930-token JANG_4M answer.
+    /// Deriving tok/s from `completedAt - createdAt` therefore reported
+    /// 27–30 tok/s for engines decoding at 32–56 tok/s. Nil until the first
+    /// delta; persisted so exports can separate decode from persistence.
+    var lastOutputAt: Date?
 
     // MARK: - Content with lazy joining
 

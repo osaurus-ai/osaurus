@@ -96,7 +96,7 @@ struct SpawnConfigurationEditor: View {
                     .font(.system(size: 11))
                     .foregroundColor(theme.warningColor)
                 Text(
-                    "Local Orchestrator Handoff is off. A local target with a different model will be refused; remote targets and the already-loaded local model can still run.",
+                    "Local Orchestrator Handoff is off. A local target with a different model runs WITHOUT the unload → load helper → run → unload helper → reload sequence, so the server eviction policy decides whether the chat model stays loaded. Turn it on in Settings → Subagents to enforce the sequence for every agent.",
                     bundle: .module
                 )
                 .font(.system(size: 11))

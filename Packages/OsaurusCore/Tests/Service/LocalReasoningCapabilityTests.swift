@@ -171,6 +171,172 @@ struct LocalReasoningCapabilityTests {
         #expect(!LocalReasoningCapability.detectDefaultThinkingOn(template.lowercased()))
     }
 
+    // MARK: - Raptor / Bailing V3 normalisation block
+
+    /// Raptor-v0.5-8B-A1B (Bailing V3 / Ling 3 template): the template
+    /// normalises `enable_thinking` into a `thinking_option` string and the
+    /// undefined-kwarg fallback (`elif thinking_option is not defined`) sets
+    /// it to `'on'`. No `default(...)` filter, no ternary, no `is false`
+    /// gate — the old detector fell through to OFF and the chip lied.
+    static let raptorTemplateExcerpt = """
+        {#- Bailing V3 chat template -#}
+        {#- Supports: thinking option, tool calling -#}
+
+        {#- ==================== thinking option normalization ==================== -#}
+        {%- if enable_thinking is defined %}
+        {%- if enable_thinking %}
+        {%- set thinking_option = 'on' %}
+        {%- else %}
+        {%- set thinking_option = 'off' %}
+        {%- endif %}
+        {%- elif thinking_option is not defined %}
+        {%- set thinking_option = 'on' %}
+        {%- endif %}
+
+        {#- ==================== preserved thinking  ==================== -#}
+        {% set preserved_thinking = true %}
+
+        {#- ==================== generation prompt ==================== -#}
+        {%- if add_generation_prompt %}
+            {{- '<role>ASSISTANT</role>' }}
+            {%- if thinking_option == 'on' %}
+                {{- '\n<think>' }}
+            {%- elif thinking_option == 'off' %}
+                {{- '\n<think></think>' }}
+            {%- endif %}
+        {%- endif %}
+        """
+
+    @Test("Raptor normalisation block: undefined kwarg ⇒ thinking_option='on' ⇒ defaults ON")
+    func raptorTemplateDefaultsThinkingOn() {
+        let cap = LocalReasoningCapability.analyze(template: Self.raptorTemplateExcerpt)
+        #expect(cap.supportsThinking)
+        #expect(cap.hasEnableThinkingKwarg)
+        #expect(cap.isToggleableThinking)
+        #expect(cap.defaultThinkingOn)
+        // Template-inferred: not a `generation_config` declaration.
+        #expect(cap.declaredDefaultThinkingOn == nil)
+    }
+
+    @Test("Normalisation block whose fallback sets 'off' ⇒ defaults OFF")
+    func normalisationFallbackOffDefaultsOff() {
+        let template = """
+            {%- if enable_thinking is defined %}
+            {%- if enable_thinking %}{%- set thinking_option = 'on' %}{%- else %}{%- set thinking_option = 'off' %}{%- endif %}
+            {%- else %}
+            {%- set thinking_option = 'off' %}
+            {%- endif %}
+            {%- if thinking_option == 'on' %}{{- '<think>' }}{%- else %}{{- '<think></think>' }}{%- endif %}
+            """
+        #expect(!LocalReasoningCapability.detectDefaultThinkingOn(template.lowercased()))
+    }
+
+    @Test("Fallback branch extraction skips the nested inner if/else")
+    func fallbackBranchExtractionIsDepthAware() {
+        let branch = LocalReasoningCapability.undefinedKwargFallbackBranch(
+            Self.raptorTemplateExcerpt.lowercased()
+        )
+        let text = branch ?? ""
+        #expect(branch != nil)
+        // The inner `{%- else %}` (which sets 'off') belongs to the nested
+        // `if enable_thinking` block and must NOT be mistaken for the
+        // fallback branch of the outer `is defined` block.
+        #expect(text.contains("set thinking_option = 'on'"))
+        #expect(!text.contains("'off'"))
+        #expect(LocalReasoningCapability.fallbackBranchTurnsThinkingOn(text) == true)
+    }
+
+    @Test("`is defined` guard with no fallback branch ⇒ no verdict (Qwen3 read guard)")
+    func isDefinedGuardWithoutFallbackYieldsNothing() {
+        let template = "{% if enable_thinking is defined %}{% set x = enable_thinking %}{% endif %}"
+        #expect(LocalReasoningCapability.undefinedKwargFallbackBranch(template.lowercased()) == nil)
+        // And the existing conventions are untouched: this template has no
+        // ON default signal, so it stays OFF.
+        #expect(!LocalReasoningCapability.detectDefaultThinkingOn(template.lowercased()))
+    }
+
+    /// Raptor's `jang_config.json` carries a TOP-LEVEL `reasoning` block
+    /// (no `chat.reasoning`, no `capabilities`) with `"default": "on"`.
+    /// `DeclaredReasoningEffort` already reads that block; the chip default
+    /// must read it too.
+    static let raptorJangConfigExcerpt = Data(
+        #"""
+        {
+          "chat": {
+            "sampling_defaults": {"temperature": 0.7, "top_p": 0.95, "top_k": 20},
+            "stop_token_ids": [156895],
+            "role_framing": {"style": "bailing_v3"}
+          },
+          "reasoning": {
+            "supported": true,
+            "parser": "bailing_v3",
+            "default": "on",
+            "think_in_template": true,
+            "enable_kwarg": "enable_thinking",
+            "off_is_prefilled_closed_block": true,
+            "off_prefill": "<think></think>",
+            "preserve_thinking_supported": true,
+            "preserve_thinking_default": true
+          },
+          "tools": {"supported": true, "parser": "bailing_v3_xml_arg"}
+        }
+        """#.utf8
+    )
+
+    @Test("jang_config top-level reasoning.default='on' ⇒ serving default ON")
+    func raptorJangConfigTopLevelDefaultOn() {
+        #expect(LocalReasoningCapability.jangConfigDefaultThinkingOn(data: Self.raptorJangConfigExcerpt) == true)
+        // The template-less fallback reads the same block.
+        let cap = LocalReasoningCapability.analyzeJangConfig(data: Self.raptorJangConfigExcerpt)
+        #expect(cap?.supportsThinking == true)
+        #expect(cap?.defaultThinkingOn == true)
+        #expect(cap?.hasEnableThinkingKwarg == false, "the kwarg flag stays template-driven")
+    }
+
+    @Test("jang_config top-level reasoning.default='off' ⇒ serving default OFF")
+    func jangConfigTopLevelDefaultOff() {
+        let data = Data(#"{"reasoning": {"supported": true, "default": "off"}}"#.utf8)
+        #expect(LocalReasoningCapability.jangConfigDefaultThinkingOn(data: data) == false)
+    }
+
+    @Test("jang_config top-level reasoning without a default key ⇒ nil (template decides)")
+    func jangConfigTopLevelWithoutDefaultIsNil() {
+        let data = Data(#"{"reasoning": {"supported": true, "parser": "bailing_v3"}}"#.utf8)
+        #expect(LocalReasoningCapability.jangConfigDefaultThinkingOn(data: data) == nil)
+    }
+
+    @Test("jang_config legacy chat.reasoning default_mode still read")
+    func jangConfigLegacyChatReasoningDefaultStillRead() {
+        let data = Data(
+            #"{"chat": {"reasoning": {"supported": true, "default_mode": "chat"}}}"#.utf8
+        )
+        #expect(LocalReasoningCapability.jangConfigDefaultThinkingOn(data: data) == false)
+    }
+
+    /// End to end on disk: a Raptor-shaped bundle directory (template +
+    /// jang_config, no generation_config declaration) resolves to a
+    /// toggleable capability whose default is ON, and the ON default is
+    /// presentation metadata only — `declaredDefaultThinkingOn` stays nil so
+    /// request construction keeps sending nothing until the user chooses.
+    @Test("Raptor-shaped bundle directory ⇒ toggleable, default ON, nothing declared")
+    func raptorShapedBundleDirectoryDefaultsOn() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("raptor-shaped-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Self.raptorTemplateExcerpt.write(
+            to: dir.appendingPathComponent("chat_template.jinja"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try Self.raptorJangConfigExcerpt.write(to: dir.appendingPathComponent("jang_config.json"))
+
+        let cap = LocalReasoningCapability.detect(at: dir)
+        #expect(cap.isToggleableThinking)
+        #expect(cap.defaultThinkingOn)
+        #expect(cap.declaredDefaultThinkingOn == nil)
+    }
+
     // MARK: - jang_config.json chat.reasoning fallback (DSV4-class bundles)
 
     /// DSV4-Flash ships NO chat_template in tokenizer_config.json — the

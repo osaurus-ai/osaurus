@@ -109,32 +109,29 @@ struct ChatWindowSessionDetachTests {
 
     // MARK: New chat while streaming
 
-    @Test func startNewChat_whileStreaming_detachesRunAndKeepsItStreaming() async throws {
+    /// A new chat while a run is in flight opens a NEW tab (browser-style):
+    /// the run keeps its own tab, still window-owned and streaming, and its
+    /// output never leaks into the new chat.
+    @Test func startNewChat_whileStreaming_opensNewTabAndKeepsRunInItsTab() async throws {
         try await ChatHistoryTestStorage.run {
             let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
             let running = try await startStream(in: window, prompt: "long question")
 
             window.startNewChat()
 
-            // The view detached: the window shows a fresh session while the
-            // run keeps executing, now owned by the registry.
-            #expect(window.session !== running, "window must install a replacement session")
+            #expect(window.session !== running, "window must show a fresh session")
+            #expect(window.session.turns.isEmpty)
             #expect(running.isStreaming, "UI context switch must not stop the run")
+            #expect(window.tabs.count == 2)
+            #expect(window.tabSessions.contains { $0 === running })
+            #expect(running.windowState === window)
             let sessionId = try #require(running.sessionId)
-            let task = try #require(mgr.liveTask(forSessionId: sessionId))
-            #expect(task.status == .running)
-            #expect(task.chatSession === running)
-            // The detached run no longer pushes view state into this window.
-            #expect(running.windowState == nil)
+            #expect(mgr.liveTask(forSessionId: sessionId) == nil, "no registry hand-off: the tab owns the run")
 
-            // The run finishes in the background: its output lands ONLY in
-            // its own session; the window's new chat never sees it.
             try await waitUntil { !running.isStreaming }
             #expect(running.turns.contains { $0.role == .assistant && $0.content.contains("background answer") })
             #expect(window.session.turns.isEmpty, "background output must not leak into the new chat")
-            try await waitUntil { task.status == .completed(summary: "Chat completed") }
 
-            mgr.finalizeTask(task.id)
             window.cleanup()
         }
     }
@@ -196,20 +193,23 @@ struct ChatWindowSessionDetachTests {
 
     // MARK: Reopening a running chat
 
-    @Test func loadSession_ofLiveRun_reattachesSameSessionInstance() async throws {
+    /// Reopening a chat that is still running in ANOTHER tab focuses that
+    /// tab: the exact live instance is shown again, never a stale disk copy
+    /// loaded into a second session.
+    @Test func loadSession_ofLiveRun_focusesItsTab() async throws {
         try await ChatHistoryTestStorage.run {
             let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
             let running = try await startStream(in: window, prompt: "still working", delayMs: 800)
 
-            // Detach: the window moves to a new chat while the run continues.
+            // New chat: the run keeps its tab while a fresh tab takes over.
             window.startNewChat()
             let runningId = try #require(running.sessionId)
-            let task = try #require(mgr.liveTask(forSessionId: runningId))
+            #expect(window.session !== running)
             #expect(running.isStreaming)
+            let runningTabId = try #require(window.tabs.first { $0.session === running }?.id)
 
-            // Reopen the running chat from the sidebar: the EXACT live
-            // instance is re-attached — not a stale disk copy — and the
-            // window is bound to the task (view attachment, not ownership).
+            // Reopen the running chat (e.g. from history): its tab is
+            // selected and the live instance is back on screen.
             let reopenData = ChatSessionData(
                 id: runningId,
                 title: running.title,
@@ -221,22 +221,27 @@ struct ChatWindowSessionDetachTests {
             )
             window.loadSession(reopenData)
 
-            #expect(window.session === running, "reopening a live chat must attach the in-memory session")
-            #expect(mgr.taskId(forWindowId: window.windowId) == task.id)
+            #expect(window.session === running, "reopening a live chat must show the in-memory session")
+            #expect(window.activeTabId == runningTabId)
+            #expect(window.tabs.count == 2, "no duplicate tab for a chat that is already open")
             #expect(running.windowState === window)
+            #expect(mgr.liveTask(forSessionId: runningId) == nil, "tab-owned run: no registry task")
 
-            // Subsequent deltas keep landing in the re-attached session.
+            // Subsequent deltas keep landing in the same session.
             try await waitUntil { !running.isStreaming }
             #expect(window.session.turns.contains { $0.role == .assistant && $0.content.contains("background answer") })
 
-            mgr.finalizeTask(task.id)
             window.cleanup()
         }
     }
 
     // MARK: Agent switch while streaming
 
-    @Test func switchAgent_whileStreaming_detachesInsteadOfResetting() async throws {
+    /// Switching agents while a run is in flight opens the new agent in a
+    /// NEW tab (browser-style) rather than detaching the run to the
+    /// background registry: the streaming chat keeps its tab, keeps
+    /// rendering, and stays owned by the window.
+    @Test func switchAgent_whileStreaming_opensNewTabAndKeepsRunInItsTab() async throws {
         try await ChatHistoryTestStorage.run {
             let custom = Agent(
                 name: "DetachSwitch-\(UUID().uuidString.prefix(6))",
@@ -253,12 +258,18 @@ struct ChatWindowSessionDetachTests {
 
             #expect(window.session !== running)
             #expect(window.session.agentId == custom.id)
+            #expect(window.session.turns.isEmpty)
             #expect(running.isStreaming, "switching agents must not stop the previous run")
+            // The run stayed in its own tab, still window-owned: no registry
+            // hand-off, and the window now shows two tabs.
+            #expect(window.tabs.count == 2)
+            #expect(window.tabSessions.contains { $0 === running })
+            #expect(running.windowState === window)
             let runningId = try #require(running.sessionId)
-            #expect(mgr.liveTask(forSessionId: runningId) != nil)
+            #expect(mgr.liveTask(forSessionId: runningId) == nil)
 
             try await waitUntil { !running.isStreaming }
-            finalizeTask(ownedBy: running)
+            #expect(running.turns.contains { $0.role == .assistant && $0.content.contains("background answer") })
             window.cleanup()
             _ = await AgentManager.shared.delete(id: custom.id)
         }

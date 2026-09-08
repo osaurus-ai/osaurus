@@ -31,6 +31,27 @@ private final class ScopeProbeTool: OsaurusTool, @unchecked Sendable {
     }
 }
 
+/// A probe with an object schema, so the steer hint can be checked for the
+/// target tool's own argument names.
+private final class SchemaProbeTool: OsaurusTool, @unchecked Sendable {
+    let name: String
+    let description = "Test-only schema probe."
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "properties": .object([
+            "urls": .object(["type": .string("array")]),
+            "maxCharacters": .object(["type": .string("number")]),
+        ]),
+        "required": .array([.string("urls")]),
+    ])
+    private(set) var executions = 0
+    init(name: String) { self.name = name }
+    func execute(argumentsJSON: String) async throws -> String {
+        executions += 1
+        return ToolEnvelope.success(tool: name, text: "ran")
+    }
+}
+
 @Suite(.serialized)
 @MainActor
 struct ToolScopeGateRecoveryTests {
@@ -259,6 +280,68 @@ struct ToolScopeGateRecoveryTests {
     }
 
     @Test
+    func announcedToolCallRecovery_classifiesByTheSameRulesAsTheGate() async throws {
+        // The announce-only nudge must say the same thing the gate would:
+        // workspace tools are "attach a folder" by NAME whether or not they
+        // are registered; an enabled dynamic tool the turn never exposed is
+        // loadable; a globally disabled one is left unnamed; an exposed tool
+        // is neither.
+        let loadable = ScopeProbeTool(name: "test_recovery_loadable_probe")
+        let withheld = ScopeProbeTool(name: "test_recovery_withheld_probe")
+        let exposedTool = ScopeProbeTool(name: "test_recovery_exposed_probe")
+        for tool in [loadable, withheld, exposedTool] { ToolRegistry.shared.register(tool) }
+        ToolRegistry.shared.setEnabled(true, for: loadable.name)
+        ToolRegistry.shared.setEnabled(false, for: withheld.name)
+        ToolRegistry.shared.setEnabled(true, for: exposedTool.name)
+        defer {
+            for tool in [loadable, withheld, exposedTool] {
+                ToolRegistry.shared.setEnabled(false, for: tool.name)
+                ToolRegistry.shared.unregister(names: [tool.name])
+            }
+        }
+        let customAgent = UUID()
+
+        for registered in [false, true] {
+            if registered {
+                FolderToolManager.shared.ensureFolderToolsRegistered()
+            } else {
+                FolderToolManager.shared._unregisterAllForTesting()
+            }
+            defer { if registered { FolderToolManager.shared._unregisterAllForTesting() } }
+
+            let scope = ToolExecutionScope(exposed: [])
+            scope.activate([exposedTool.name, "capabilities"])
+            let recovery = ToolRegistry.shared.announcedToolCallRecovery(
+                exposed: scope.authorizedNames,
+                agentId: customAgent,
+                loaderPermitted: { scope.permits($0) }
+            )
+            #expect(recovery.exposed.contains(exposedTool.name), "registered=\(registered)")
+            #expect(recovery.workspaceBlocked == ToolRegistry.coreWorkspaceToolNames, "registered=\(registered)")
+            #expect(recovery.loadable.contains(loadable.name), "registered=\(registered)")
+            #expect(!recovery.loadable.contains(withheld.name), "registered=\(registered)")
+            #expect(!recovery.loadable.contains(exposedTool.name), "registered=\(registered)")
+            #expect(recovery.loadable.isDisjoint(with: ToolRegistry.coreWorkspaceToolNames), "registered=\(registered)")
+            #expect(recovery.loaderName == "capabilities")
+        }
+
+        // A chat with a folder attached exposes the workspace tools: nothing
+        // is workspace-blocked and file_write is simply callable now.
+        let folderScope = ToolExecutionScope(exposed: [])
+        folderScope.activate(Array(ToolRegistry.coreWorkspaceToolNames))
+        let withFolder = ToolRegistry.shared.announcedToolCallRecovery(
+            exposed: folderScope.authorizedNames, agentId: customAgent, loaderPermitted: { _ in false })
+        #expect(withFolder.workspaceBlocked.isEmpty)
+        #expect(withFolder.exposed.contains("file_write"))
+        #expect(withFolder.loaderName == "capabilities")
+
+        // The default agent's load gate admits only configure-write tools.
+        let defaultAgent = ToolRegistry.shared.announcedToolCallRecovery(
+            exposed: [], agentId: Agent.defaultId, loaderPermitted: { _ in false })
+        #expect(!defaultAgent.loadable.contains(loadable.name))
+    }
+
+    @Test
     func scopeActivationMakesTheToolExecutable() async throws {
         let tool = ScopeProbeTool(name: "test_scope_gate_activated_probe")
         ToolRegistry.shared.register(tool)
@@ -387,5 +470,56 @@ struct ToolScopeGateRecoveryTests {
             #expect(result.contains("share_artifact"), "registered=\(registered)")
             #expect(!result.contains("callable NOW"), "registered=\(registered)")
         }
+    }
+
+    /// `web_fetch_exa` is the Exa plugin's `exa_search_web_fetch_exa` with
+    /// the plugin prefix dropped (Ornith, 2026-09-05). When that one tool is
+    /// exposed to the request, the model is pointed at its real name; when
+    /// two candidates are exposed, nothing is guessed.
+    @Test
+    func prefixDroppedPluginToolName_isSteeredToTheUniqueExposedTool() async throws {
+        let exa = SchemaProbeTool(name: "exa_search_web_fetch_exa")
+        ToolRegistry.shared.registerPluginTool(exa)
+        ToolRegistry.shared.setEnabled(true, for: exa.name)
+        defer {
+            ToolRegistry.shared.setEnabled(false, for: exa.name)
+            ToolRegistry.shared.unregister(names: [exa.name])
+        }
+        let spec = ToolRegistry.shared.specs(forTools: [exa.name])
+        let scope = ToolExecutionScope(exposed: spec)
+        let result = try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+            try await ToolRegistry.shared.execute(name: "web_fetch_exa", argumentsJSON: #"{"urls":["https://x"]}"#)
+        }
+        #expect(exa.executions == 0, "steering names the tool; it must not run it")
+        let parsed = try envelope(result)
+        #expect(parsed?["kind"] as? String == "tool_not_found")
+        #expect((parsed?["message"] as? String ?? "").contains("exa_search_web_fetch_exa"))
+        // The hint must not tell the model to reuse the invented tool's
+        // arguments; a tool with a schema gets its own argument names.
+        let steerMessage = parsed?["message"] as? String ?? ""
+        #expect(steerMessage.contains("same arguments") == false)
+        #expect(steerMessage.contains("required: urls"), "the hint names the target tool's own arguments")
+
+        // Not exposed to this request: no steer to it (falls through to the
+        // generic fetch-intent handling / refusal).
+        let unexposed = try await ChatExecutionContext.$toolExecutionScope.withValue(ToolExecutionScope(exposed: [])) {
+            try await ToolRegistry.shared.execute(name: "web_fetch_exa", argumentsJSON: "{}")
+        }
+        #expect(!(try envelope(unexposed)?["message"] as? String ?? "").contains("exa_search_web_fetch_exa"))
+
+        // Two exposed candidates: ambiguous, no guess.
+        let other = ScopeProbeTool(name: "other_plugin_web_fetch_exa")
+        ToolRegistry.shared.registerPluginTool(other)
+        ToolRegistry.shared.setEnabled(true, for: other.name)
+        defer {
+            ToolRegistry.shared.setEnabled(false, for: other.name)
+            ToolRegistry.shared.unregister(names: [other.name])
+        }
+        let both = ToolExecutionScope(exposed: ToolRegistry.shared.specs(forTools: [exa.name, other.name]))
+        let ambiguous = try await ChatExecutionContext.$toolExecutionScope.withValue(both) {
+            try await ToolRegistry.shared.execute(name: "web_fetch_exa", argumentsJSON: "{}")
+        }
+        let msg = try envelope(ambiguous)?["message"] as? String ?? ""
+        #expect(!msg.contains("exa_search_web_fetch_exa") && !msg.contains("other_plugin_web_fetch_exa"))
     }
 }

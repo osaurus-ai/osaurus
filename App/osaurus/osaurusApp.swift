@@ -360,6 +360,12 @@ private extension osaurusApp {
                 Text(verbatim: L("Keyboard Shortcuts"))
             }
 
+            Button {
+                Task { @MainActor in ChatLayoutTour.shared.start() }
+            } label: {
+                Text(verbatim: L("Chat Layout Tour"))
+            }
+
             Divider()
 
             Button {

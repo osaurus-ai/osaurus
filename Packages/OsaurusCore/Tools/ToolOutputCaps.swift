@@ -98,4 +98,47 @@ enum HeadTailTruncation {
             + "\n... [TRUNCATED: \(omitted) of \(text.count) chars omitted\(hintSuffix)] ...\n"
             + String(text.suffix(tailChars))
     }
+
+    /// Byte-exact form for a BYTE budget. Character slicing cannot bound bytes:
+    /// one `Character` may carry an unbounded combining sequence (an "x"
+    /// followed by 60,000 combining acutes is a single 120,001-byte grapheme,
+    /// and `apply` returns it unchanged for any cap ≥ 1). This keeps a UTF-8
+    /// head and tail cut at Unicode-scalar boundaries — always valid UTF-8, a
+    /// grapheme may be split — with the same marker, whose own bytes count
+    /// against the cap. The result is never longer than `byteCap` bytes
+    /// whenever the cap covers the marker (a cap smaller than the ~100-byte
+    /// marker returns the marker alone).
+    static func applyByteExact(_ text: String, byteCap: Int, headFraction: Double, hint: String? = nil) -> String {
+        let utf8 = Array(text.utf8)
+        guard utf8.count > byteCap else { return text }
+        let hintSuffix = hint.map { " — \($0)" } ?? ""
+        // The largest scalar start at or before `i` (a UTF-8 continuation
+        // byte is 0b10xxxxxx).
+        func scalarStart(_ i: Int) -> Int {
+            var j = min(max(i, 0), utf8.count)
+            while j > 0, j < utf8.count, utf8[j] & 0xC0 == 0x80 { j -= 1 }
+            return j
+        }
+        func nextScalarStart(_ i: Int) -> Int {
+            var j = i + 1
+            while j < utf8.count, utf8[j] & 0xC0 == 0x80 { j += 1 }
+            return min(j, utf8.count)
+        }
+        let marker = "\n... [TRUNCATED: \(utf8.count) bytes total, head and tail kept\(hintSuffix)] ...\n"
+        let contentBudget = max(0, byteCap - marker.utf8.count)
+        var headEnd = scalarStart(Int(Double(contentBudget) * headFraction))
+        var tailStart = scalarStart(utf8.count - max(0, contentBudget - headEnd))
+        if tailStart < headEnd { tailStart = headEnd }
+        // Backing the tail off to a scalar start can only grow it; advance to
+        // the next scalar start until head + tail fit the content budget.
+        while tailStart < utf8.count, headEnd + (utf8.count - tailStart) > contentBudget {
+            tailStart = nextScalarStart(tailStart)
+        }
+        while headEnd > 0, headEnd + (utf8.count - tailStart) > contentBudget {
+            headEnd = scalarStart(headEnd - 1)
+        }
+        let head = String(decoding: utf8[0..<headEnd], as: UTF8.self)
+        let tail = String(decoding: utf8[tailStart...], as: UTF8.self)
+        return head + marker + tail
+    }
 }

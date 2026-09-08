@@ -1140,7 +1140,16 @@ struct AgentTaskStateTests {
         let replay = try #require(
             state.heldResult(name: "search_and_extract", argsJSON: extractionArgs)
         )
-        #expect(replay == extractionFailure)
+        // The replay is the held failure marked as a cached replay: the
+        // original fields and message survive, plus `cached_replay: true`,
+        // the replay count, and a message prefix saying no new network
+        // request was made — so the transcript itself cannot read as a retry.
+        #expect(replay != extractionFailure)
+        #expect(replay.contains("\"cached_replay\":true"))
+        #expect(replay.contains("\"cached_replay_count\":1"))
+        #expect(replay.contains("Cached replay of the identical earlier attempt (no new network request was made). "))
+        #expect(replay.contains("do not claim these pages were read"))
+        #expect(replay.contains("\"extraction_failed_count\":1"))
         #expect(state.lastReplayNotice?.contains("was NOT re-executed") == true)
     }
 
@@ -1669,6 +1678,42 @@ struct AgentTaskStateTests {
         #expect(
             state.heldResult(name: "read_knowledge", argsJSON: otherReadArgs) != nil,
             "a read of an untouched document stays fresh — invalidation is per path")
+    }
+
+    /// Regression check for the 0.24.7 "listing truncated at 50" report:
+    /// the #2632 dedupe keys on the FULL canonical argument set, so paging
+    /// `list_knowledge` with a different `offset` (or a different `limit`)
+    /// is a different call and is executed, never replayed as the first
+    /// page. Only a byte-identical re-issue is held.
+    @Test func knowledge_pagedListingIsNotReplayed() {
+        let state = AgentTaskState()
+        let page0 = #"{"collection":"Obsidian Vault","limit":100,"offset":0}"#
+        let env0 = ToolEnvelope.success(
+            tool: "list_knowledge", text: "Found 312 knowledge document(s) in total; showing 1–100")
+        state.record(name: "list_knowledge", argsJSON: page0, result: env0)
+        #expect(state.heldResult(name: "list_knowledge", argsJSON: page0) == env0)
+        // Same page, keys reordered → same call → replayed.
+        #expect(
+            state.heldResult(
+                name: "list_knowledge",
+                argsJSON: #"{"offset":0,"limit":100,"collection":"Obsidian Vault"}"#) == env0)
+        // Next page → not held.
+        #expect(
+            state.heldResult(
+                name: "list_knowledge",
+                argsJSON: #"{"collection":"Obsidian Vault","limit":100,"offset":100}"#) == nil)
+        // Larger limit → not held.
+        #expect(
+            state.heldResult(
+                name: "list_knowledge",
+                argsJSON: #"{"collection":"Obsidian Vault","limit":500,"offset":0}"#) == nil)
+        // A string limit ("20") is a different signature from the integer:
+        // never confused with a held integer call.
+        let intArgs = #"{"limit":20}"#
+        state.record(
+            name: "list_knowledge", argsJSON: intArgs,
+            result: ToolEnvelope.success(tool: "list_knowledge", text: "20 rows"))
+        #expect(state.heldResult(name: "list_knowledge", argsJSON: #"{"limit":"20"}"#) == nil)
     }
 
     /// `write_knowledge` creating the missing document clears the held

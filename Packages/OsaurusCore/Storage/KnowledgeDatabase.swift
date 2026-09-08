@@ -667,15 +667,73 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         collectionIds: [String],
         docType: String? = nil,
         tag: String? = nil,
-        limit: Int = 100
+        limit: Int = 100,
+        offset: Int = 0
     ) throws -> [KnowledgeDocument] {
         guard !collectionIds.isEmpty else { return [] }
         var documents: [KnowledgeDocument] = []
+        let filter = Self.documentFilter(collectionIds: collectionIds, docType: docType, tag: tag)
+        let limitIndex = filter.nextIndex
+        let offsetIndex = filter.nextIndex + 1
+        let sql =
+            "SELECT \(Self.documentColumns) FROM documents WHERE \(filter.sql)"
+            + " ORDER BY collection_id, rel_path LIMIT ?\(limitIndex) OFFSET ?\(offsetIndex)"
+        try prepareAndExecute(
+            sql,
+            readOnly: true,
+            bind: { stmt in
+                filter.bind(stmt)
+                sqlite3_bind_int(stmt, Int32(limitIndex), Int32(clamping: max(0, limit)))
+                sqlite3_bind_int(stmt, Int32(offsetIndex), Int32(clamping: max(0, offset)))
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    documents.append(Self.readDocument(stmt))
+                }
+            }
+        )
+        return documents
+    }
+
+    /// Number of documents `listDocuments` would return with the same
+    /// filters and no limit — the total a paged listing reports.
+    public func countDocuments(
+        collectionIds: [String],
+        docType: String? = nil,
+        tag: String? = nil
+    ) throws -> Int {
+        guard !collectionIds.isEmpty else { return 0 }
+        var count = 0
+        let filter = Self.documentFilter(collectionIds: collectionIds, docType: docType, tag: tag)
+        try prepareAndExecute(
+            "SELECT COUNT(*) FROM documents WHERE \(filter.sql)",
+            readOnly: true,
+            bind: { stmt in filter.bind(stmt) },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    count = Int(sqlite3_column_int(stmt, 0))
+                }
+            }
+        )
+        return count
+    }
+
+    /// The shared WHERE clause + binder for `listDocuments` and
+    /// `countDocuments`, so the page and its total can never disagree on
+    /// which rows qualify. `nextIndex` is the first free `?N` placeholder.
+    private struct DocumentFilter {
+        let sql: String
+        let nextIndex: Int
+        let bind: (OpaquePointer) -> Void
+    }
+
+    private static func documentFilter(
+        collectionIds: [String],
+        docType: String?,
+        tag: String?
+    ) -> DocumentFilter {
         let placeholders = Self.inPlaceholders(count: collectionIds.count, startingAt: 1)
-        var sql = """
-            SELECT \(Self.documentColumns) FROM documents
-            WHERE collection_id IN (\(placeholders))
-            """
+        var sql = "collection_id IN (\(placeholders))"
         var nextIndex = collectionIds.count + 1
         var docTypeIndex: Int?
         var tagIndex: Int?
@@ -689,29 +747,17 @@ public final class KnowledgeDatabase: @unchecked Sendable {
             sql += " AND (',' || tags_csv || ',') LIKE ('%,' || ?\(nextIndex) || ',%')"
             nextIndex += 1
         }
-        sql += " ORDER BY collection_id, rel_path LIMIT ?\(nextIndex)"
-        try prepareAndExecute(
-            sql,
-            readOnly: true,
-            bind: { stmt in
-                for (offset, id) in collectionIds.enumerated() {
-                    Self.bindText(stmt, index: Int32(offset + 1), value: id)
-                }
-                if let docTypeIndex, let docType {
-                    Self.bindText(stmt, index: Int32(docTypeIndex), value: docType)
-                }
-                if let tagIndex, let tag {
-                    Self.bindText(stmt, index: Int32(tagIndex), value: tag.lowercased())
-                }
-                sqlite3_bind_int(stmt, Int32(nextIndex), Int32(limit))
-            },
-            process: { stmt in
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    documents.append(Self.readDocument(stmt))
-                }
+        return DocumentFilter(sql: sql, nextIndex: nextIndex) { stmt in
+            for (position, id) in collectionIds.enumerated() {
+                Self.bindText(stmt, index: Int32(position + 1), value: id)
             }
-        )
-        return documents
+            if let docTypeIndex, let docType {
+                Self.bindText(stmt, index: Int32(docTypeIndex), value: docType)
+            }
+            if let tagIndex, let tag {
+                Self.bindText(stmt, index: Int32(tagIndex), value: tag.lowercased())
+            }
+        }
     }
 
     // MARK: - Chunk search

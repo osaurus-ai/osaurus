@@ -347,7 +347,71 @@ public struct SchemaValidator {
             return .ok()
         }
         let label = key.map { " '\($0)'" } ?? ""
-        return .fail("Property\(label) must be one of: \(allowed)", field: key)
+        return .fail(
+            "Property\(label) must be one of: \(enumValueList(allowed)). "
+                + "Got \(enumValueDescription(value))\(enumWrappingHint(value: value, allowed: allowed))",
+            field: key
+        )
+    }
+
+    /// Render the allowed enum values as a comma-separated list of bare
+    /// values (`"enabled", "disabled"`), never as a Swift/JSON array literal.
+    /// Observed live: `must be one of: ["enabled"]` read as "send the JSON
+    /// array `["enabled"]`", and the model did exactly that — the rendered
+    /// list was byte-identical to the rejected value, so the error was
+    /// uncorrectable from the model's side.
+    private static func enumValueList(_ allowed: [Any]) -> String {
+        allowed.map(enumValueDescription).joined(separator: ", ")
+    }
+
+    /// Quote strings the way a model would type them; leave numbers/bools
+    /// bare; JSON-encode containers compactly.
+    private static func enumValueDescription(_ value: Any) -> String {
+        if let s = value as? String {
+            let escaped =
+                s
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            return "\"\(escaped)\""
+        }
+        if value is NSNull { return "null" }
+        if let n = value as? NSNumber, isObjCBool(n) {
+            return n.boolValue ? "true" : "false"
+        }
+        if JSONSerialization.isValidJSONObject(value),
+            let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
+            let text = String(data: data, encoding: .utf8)
+        {
+            return text
+        }
+        return String(describing: value)
+    }
+
+    /// When the rejected value is an allowed value wrapped in an array —
+    /// either a real JSON array or a stringified one such as
+    /// `"[\"enabled\"]"` — name the fix explicitly. Without this the
+    /// received value and the allowed list look identical to the model.
+    private static func enumWrappingHint(value: Any, allowed: [Any]) -> String {
+        var wrapped: [Any]? = nil
+        if let arr = value as? [Any] {
+            wrapped = arr
+        } else if let s = value as? String {
+            let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("["), let data = trimmed.data(using: .utf8),
+                let arr = try? JSONSerialization.jsonObject(with: data) as? [Any]
+            {
+                wrapped = arr
+            }
+        }
+        guard let wrapped, !wrapped.isEmpty,
+            wrapped.allSatisfy({ element in
+                allowed.contains(where: { equalJSONValues($0, element) })
+            })
+        else { return "." }
+        if value is String {
+            return " — pass the bare string value, not a JSON array."
+        }
+        return " — pass the bare value, not an array."
     }
 
     /// Format a "Property [name] must be a[n] [type]" failure with the

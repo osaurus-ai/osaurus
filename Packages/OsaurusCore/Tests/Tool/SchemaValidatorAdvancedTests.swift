@@ -261,4 +261,49 @@ struct SchemaValidatorAdvancedTests {
         #expect(lower.isValid)
         #expect(upper.isValid)
     }
+
+    // MARK: - enum failure text
+
+    private let capabilitiesLikeEnumSchema: JSONValue = .object([
+        "type": .string("object"),
+        "properties": .object([
+            "list": .object([
+                "type": .string("string"),
+                "enum": .array([.string("enabled")]),
+            ])
+        ]),
+    ])
+
+    /// Observed live (`capabilities`, 0.24.6): the model sent the stringified
+    /// array `"[\"enabled\"]"` and the old message rendered the allowed list
+    /// as `["enabled"]` — byte-identical to what it sent, so the error was
+    /// uncorrectable. The message must list bare allowed values, echo the
+    /// received value, and name the fix.
+    @Test func enumFailureForStringifiedArrayNamesTheFix() {
+        let result = SchemaValidator.validate(
+            arguments: ["list": "[\"enabled\"]"],
+            against: capabilitiesLikeEnumSchema
+        )
+        #expect(!result.isValid)
+        #expect(result.field == "list")
+        let message = result.errorMessage ?? ""
+        #expect(message.contains(#"Property 'list' must be one of: "enabled". "#))
+        #expect(message.contains(#"Got "[\"enabled\"]""#))
+        #expect(message.contains("pass the bare string value, not a JSON array"))
+        // The allowed list must never render as an array literal again.
+        #expect(!message.contains(#"one of: ["#))
+    }
+
+    /// A plainly wrong value gets the same shape without the array hint.
+    @Test func enumFailureForPlainWrongValueEchoesItWithoutArrayHint() {
+        let result = SchemaValidator.validate(
+            arguments: ["list": "all"],
+            against: capabilitiesLikeEnumSchema
+        )
+        #expect(!result.isValid)
+        #expect(result.field == "list")
+        let message = result.errorMessage ?? ""
+        #expect(message.contains(#"Property 'list' must be one of: "enabled". Got "all"."#))
+        #expect(!message.contains("JSON array"))
+    }
 }

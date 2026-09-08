@@ -57,13 +57,14 @@ public final class FolderContextService {
         // The tree walk, manifest/context-file reads and extension scan are all
         // synchronous filesystem I/O. Run them off the main actor so picking a
         // large folder can't hang the UI.
-        let (projectType, tree, manifest, isGitRepo, contextFiles, detectedExtensions) =
+        let (projectType, tree, manifest, isGitRepo, contextFiles, detectedExtensions, shownFiles, totalFiles) =
             await Task.detached(priority: .userInitiated) { [self] in
                 let projectType = detectProjectType(url)
                 let options = FileTreeOptions(
                     ignorePatterns: projectType.ignorePatterns
                 )
-                let tree = buildFileTree(url, options: options)
+                let built = buildFileTree(url, options: options)
+                let tree = built.tree
                 let manifest = readManifest(url, projectType: projectType)
                 let isGitRepo = checkIsGitRepo(url)
                 let contextFiles = readContextFiles(url)
@@ -71,7 +72,10 @@ public final class FolderContextService {
                     url,
                     ignorePatterns: projectType.ignorePatterns
                 )
-                return (projectType, tree, manifest, isGitRepo, contextFiles, detectedExtensions)
+                return (
+                    projectType, tree, manifest, isGitRepo, contextFiles, detectedExtensions,
+                    built.shownFiles, built.totalFiles
+                )
             }.value
         let gitStatus = isGitRepo ? await getGitStatus(url) : nil
 
@@ -83,7 +87,9 @@ public final class FolderContextService {
             gitStatus: gitStatus,
             isGitRepo: isGitRepo,
             contextFiles: contextFiles,
-            detectedFileExtensions: detectedExtensions
+            detectedFileExtensions: detectedExtensions,
+            treeShownFiles: shownFiles,
+            treeTotalFiles: totalFiles
         )
     }
 
@@ -230,7 +236,16 @@ public final class FolderContextService {
         return false
     }
 
-    nonisolated private func buildFileTree(_ url: URL, options: FileTreeOptions) -> String {
+    /// The rendered tree plus its file accounting: `shownFiles` is how many
+    /// files the tree represents (listed individually or folded into an
+    /// extension-group line), `totalFiles` how many visible files exist under
+    /// the root at any depth (ignore patterns honoured, enumeration capped at
+    /// 10,000). The prompt states the gap so the model never mistakes a
+    /// 300-file tree for a 350-file folder.
+    nonisolated internal func buildFileTree(
+        _ url: URL,
+        options: FileTreeOptions
+    ) -> (tree: String, shownFiles: Int, totalFiles: Int) {
         // Adaptive depth: inspect top-level item count to choose depth automatically.
         // This prevents bloated trees for broad directories like ~/Downloads (2000+ files)
         // while preserving full detail for well-structured projects (e.g., a Swift package).
@@ -240,6 +255,11 @@ public final class FolderContextService {
 
         var result = ""
         var fileCount = 0
+        // Files the tree accounts for via a "(N files, M folders)" summary
+        // line rather than by name — still visible to the model as a count,
+        // so they are "shown" for truncation accounting but do not consume
+        // the per-name `maxFiles` budget.
+        var summarizedFiles = 0
         let maxFiles = adaptiveOptions.maxFiles
         let patterns = adaptiveOptions.ignorePatterns
 
@@ -292,6 +312,7 @@ public final class FolderContextService {
                     if depth == adaptiveOptions.maxDepth || visibleSubCount > 50 {
                         let (f, d) = countContents(dir, patterns: patterns)
                         result += "\(prefix)\(connector)\(name)/     (\(f) files, \(d) folders)\n"
+                        summarizedFiles += f
                     } else {
                         result += "\(prefix)\(connector)\(name)/\n"
                         traverse(dir, depth: depth + 1, prefix: prefix + childPrefix)
@@ -333,6 +354,7 @@ public final class FolderContextService {
                             let (f, d) = countContents(item, patterns: patterns)
                             result +=
                                 "\(prefix)\(connector)\(name)/     (\(f) files, \(d) folders)\n"
+                            summarizedFiles += f
                         } else {
                             result += "\(prefix)\(connector)\(name)/\n"
                             traverse(item, depth: depth + 1, prefix: prefix + childPrefix)
@@ -348,7 +370,9 @@ public final class FolderContextService {
         result = "./\n"
         traverse(url, depth: 1, prefix: "")
 
-        return result
+        let shown = fileCount + summarizedFiles
+        let total = countContents(url, patterns: patterns).files
+        return (result, min(shown, total), max(total, shown))
     }
 
     /// Count visible (non-ignored) children of a directory

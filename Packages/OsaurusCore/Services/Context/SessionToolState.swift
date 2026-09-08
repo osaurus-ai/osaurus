@@ -86,15 +86,32 @@ struct SessionToolState: Sendable {
         self.frozenUserPrefixes = frozenUserPrefixes
     }
 
-    /// Canonical fingerprint string for a (mode, toolSelectionMode) pair.
-    /// Centralised so the read and write sides cannot drift in shape.
+    /// Canonical fingerprint string for a (mode, toolSelectionMode, agent)
+    /// triple. Centralised so the read and write sides cannot drift in shape.
     /// The folder ROOT is part of the identity: folders are per chat
     /// session now, and switching this chat's folder (or restoring a
     /// session against a different root) must invalidate cached tool
     /// state — the composed folder sections and git-tool availability
     /// both depend on which root is mounted, and a stale entry from the
     /// old root would silently keep composing against it.
-    static func fingerprint(executionMode: ExecutionMode, toolMode: ToolSelectionMode) -> String {
+    ///
+    /// The AGENT is part of the identity too: the baseline schema is
+    /// per-agent (`SystemPromptComposer.resolveTools` strips the configure
+    /// trio from every custom agent and grants it only to the Default
+    /// agent), so the first-turn always-loaded snapshot is only valid for
+    /// the agent that produced it. Before the agent joined the fingerprint
+    /// a chat started under a custom agent and switched to the
+    /// Orchestrator chip kept the custom agent's frozen names: the
+    /// Orchestrator addendum told the model to ALWAYS call `osaurus_help`
+    /// while the frozen filter kept `osaurus_help` out of the schema — and
+    /// the scope refused every call with `tool_not_found`. `agentId` is
+    /// optional only for legacy callers / tests that reason about the mode
+    /// components alone; every live surface passes it.
+    static func fingerprint(
+        executionMode: ExecutionMode,
+        toolMode: ToolSelectionMode,
+        agentId: UUID? = nil
+    ) -> String {
         let modeTag: String
         switch executionMode {
         case .hostFolder(let context):
@@ -103,7 +120,26 @@ struct SessionToolState: Sendable {
             modeTag = "sandbox"
         case .none: modeTag = "none"
         }
-        return "\(modeTag)/\(toolMode.rawValue)"
+        var fingerprint = "\(modeTag)/\(toolMode.rawValue)"
+        if let agentId {
+            fingerprint += "/\(agentComponentPrefix)\(agentId.uuidString)"
+        }
+        return fingerprint
+    }
+
+    /// Marker that introduces the agent component of a fingerprint. Kept
+    /// distinct from the mode/toolMode components so the store can tell an
+    /// agent switch apart from a mode flip (the two invalidate differently:
+    /// a mode flip carries mode-independent dynamic loads across, an agent
+    /// switch must not — the new agent may never have been granted them).
+    static let agentComponentPrefix = "agent:"
+
+    /// The agent component of a fingerprint produced by `fingerprint(...)`,
+    /// or nil for a legacy fingerprint that carries none.
+    static func agentComponent(of fingerprint: String) -> String? {
+        fingerprint.split(separator: "/")
+            .first { $0.hasPrefix(agentComponentPrefix) }
+            .map(String.init)
     }
 
     /// Stable, non-sensitive identity for a mounted folder: a short hash of

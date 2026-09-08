@@ -381,6 +381,18 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
     private static let perQueryTopK: (methods: Int, tools: Int, skills: Int) =
         (methods: 5, tools: 5, skills: 3)
 
+    /// "Found N capability(ies)" is a top-k per query (methods 5, tools 5,
+    /// skills 3), not the number that exist — a model reading it as a census
+    /// ("there are 5 email tools") is wrong whenever a provider exposes more.
+    /// Say so on the line the model reads.
+    static func searchResultHeader(count: Int, queryCount: Int) -> String {
+        let perQuery =
+            "top \(perQueryTopK.tools) tools / \(perQueryTopK.methods) methods / \(perQueryTopK.skills) skills per query"
+        let scope = queryCount > 1 ? "\(perQuery), \(queryCount) queries merged" : perQuery
+        return "Found \(count) capability(ies) (\(scope) — not a full inventory; a narrower query, "
+            + "or `list: \"enabled\"`, shows others):\n\n"
+    }
+
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
@@ -618,7 +630,7 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
                 )
             }).sorted { $0.score > $1.score }
 
-        var output = "Found \(results.count) capability(ies):\n\n"
+        var output = Self.searchResultHeader(count: results.count, queryCount: queries.count)
         for r in results {
             output += "- **\(r.id)** [\(r.type)]\n"
             output += "  \(r.description)\n"
@@ -1263,9 +1275,11 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                     message:
                         "Tool '\(toolId)' is a workspace tool and cannot be loaded here — "
                         + "it activates only when a workspace folder is attached to this "
-                        + "chat. Ask the user to attach one via the Folder chip (or enable "
-                        + "Autonomous execution); deliver file content with share_artifact "
-                        + "meanwhile."
+                        + "chat. An agent's Host Files folder (Agent → Abilities) does not "
+                        + "apply here: that grant is mounted only for authenticated remote "
+                        + "agent runs, never for in-app chat. Ask the user to attach a "
+                        + "folder via the Folder chip (or enable Autonomous execution); "
+                        + "deliver file content with share_artifact meanwhile."
                 )
             )
         }
@@ -1296,11 +1310,14 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         // Built-ins are not dynamic capabilities. If the composer withheld one
         // because Browser/Computer/Spawn/Image/AppleScript, an ability flag,
         // execution mode, model readiness, or Tools is off, an exact guessed ID
-        // must not activate it through the load buffer. The Default agent's
-        // configure-write family is the sole intentional deferred built-in.
+        // must not activate it through the load buffer. Two intentional
+        // exceptions: the Default agent's configure-write family, and the
+        // `onDemandBuiltInToolNames` kept out of the baseline purely for
+        // prompt-prefix stability (see that set for why).
         let isDeferredDefaultConfigureWrite =
             isDefaultAgent && configureWrites.contains(toolId)
-        if isBuiltIn, !isDeferredDefaultConfigureWrite {
+        let isOnDemandBuiltIn = ToolRegistry.onDemandBuiltInToolNames.contains(toolId)
+        if isBuiltIn, !isDeferredDefaultConfigureWrite, !isOnDemandBuiltIn {
             return .failure(
                 LoadFailure(
                     kind: .rejected,

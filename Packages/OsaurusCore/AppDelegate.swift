@@ -2395,9 +2395,16 @@ extension AppDelegate {
                     // Invalidate model cache so fresh models are discovered
                     // This ensures any models downloaded during onboarding are visible
                     ModelPickerItemCache.shared.invalidateCache()
+                    // The chat window's once-per-user layout tour auto-starts
+                    // when the window becomes key. Hold it until the first-run
+                    // dialogs below have been queued so the coachmarks don't
+                    // start underneath the import prompt; once released, the
+                    // tour waits for any queued dialog to be dismissed.
+                    ChatLayoutTour.shared.holdAutoStart()
                     // Open ChatView after onboarding completes
                     self?.showChatOverlay()
                     Task { @MainActor [weak self] in
+                        defer { ChatLayoutTour.shared.releaseAutoStart() }
                         try? await Task.sleep(for: .seconds(1))
                         // Brand-new users get the one-time import-history
                         // suggestion first, once the chat window is up to
@@ -2484,13 +2491,18 @@ extension AppDelegate {
         deeplinkModelId: String? = nil,
         deeplinkFile: String? = nil,
         deeplinkAgentId: UUID? = nil,
-        deeplinkRemoteAgentId: UUID? = nil
+        deeplinkRemoteAgentId: UUID? = nil,
+        deeplinkCreateAgent: Bool = false
     ) {
         // Remote-agent detail navigation rides the shared management state
         // (mirrors `pendingPluginDetailId`) so it works for both a freshly
         // created window and a reused one without rebuilding the SwiftUI graph.
         if let deeplinkRemoteAgentId {
             ManagementStateManager.shared.pendingRemoteAgentDetailId = deeplinkRemoteAgentId
+        }
+        // Create-agent rides the same shared-state route.
+        if deeplinkCreateAgent {
+            ManagementStateManager.shared.pendingCreateAgent = true
         }
         closePopoverAndPerform { [weak self] in
             guard let self = self else { return }
@@ -2691,6 +2703,9 @@ extension AppDelegate {
         guard NSApp.modalWindow == nil else { return }
         guard !NSApp.windows.contains(where: { $0.attachedSheet != nil }) else { return }
         guard !ThemedAlertCenter.shared.hasAnyActiveAlert else { return }
+        // The layout tour's coachmark overlay owns the chat window while it
+        // runs; a dialog landing underneath it would be unreachable.
+        guard !ChatLayoutTour.shared.isActive else { return }
         guard ComputerUsePromptQueue.shared.pending.isEmpty,
             ComputerUsePromptQueue.shared.pendingConsent.isEmpty
         else { return }
@@ -2785,6 +2800,7 @@ extension AppDelegate {
         guard NSApp.modalWindow == nil else { return }
         guard !NSApp.windows.contains(where: { $0.attachedSheet != nil }) else { return }
         guard !ThemedAlertCenter.shared.hasAnyActiveAlert else { return }
+        guard !ChatLayoutTour.shared.isActive else { return }
 
         // Host in the user's landing window (same routing as the Product
         // Hunt dialog): the chat window that just opened after onboarding,
@@ -2831,9 +2847,13 @@ extension AppDelegate {
                 showsCloseButton: true,
                 customContent: AnyView(sheet),
                 width: 470,
-                onDismiss: {
+                onDismiss: { [weak self] in
                     gate.didDismiss()
                     ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                    // Run the next first-run dialog (if any) straight after
+                    // this one, so every modal is done before the deferred
+                    // layout tour starts.
+                    self?.presentProductHuntLaunchDialogIfEligible()
                 }
             ),
             scope: scope

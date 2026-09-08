@@ -39,6 +39,25 @@ public struct ChatThreadIdentity: Equatable, Sendable {
     public let isRemote: Bool
 }
 
+/// One browser-style tab in a chat window. Identity is the tab's own id —
+/// the session it holds is replaceable (in-tab chat switches swap it, just
+/// like the window's single session used to be swapped).
+struct ChatTab: Identifiable, Equatable {
+    let id: UUID
+    var session: ChatSession
+    /// LRU stamp: when this tab last became the active tab. Drives which
+    /// idle tabs get hibernated when the window holds too many.
+    var lastActivatedAt: Date = Date()
+    /// A hibernated tab keeps only a metadata-level session (title, agent,
+    /// ids; no turns, no warm-up) so the chip still renders; the transcript
+    /// reloads from disk when the tab is selected again.
+    var isHibernated: Bool = false
+
+    static func == (lhs: ChatTab, rhs: ChatTab) -> Bool {
+        lhs.id == rhs.id && lhs.session === rhs.session
+    }
+}
+
 /// Per-window state container for ChatView - each window creates its own instance
 @MainActor
 final class ChatWindowState: ObservableObject {
@@ -49,9 +68,22 @@ final class ChatWindowState: ObservableObject {
     /// chats while a run is in flight detaches the running session into the
     /// `BackgroundTaskManager` registry (execution continues) and installs a
     /// different `ChatSession` here. `@Published` so the window root view can
-    /// rebuild `ChatView` around the new instance.
-    @Published private(set) var session: ChatSession
+    /// rebuild `ChatView` around the new instance. Always mirrors the active
+    /// tab's session — the didSet keeps the tab entry in sync when in-tab
+    /// navigation replaces the instance.
+    @Published private(set) var session: ChatSession {
+        didSet { syncActiveTabSession() }
+    }
     let foundationModelAvailable: Bool
+
+    // MARK: - Tabs
+
+    /// Browser-style tabs, each holding its own live `ChatSession`. Inactive
+    /// tabs keep their sessions alive in memory (streams keep running); only
+    /// closing a tab tears its session down or hands it to the background
+    /// registry.
+    @Published private(set) var tabs: [ChatTab] = []
+    @Published private(set) var activeTabId: UUID = UUID()
 
     // MARK: - View State
 
@@ -90,6 +122,10 @@ final class ChatWindowState: ObservableObject {
     /// to closing the whole window. Not `@Published`: purely imperative,
     /// no view re-renders.
     var cancelInlineEdit: (() -> Void)?
+
+    /// Float-on-top state, driven by the toolbar overflow menu's Pin Window
+    /// item (was local state inside the old PinButton).
+    @Published var isWindowPinned: Bool = false
 
     /// Drives the in-conversation find bar (Cmd+F). Set by the window-level
     /// key monitor (which cannot touch `ChatView`'s `@State`) and cleared by
@@ -137,6 +173,19 @@ final class ChatWindowState: ObservableObject {
     /// found"). Driven by `pinRemoteAgentModelAfterConnect` and kept in sync
     /// with later disconnects via the `.remoteProviderStatusChanged` observer.
     @Published var remoteAgentConnectionPhase: RemoteAgentConnectionPhase = .idle
+
+    /// The window's content width, pushed by `ChatWindowDelegate` on every
+    /// resize. The tab strip sizes itself from this — it must come through
+    /// the window state because the strip's own toolbar item (and any AppKit
+    /// observer owned by its views) is REMOVED from the window when AppKit
+    /// folds an oversized item into the toolbar overflow menu, which would
+    /// freeze a view-owned measurement exactly when it's needed most.
+    @Published private(set) var windowContentWidth: CGFloat?
+
+    func updateWindowContentWidth(_ width: CGFloat) {
+        guard abs((windowContentWidth ?? -1) - width) > 0.5 else { return }
+        windowContentWidth = width
+    }
 
     /// True while the window is in native full screen. AppKit draws the
     /// full-screen toolbar with an opaque system backdrop that clashes with
@@ -198,12 +247,27 @@ final class ChatWindowState: ObservableObject {
         self.cachedAgentDisplayName = Self.displayName(for: cachedActiveAgent)
         decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
 
+        let initialTab = ChatTab(id: UUID(), session: self.session)
+        self.tabs = [initialTab]
+        self.activeTabId = initialTab.id
+
         // Configure session
         self.session.windowState = self
         self.session.agentId = agentId
         self.session.applyInitialModelSelection()
         if let data = sessionData {
-            self.session.load(from: data)
+            // The sidebar and the history panel hold METADATA rows
+            // (`ChatSessionStore.loadAll` → `loadAllMetadata`, turns: []).
+            // "Open in New Window" handed that row straight here, so the
+            // new window showed an empty transcript, the next send went to
+            // the model with no history, and the incremental save then
+            // deleted every stored turn the window never had (2026-09-06:
+            // a 50-turn research session reopened from History became 2
+            // turns). Hydrate from disk exactly as the in-place open does
+            // (`loadSession(_:)` below); fall back to the given data only
+            // when the row is not on disk (a brand-new, unsaved session).
+            let resolved = data.turns.isEmpty ? (ChatSessionStore.load(id: data.id) ?? data) : data
+            self.session.load(from: resolved)
         }
         self.session.onSessionChanged = { [weak self] in
             self?.refreshSessionsDebounced()
@@ -244,6 +308,10 @@ final class ChatWindowState: ObservableObject {
         self.cachedAgentDisplayName = Self.displayName(for: cachedActiveAgent)
         decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
 
+        let initialTab = ChatTab(id: UUID(), session: self.session)
+        self.tabs = [initialTab]
+        self.activeTabId = initialTab.id
+
         // Re-link the adopted session to this window so busy alerts and
         // Mode 2 routing reach the view that now displays it.
         self.session.windowState = self
@@ -270,6 +338,10 @@ final class ChatWindowState: ObservableObject {
         selectedDiscoveredAgent = nil
         selectedDiscoveredAgentProviderId = nil
         selectedRelayAgent = nil
+        // Inactive tabs first: each of their sessions is saved and stopped
+        // (or handed to the background registry / unlinked when shared) —
+        // the single-session logic below only covers the active tab.
+        teardownInactiveTabSessions()
         // A registry-shared session is co-owned by its registering owner:
         // this window closing must only unlink, never shut down the shared
         // instance's warm-up controller or stop its run.
@@ -304,25 +376,38 @@ final class ChatWindowState: ObservableObject {
         AgentManager.shared.themeId(for: agentId)
     }
 
+    /// Pick another agent. Browser-style: the current tab is only reused
+    /// when it is a blank chat; otherwise the conversation stays put in its
+    /// tab and the new agent opens in its own tab (or an existing blank tab
+    /// of that agent is focused). The fresh chat does NOT inherit the
+    /// outgoing chat's project: it is a different agent's new conversation,
+    /// so the project pill only shows for chats that belong to a project.
     func switchAgent(to newAgentId: UUID) {
         TTSService.shared.stop()
-        if !session.turns.isEmpty { session.save() }
-        // Switching agents starts a fresh chat, and `reset`/`installFreshSession`
-        // both clear `projectId`. Preserve project membership across the switch:
-        // cross-agent work *inside* a project is the point, so switching agents
-        // from a project chat must keep the new chat in that project rather than
-        // silently dropping it (the project pill would vanish and the chat would
-        // stop sharing the project's instructions, knowledge, and memory).
-        let inheritedProjectId = session.projectId
-        adoptAgent(newAgentId)
-        if releaseSharedSessionIfNeeded() || detachRunningSessionIfNeeded() {
-            installFreshSession(agentId: newAgentId)
-        } else {
-            session.reset(for: newAgentId)
+        if isBlank(session) {
+            adoptAgent(newAgentId)
+            if releaseSharedSessionIfNeeded() || detachRunningSessionIfNeeded() {
+                installFreshSession(agentId: newAgentId)
+            } else {
+                session.reset(for: newAgentId)
+            }
+            refreshSessions()
+            refreshSandboxChanges()
+            return
         }
-        session.projectId = inheritedProjectId
-        refreshSessions()
-        refreshSandboxChanges()
+        if let blank = tabs.first(where: {
+            $0.id != activeTabId && !$0.isHibernated && isBlank($0.session)
+                && ($0.session.agentId ?? Agent.defaultId) == newAgentId
+        }) {
+            selectTab(id: blank.id)
+            return
+        }
+        newTab(agentId: newAgentId)
+    }
+
+    /// An untouched chat: nothing sent, nothing running, nothing pending.
+    private func isBlank(_ s: ChatSession) -> Bool {
+        s.turns.isEmpty && !s.isStreaming && s.awaitingClarify == nil
     }
 
     /// Start a new chat that stays in the user's current project context:
@@ -368,7 +453,32 @@ final class ChatWindowState: ObservableObject {
         }
     }
 
+    /// ⌘N: ALWAYS open a new tab (like ⌘T), staying in the current project
+    /// context: the current chat's project, if any, is stamped on the new
+    /// tab along with the project folder, the same way `startNewChat(in:)`
+    /// does. Unlike `startNewChat`, a blank active tab is not reused.
+    func newTabInCurrentProject() {
+        let project = ProjectManager.shared.project(for: openProjectId ?? session.projectId)
+        openProjectId = nil
+        enteredChatFromProjectPage = project != nil
+        newTab()
+        guard let project else { return }
+        session.projectId = project.id
+        if project.folderBookmark != nil, !session.folderState.hasActiveFolder {
+            session.folderState.restore(bookmark: project.folderBookmark, path: project.folderPath)
+        }
+    }
+
+    /// Start a new chat. Browser-style: a blank active tab is reused in
+    /// place; otherwise the current conversation keeps its tab (a running
+    /// reply keeps streaming there) and the new chat opens in a new tab.
+    /// Callers that stamp project membership afterwards (`startNewChat(in:)`)
+    /// act on `session`, which is then the new tab's session.
     func startNewChat() {
+        guard isBlank(session) else {
+            newTab()
+            return
+        }
         TTSService.shared.stop()
         if !session.turns.isEmpty { session.save() }
         flushCurrentSession()
@@ -392,6 +502,25 @@ final class ChatWindowState: ObservableObject {
     /// view (never a background-registry handoff — the row is going away,
     /// and an adopted run's completion save would resurrect it).
     func prepareForSessionDeletion(id: UUID) {
+        // An INACTIVE tab showing the doomed conversation just closes; its
+        // session must not be saved on the way out (the row is being
+        // deleted, a save would resurrect it).
+        if let tab = tabs.first(where: {
+            $0.id != activeTabId && $0.session.sessionId == id
+        }) {
+            tabs.removeAll { $0.id == tab.id }
+            let doomed = tab.session
+            if LiveChatSessionRegistry.shared.isShared(doomed) {
+                doomed.windowState = nil
+                doomed.onSessionChanged = nil
+            } else {
+                doomed.warmupController.shutdown()
+                doomed.stop()
+                doomed.onSessionChanged = nil
+                doomed.windowState = nil
+            }
+            return
+        }
         guard session.sessionId == id else { return }
         if releaseSharedSessionIfNeeded() {
             installFreshSession(agentId: agentId)
@@ -402,6 +531,16 @@ final class ChatWindowState: ObservableObject {
 
     func loadSession(_ sessionData: ChatSessionData) {
         guard sessionData.id != session.sessionId else { return }
+        // Browser-style dedupe: if another tab already shows this
+        // conversation, switch to it instead of loading a second copy of
+        // the same transcript into this tab (two live instances of one row
+        // race each other's saves).
+        if let existing = tabs.first(where: {
+            $0.id != activeTabId && $0.session.sessionId == sessionData.id
+        }) {
+            selectTab(id: existing.id)
+            return
+        }
         TTSService.shared.stop()
         if !session.turns.isEmpty { session.save() }
         flushCurrentSession()
@@ -447,6 +586,305 @@ final class ChatWindowState: ObservableObject {
         }
         refreshSessions()
         refreshSandboxChanges()
+    }
+
+    // MARK: - Tabs API
+
+    /// All live sessions this window holds, across every tab. The active
+    /// tab's session is `session`; the rest keep streaming/existing in the
+    /// background of this window.
+    var tabSessions: [ChatSession] {
+        tabs.map(\.session)
+    }
+
+    /// Open a new tab with a fresh empty chat and make it active. The
+    /// outgoing tab keeps its session untouched (no detach — the tab still
+    /// owns it).
+    func newTab(agentId newAgentId: UUID? = nil) {
+        persistActiveSessionForTabSwitch()
+        if let newAgentId, newAgentId != agentId {
+            adoptAgent(newAgentId)
+        }
+        let fresh = makeFreshSession(agentId: agentId)
+        let tab = ChatTab(id: UUID(), session: fresh)
+        // One un-animated update for strip + content: letting SwiftUI's
+        // implicit animations interpolate the strip growing while ChatView
+        // is simultaneously torn down and remounted (the `.id` swap) reads
+        // as a visual glitch.
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            tabs.append(tab)
+            activeTabId = tab.id
+            session = fresh
+        }
+        refreshSessions()
+        refreshSandboxChanges()
+        hibernateColdTabsIfNeeded()
+        // KPI: a new tab starts a new conversation, same as sidebar New Chat.
+        FeatureTelemetry.chatSessionStarted()
+    }
+
+    /// Switch the visible chat to another tab. Unlike `loadSession`, the
+    /// outgoing session is neither detached nor released — its tab keeps it
+    /// live, so an in-flight stream keeps rendering into that tab.
+    /// Reorder a tab (drag-to-reorder in the strip). Pure array move; the
+    /// active tab and its session are untouched.
+    func moveTab(id: UUID, to newIndex: Int) {
+        guard let from = tabs.firstIndex(where: { $0.id == id }) else { return }
+        let to = min(max(newIndex, 0), tabs.count - 1)
+        guard from != to else { return }
+        let tab = tabs.remove(at: from)
+        tabs.insert(tab, at: to)
+    }
+
+    func selectTab(id: UUID) {
+        guard id != activeTabId, let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
+        persistActiveSessionForTabSwitch()
+        tabs[idx].lastActivatedAt = Date()
+        if tabs[idx].isHibernated {
+            wake(tabAt: idx)
+        }
+        activeTabId = id
+        adoptTabSession(tabs[idx].session)
+        hibernateColdTabsIfNeeded()
+    }
+
+    /// Cycle to the next (+1) or previous (-1) tab, wrapping around.
+    func selectAdjacentTab(offset: Int) {
+        guard tabs.count > 1,
+            let idx = tabs.firstIndex(where: { $0.id == activeTabId })
+        else { return }
+        let next = ((idx + offset) % tabs.count + tabs.count) % tabs.count
+        selectTab(id: tabs[next].id)
+    }
+
+    /// Close a tab. The last remaining tab never closes here — the caller
+    /// (⌘W / close button) falls through to closing the window instead.
+    /// A closing tab's session follows the window-close rules: shared →
+    /// unlink only; mid-run → detach to the background registry; idle →
+    /// save and stop.
+    func closeTab(id: UUID) {
+        guard tabs.count > 1, let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
+        let closing = tabs[idx]
+        rememberClosedTab(closing, at: idx)
+        // The removal itself animates (the strip keys a layout animation on
+        // the tab ids, so neighbors slide over); the session swap below is
+        // wrapped un-animated so ChatView's remount doesn't interpolate.
+        tabs.remove(at: idx)
+        if activeTabId == id {
+            let neighbor = tabs[min(idx, tabs.count - 1)]
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                activeTabId = neighbor.id
+                adoptTabSession(neighbor.session)
+            }
+        }
+        teardownTabSession(closing.session)
+    }
+
+    /// Open a persisted conversation in a new tab (or focus the tab that
+    /// already shows it).
+    func openSessionInNewTab(_ sessionData: ChatSessionData) {
+        if let existing = tabs.first(where: { $0.session.sessionId == sessionData.id }) {
+            selectTab(id: existing.id)
+            return
+        }
+        // Chrome-style: an untouched empty tab is reused rather than left
+        // behind as a blank tab next to the one we just opened.
+        let activeIsBlank = session.turns.isEmpty && !session.isStreaming
+        if !activeIsBlank {
+            newTab()
+        }
+        loadSession(sessionData)
+    }
+
+    /// Tear down every tab except the active one. `cleanup()` calls this on
+    /// window close; `ChatWindowManager` also calls it when the ACTIVE
+    /// session was detached to the background (that path skips `cleanup()`
+    /// entirely, which would otherwise strand inactive tabs unsaved).
+    func teardownInactiveTabSessions() {
+        let inactive = tabs.filter { $0.id != activeTabId }
+        tabs.removeAll { $0.id != activeTabId }
+        for tab in inactive {
+            teardownTabSession(tab.session)
+        }
+    }
+
+    /// Make an incoming tab's session the visible one, syncing the window's
+    /// per-agent chrome (theme, pills, dropdown, sidebar filter) the same
+    /// way `loadSession` does for in-tab switches.
+    private func adoptTabSession(_ target: ChatSession) {
+        let targetAgentId = target.agentId ?? Agent.defaultId
+        if targetAgentId != agentId {
+            adoptAgent(targetAgentId)
+        }
+        session = target
+        refreshSessions()
+        refreshSandboxChanges()
+    }
+
+    /// Save the active session and flush memory before another tab takes
+    /// over the visible surface. Deliberately does NOT detach/release — the
+    /// outgoing tab still owns its session.
+    private func persistActiveSessionForTabSwitch() {
+        TTSService.shared.stop()
+        if !session.turns.isEmpty { session.save() }
+        flushCurrentSession()
+    }
+
+    /// Dispose of a session whose tab was closed, mirroring `cleanup()`'s
+    /// per-session rules (see the comments there for why save precedes
+    /// stop and shared instances are only unlinked).
+    private func teardownTabSession(_ closingSession: ChatSession) {
+        if LiveChatSessionRegistry.shared.isShared(closingSession) {
+            if !closingSession.turns.isEmpty { closingSession.save() }
+            closingSession.windowState = nil
+            closingSession.onSessionChanged = nil
+            return
+        }
+        // A mid-run (or clarify-paused) session survives its tab closing the
+        // same way it survives its window closing: adopted into the
+        // background registry, execution untouched.
+        if closingSession.isStreaming || closingSession.awaitingClarify != nil,
+            BackgroundTaskManager.shared.adoptSession(closingSession) != nil
+        {
+            closingSession.windowState = nil
+            closingSession.onSessionChanged = nil
+            return
+        }
+        if !closingSession.turns.isEmpty { closingSession.save() }
+        closingSession.warmupController.shutdown()
+        closingSession.stop()
+        closingSession.onSessionChanged = nil
+        closingSession.windowState = nil
+    }
+
+    // MARK: Recently closed tabs (⇧⌘T)
+
+    private struct ClosedTab {
+        let sessionId: UUID
+        let index: Int
+    }
+
+    /// Most recent last. Only persisted conversations are remembered: a
+    /// blank tab has nothing to reopen.
+    private var recentlyClosedTabs: [ClosedTab] = []
+    private static let recentlyClosedLimit = 10
+
+    private func rememberClosedTab(_ tab: ChatTab, at index: Int) {
+        guard let sessionId = tab.session.sessionId,
+            tab.isHibernated || !tab.session.turns.isEmpty
+        else { return }
+        recentlyClosedTabs.removeAll { $0.sessionId == sessionId }
+        recentlyClosedTabs.append(ClosedTab(sessionId: sessionId, index: index))
+        if recentlyClosedTabs.count > Self.recentlyClosedLimit {
+            recentlyClosedTabs.removeFirst(recentlyClosedTabs.count - Self.recentlyClosedLimit)
+        }
+    }
+
+    /// Reopen the most recently closed tab at its old position (browser
+    /// ⇧⌘T). Conversations deleted since, or already open in another tab,
+    /// are skipped / focused respectively.
+    func reopenLastClosedTab() {
+        while let closed = recentlyClosedTabs.popLast() {
+            let sessionId = closed.sessionId
+            if let open = tabs.first(where: { $0.session.sessionId == sessionId }) {
+                selectTab(id: open.id)
+                return
+            }
+            guard let data = ChatSessionStore.load(id: sessionId) else { continue }
+            // Always its own tab (a blank active tab is left alone), like a
+            // browser restoring a closed tab.
+            newTab(agentId: data.agentId ?? Agent.defaultId)
+            loadSession(data)
+            moveTab(id: activeTabId, to: min(closed.index, tabs.count - 1))
+            return
+        }
+    }
+
+    // MARK: Tab hibernation (LRU)
+
+    /// How many tabs keep a fully hydrated session (transcript, warm-up
+    /// controller, KV-cache prefix) at once. Beyond this the least recently
+    /// activated idle tabs are hibernated to a metadata-only session.
+    private static let warmTabLimit = 5
+
+    /// Hibernate the coldest idle tabs once more than `warmTabLimit` are
+    /// hydrated. Streaming, clarify-paused, registry-shared and unsaved
+    /// (blank) tabs are never hibernated: their state lives only in memory.
+    private func hibernateColdTabsIfNeeded() {
+        let warm = tabs.enumerated()
+            .filter { $0.element.id != activeTabId && !$0.element.isHibernated }
+            .sorted { $0.element.lastActivatedAt < $1.element.lastActivatedAt }
+        var excess = warm.count - (Self.warmTabLimit - 1)
+        for (idx, tab) in warm where excess > 0 {
+            guard canHibernate(tab.session) else { continue }
+            hibernate(tabAt: idx)
+            excess -= 1
+        }
+    }
+
+    private func canHibernate(_ s: ChatSession) -> Bool {
+        s.sessionId != nil && !s.turns.isEmpty && !s.isStreaming && s.awaitingClarify == nil
+            && !LiveChatSessionRegistry.shared.isShared(s)
+    }
+
+    /// Save the tab's session, then swap it for a metadata-only stand-in
+    /// (same ids/title/agent/project, no turns) and release the hydrated
+    /// instance's warm-up state.
+    private func hibernate(tabAt idx: Int) {
+        let live = tabs[idx].session
+        live.save()
+        var snapshot = live.toSessionData()
+        snapshot.turns = []
+        let cold = makeFreshSession(agentId: live.agentId ?? Agent.defaultId, loading: snapshot)
+        live.warmupController.shutdown()
+        live.stop()
+        live.onSessionChanged = nil
+        live.windowState = nil
+        tabs[idx].session = cold
+        tabs[idx].isHibernated = true
+    }
+
+    /// Reload a hibernated tab's transcript from disk in place.
+    private func wake(tabAt idx: Int) {
+        let cold = tabs[idx].session
+        if let sid = cold.sessionId, let full = ChatSessionStore.load(id: sid) {
+            cold.load(from: full)
+        }
+        tabs[idx].isHibernated = false
+    }
+
+    /// Sessions that are actually hydrated in this window (excludes
+    /// hibernated stand-ins, which have ids but no transcript).
+    var liveTabSessions: [ChatSession] {
+        tabs.filter { !$0.isHibernated }.map(\.session)
+    }
+
+    /// Keep the active tab's entry pointing at the window's current session
+    /// after in-tab navigation replaces the instance (loadSession /
+    /// startNewChat / switchAgent / attach paths).
+    private func syncActiveTabSession() {
+        guard let idx = tabs.firstIndex(where: { $0.id == activeTabId }) else { return }
+        if tabs[idx].session !== session {
+            tabs[idx].session = session
+        }
+    }
+
+    /// Build a fresh, window-linked `ChatSession` (shared by `newTab` and
+    /// `installFreshSession`).
+    private func makeFreshSession(agentId: UUID, loading data: ChatSessionData? = nil) -> ChatSession {
+        let fresh = ChatSession()
+        fresh.windowState = self
+        fresh.agentId = agentId
+        fresh.applyInitialModelSelection()
+        if let data { fresh.load(from: data) }
+        fresh.onSessionChanged = { [weak self] in
+            self?.refreshSessionsDebounced()
+        }
+        return fresh
     }
 
     // MARK: - Sandbox Changes
@@ -533,15 +971,7 @@ final class ChatWindowState: ObservableObject {
     /// persisted turns), used after the previous one was detached to the
     /// registry.
     private func installFreshSession(agentId: UUID, loading data: ChatSessionData? = nil) {
-        let fresh = ChatSession()
-        fresh.windowState = self
-        fresh.agentId = agentId
-        fresh.applyInitialModelSelection()
-        if let data { fresh.load(from: data) }
-        fresh.onSessionChanged = { [weak self] in
-            self?.refreshSessionsDebounced()
-        }
-        session = fresh
+        session = makeFreshSession(agentId: agentId, loading: data)
     }
 
     /// Attach an existing (registry-owned) live session to this window so

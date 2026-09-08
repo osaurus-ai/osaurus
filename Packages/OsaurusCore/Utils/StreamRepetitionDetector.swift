@@ -11,7 +11,8 @@
 //  remaining documentation:" and nothing else. It ran to the output-token
 //  ceiling, every token of it was streamed into the transcript, and the user
 //  ("it keeps repeating its communications") sat through it. The sampler-side
-//  `repetitionPenalty` cannot catch this: its window is 20 tokens, while the
+//  `repetitionPenalty` cannot catch this: its window is at most a few dozen
+//  tokens (`ModelRuntime.repetitionContextSizeWithPenalty`), while the
 //  repeating unit here is a whole line that recurs hundreds of lines apart.
 //
 //  The bar is deliberately high. A false positive truncates a legitimate

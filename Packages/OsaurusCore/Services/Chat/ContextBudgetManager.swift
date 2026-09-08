@@ -708,6 +708,28 @@ public struct ContextBudgetManager: Sendable {
         return min(msgCount, messages.count)
     }
 
+    /// The paging / truncation line of a text result, if it has one: the last
+    /// line mentioning `next_offset` or `truncated`, read from the envelope's
+    /// `result.text` when the content is a JSON envelope, else from the raw
+    /// text. Nil when the result was complete.
+    static func pagingTrailer(in content: String) -> String? {
+        let text: String
+        if ToolEnvelope.isSuccess(content),
+            let payload = ToolEnvelope.successPayload(content) as? [String: Any],
+            let inner = payload["text"] as? String
+        {
+            text = inner
+        } else {
+            text = content
+        }
+        let line = text.components(separatedBy: .newlines).last(where: {
+            $0.contains("next_offset") || $0.localizedCaseInsensitiveContains("truncated")
+        })
+        guard let line else { return nil }
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        return trimmed.count > 240 ? String(trimmed.prefix(240)) : trimmed
+    }
+
     /// Creates a short summary of a tool result for context compression
     static func summarizeToolResult(_ content: String, toolCallId: String?) -> String {
         let lineCount = content.components(separatedBy: .newlines).count
@@ -737,7 +759,22 @@ public struct ContextBudgetManager: Sendable {
         {
             let count = payload["match_count"] as? Int ?? (payload["entries"] as? [Any])?.count ?? 0
             let query = payload["query"] as? String ?? ""
-            return "[Compressed: \(count) file match(es) for '\(query)']"
+            // A capped page must stay a capped page after compression: the
+            // model reads this line turns later and, without `total` /
+            // `next_offset` / `truncated`, restates the page size as the
+            // whole folder ("there are 50 files"). Same signal the listing
+            // branch above preserves.
+            var note = ""
+            if let total = payload["total"] as? Int, total != count {
+                note += " — page of \(total) total"
+                if let next = payload["next_offset"] as? Int {
+                    note += ", next_offset \(next); not the full set"
+                }
+            }
+            if payload["truncated"] as? Bool == true {
+                note += " (truncated; narrow the path or pattern)"
+            }
+            return "[Compressed: \(count) file match(es) for '\(query)'\(note)]"
         }
 
         // Compressed summaries carry ZERO semantic content; without an
@@ -766,9 +803,15 @@ public struct ContextBudgetManager: Sendable {
             return
                 "[Compressed: file content, \(lineCount) lines, \(charCount) chars — \(firstLine); \(refetchSteer)]"
         } else if content.hasPrefix("Found ") && content.contains("match") {
-            // file_search result
-            let firstLine = content.components(separatedBy: .newlines).first ?? ""
-            return "[Compressed: \(firstLine); \(refetchSteer)]"
+            // file_search content result. Keep the truncation / paging
+            // trailer (`(Results truncated at N.)`, `[returned=… next_offset=…]`)
+            // so a capped page is not recalled as the complete match set.
+            let lines = content.components(separatedBy: .newlines)
+            let firstLine = lines.first ?? ""
+            let trailer = lines.last(where: {
+                $0.contains("truncated") || $0.contains("next_offset")
+            }).map { " \($0.trimmingCharacters(in: .whitespaces))" } ?? ""
+            return "[Compressed: \(firstLine)\(trailer); \(refetchSteer)]"
         } else if content.hasPrefix("Exit code:") {
             // shell_run result
             let exitLine = content.components(separatedBy: .newlines).first ?? "Exit code: unknown"
@@ -777,9 +820,15 @@ public struct ContextBudgetManager: Sendable {
             // git_diff result
             return "[Compressed: git diff, \(lineCount) lines, \(charCount) chars; \(refetchSteer)]"
         } else if charCount > 200 {
-            // Generic large result
+            // Generic large result. A text envelope that pages (list_knowledge:
+            // "Found 350 … in total; showing 1–100" + "[total=350, returned=100,
+            // next_offset=100 …]") keeps its paging / truncation line: the
+            // preview kept the total but dropped the continuation instruction,
+            // so a model recalling the compressed line later had no way to
+            // page (audit 2026-09-05).
             let preview = String(content.prefix(150)).replacingOccurrences(of: "\n", with: " ")
-            return "[Compressed: \(charCount) chars — \(preview)...; \(refetchSteer)]"
+            let trailer = Self.pagingTrailer(in: content).map { " — \($0)" } ?? ""
+            return "[Compressed: \(charCount) chars — \(preview)...\(trailer); \(refetchSteer)]"
         }
 
         // Small results are kept as-is

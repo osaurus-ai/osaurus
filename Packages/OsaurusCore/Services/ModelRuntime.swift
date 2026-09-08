@@ -4143,14 +4143,10 @@ public actor ModelRuntime {
         // the whole process — taking osaurus with it. Caught here so the user
         // gets a clear error and the server stays up.
         try await Self.ensureJANGTQSidecar(at: localURL, modelId: id, name: name)
-        // One-time, idempotent: Gemma-4 JANG (affine) audio bundles shipped
-        // without the `quantization.multimodal` fp16-passthrough flag that the
-        // mxfp4/mxfp8 QAT bundles carry. Without it the audio embeddings fuse at
-        // the affine-quantized precision and the model degenerates on audio
-        // input (a spurious `thought` channel stub / dropped answer). Adding the
-        // flag — exactly the value the mxfp bundles use — restores clean audio
-        // and leaves vision unaffected (verified live on 12B JANG_4M).
-        Self.patchGemma4JangAudioMultimodalIfNeeded(at: localURL, name: name)
+        // Read-only: report a Gemma-4 audio bundle that lacks the
+        // `quantization.multimodal` stamp. This preflight no longer rewrites
+        // config.json (osaurus#2633); see the function.
+        Self.noteGemma4AudioBundleMissingMultimodalStamp(at: localURL, name: name)
         // Compute the incoming bundle's on-disk weight size for *every* policy.
         // Previously only `manualMultiModel` did this (strict left it 0), which
         // meant the resident-RAM accounting — and the pre-load feasibility gate
@@ -5761,6 +5757,48 @@ public actor ModelRuntime {
         return settings.memorySafety.mode.cacheStorePolicy
     }
 
+    /// Repetition-penalty lookback when no multiplicative penalty is in
+    /// effect. vmlx does not install the processor in that case, so the value
+    /// is inert; it is kept at the engine's standard 20 for parity.
+    nonisolated static let repetitionContextSizeWithoutPenalty = 20
+
+    /// Repetition-penalty lookback when an effective penalty > 1.0 is set
+    /// (bundle `repetition_penalty`, server Sampling Default, or request).
+    ///
+    /// vmlx applies the HF-style penalty over a ring of the last N generated
+    /// tokens, so a repeat unit longer than N is never penalised at all.
+    /// Raptor-v0.5-8B-A1B-JANG_6M (bundle penalty 1.05, no presence /
+    /// frequency penalty) repeated a ~25-token sentence ("Roster — Wana UW is
+    /// the only one with no activity this window (last action Aug 31,
+    /// 2026).") five times verbatim after four tool steps: every token of the
+    /// sentence had already scrolled out of the 20-token ring by the time it
+    /// came round again. 64 covers a long sentence or a short paragraph.
+    ///
+    /// Deliberately small (<= 128): a long lookback over-penalises tokens that
+    /// legitimately recur inside one turn — turn-boundary / role sentinels,
+    /// code punctuation, table pipes and separators — and degrades structured
+    /// output. This is the multiplicative penalty's window only; it is never a
+    /// presence/frequency default and installs nothing when no penalty is set.
+    nonisolated static let repetitionContextSizeWithPenalty = 64
+
+    /// Pick the repetition lookback for a resolved penalty. An explicit
+    /// `override` (a caller/bundle/request that names the window) always
+    /// wins; otherwise a penalty > 1.0 widens the window to
+    /// `repetitionContextSizeWithPenalty`, and no penalty keeps the inert
+    /// standard `repetitionContextSizeWithoutPenalty`.
+    nonisolated static func resolveRepetitionContextSize(
+        repetitionPenalty: Float?,
+        override: Int? = nil
+    ) -> Int {
+        if let override, override > 0 {
+            return override
+        }
+        if let repetitionPenalty, repetitionPenalty > 1.0 {
+            return repetitionContextSizeWithPenalty
+        }
+        return repetitionContextSizeWithoutPenalty
+    }
+
     nonisolated static func makeGenerateParameters(
         temperature: Float,
         maxTokens: Int,
@@ -5775,7 +5813,8 @@ public actor ModelRuntime {
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
         enableCompiledBatchDecode: Bool = true,
         prefillStepSize: Int? = nil,
-        modelName: String? = nil
+        modelName: String? = nil,
+        repetitionContextSize: Int? = nil
     ) -> MLXLMCommon.GenerateParameters {
         // Laguna no longer needs a forced repetition penalty: the prior 1.15 /
         // ctx-256 default was masking a vmlx YaRN `_mscale` bug (pinned to 1.0,
@@ -5783,9 +5822,12 @@ public actor ModelRuntime {
         // bug. Both are fixed in the engine, so rep=1.0 and rep=1.15 now produce
         // identical coherent output. Drop the laguna special-case — it also drove
         // a TokenRing index-out-of-range crash on longer prompts at ctx 256. A
-        // caller-supplied penalty still applies; default is the standard 20 window.
+        // caller-supplied penalty still applies.
         let resolvedRepetitionPenalty = repetitionPenalty
-        let resolvedRepetitionContextSize = 20
+        let resolvedRepetitionContextSize = resolveRepetitionContextSize(
+            repetitionPenalty: resolvedRepetitionPenalty,
+            override: repetitionContextSize
+        )
         var params = MLXLMCommon.GenerateParameters(
             maxTokens: maxTokens,
             enableCompiledBatchDecode: enableCompiledBatchDecode,
@@ -7126,70 +7168,57 @@ public actor ModelRuntime {
         }
     }
 
-    /// One-time, idempotent config repair for Gemma-4 JANG (affine) **audio**
-    /// bundles. The mxfp4/mxfp8 QAT bundles set
-    /// `quantization.multimodal = "fp16_passthrough_embedders_early_fusion"`,
-    /// which keeps the multimodal embedders at fp16 for early fusion; the JANG
-    /// bundles shipped without it and therefore fuse audio at the affine quant
-    /// precision, degenerating on audio input (spurious `thought` channel stub /
-    /// dropped answer) while text and vision stay fine. Add the flag once, in
-    /// place, exactly matching the mxfp value — verified live to restore clean
-    /// audio on 12B JANG_4M with no effect on vision.
+    /// osaurus#2633 — read-only. Until 2026-09 this preflight ADDED
+    /// `quantization.multimodal = "fp16_passthrough_embedders_early_fusion"` to a
+    /// Gemma-4 audio bundle's config.json and re-serialized the whole file, so
+    /// every integral double lost its `.0` (`10000000000.0` → `10000000000`),
+    /// keys were re-sorted, and the bundle no longer matched the Hub. Its
+    /// "JANG/affine" arm also matched the ordinary mlx_lm
+    /// `quantization.mode == "affine"` stamp, so every plain 4-bit Gemma-4 audio
+    /// conversion was rewritten on its first load.
     ///
-    /// Only fires for: Gemma-4 family, a JANG/affine bundle, that actually ships
-    /// an audio embedder, and whose `quantization.multimodal` is still missing.
-    /// Once written, the missing-flag guard fails on every subsequent load, so
-    /// the file is patched exactly once.
-    static func patchGemma4JangAudioMultimodalIfNeeded(at directory: URL, name: String) {
+    /// This preflight no longer rewrites config.json: it only reports a missing
+    /// stamp and returns whether one is missing. As of this change no Swift code
+    /// reads the key — osaurus does not, and vmlx-swift's quantization override
+    /// decoder (`BaseConfiguration`, `isScalarMetadata`) skips a string value —
+    /// and the jang converter stamps the flag at conversion time. Whether audio
+    /// on an unstamped JANG bundle differs with or without the stamp has not
+    /// been re-measured here.
+    ///
+    /// This prevents future rewrites. A config.json that an earlier build
+    /// already rewrote is not repaired; re-download it from the source.
+    ///
+    /// Returns true when the bundle is a Gemma-4 JANG/affine audio bundle
+    /// without the stamp — the exact set the old code rewrote.
+    @discardableResult
+    static func noteGemma4AudioBundleMissingMultimodalStamp(at directory: URL, name: String) -> Bool {
         let configURL = directory.appendingPathComponent("config.json")
         guard let data = try? Data(contentsOf: configURL),
-            var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return }
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
 
-        // 1. Gemma-4 family only.
         let modelType = (json["model_type"] as? String)?.lowercased() ?? ""
-        guard modelType.hasPrefix("gemma4") else { return }
+        guard modelType.hasPrefix("gemma4") else { return false }
 
-        // 2. JANG / affine bundle only — the mxfp bundles already carry the flag.
         let weightFormat = (json["weight_format"] as? String)?.lowercased() ?? ""
-        var quantization = json["quantization"] as? [String: Any] ?? [:]
+        let quantization = json["quantization"] as? [String: Any] ?? [:]
         let quantMode = (quantization["mode"] as? String)?.lowercased() ?? ""
         let isJangAffine =
             weightFormat.contains("jang") || weightFormat.contains("affine")
             || quantMode == "affine"
-        guard isJangAffine else { return }
+        guard isJangAffine else { return false }
 
-        // 3. Idempotency: only when the flag is genuinely absent. After we write
-        //    it, this guard fails next load and the file is never rewritten.
-        if let existing = quantization["multimodal"], !(existing is NSNull) { return }
+        if let existing = quantization["multimodal"], !(existing is NSNull) { return false }
 
-        // 4. Audio bundles only — must actually ship the `embed_audio`
-        //    projection. Vision-only JANG rows (26B/31B carry no audio tensors)
-        //    are left untouched so their vision fusion is unaffected.
         let indexURL = directory.appendingPathComponent("model.safetensors.index.json")
         guard let indexData = try? Data(contentsOf: indexURL, options: .mappedIfSafe),
             indexData.range(of: Data("embed_audio.embedding_projection".utf8)) != nil
-        else { return }
+        else { return false }
 
-        // Patch + persist exactly once, atomically, matching the mxfp QAT value.
-        quantization["multimodal"] = "fp16_passthrough_embedders_early_fusion"
-        json["quantization"] = quantization
-        guard
-            let out = try? JSONSerialization.data(
-                withJSONObject: json,
-                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-            )
-        else { return }
-        do {
-            try out.write(to: configURL, options: .atomic)
-            genLog.info(
-                "patched Gemma-4 JANG audio config: added quantization.multimodal fp16 passthrough model=\(name, privacy: .public)"
-            )
-        } catch {
-            genLog.error(
-                "failed to patch Gemma-4 JANG audio config model=\(name, privacy: .public): \(String(describing: error), privacy: .public)"
-            )
-        }
+        genLog.info(
+            "Gemma-4 audio bundle has no quantization.multimodal stamp; config.json left untouched (osaurus#2633) model=\(name, privacy: .public)"
+        )
+        return true
     }
 
     private static func readJSONObject(at url: URL) -> [String: Any] {

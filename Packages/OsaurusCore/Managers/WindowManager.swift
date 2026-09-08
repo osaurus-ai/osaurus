@@ -44,7 +44,9 @@ public struct WindowConfiguration: Sendable {
 
     public static let chat = WindowConfiguration(
         identifier: .chat,
-        defaultSize: NSSize(width: 800, height: 610),
+        // Wide enough that the default-visible 260pt session sidebar still
+        // leaves ~800pt for the chat content. 800x610 squished the chat pane.
+        defaultSize: NSSize(width: 1060, height: 700),
         styleMask: [.titled, .resizable, .fullSizeContentView],
         usePanel: true,
         titlebarAppearsTransparent: true,

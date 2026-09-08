@@ -1,9 +1,9 @@
 {
   "id": "subagent.residency-dir-local-local-diff-off",
   "domain": "subagent",
-  "label": "Subagent • residency direction: local→local (different, handoff OFF) rejected before evict",
+  "label": "Subagent • residency direction: local→local (different, handoff OFF) runs with no sequencing",
   "query": "Spawn a DIFFERENT local model with the Local Orchestrator Handoff disabled.",
-  "notes": "LIVE RESIDENCY (machine-specific) — the GATE. PRODUCTION path: preloads local orchestrator A, then spawns a DIFFERENT local model B with the Local Orchestrator Handoff OFF. SubagentResidency must REJECT before evicting anything (so the orchestrator is never stranded unloaded) → rejected envelope carrying the handoff-disabled message. Id is `residency-dir-*` so it stays OUT of FILTER=spawn; run with FILTER=residency-dir-. SKIPS when either local model isn't installed (surfaces unavailable, not rejected).",
+  "notes": "LIVE RESIDENCY (machine-specific) — the NO-SEQUENCING mode. PRODUCTION path: preloads local orchestrator A, then spawns a DIFFERENT local model B with the Local Orchestrator Handoff OFF. The toggle is a mode, not a gate: SubagentResidency must NOT refuse — the spawn runs without the unload→load→run→unload→reload sequence (handoffWrapped=false, residency_mode=sequencing_off) and the server eviction policy decides what happens to A. Id is `residency-dir-*` so it stays OUT of FILTER=spawn; run with FILTER=residency-dir-. SKIPS when either local model isn't installed (surfaces unavailable).",
   "fixtures": {},
   "expect": {
     "subagent": {
@@ -13,9 +13,10 @@
       "handoffEnabled": false,
       "ensureResident": true,
       "input": "Reply with a single short sentence confirming you received this task.",
-      "expectSuccess": false,
-      "expectEnvelopeKind": "rejected",
-      "summaryContains": ["Local Orchestrator Handoff"]
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "spawn_result",
+      "expectHandoffWrapped": false
     }
   }
 }

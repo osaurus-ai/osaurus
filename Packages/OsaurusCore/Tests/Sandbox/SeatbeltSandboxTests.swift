@@ -23,12 +23,52 @@ struct SeatbeltSandboxTests {
     private func runOrSkip(
         _ request: SeatbeltExecutor.Request
     ) async throws -> ContainerExecResult? {
+        // The inactivity timeout alone was not enough: with the runner's
+        // sandbox XPC services wedged, a denied `/bin/cat` sat in an
+        // uninterruptible kernel wait and the suite hit the 180 s harness
+        // limit twice in one day, on this branch and on main. Probe the host
+        // once with a hard wall-clock bound before running anything real.
+        guard Self.hostCanRunSeatbelt else { return nil }
         do {
             return try await SeatbeltExecutor.run(request)
         } catch SandboxError.timeout {
             return nil
         }
     }
+
+    /// One-shot host health probe, computed once per process.
+    ///
+    /// Runs the smallest command that exercises the exact path that wedges:
+    /// a sandbox violation (deny-default profile, then exec), which the
+    /// kernel reports through sandboxd. On a healthy host this exits in
+    /// milliseconds with a denial. On a wedged host it never returns, so the
+    /// wait is a dispatch semaphore with a 5 s ceiling rather than anything
+    /// the cooperative pool has to schedule, and the stuck child is
+    /// SIGKILLed and abandoned. `false` skips every end-to-end assertion in
+    /// this suite, which is the same contract as `sandbox-exec` being
+    /// missing: the profile under test is only judged where it can run.
+    private static let hostCanRunSeatbelt: Bool = {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/sandbox-exec")
+        else { return false }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+        process.arguments = ["-p", "(version 1)(deny default)", "/bin/cat", "/etc/hosts"]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
+        do {
+            try process.run()
+        } catch {
+            return false
+        }
+        if exited.wait(timeout: .now() + 5) == .timedOut {
+            _ = Darwin.kill(process.processIdentifier, SIGKILL)
+            return false
+        }
+        return true
+    }()
 
     // MARK: - Backend selection
 

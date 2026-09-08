@@ -1846,6 +1846,20 @@ public actor RemoteProviderService: ToolCapableService {
         return normalizedHost == "api.openai.com" || normalizedHost.hasSuffix(".openai.com")
     }
 
+    /// OpenCode-hosted endpoints (`opencode.ai` and subdomains). Any provider
+    /// type qualifies: users point an OpenAI-compatible or Anthropic provider
+    /// at OpenCode's gateway.
+    static func isOpenCodeHost(_ host: String) -> Bool {
+        let normalizedHost = host.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalizedHost == "opencode.ai" || normalizedHost.hasSuffix(".opencode.ai")
+    }
+
+    /// Session affinity header required by OpenCode Go. Callers merge this
+    /// underneath user-supplied custom headers so an explicit override wins.
+    static func opencodeSessionHeaders(sessionId: String) -> [String: String] {
+        ["x-opencode-session": sessionId]
+    }
+
     static func remoteChatMaxTokens(
         providerType: RemoteProviderType,
         parameters: GenerationParameters
@@ -3172,6 +3186,14 @@ public actor RemoteProviderService: ToolCapableService {
         {
             request.codexSessionKey = sessionId
         }
+        // OpenCode (Zen / Go) rejects requests without `x-opencode-session`
+        // with HTTP 400 "cannot be routed efficiently". Keep the key
+        // conversation-scoped so every turn lands on the same upstream shard.
+        if !isAgentRun, Self.isOpenCodeHost(provider.host),
+            let sessionId = parameters.sessionId, !sessionId.isEmpty
+        {
+            request.opencodeSessionKey = sessionId
+        }
         // Session-scoped prompt-cache routing hint for genuine OpenAI hosts.
         // The chat surface already threads a stable per-conversation
         // `session_id`; scoping the key to it keeps one conversation's turns
@@ -3281,6 +3303,16 @@ public actor RemoteProviderService: ToolCapableService {
     }
 
     private func codexResponsesLiteSessionId(for sourceKey: String?) -> String {
+        affinitySessionId(for: sourceKey)
+    }
+
+    private func opencodeSessionId(for sourceKey: String?) -> String {
+        affinitySessionId(for: sourceKey)
+    }
+
+    /// Stable per-conversation wire id for provider affinity headers. Keys
+    /// without a source conversation get a fresh id per request.
+    private func affinitySessionId(for sourceKey: String?) -> String {
         let key: String
         if let sourceKey, !sourceKey.isEmpty {
             key = sourceKey
@@ -3524,6 +3556,9 @@ public actor RemoteProviderService: ToolCapableService {
         } else {
             codexSessionId = nil
         }
+        let opencodeSessionId: String? =
+            Self.isOpenCodeHost(provider.host)
+            ? self.opencodeSessionId(for: request.opencodeSessionKey) : nil
 
         // Mode 2 hard guard (defense-in-depth): a remote-agent run must only
         // ever target a native Osaurus peer's `/agents/{address}/run`. If
@@ -3637,7 +3672,7 @@ public actor RemoteProviderService: ToolCapableService {
             urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
         }
 
-        let headers: [String: String]
+        var headers: [String: String]
         if provider.providerType == .osaurusRouter {
             headers = [:]
         } else if provider.authType == .openAICodexOAuth {
@@ -3657,6 +3692,15 @@ public actor RemoteProviderService: ToolCapableService {
             // Headers are resolved once at service creation time (on @MainActor)
             // to avoid Keychain access issues from the actor's background executor.
             headers = cachedHeaders
+        }
+        if let opencodeSessionId {
+            // User-supplied custom headers keep precedence (case-insensitive).
+            let alreadySet = headers.keys.contains {
+                $0.caseInsensitiveCompare("x-opencode-session") == .orderedSame
+            }
+            if !alreadySet {
+                headers.merge(Self.opencodeSessionHeaders(sessionId: opencodeSessionId)) { existing, _ in existing }
+            }
         }
         for (key, value) in headers where Self.isSafeHeader(name: key, value: value) {
             urlRequest.setValue(value, forHTTPHeaderField: key)
@@ -4567,6 +4611,9 @@ struct RemoteChatRequest: Encodable {
     /// Local-only source conversation key for Codex Responses Lite affinity.
     /// Intentionally absent from `CodingKeys`.
     var codexSessionKey: String? = nil
+    /// Local-only source conversation key for OpenCode session affinity
+    /// (`x-opencode-session`). Intentionally absent from `CodingKeys`.
+    var opencodeSessionKey: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case model, messages, temperature, max_completion_tokens, max_tokens, stream

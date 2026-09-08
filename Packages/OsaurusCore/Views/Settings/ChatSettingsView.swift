@@ -365,13 +365,6 @@ struct ChatSettingsView: View {
                     isOn: $tempEnableClipboardMonitoring
                 )
 
-                SettingsToggle(
-                    title: L("Automatically Warm Models on Load"),
-                    description:
-                        "Preload the selected local model and prefill your chat context so the first response starts faster. The model selector shows yellow while warming and green when warmed; with this off, it shows green only while the model is loaded.",
-                    isOn: $tempWarmModelsOnLoad
-                )
-
                 autoTitleToggleRow
 
                 followUpToggleRow

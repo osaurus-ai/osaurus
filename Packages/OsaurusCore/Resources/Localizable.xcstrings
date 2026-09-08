@@ -1,6 +1,255 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "All Chats": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Alle Chats" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "모든 채팅" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Все чаты" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "所有聊天" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "所有聊天" } }
+      }
+    },
+    "Agents": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Agenten" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "에이전트" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Агенты" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "智能体" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "智能體" } }
+      }
+    },
+    "Search agents...": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Agenten durchsuchen …" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "에이전트 검색..." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Поиск агентов..." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "搜索智能体..." } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "搜尋智能體..." } }
+      }
+    },
+    "No agents found": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Keine Agenten gefunden" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "에이전트를 찾을 수 없음" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Агенты не найдены" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "未找到智能体" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "未找到智能體" } }
+      }
+    },
+    "Choose which agent's chats to show": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Wähle, welche Agenten-Chats angezeigt werden" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "표시할 에이전트의 채팅 선택" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Выберите, чаты какого агента показывать" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "选择显示哪个智能体的聊天" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "選擇顯示哪個智能體的聊天" } }
+      }
+    },
+    "Agent Settings" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent-Einstellungen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트 설정"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройки агента"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "智能体设置"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "智能體設定"
+          }
+        }
+      }
+    },
+    "Chat Layout Tour" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tour durch das Chat-Layout"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "채팅 레이아웃 둘러보기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обзор макета чата"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聊天布局导览"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聊天版面導覽"
+          }
+        }
+      }
+    },
+    "Chats are now organized by agent" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chats sind jetzt nach Agent sortiert"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이제 채팅이 에이전트별로 정리됩니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чаты теперь сгруппированы по агентам"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聊天现在按智能体整理"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聊天現在按智能體整理"
+          }
+        }
+      }
+    },
+    "Choose an agent to continue your conversation.\n\nYou can start a new chat with that agent anytime." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle einen Agenten, um deine Unterhaltung fortzusetzen.\n\nDu kannst jederzeit einen neuen Chat mit diesem Agenten beginnen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트를 선택하여 대화를 이어가세요.\n\n언제든지 해당 에이전트와 새 채팅을 시작할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите агента, чтобы продолжить беседу.\n\nНовый чат с этим агентом можно начать в любой момент."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择一个智能体以继续对话。\n\n你可以随时与该智能体开始新的聊天。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇一個智能體以繼續對話。\n\n你可以隨時與該智能體開始新的聊天。"
+          }
+        }
+      }
+    },
+    "Close Tab" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tab schließen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "탭 닫기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Закрыть вкладку"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭标签页"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "關閉分頁"
+          }
+        }
+      }
+    },
+    "Every chat is a tab" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jeder Chat ist ein Tab"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모든 채팅은 탭입니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Каждый чат — это вкладка"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每个聊天都是一个标签页"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每個聊天都是一個分頁"
+          }
+        }
+      }
+    },
     "Generating": {
       "localizations": {
         "de": { "stringUnit": { "state": "translated", "value": "Generierung" } },
@@ -8,6 +257,40 @@
         "ru": { "stringUnit": { "state": "translated", "value": "Генерация" } },
         "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在生成" } },
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在生成" } }
+      }
+    },
+    "Go to that tab" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zu diesem Tab wechseln"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "해당 탭으로 이동"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перейти к этой вкладке"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "前往该标签页"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "前往該分頁"
+          }
+        }
       }
     },
     "Inference now": {
@@ -37,6 +320,244 @@
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在載入模型" } }
       }
     },
+    "More Tabs" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Weitere Tabs"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "더 많은 탭"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Другие вкладки"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更多标签页"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更多分頁"
+          }
+        }
+      }
+    },
+    "New Agent" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neuer Agent"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "새 에이전트"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новый агент"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新建智能体"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新建智能體"
+          }
+        }
+      }
+    },
+    "New Tab" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neuer Tab"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "새 탭"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новая вкладка"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新建标签页"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新增分頁"
+          }
+        }
+      }
+    },
+    "Only one local model can run at a time, and another tab in this window is using it right now. Wait for that reply to finish, stop it, or switch this chat to a remote model." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Es kann immer nur ein lokales Modell gleichzeitig ausgeführt werden, und ein anderer Tab in diesem Fenster verwendet es gerade. Warte, bis diese Antwort abgeschlossen ist, halte sie an oder wechsle in diesem Chat zu einem Remote-Modell."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "로컬 모델은 한 번에 하나만 실행할 수 있으며, 현재 이 창의 다른 탭에서 사용 중입니다. 해당 응답이 완료될 때까지 기다리거나, 중지하거나, 이 채팅을 원격 모델로 전환하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Одновременно может работать только одна локальная модель, и прямо сейчас её использует другая вкладка этого окна. Подождите, пока ответ завершится, остановите его или переключите этот чат на удалённую модель."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一次只能运行一个本地模型，目前此窗口的另一个标签页正在使用它。请等待该回复完成、停止它，或将此聊天切换为远程模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一次只能運行一個本地模型，目前此視窗的另一個分頁正在使用它。請等待該回覆完成、停止它，或將此聊天切換為遠端模型。"
+          }
+        }
+      }
+    },
+    "Open in New Tab" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In neuem Tab öffnen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "새 탭에서 열기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть в новой вкладке"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在新标签页中打开"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在新分頁中開啟"
+          }
+        }
+      }
+    },
+    "Open multiple chats and switch between them like browser tabs, without interrupting responses in progress." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Öffne mehrere Chats und wechsle zwischen ihnen wie zwischen Browser-Tabs, ohne laufende Antworten zu unterbrechen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "여러 채팅을 열고 브라우저 탭처럼 전환하세요. 진행 중인 응답은 중단되지 않습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открывайте несколько чатов и переключайтесь между ними, как между вкладками браузера, не прерывая ответы, которые ещё формируются."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开多个聊天并像浏览器标签页一样切换，不会打断正在生成的回复。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開啟多個聊天並像瀏覽器分頁一樣切換，不會打斷正在生成的回覆。"
+          }
+        }
+      }
+    },
+    "Pin Window" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fenster anheften"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "창 고정"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Закрепить окно"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "固定窗口"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "釘選視窗"
+          }
+        }
+      }
+    },
     "Processing prompt": {
       "localizations": {
         "de": { "stringUnit": { "state": "translated", "value": "Eingabe wird verarbeitet" } },
@@ -53,6 +574,40 @@
         "ru": { "stringUnit": { "state": "translated", "value": "Сохранение кэша" } },
         "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在保存缓存" } },
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在儲存快取" } }
+      }
+    },
+    "See History" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verlauf anzeigen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기록 보기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать историю"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看历史"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看歷史"
+          }
+        }
       }
     },
     "Stopping…": {
@@ -127,6 +682,74 @@
         "ru": { "stringUnit": { "state": "translated", "value": "Начать новый чат" } },
         "zh-Hans": { "stringUnit": { "state": "translated", "value": "开始新聊天" } },
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "開始新聊天" } }
+      }
+    },
+    "Unpin Window" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fenster lösen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "창 고정 해제"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открепить окно"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消固定窗口"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消釘選視窗"
+          }
+        }
+      }
+    },
+    "View and search past chats with this agent." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Frühere Chats mit diesem Agenten ansehen und durchsuchen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 에이전트와의 이전 채팅을 보고 검색하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Просматривайте прошлые чаты с этим агентом и ищите по ним."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看并搜索与该智能体的过往聊天。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看並搜尋與該智能體的過往聊天。"
+          }
+        }
       }
     },
     "You switched from %@ to %@ in this conversation.": {
@@ -915,6 +1538,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "卸載模型"
+          }
+        }
+      }
+    },
+    "Your chat history" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dein Chat-Verlauf"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "채팅 기록"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "История ваших чатов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的聊天历史"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的聊天歷史"
           }
         }
       }
@@ -188564,36 +189221,104 @@
         }
       }
     },
-    "Settings → Privacy → Export data. The download link arrives by email as a zip file.": {
+    "Settings → Privacy → Export data. The download link arrives by email. Large accounts are split into several batch zip files plus an index JSON: import each batch zip, not the index.": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Einstellungen → Datenschutz → Daten exportieren. Der Download-Link kommt per E-Mail als Zip-Datei."
+            "value": "Einstellungen → Datenschutz → Daten exportieren. Der Download-Link kommt per E-Mail. Große Konten werden in mehrere Batch-Zip-Dateien plus eine Index-JSON aufgeteilt: Importiere jede Batch-Zip-Datei, nicht den Index."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "설정 → 개인정보 보호 → 데이터 내보내기. 다운로드 링크가 zip 파일로 이메일로 전송됩니다."
+            "value": "설정 → 개인정보 보호 → 데이터 내보내기. 다운로드 링크가 이메일로 전송됩니다. 큰 계정은 여러 개의 배치 zip 파일과 인덱스 JSON으로 나뉩니다. 인덱스가 아닌 각 배치 zip 파일을 가져오세요."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Настройки → Конфиденциальность → Экспорт данных. Ссылка для скачивания придёт по электронной почте в виде zip-файла."
+            "value": "Настройки → Конфиденциальность → Экспорт данных. Ссылка для скачивания придёт по электронной почте. Большие аккаунты разбиваются на несколько zip-файлов (батчей) и индексный JSON: импортируйте каждый zip-батч, а не индекс."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "设置 → 隐私 → 导出数据。下载链接将以 zip 文件形式通过电子邮件发送。"
+            "value": "设置 → 隐私 → 导出数据。下载链接将通过电子邮件发送。数据量大的账户会被拆分为多个批次 zip 文件和一个索引 JSON：请导入每个批次 zip 文件，而不是索引。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "設定 → 隱私 → 導出資料。下載連結將以 zip 檔案形式透過電子郵件傳送。"
+            "value": "設定 → 隱私 → 導出資料。下載連結將透過電子郵件傳送。資料量大的帳戶會被拆分為多個批次 zip 檔案和一個索引 JSON：請匯入每個批次 zip 檔案，而不是索引。"
+          }
+        }
+      }
+    },
+    "This file is the index of a Claude export, not the conversations. Claude splits large exports into batch zip files and lists them here. Import each batch zip directly, no need to unzip. If you only received this file, download each link under export_url first.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diese Datei ist der Index eines Claude-Exports, nicht die Unterhaltungen. Claude teilt große Exporte in Batch-Zip-Dateien auf und listet sie hier auf. Importiere jede Batch-Zip-Datei direkt, ohne sie zu entpacken. Wenn du nur diese Datei erhalten hast, lade zuerst jeden Link unter export_url herunter."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 파일은 Claude 내보내기의 인덱스이며 대화가 아닙니다. Claude는 큰 내보내기를 배치 zip 파일로 나누고 여기에 목록을 기록합니다. 압축을 풀 필요 없이 각 배치 zip 파일을 직접 가져오세요. 이 파일만 받았다면 먼저 export_url 아래의 각 링크를 다운로드하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Этот файл — индекс экспорта Claude, а не сами разговоры. Claude разбивает большие экспорты на zip-файлы (батчи) и перечисляет их здесь. Импортируйте каждый zip-батч напрямую, распаковывать не нужно. Если вы получили только этот файл, сначала скачайте каждую ссылку из export_url."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此文件是 Claude 导出的索引，而不是对话内容。Claude 会将大型导出拆分为多个批次 zip 文件并在此列出。请直接导入每个批次 zip 文件，无需解压。如果你只收到了此文件，请先下载 export_url 下的每个链接。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此檔案是 Claude 匯出的索引，而不是對話內容。Claude 會將大型匯出拆分為多個批次 zip 檔案並在此列出。請直接匯入每個批次 zip 檔案，無需解壓。如果你只收到了此檔案，請先下載 export_url 下的每個連結。"
+          }
+        }
+      }
+    },
+    "Batch files listed in the index:": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Im Index aufgeführte Batch-Dateien:"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "인덱스에 나열된 배치 파일:"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Файлы батчей, перечисленные в индексе:"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "索引中列出的批次文件："
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "索引中列出的批次檔案："
           }
         }
       }
@@ -236973,6 +237698,51 @@
         "ru": { "stringUnit": { "state": "translated", "value": "Этот документ знаний больше не существует в своей коллекции." } },
         "zh-Hans": { "stringUnit": { "state": "translated", "value": "该知识文档已不存在于其集合中。" } },
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "此知識文件已不存在於其集合中。" } }
+      }
+    },
+    "Consolidation is already running": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Konsolidierung läuft bereits" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "통합이 이미 실행 중입니다" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Консолидация уже выполняется" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "整合已在运行" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "整合已在執行" } }
+      }
+    },
+    "Enable memory to run consolidation": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Aktiviere das Gedächtnis, um die Konsolidierung auszuführen" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "통합을 실행하려면 메모리를 활성화하세요" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Включите память, чтобы запустить консолидацию" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "启用记忆以运行整合" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "啟用記憶以執行整合" } }
+      }
+    },
+    "Memory database is not open": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Gedächtnisdatenbank ist nicht geöffnet" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "메모리 데이터베이스가 열려 있지 않습니다" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "База данных памяти не открыта" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "记忆数据库未打开" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "記憶資料庫未開啟" } }
+      }
+    },
+    "Last run:": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Letzter Lauf:" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "마지막 실행:" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Последний запуск:" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "上次运行：" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "上次執行：" } }
+      }
+    },
+    "ago": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "her" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "전" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "назад" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "前" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "前" } }
       }
     }
   },

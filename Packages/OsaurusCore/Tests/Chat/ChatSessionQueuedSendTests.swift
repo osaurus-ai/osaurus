@@ -534,6 +534,58 @@ struct ChatSessionQueuedSendTests {
             #expect(session.turns.isEmpty)
         }
     }
+
+    // MARK: - Mid-run steer ordering
+
+    /// The serial tool path appends `[toolTurn, newAssistantTurn]` after every
+    /// result — the NEXT iteration's empty placeholder — before the driver's
+    /// `buildMessages` hook injects a queued steer. Appending the steer after
+    /// that placeholder persisted `[assistant(call), user(steer), tool(result)]`:
+    /// the model then read the user's instruction as arriving after its own
+    /// call, with the call's result after it, on every later iteration and in
+    /// every later turn of the session.
+    @Test
+    func injectQueuedSteer_landsBeforeTheTrailingAssistantPlaceholder() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            let user = ChatTurn(role: .user, content: "Check what's currently configured in Osaurus.")
+            let call = ChatTurn(role: .assistant, content: "")
+            call.toolCalls = [
+                ToolCall(
+                    id: "call_1",
+                    type: "function",
+                    function: ToolCallFunction(name: "osaurus_inspect", arguments: #"{"action":"status"}"#)
+                )
+            ]
+            let result = ChatTurn(role: .tool, content: #"{"ok":true,"result":{}}"#)
+            result.toolCallId = "call_1"
+            let placeholder = ChatTurn(role: .assistant, content: "")
+            session.turns = [user, call, result, placeholder]
+
+            session.enqueueSend("Use osaurus_inspect with action describe", attachments: [])
+            #expect(session.injectQueuedSteerIfEligible())
+
+            #expect(session.turns.map(\.role) == [.user, .assistant, .tool, .user, .assistant])
+            #expect(session.turns[3].content == "Use osaurus_inspect with action describe")
+            #expect(session.turns.last === placeholder)
+        }
+    }
+
+    /// A trailing assistant turn that already streamed content is not a
+    /// placeholder: the steer still appends after it.
+    @Test
+    func injectQueuedSteer_appendsAfterAnAssistantTurnThatHasContent() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            let user = ChatTurn(role: .user, content: "hi")
+            let answer = ChatTurn(role: .assistant, content: "partial answer")
+            session.turns = [user, answer]
+            session.enqueueSend("and also this", attachments: [])
+            #expect(session.injectQueuedSteerIfEligible())
+            #expect(session.turns.map(\.role) == [.user, .assistant, .user])
+            #expect(session.turns.last?.content == "and also this")
+        }
+    }
 }
 
 // MARK: - Test doubles

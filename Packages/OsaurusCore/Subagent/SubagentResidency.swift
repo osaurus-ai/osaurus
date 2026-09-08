@@ -122,12 +122,29 @@ struct SubagentCoexistence: Sendable {
 }
 
 enum SubagentResidency {
-    /// Pure residency decision — no `ModelRuntime` / `ModelManager`, so the
-    /// control flow (remote ⇒ none, same ⇒ none, different-local + handoff-off ⇒
-    /// denied, different-local + coexistence-fits ⇒ coexist, different-local +
-    /// handoff-on ⇒ unload) is unit-testable with no GPU. `residentChatModels`
-    /// is the live set of resident chat-model names; the caller resolves it
-    /// (empty when the model isn't local).
+    /// Pure residency decision — the delegation RAM-safety decision table, no
+    /// `ModelRuntime` / `ModelManager`, so it unit-tests with no GPU:
+    ///
+    ///   remote delegate                          ⇒ run in place (no swap)
+    ///   same model as the invoking parent        ⇒ run in place (no churn)
+    ///   different local + handoff toggle ON      ⇒ unload main → load delegate
+    ///                                              → run → unload delegate →
+    ///                                              reload main (also when the
+    ///                                              main model is NOT loaded:
+    ///                                              the reload leg still runs)
+    ///   different local + handoff toggle OFF     ⇒ NO sequencing: coexist when
+    ///                                              the user opted in and it
+    ///                                              fits, else run in place and
+    ///                                              let the runtime's eviction
+    ///                                              policy decide. Never a
+    ///                                              refusal.
+    ///
+    /// `residentChatModels` is the live set of resident chat-model names that
+    /// belong to the invoking parent (empty when the model isn't local or the
+    /// parent is not loaded). `invokingParentModelName` is the parent's
+    /// canonical INSTALLED local name (nil for a cloud/unknown parent) so the
+    /// not-loaded state can still schedule the reload leg. `deniedMessage` is
+    /// retained for call-site compatibility; the toggle no longer refuses.
     static func decidePlan(
         isLocal: Bool,
         modelName: String,
@@ -138,7 +155,8 @@ enum SubagentResidency {
         requiredBytes: Int64,
         idleWaitSeconds: Int,
         deniedMessage: String,
-        coexistence: SubagentCoexistence = .disabled
+        coexistence: SubagentCoexistence = .disabled,
+        invokingParentModelName: String? = nil
     ) throws -> ResidencyPlan {
         // A remote/router model never touches local GPU residency.
         guard isLocal else { return .none }
@@ -179,6 +197,22 @@ enum SubagentResidency {
                         + ". Finish the other local work or select the same resident model."
                 )
             }
+            // Parity leg: the invoking parent is a known local model that is
+            // NOT loaded right now (evicted, or never warmed). With the
+            // handoff toggle ON the sequence still ends with the chat model
+            // loaded back, so schedule the swap plan — its unload leg finds
+            // nothing to unload and returns a restore-only lease.
+            if handoffEnabled,
+                let invokingParentModelName,
+                invokingParentModelName.caseInsensitiveCompare(modelName) != .orderedSame
+            {
+                return ResidencyPlan(
+                    shouldUnload: true,
+                    requiredBytes: requiredBytes,
+                    ramSafetyEnabled: ramSafetyEnabled,
+                    maxElapsedSeconds: idleWaitSeconds
+                )
+            }
             return ResidencyPlan(
                 shouldUnload: false,
                 requiredBytes: requiredBytes,
@@ -186,11 +220,11 @@ enum SubagentResidency {
                 maxElapsedSeconds: idleWaitSeconds
             )
         }
-        // RAM-aware coexistence: both models fit (flexible policy, projection
-        // proven) → skip the 10–60s unload+reload round-trip and run alongside.
-        // Checked before the handoff-enabled gate on purpose: coexistence does
-        // not unload the orchestrator, which is exactly what that toggle
-        // protects. Tight RAM or unknown size falls through to the handoff.
+        // RAM-aware coexistence lives in the NO-sequencing mode only (handoff
+        // toggle OFF): both models fit (flexible policy, projection proven) →
+        // keep the chat model loaded and run alongside. With the toggle ON the
+        // user asked for the unload/reload sequence everywhere, so coexistence
+        // never overrides it. Tight RAM or unknown size falls through.
         let targetAlreadyResident =
             residentChatModels.contains {
                 $0.caseInsensitiveCompare(modelName) == .orderedSame
@@ -198,10 +232,12 @@ enum SubagentResidency {
             || protectedResidentModels.contains {
                 $0.caseInsensitiveCompare(modelName) == .orderedSame
             }
-        if coexistence.fits(
-            requiredBytes: requiredBytes,
-            targetAlreadyResident: targetAlreadyResident
-        ) {
+        if !handoffEnabled,
+            coexistence.fits(
+                requiredBytes: requiredBytes,
+                targetAlreadyResident: targetAlreadyResident
+            )
+        {
             return ResidencyPlan(
                 shouldUnload: false,
                 requiredBytes: requiredBytes,
@@ -244,9 +280,20 @@ enum SubagentResidency {
                     + "or finish the other API/plugin work first."
             )
         }
-        // Reject BEFORE evicting: if the handoff is disabled, fail cleanly so
-        // nothing is unloaded.
-        guard handoffEnabled else { throw SubagentError.denied(deniedMessage) }
+        // Handoff toggle OFF: the user opted out of the unload/reload
+        // sequence. Run in place with NO sequencing — nothing is unloaded or
+        // restored by the delegation; the runtime's own eviction policy
+        // decides what happens to the chat model when the delegate loads.
+        // This is a mode, never a refusal (`deniedMessage` is not thrown).
+        guard handoffEnabled else {
+            return ResidencyPlan(
+                shouldUnload: false,
+                requiredBytes: requiredBytes,
+                ramSafetyEnabled: ramSafetyEnabled,
+                maxElapsedSeconds: idleWaitSeconds,
+                sequencingDisabled: true
+            )
+        }
         return ResidencyPlan(
             shouldUnload: true,
             requiredBytes: requiredBytes,
@@ -257,8 +304,9 @@ enum SubagentResidency {
 
     /// Live residency decision for a resolved model name. Reads the installed
     /// bundle (`ModelManager`) + the resident chat models (`ModelRuntime`) and
-    /// feeds them to `decidePlan`. Throws `SubagentError.denied` when a
-    /// different local model would require the handoff but it is disabled.
+    /// feeds them to `decidePlan`. A different local model with the handoff
+    /// toggle OFF runs without sequencing (see `decidePlan`); the only throws
+    /// left are the pre-existing protected-resident ownership guards.
     static func resolve(
         modelName: String,
         config: SubagentConfiguration,
@@ -285,6 +333,11 @@ enum SubagentResidency {
         }
         let canonicalParentName = invokingParentModelName.flatMap {
             ModelManager.findInstalledModel(named: $0)?.name ?? $0
+        }
+        // The parity leg may only reload an INSTALLED local parent; a cloud
+        // or unknown parent has nothing to restore.
+        let installedParentName = invokingParentModelName.flatMap {
+            ModelManager.findInstalledModel(named: $0)?.name
         }
         let parentIsOwned: Bool
         if let invokingParentModelName,
@@ -349,7 +402,8 @@ enum SubagentResidency {
                 ? ChatResidencyHandoff.estimatedChatModelBytes(named: modelName) : 0,
             idleWaitSeconds: idleWaitSeconds,
             deniedMessage: deniedMessage,
-            coexistence: coexistence
+            coexistence: coexistence,
+            invokingParentModelName: installedParentName
         )
         return SubagentResidencyDecision(isLocal: isLocal, plan: plan)
     }

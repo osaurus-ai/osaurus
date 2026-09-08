@@ -62,6 +62,36 @@ struct FolderContextRenderTests {
         )
     }
 
+    @Test("tree truncation line renders only when the folder holds more files than the tree shows")
+    func treeTruncationLine() {
+        let truncated = FolderContext(
+            rootPath: URL(fileURLWithPath: "/tmp/render-test"),
+            projectType: .unknown,
+            tree: "./\nnotes/",
+            manifest: nil,
+            gitStatus: nil,
+            isGitRepo: false,
+            treeShownFiles: 300,
+            treeTotalFiles: 350
+        )
+        let rendered = SystemPromptTemplates.folderContext(from: truncated)
+        #expect(rendered.contains("**Tree truncated:** 300 of 350 files shown (50 not listed)"))
+        #expect(rendered.contains("`file_search`"))
+        // Unknown accounting (hand-built contexts) and a complete tree say nothing.
+        #expect(!SystemPromptTemplates.folderContext(from: ctx()).contains("Tree truncated"))
+        let complete = FolderContext(
+            rootPath: URL(fileURLWithPath: "/tmp/render-test"),
+            projectType: .unknown,
+            tree: "./\na.md",
+            manifest: nil,
+            gitStatus: nil,
+            isGitRepo: false,
+            treeShownFiles: 12,
+            treeTotalFiles: 12
+        )
+        #expect(!SystemPromptTemplates.folderContext(from: complete).contains("Tree truncated"))
+    }
+
     @Test("git status is omitted entirely when nil")
     func noGitStatusIsHidden() {
         let rendered = SystemPromptTemplates.folderContext(from: ctx(gitStatus: nil))

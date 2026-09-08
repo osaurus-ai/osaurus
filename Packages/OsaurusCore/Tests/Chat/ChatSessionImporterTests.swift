@@ -430,6 +430,34 @@ struct ChatSessionImporterTests {
         }
     }
 
+    /// Claude's split export ships an index JSON next to the batch zips.
+    /// Picking it must fail with the dedicated error that names the
+    /// batches, not the generic "unrecognized" one.
+    @Test func rejectsClaudeExportIndexWithBatchNames() {
+        let export = Data(
+            """
+            {
+              "instructions": "Download each file listed below.",
+              "created_at": "2026-09-01T10:00:00Z",
+              "total_files": 2,
+              "version": "1",
+              "data_files": [
+                {"batch_index": 0, "export_url": "https://example.com/a?sig=1",
+                 "category": "conversations", "part": 1, "filename": "data-2026-09-01-batch-0000.zip"},
+                {"batch_index": 1, "export_url": "https://example.com/data-2026-09-01-batch-0001.zip?sig=2",
+                 "category": "conversations", "part": 2}
+              ]
+            }
+            """.utf8)
+        #expect {
+            _ = try ChatSessionImporter.parse(data: export)
+        } throws: { error in
+            guard case .claudeExportIndex(let files) = error as? ChatSessionImporter.ImportError
+            else { return false }
+            return files == ["data-2026-09-01-batch-0000.zip", "data-2026-09-01-batch-0001.zip"]
+        }
+    }
+
     @Test func rejectsNonJSON() {
         let export = Data("# just markdown".utf8)
         #expect(throws: ChatSessionImporter.ImportError.self) {

@@ -80,6 +80,16 @@ struct AgentLoopPolicy: Sendable {
     /// zero and retain their existing semantics.
     var todoRequiredBeforeToolCallCount: Int = 0
 
+    /// Chat-only truthful termination. When announce-only recovery is
+    /// exhausted, or the same retrieval has failed and been replayed until
+    /// the run must stop, the run does NOT end on the model's last promise
+    /// or on an error sentence: the driver returns a `wrapUpNotice` and the
+    /// surface streams one tool-free status step (the same mechanism as the
+    /// iteration cap) asking for completed work, unfinished work and the
+    /// blocker. Exactly one such step; no retries, no sampler changes.
+    /// Headless surfaces keep their previous exits.
+    var wrapsUpIncompleteWork: Bool = false
+
     init(
         maxIterations: Int,
         budgetWarningThreshold: Int = 3,
@@ -87,8 +97,10 @@ struct AgentLoopPolicy: Sendable {
         dedupeNoticeEnabled: Bool,
         todoStalenessThreshold: Int = 4,
         maxDataMovementSteps: Int = 0,
-        todoRequiredBeforeToolCallCount: Int = 0
+        todoRequiredBeforeToolCallCount: Int = 0,
+        wrapsUpIncompleteWork: Bool = false
     ) {
+        self.wrapsUpIncompleteWork = wrapsUpIncompleteWork
         self.maxIterations = max(1, maxIterations)
         self.budgetWarningThreshold = budgetWarningThreshold
         self.stopOnToolRejection = stopOnToolRejection
@@ -304,14 +316,100 @@ enum AgentLoopModelStep {
         else { return false }
 
         if last.hasSuffix(":") { return true }
+        // A colon WITH content after it is the answer itself ("I will
+        // summarize what the sources agree on: cocoa polyphenols bind…"),
+        // never a promise of a call (cross-family control, 2026-09-06).
+        if last.contains(": ") { return false }
 
         // "Let me check the result" / "I'll write these now" as the whole
         // closing line, with no answer after it. Bounded length keeps this
         // from matching a long sentence that merely opens with "I'll".
-        guard last.count <= 120 else { return false }
+        // Bound raised from 120: a 128-character promise ("I'll search for
+        // more accessible sources with the scientific data, including the
+        // 71% inhibition figure and peer-reviewed studies.") closed an Ornith
+        // turn as a final answer on 2026-09-06 (run 121436 R1).
+        // The sign-off exclusions apply to the line rule as well: "I'll be
+        // honest: the evidence is mixed…" is an answer, not a promise (caught
+        // by the cross-family control on 2026-09-06).
         let lowered = last.lowercased()
-        return Self.announcementPrefixes.contains { lowered.hasPrefix($0) }
+        if last.count <= Self.announcementLengthBound,
+            Self.announcementPrefixes.contains(where: { lowered.hasPrefix($0) }),
+            !Self.closingSignOffPrefixes.contains(where: { lowered.hasPrefix($0) })
+        {
+            return true
+        }
+
+        // The same announcement as the closing SENTENCE of a status line:
+        // "The Wellkr site blocks retrieval. Let me try the Verywell Health
+        // article and the Quantum Cacao source." ended an Ornith research run
+        // with `stop` and no call. A verb allowlist (try/fetch/check/read/…)
+        // then missed the next three endings of the same model on the folder-
+        // attached run (2026-09-06, session 58544EC9): "I have solid sources
+        // now. Let me get one more with scientific detail…", "I have enough
+        // sources. Let me write the research report to the host files
+        // folder.", "No, I haven't written the file yet. Let me do that now."
+        // — each accepted as a final answer while file_write was available.
+        // The closing sentence is therefore judged by its OPENER (a first-
+        // person "about to act" phrase) with an explicit sign-off exclusion
+        // list ("let me know…", "I'll be here…", "I will wait…"), so a promise
+        // of work is recovered whatever the verb, and a sign-off stays final.
+        guard let sentence = Self.closingSentence(of: last), sentence.count <= Self.announcementLengthBound
+        else { return false }
+        let loweredSentence = sentence.lowercased()
+        guard Self.closingActionOpeners.contains(where: { loweredSentence.hasPrefix($0) }) else { return false }
+        return !Self.closingSignOffPrefixes.contains(where: { loweredSentence.hasPrefix($0) })
     }
+
+    /// The last sentence of a line: the text after the final ". ", "! " or
+    /// "? " boundary. `nil` when the line is a single sentence (the line rule
+    /// already judged it).
+    private static func closingSentence(of line: String) -> String? {
+        // A boundary is a terminator followed by whitespace OR directly by
+        // an uppercase letter: announce-only retries stream into the same
+        // bubble with no separator ("…to my document.I'll append…", run
+        // 130916 R2), and a split only on ". " left the whole 250-character
+        // tail as one "sentence", so the third announcement was accepted
+        // as the final answer.
+        var cut: String.Index? = nil
+        var index = line.startIndex
+        while index < line.endIndex {
+            let ch = line[index]
+            if ch == "." || ch == "!" || ch == "?" {
+                let next = line.index(after: index)
+                if next < line.endIndex, line[next].isWhitespace || line[next].isUppercase {
+                    cut = next
+                }
+            }
+            index = line.index(after: index)
+        }
+        guard let cut else { return nil }
+        let tail = line[cut...].trimmingCharacters(in: .whitespacesAndNewlines)
+        return tail.isEmpty ? nil : tail
+    }
+
+    /// Longest line / closing sentence still read as an announcement. Long
+    /// enough for a promise that names its sources and figures, short enough
+    /// that a paragraph opening with "I'll" is still an answer.
+    static let announcementLengthBound = 200
+
+    /// First-person "about to act" openers for the closing-sentence rule.
+    /// Lowercased, matched as prefixes of the final sentence only.
+    private static let closingActionOpeners: [String] = [
+        "let me ", "now let me ", "next, let me ", "next let me ", "first, let me ", "first let me ",
+        "i'll ", "i will ", "i'm going to ", "i am going to ", "next, i'll ", "next i'll ",
+    ]
+
+    /// Closing sentences that open like an announcement but are sign-offs or
+    /// requests to the user, never a promised call: they stay final.
+    private static let closingSignOffPrefixes: [String] = [
+        "let me know", "let me be ", "let me explain", "let me clarify", "let me summarize", "let me summarise",
+        "i'll summarize", "i'll summarise", "i will summarize", "i will summarise", "i'll explain", "i will explain",
+        "i'll answer", "i will answer", "i'll note", "i will note", "i'll say ", "i will say ",
+        "i'll be ", "i will be ", "i'll let you know", "i will let you know", "i'll wait", "i will wait",
+        "i'll stand by", "i will stand by", "i'll leave ", "i will leave ", "i'll stop ", "i will stop ",
+        "i'll hold ", "i will hold ", "i'll need ", "i will need ", "i'll have to ", "i will have to ",
+        "i'll refrain", "i will refrain", "i'll defer", "i will defer",
+    ]
 
     /// Openers of a first-person "about to act" line. Lowercased, matched as
     /// prefixes of the final line only.
@@ -533,6 +631,32 @@ struct AgentLoopHooks {
     /// one answer, so the driver skips the check when this is nil.
     var prepareGroundedClaimRetry: (() async -> Void)?
 
+    /// The user-visible text of the assistant message the surface just
+    /// classified — a tool-calling message's narration OR a final answer —
+    /// for the file side-effect advisory (`GroundedFileSideEffectCheck`).
+    /// Unlike `finalVisibleText` this is not scoped to a tool surface. The
+    /// loop reads it BEFORE executing a tool batch, because a streaming
+    /// surface may swap in a fresh buffer in `onBatchComplete`. Leaving it
+    /// nil opts the surface out; a nil return skips the check for that turn.
+    var assistantVisibleText: (() async -> String?)?
+
+    /// The tool names this request is authorized to EXECUTE right now —
+    /// chat binds it to `ToolExecutionScope.authorizedNames` (the scope
+    /// grows with same-run `capabilities` activations, so this is a closure,
+    /// not a snapshot). The driver uses it for two advisory-only jobs:
+    /// folding a hallucinated punctuation variant of an authorized name
+    /// (`osaurus_help!!`) back onto the real tool before execution, and
+    /// listing the authorized names in the `tool_not_found` notice. Nil on
+    /// surfaces that publish no scope — both behaviours then stay off.
+    var authorizedToolNames: (() -> Set<String>)?
+
+    /// What the announce-only nudge may say about tools the model cannot
+    /// call right now (see `AnnouncedToolCallRecovery`). Chat binds it to the
+    /// registry's classification of every registered tool against the live
+    /// scope; nil keeps the bare nudge. Assigned after construction like
+    /// `authorizedToolNames`.
+    var announcedToolCallRecovery: (() -> AgentToolLoop.AnnouncedToolCallRecovery?)?
+
     init(
         isCancelled: @escaping () async -> Bool = { false },
         buildMessages: @escaping (_ notices: [String]) async -> AgentLoopIterationInput,
@@ -556,7 +680,9 @@ struct AgentLoopHooks {
         emitFallbackText: ((_ text: String) async -> Void)? = nil,
         emitToolRejectionText: ((_ text: String) async -> Void)? = nil,
         finalVisibleText: (() async -> String?)? = nil,
-        prepareGroundedClaimRetry: (() async -> Void)? = nil
+        prepareGroundedClaimRetry: (() async -> Void)? = nil,
+        assistantVisibleText: (() async -> String?)? = nil,
+        authorizedToolNames: (() -> Set<String>)? = nil
     ) {
         self.isCancelled = isCancelled
         self.buildMessages = buildMessages
@@ -574,6 +700,8 @@ struct AgentLoopHooks {
         self.emitToolRejectionText = emitToolRejectionText
         self.finalVisibleText = finalVisibleText
         self.prepareGroundedClaimRetry = prepareGroundedClaimRetry
+        self.assistantVisibleText = assistantVisibleText
+        self.authorizedToolNames = authorizedToolNames
     }
 }
 
@@ -1068,6 +1196,10 @@ enum AgentToolLoop {
         /// Announce-only recovery ran out of nudges; the model's preamble is
         /// kept as the answer.
         case announcedToolCallRecoveryExhausted
+        /// The same retrieval failed and was replayed until the run had to
+        /// stop; under `wrapsUpIncompleteWork` the surface streams a truthful
+        /// status step instead of ending on the error sentence.
+        case repeatedRetrievalFailureWrapUp
         /// The model asked whether to continue and no tracked work was
         /// pending, so the question was handed to the user.
         case continuationRequestNoPendingWork
@@ -1106,11 +1238,17 @@ enum AgentToolLoop {
         /// reaches the hard iteration cap. Nil for every other exit, including
         /// an ordinary tool-loop cap with no Todo contract.
         var unfinishedTodoCount: Int?
+        /// Set when the run stopped on incomplete work under
+        /// `AgentLoopPolicy.wrapsUpIncompleteWork`: the visible text is a
+        /// promise or an error, not an answer, and the surface must stream
+        /// one tool-free status step carrying this notice. Nil otherwise.
+        var wrapUpNotice: String?
 
-        init(exit: Exit, iterations: Int, unfinishedTodoCount: Int? = nil) {
+        init(exit: Exit, iterations: Int, unfinishedTodoCount: Int? = nil, wrapUpNotice: String? = nil) {
             self.exit = exit
             self.iterations = iterations
             self.unfinishedTodoCount = unfinishedTodoCount
+            self.wrapUpNotice = wrapUpNotice
         }
     }
 
@@ -1162,6 +1300,59 @@ enum AgentToolLoop {
         "[System Notice] Your previous turn described a tool call but did not actually emit one, so nothing ran. "
         + "No file was written and no command executed. Emit the tool call itself now, as a real call — "
         + "do not describe it, narrate it, or claim it already ran."
+
+    /// What the announce-only nudge may truthfully say about tools the model
+    /// cannot call right now. Three buckets, because they call for three
+    /// different next steps and the wrong one either wastes a retry (asking
+    /// the model to emit a call it has no schema for) or lies (telling it a
+    /// legitimately loadable tool is impossible):
+    /// - `exposed`: callable now, as-is.
+    /// - `loadable`: registered, and `loaderName` would actually grant it
+    ///   (same gate as the registry's `tool_not_found` hint).
+    /// - `workspaceBlocked`: the file/shell tools that need a workspace
+    ///   attached to THIS chat; no loader helps, only the user can.
+    struct AnnouncedToolCallRecovery: Equatable, Sendable {
+        var exposed: Set<String> = []
+        var loadable: Set<String> = []
+        var loaderName: String = "capabilities"
+        var workspaceBlocked: Set<String> = []
+
+        var isEmpty: Bool { exposed.isEmpty && loadable.isEmpty && workspaceBlocked.isEmpty }
+    }
+
+    /// The announce-only nudge, naming what the model can do about the tool
+    /// it described. Ornith research run (2026-09-06, current main): the Web
+    /// Researcher agent had no file tool in its schema (no folder attached to
+    /// the chat), so "Let me write the markdown file to the host files
+    /// folder" could never become a call — the bare nudge told the model to
+    /// "emit the tool call itself now" for a tool it did not have, twice, and
+    /// the run ended on the same announcement. The classified notice tells it
+    /// which described actions are callable, which are one load away, and
+    /// which need the user to attach a folder; only the last is "impossible
+    /// in this chat".
+    static func announcedToolCallNotice(recovery: AnnouncedToolCallRecovery?) -> String {
+        guard let recovery, !recovery.isEmpty else { return announcedToolCallNotice }
+        var text = announcedToolCallNotice
+        if !recovery.exposed.isEmpty {
+            text += " The tools you can call right now in this chat are: "
+                + recovery.exposed.sorted().joined(separator: ", ") + "."
+        }
+        if !recovery.loadable.isEmpty {
+            text += " These tools exist but are not loaded yet; call \(recovery.loaderName) with ids "
+                + "[\"tool/<name>\"] first, then emit the call: "
+                + recovery.loadable.sorted().joined(separator: ", ") + "."
+        }
+        if !recovery.workspaceBlocked.isEmpty {
+            text += " " + recovery.workspaceBlocked.sorted().joined(separator: ", ")
+                + " need a workspace attached to THIS chat and there is none, so no call can write, read or run "
+                + "files here; do not announce that again. Tell the user to attach a folder via the Folder chip "
+                + "(or enable Autonomous execution) and give them the content directly in your answer"
+                + (recovery.exposed.contains("share_artifact") ? " (share_artifact can carry it)." : ".")
+        }
+        text += " If what you described needs a tool in none of these groups, say plainly that you cannot do it "
+            + "in this chat and give the user the result you have."
+        return text
+    }
 
     /// How many times a run will push back on "shall I continue?" before
     /// letting the question stand. Two: enough to get past a model that asks
@@ -1260,6 +1451,13 @@ enum AgentToolLoop {
     /// model; the model always writes its own corrected answer.
     static let maxGroundedClaimRetries = 2
 
+    /// Bounded file side-effect advisories per run for TOOL-CALLING turns
+    /// (see `GroundedFileSideEffectCheck`): the notice is staged for the
+    /// next step and the loop continues — never a stop — so a model that
+    /// ignores it is nudged at most this many times rather than every
+    /// iteration. Final-answer trips share `maxGroundedClaimRetries`.
+    static let maxUngroundedFileClaimNotices = 2
+
     static let incompleteReasoningFallback =
         "The model ended in reasoning without producing a user-visible final answer. "
         + "The agent task may be incomplete; retry with Thinking disabled or continue from the latest tool result."
@@ -1285,12 +1483,68 @@ enum AgentToolLoop {
         "[System Notice] Tool call budget: \(remaining) of \(maxIterations) remaining. Wrap up your current work and provide a summary."
     }
 
+    private static let budgetWarningNoticeMarker = "[System Notice] Tool call budget: "
+
+    /// The driver stages this iteration's notices BEFORE the surface's
+    /// `buildMessages` hook runs; chat injects a queued steer (a new user
+    /// message) inside that hook and resets `AgentTaskState` there. State
+    /// notices staged for the previous message ("you have made the exact
+    /// same call 3+ times", invalid-args nudges, planning-loop nudges) then
+    /// rode into the first request of the NEW message, telling the model it
+    /// had repeated a call it had not yet made in this message. Only the
+    /// run-scoped iteration-budget warning belongs to the run rather than to
+    /// the message that produced it; keep that one.
+    static func noticesSurvivingNewUserMessage(_ notices: [String]) -> [String] {
+        notices.filter { $0.hasPrefix(budgetWarningNoticeMarker) }
+    }
+
     /// Final, transient control notice for the one tool-free summarization
     /// request issued after the hard iteration cap. The model may still have
     /// an unfinished tool request in mind; without this explicit boundary it
     /// can print an imitation tool/result envelope and claim work that never
     /// executed. This notice asks for an honest status only. It does not alter
     /// sampling, thinking, templates, or any model-family behavior.
+    /// Visible text for a capped run whose wrap-up turn produced no visible
+    /// content at all (thinking only, or nothing). Not a summary of the work
+    /// — the model did not write one — just the truthful state.
+    static let iterationCapEmptyWrapUpText =
+        "The configured tool-call limit was reached before a final answer was written. "
+        + "The tool results above are the state of the work; send a message to continue."
+
+    /// Visible text when the truthful-status step after incomplete work
+    /// produced no visible content. Not a summary — just the honest state.
+    static let incompleteWorkEmptyWrapUpText =
+        "The run stopped before the requested work was complete. "
+        + "The tool results above are the state of the work; send a message to continue."
+
+    /// The one tool-free status step after announce-only recovery ran out:
+    /// the model described its next action `announcements` times without
+    /// calling a tool. Ornith 9B (2026-09-06, run 065533 R2): "I'll continue
+    /// by fetching the next source…" twice, accepted as the final answer.
+    static func announceExhaustedWrapUpNotice(announcements: Int) -> String {
+        "[System Notice] You described the next action \(announcements) times without making a tool call, "
+            + "so nothing further ran. No more tools are available in this response. Report truthfully: "
+            + "what was completed (keep every result already above), what remains undone, and what blocked "
+            + "the step you kept announcing. Do not promise to do it next, and do not claim it was done. "
+            + "This response ends the turn: do not promise any further action (fetching, writing, verifying) — "
+            + "the user decides what happens next."
+    }
+
+    /// The one tool-free status step after the same retrieval failed and was
+    /// replayed until the run had to stop. Ornith 9B (2026-09-06, run 075032
+    /// R2): five blocked URLs, then "The requested action was not completed."
+    /// as the whole answer. Distinguishes the cached replay from the real
+    /// network attempts so the model does not report the replay as a retry.
+    static func repeatedRetrievalWrapUpNotice(tool: String, failures: Int) -> String {
+        "[System Notice] The identical `\(tool)` retrieval has failed \(failures) times. "
+            + "The last result was a cached replay of the earlier failure, not a new network request, "
+            + "and this response cannot retry it. No more tools are available in this response. "
+            + "Report truthfully: what was completed (keep every successful result already above), "
+            + "what remains undone, and that this source is blocked. Do not promise to try again, "
+            + "and do not claim the failed page was read. This response ends the turn: do not promise any "
+            + "further action (fetching, writing, verifying) — the user decides what happens next."
+    }
+
     static let iterationCapWrapUpNotice =
         "[System Notice] The configured tool-call limit has been reached. "
         + "No more tools are available in this response. Give the user an honest final status "
@@ -1820,9 +2074,52 @@ enum AgentToolLoop {
     /// Explicit user denials and policy/security refusals stop immediately.
     /// Repeating an identical failing call also stops, preventing a correction
     /// loop from spinning on the same envelope.
-    static func shouldStopAfterToolOutcome(_ outcome: AgentLoopToolOutcome) -> Bool {
+    /// `invocations` with each tool name replaced by its canonical form
+    /// (`AgentTaskState.canonicalToolName`) when — and only when — the
+    /// emitted name is NOT authorized but the canonical one IS. Everything
+    /// else is returned untouched, including every call when the surface
+    /// publishes no scope (`authorizedToolNames == nil`).
+    static func canonicalizedInvocations(
+        _ invocations: [ServiceToolInvocation],
+        authorizedToolNames: Set<String>?
+    ) -> [ServiceToolInvocation] {
+        guard let authorized = authorizedToolNames else { return invocations }
+        return invocations.map { invocation in
+            let raw = invocation.toolName
+            guard !authorized.contains(raw) else { return invocation }
+            let canonical = AgentTaskState.canonicalToolName(raw)
+            guard canonical != raw, authorized.contains(canonical) else { return invocation }
+            print("[Osaurus][Loop] canonicalized tool name raw=\(raw) -> \(canonical)")
+            return ServiceToolInvocation(
+                toolName: canonical,
+                jsonArguments: invocation.jsonArguments,
+                toolCallId: invocation.toolCallId,
+                geminiThoughtSignature: invocation.geminiThoughtSignature
+            )
+        }
+    }
+
+    static func shouldStopAfterToolOutcome(
+        _ outcome: AgentLoopToolOutcome,
+        heldErrorReplays: Int = 0
+    ) -> Bool {
         guard outcome.wasError || ToolEnvelope.isError(outcome.result) else { return false }
-        if outcome.wasDeduped { return true }
+        if outcome.wasDeduped {
+            // A replayed retrieval failure (`search_and_extract`: the same
+            // URL failed as-is) is not a side effect, and the escalation
+            // notice staged with the replay tells the model to change the
+            // source. Ornith 9B research run (2026-09-06, reasoning on): the
+            // second identical 404 ended the whole turn with "The requested
+            // action was not completed." before that notice could reach the
+            // model. Let it land once; the same call replayed AGAIN ends the
+            // run exactly as before.
+            if AgentTaskState.isRetrievalAsIsFailureTool(outcome.invocation.toolName),
+                heldErrorReplays <= 1
+            {
+                return false
+            }
+            return true
+        }
         if isRecoverableTodoContractResult(outcome.result) { return false }
         if isTerminalDesktopSubagentFailure(
             toolName: outcome.invocation.toolName,
@@ -2021,13 +2318,49 @@ enum AgentToolLoop {
         isolation: isolated (any Actor)? = #isolation
     ) async throws -> RunResult {
         var iteration = 0
+        // The `tool_not_found` notice lists what the request may execute;
+        // the surface's scope is the only source of that truth.
+        if let authorizedToolNames = hooks.authorizedToolNames {
+            state.authorizedToolNamesProvider = authorizedToolNames
+        }
         // Staged-notice slots, mirroring the historical chat locals
-        // (`pendingBudgetNotice` / `pendingStateNotice`). The state slot is
-        // overwritten per event so the LAST dedupe/bias in a batch wins,
-        // exactly as the per-call overwrite did in `ChatSession.send`.
+        // (`pendingBudgetNotice` / `pendingStateNotice`). The state slot
+        // holds an ORDERED, de-duplicated list rather than a single string:
+        // per-event signals (dedupe, escalation, no-tool-call recoveries)
+        // still replace it so the LAST one in a batch wins, exactly as the
+        // per-call overwrite did in `ChatSession.send`, while independent
+        // advisories staged later in the same iteration (task-tracking,
+        // data-movement relief, ungrounded file claims) COMPOSE onto it.
+        // Before this, `taskTrackingRequiredNotice` / `dataMovementReliefNotice`
+        // silently dropped the invalid-args notice `AgentTaskState.nextStepBias`
+        // had just staged. The bias notice always rides first.
         var pendingBudgetNotice: String?
-        var pendingStateNotice: String?
+        var pendingStateNotices: [String] = []
+        var stagedBiasNotice: String?
         var pendingTodoNotice: String?
+        /// Per-event replace: the historical single-slot overwrite.
+        func replaceStateNotice(_ notice: String) {
+            pendingStateNotices = [notice]
+            stagedBiasNotice = nil
+        }
+        /// Compose: append unless an identical notice is already staged.
+        func stageStateNotice(_ notice: String) {
+            guard !pendingStateNotices.contains(notice) else { return }
+            pendingStateNotices.append(notice)
+        }
+        /// The next-step bias (invalid-args, listing nudge, ...) goes FIRST
+        /// and a later bias in the same batch supersedes an earlier one
+        /// (last bias wins, as before) without touching the other staged
+        /// advisories.
+        func stageBiasNotice(_ bias: String) {
+            let notice = "[System Notice] " + bias
+            if let previous = stagedBiasNotice {
+                pendingStateNotices.removeAll { $0 == previous }
+            }
+            pendingStateNotices.removeAll { $0 == notice }
+            pendingStateNotices.insert(notice, at: 0)
+            stagedBiasNotice = notice
+        }
         // Consecutive empty (0-token / no-tool) turns this run. Reset by any
         // productive turn; bounds the nudge-and-retry recovery so the loop
         // can never spin on a deterministically-empty model.
@@ -2037,6 +2370,17 @@ enum AgentToolLoop {
         // final-response check has consumed (bounded, never editing output).
         var hasGroundedConfigApply = false
         var groundedClaimRetries = 0
+        // File side-effect grounding (`GroundedFileSideEffectCheck`): whether
+        // any file-writing tool succeeded this run, and how many advisory
+        // notices tool-calling turns have staged (bounded).
+        var hasGroundedFileWrite = false
+        var ungroundedFileClaimNotices = 0
+        // Knowledge grounding (`GroundedKnowledgeClaimCheck`): whether any
+        // knowledge read SUCCEEDED this run, and the most recent knowledge
+        // read that FAILED (tool + envelope). A final answer that describes
+        // the collection after only failures gets the factual notice.
+        var hasGroundedKnowledgeRead = false
+        var lastFailedKnowledgeRead: (tool: String, result: String)? = nil
         // Consecutive announce-only turns (visible "let me…" preamble, no
         // call). Reset by any productive turn, for the same reason.
         var consecutiveAnnouncedToolCalls = 0
@@ -2080,6 +2424,21 @@ enum AgentToolLoop {
         /// terminal semantics and never gains a synthetic denial message.
         func emitToolRejection(_ outcome: AgentLoopToolOutcome) async {
             await hooks.emitToolRejectionText?(ToolEnvelope.failureMessage(outcome.result))
+        }
+        /// Under `wrapsUpIncompleteWork`, a stop caused by a replayed
+        /// retrieval failure becomes a truthful status step instead of the
+        /// error sentence: returns the notice for it, nil for every other
+        /// rejection (denials and terminal failures keep stopping as before).
+        func repeatedRetrievalWrapUp(_ outcome: AgentLoopToolOutcome) -> String? {
+            guard policy.wrapsUpIncompleteWork, outcome.wasDeduped,
+                AgentTaskState.isRetrievalAsIsFailureTool(outcome.invocation.toolName)
+            else { return nil }
+            let replays = state.heldErrorReplayCount(
+                name: outcome.invocation.toolName,
+                argsJSON: outcome.invocation.jsonArguments
+            )
+            return Self.repeatedRetrievalWrapUpNotice(
+                tool: outcome.invocation.toolName, failures: replays + 1)
         }
         // Total oversized streamed-call recoveries. One typed retry gives a
         // model a chance to switch to bounded/chunked writes without allowing
@@ -2151,9 +2510,10 @@ enum AgentToolLoop {
                 notices.append(n)
                 pendingBudgetNotice = nil
             }
-            if let n = pendingStateNotice {
-                notices.append(n)
-                pendingStateNotice = nil
+            if !pendingStateNotices.isEmpty {
+                notices.append(contentsOf: pendingStateNotices)
+                pendingStateNotices.removeAll()
+                stagedBiasNotice = nil
             }
             if let n = pendingTodoNotice {
                 notices.append(n)
@@ -2202,10 +2562,66 @@ enum AgentToolLoop {
                             + "groundedApply=\(hasGroundedConfigApply)): "
                             + String(notice.prefix(140))
                     )
-                    pendingStateNotice = notice
+                    replaceStateNotice(notice)
                     await prepareRetry()
                     // Protocol correction, not agent progress — don't charge
                     // the tool-iteration budget (same as the empty-turn path).
+                    iteration -= 1
+                    continue
+                }
+                // File side-effect grounding on a final answer ("I've saved
+                // the report" with no file-writing tool landed this run):
+                // same bounded, notice-and-regenerate channel as above. The
+                // model writes its own corrected answer — either it calls
+                // the file tool now, or it says nothing was written.
+                if let assistantVisibleText = hooks.assistantVisibleText,
+                    let prepareRetry = hooks.prepareGroundedClaimRetry,
+                    !hasGroundedFileWrite,
+                    groundedClaimRetries < Self.maxGroundedClaimRetries,
+                    let visibleText = await assistantVisibleText(),
+                    GroundedFileSideEffectCheck.containsFileSideEffectClaim(visibleText)
+                {
+                    groundedClaimRetries += 1
+                    print(
+                        "[Osaurus] Ungrounded file side-effect claim in final answer "
+                            + "(retry \(groundedClaimRetries)/\(Self.maxGroundedClaimRetries)); "
+                            + "no file-writing tool succeeded this run"
+                    )
+                    replaceStateNotice(GroundedFileSideEffectCheck.ungroundedFileClaimNotice)
+                    await prepareRetry()
+                    iteration -= 1
+                    continue
+                }
+                // Knowledge grounding on a final answer ("the vault contains
+                // 20 documents" when the only knowledge call this run was an
+                // `invalid_args` rejection): same bounded notice-and-
+                // regenerate channel. The notice repeats the granted
+                // collection names the failed envelope already listed, so
+                // the corrected turn can retry with the right `collection`
+                // — or say plainly that the collection could not be read.
+                if let assistantVisibleText = hooks.assistantVisibleText,
+                    let prepareRetry = hooks.prepareGroundedClaimRetry,
+                    !hasGroundedKnowledgeRead,
+                    let failed = lastFailedKnowledgeRead,
+                    groundedClaimRetries < Self.maxGroundedClaimRetries,
+                    let visibleText = await assistantVisibleText(),
+                    GroundedKnowledgeClaimCheck.containsCollectionContentClaim(visibleText)
+                {
+                    groundedClaimRetries += 1
+                    print(
+                        "[Osaurus] Ungrounded knowledge-content claim in final answer "
+                            + "(retry \(groundedClaimRetries)/\(Self.maxGroundedClaimRetries)); "
+                            + "\(failed.tool) failed and no knowledge read succeeded this run"
+                    )
+                    replaceStateNotice(
+                        GroundedKnowledgeClaimCheck.ungroundedKnowledgeClaimNotice(
+                            tool: failed.tool,
+                            grantedNames: GroundedKnowledgeClaimCheck.grantedCollectionNames(
+                                inFailure: failed.result
+                            )
+                        )
+                    )
+                    await prepareRetry()
                     iteration -= 1
                     continue
                 }
@@ -2226,10 +2642,10 @@ enum AgentToolLoop {
             case .oversizedToolCall(let toolName, let argumentCharacters):
                 oversizedToolCallRetries += 1
                 if oversizedToolCallRetries <= Self.maxOversizedToolCallRetries {
-                    pendingStateNotice = Self.oversizedToolCallNotice(
+                    replaceStateNotice(Self.oversizedToolCallNotice(
                         toolName: toolName,
                         argumentCharacters: argumentCharacters
-                    )
+                    ))
                     iteration -= 1
                     continue
                 }
@@ -2239,10 +2655,10 @@ enum AgentToolLoop {
             case .truncatedToolCall(let toolName, let argumentCharacters):
                 truncatedToolCallRetries += 1
                 if truncatedToolCallRetries <= Self.maxTruncatedToolCallRetries {
-                    pendingStateNotice = Self.truncatedToolCallNotice(
+                    replaceStateNotice(Self.truncatedToolCallNotice(
                         toolName: toolName,
                         argumentCharacters: argumentCharacters
-                    )
+                    ))
                     iteration -= 1
                     continue
                 }
@@ -2258,7 +2674,7 @@ enum AgentToolLoop {
                 consecutiveEmptyTurns += 1
                 totalEmptyTurnRetries += 1
                 if consecutiveEmptyTurns <= Self.maxEmptyTurnRetries {
-                    pendingStateNotice = Self.emptyTurnNotice
+                    replaceStateNotice(Self.emptyTurnNotice)
                     // Not charged against the tool-iteration budget.
                     iteration -= 1
                     continue
@@ -2283,12 +2699,23 @@ enum AgentToolLoop {
                 consecutiveAnnouncedToolCalls += 1
                 totalAnnouncedToolCallRetries += 1
                 if consecutiveAnnouncedToolCalls <= Self.maxAnnouncedToolCallRetries {
-                    pendingStateNotice = Self.announcedToolCallNotice
+                    replaceStateNotice(
+                        Self.announcedToolCallNotice(recovery: hooks.announcedToolCallRecovery?()))
                     // Not charged against the tool-iteration budget.
                     iteration -= 1
                     continue
                 }
                 await recordExit(.finalResponse, .announcedToolCallRecoveryExhausted)
+                if policy.wrapsUpIncompleteWork {
+                    // The visible text is a promise, not an answer: the
+                    // surface streams one tool-free status step.
+                    return RunResult(
+                        exit: .finalResponse,
+                        iterations: iteration,
+                        wrapUpNotice: Self.announceExhaustedWrapUpNotice(
+                            announcements: consecutiveAnnouncedToolCalls)
+                    )
+                }
                 return RunResult(exit: .finalResponse, iterations: iteration)
 
             case .continuationRequest:
@@ -2310,7 +2737,7 @@ enum AgentToolLoop {
                 consecutiveContinuationRequests += 1
                 totalContinuationRequestRetries += 1
                 if consecutiveContinuationRequests <= Self.maxContinuationRequestRetries {
-                    pendingStateNotice = Self.continuationRequestNotice(pending: pending)
+                    replaceStateNotice(Self.continuationRequestNotice(pending: pending))
                     // Not charged against the tool-iteration budget.
                     iteration -= 1
                     continue
@@ -2325,7 +2752,7 @@ enum AgentToolLoop {
             case .repetitionLoop(let phrase):
                 repetitionLoopRetries += 1
                 if repetitionLoopRetries <= Self.maxRepetitionLoopRetries {
-                    pendingStateNotice = Self.repetitionLoopNotice(phrase: phrase)
+                    replaceStateNotice(Self.repetitionLoopNotice(phrase: phrase))
                     // Not charged against the tool-iteration budget.
                     iteration -= 1
                     continue
@@ -2372,13 +2799,32 @@ enum AgentToolLoop {
                     iterations: iteration
                 )
 
-            case .toolCalls(let invocations):
+            case .toolCalls(let emittedInvocations):
+                // Fold hallucinated punctuation around an AUTHORIZED name
+                // (`osaurus_help!!`) back onto the real tool before anything
+                // materialises or executes. A name whose canonical form is
+                // not in scope is left exactly as emitted, so the registry's
+                // `tool_not_found` still answers it — decoration never
+                // reaches a withheld tool.
+                let invocations = Self.canonicalizedInvocations(
+                    emittedInvocations,
+                    authorizedToolNames: hooks.authorizedToolNames?()
+                )
                 // A productive turn — reset the empty-turn and announce-only
                 // recovery budgets so a later unrelated stall gets its own
                 // fresh allowance.
                 consecutiveEmptyTurns = 0
                 consecutiveAnnouncedToolCalls = 0
                 consecutiveContinuationRequests = 0
+
+                // File side-effect advisory (`GroundedFileSideEffectCheck`):
+                // capture this message's visible narration BEFORE any tool
+                // runs — chat's `onBatchComplete` swaps in a fresh assistant
+                // buffer, so reading afterwards would see the empty next turn.
+                var toolCallVisibleText: String? = nil
+                if let assistantVisibleText = hooks.assistantVisibleText {
+                    toolCallVisibleText = await assistantVisibleText()
+                }
 
                 // A desktop subagent already completed successfully, and the
                 // very next model step emitted only a malformed repeat of that
@@ -2507,9 +2953,9 @@ enum AgentToolLoop {
                             // (it is a correctness signal, not chat polish);
                             // fresh-read replays keep the per-policy notice.
                             if let escalation = state.lastReplayNotice {
-                                pendingStateNotice = "[System Notice] " + escalation
+                                replaceStateNotice("[System Notice] " + escalation)
                             } else if policy.dedupeNoticeEnabled {
-                                pendingStateNotice = Self.dedupeNotice
+                                replaceStateNotice(Self.dedupeNotice)
                             }
                             continue
                         }
@@ -2603,9 +3049,9 @@ enum AgentToolLoop {
                                     wasError: ToolEnvelope.isError(held)
                                 )
                                 if let escalation = state.lastReplayNotice {
-                                    pendingStateNotice = "[System Notice] " + escalation
+                                    replaceStateNotice("[System Notice] " + escalation)
                                 } else if policy.dedupeNoticeEnabled {
-                                    pendingStateNotice = Self.dedupeNotice
+                                    replaceStateNotice(Self.dedupeNotice)
                                 }
                             } else {
                                 let deferredExecutions =
@@ -2653,14 +3099,16 @@ enum AgentToolLoop {
                         )
                     }
                     if let bias = state.nextStepBias() {
-                        pendingStateNotice = "[System Notice] " + bias
+                        stageBiasNotice(bias)
                     }
                     outcomes = slotted.compactMap { $0 }
                     if outcomes.contains(where: {
                         Self.isTaskTrackingRequiredResult($0.result)
                     }) {
-                        pendingStateNotice = Self.taskTrackingRequiredNotice(
-                            threshold: policy.todoRequiredBeforeToolCallCount
+                        stageStateNotice(
+                            Self.taskTrackingRequiredNotice(
+                                threshold: policy.todoRequiredBeforeToolCallCount
+                            )
                         )
                     }
                     if let pending = outcomes.compactMap({ outcome -> Int? in
@@ -2693,8 +3141,22 @@ enum AgentToolLoop {
                         return await finishBatch(.cancelled)
                     }
                     if policy.stopOnToolRejection,
-                        let rejected = outcomes.first(where: Self.shouldStopAfterToolOutcome)
+                        let rejected = outcomes.first(where: {
+                            Self.shouldStopAfterToolOutcome(
+                                $0,
+                                heldErrorReplays: state.heldErrorReplayCount(
+                                    name: $0.invocation.toolName,
+                                    argsJSON: $0.invocation.jsonArguments
+                                )
+                            )
+                        })
                     {
+                        if let notice = repeatedRetrievalWrapUp(rejected) {
+                            await recordExit(.finalResponse, .repeatedRetrievalFailureWrapUp)
+                            let finished = await finishBatch(.finalResponse)
+                            return RunResult(
+                                exit: .finalResponse, iterations: finished.iterations, wrapUpNotice: notice)
+                        }
                         await emitToolRejection(rejected)
                         return await finishBatch(.toolRejected)
                     }
@@ -2729,8 +3191,10 @@ enum AgentToolLoop {
                                     wasError: true
                                 )
                             )
-                            pendingStateNotice = Self.taskTrackingRequiredNotice(
-                                threshold: policy.todoRequiredBeforeToolCallCount
+                            stageStateNotice(
+                                Self.taskTrackingRequiredNotice(
+                                    threshold: policy.todoRequiredBeforeToolCallCount
+                                )
                             )
                             continue
                         }
@@ -2801,7 +3265,7 @@ enum AgentToolLoop {
                                 result: guarded
                             )
                             if let bias = state.nextStepBias() {
-                                pendingStateNotice = "[System Notice] " + bias
+                                stageBiasNotice(bias)
                             }
                             let guardedOutcome = AgentLoopToolOutcome(
                                 invocation: invocation,
@@ -2837,13 +3301,25 @@ enum AgentToolLoop {
                                 )
                             outcomes.append(outcome)
                             if let escalation = state.lastReplayNotice {
-                                pendingStateNotice = "[System Notice] " + escalation
+                                replaceStateNotice("[System Notice] " + escalation)
                             } else if policy.dedupeNoticeEnabled {
-                                pendingStateNotice = Self.dedupeNotice
+                                replaceStateNotice(Self.dedupeNotice)
                             }
                             if policy.stopOnToolRejection,
-                                Self.shouldStopAfterToolOutcome(outcome)
+                                Self.shouldStopAfterToolOutcome(
+                                    outcome,
+                                    heldErrorReplays: state.heldErrorReplayCount(
+                                        name: invocation.toolName,
+                                        argsJSON: invocation.jsonArguments
+                                    )
+                                )
                             {
+                                if let notice = repeatedRetrievalWrapUp(outcome) {
+                                    await hooks.onBatchComplete(outcomes)
+                                    await recordExit(.finalResponse, .repeatedRetrievalFailureWrapUp)
+                                    return RunResult(
+                                        exit: .finalResponse, iterations: iteration, wrapUpNotice: notice)
+                                }
                                 await emitToolRejection(outcome)
                                 return RunResult(exit: .toolRejected, iterations: iteration)
                             }
@@ -2885,7 +3361,7 @@ enum AgentToolLoop {
                             result: execution.result
                         )
                         if let bias = state.nextStepBias() {
-                            pendingStateNotice = "[System Notice] " + bias
+                            stageBiasNotice(bias)
                         }
                         outcomes.append(
                             AgentLoopToolOutcome(
@@ -2929,6 +3405,54 @@ enum AgentToolLoop {
                 {
                     hasGroundedConfigApply = true
                 }
+                // File side-effect grounding: one successful file-writing
+                // tool this run grounds later "saved / appended…" narration.
+                if !hasGroundedFileWrite,
+                    outcomes.contains(where: {
+                        GroundedFileSideEffectCheck.isGroundedFileWriteOutcome(
+                            toolName: $0.invocation.toolName,
+                            result: $0.result
+                        )
+                    })
+                {
+                    hasGroundedFileWrite = true
+                }
+                // Knowledge grounding bookkeeping: one successful knowledge
+                // read grounds every later content claim; otherwise remember
+                // the latest failed read so the final-answer check can quote
+                // the granted names its envelope carries.
+                for outcome in outcomes {
+                    if GroundedKnowledgeClaimCheck.isGroundedKnowledgeOutcome(
+                        toolName: outcome.invocation.toolName,
+                        result: outcome.result
+                    ) {
+                        hasGroundedKnowledgeRead = true
+                    } else if GroundedKnowledgeClaimCheck.isFailedKnowledgeOutcome(
+                        toolName: outcome.invocation.toolName,
+                        result: outcome.result
+                    ) {
+                        lastFailedKnowledgeRead = (outcome.invocation.toolName, outcome.result)
+                    }
+                }
+                // Advisory, never a stop: the model narrated a file write
+                // ("appended to the file") in a message whose tool calls
+                // wrote nothing (observed live: `fetch_html` with no write
+                // tool in the schema). Stage the factual notice for the next
+                // step and keep going; bounded per run.
+                if !hasGroundedFileWrite,
+                    ungroundedFileClaimNotices < Self.maxUngroundedFileClaimNotices,
+                    let narration = toolCallVisibleText,
+                    GroundedFileSideEffectCheck.containsFileSideEffectClaim(narration)
+                {
+                    ungroundedFileClaimNotices += 1
+                    print(
+                        "[Osaurus] Ungrounded file side-effect claim in a tool-calling turn "
+                            + "(notice \(ungroundedFileClaimNotices)/\(Self.maxUngroundedFileClaimNotices)); "
+                            + "no file-writing tool succeeded this run"
+                    )
+                    let notice = GroundedFileSideEffectCheck.ungroundedFileClaimNotice
+                    stageStateNotice(notice)
+                }
                 let successfulTodoOutcomes = outcomes.filter { outcome in
                     outcome.invocation.toolName == "todo"
                         && !outcome.wasError
@@ -2965,8 +3489,8 @@ enum AgentToolLoop {
                     iteration -= 1
                     if !announcedDataMovementRelief {
                         announcedDataMovementRelief = true
-                        pendingStateNotice = Self.dataMovementReliefNotice(
-                            cap: policy.maxDataMovementSteps
+                        stageStateNotice(
+                            Self.dataMovementReliefNotice(cap: policy.maxDataMovementSteps)
                         )
                     }
                     continue

@@ -124,7 +124,7 @@ final class FlagKnowledgeStaleTool: OsaurusTool, @unchecked Sendable {
             tool: name,
             collectionName: args["collection"] as? String
         )
-        guard case .granted(let collections) = scope else {
+        guard case .granted(let collections, _) = scope else {
             if case .failure(let envelope) = scope { return envelope }
             return ""
         }
@@ -238,7 +238,7 @@ final class ListKnowledgeTicketsTool: OsaurusTool, @unchecked Sendable {
             tool: name,
             collectionName: args["collection"] as? String
         )
-        guard case .granted(let collections) = scope else {
+        guard case .granted(let collections, _) = scope else {
             if case .failure(let envelope) = scope { return envelope }
             return ""
         }
@@ -373,7 +373,7 @@ final class UpdateKnowledgeTicketTool: OsaurusTool, @unchecked Sendable {
         }
 
         let scope = await KnowledgeToolScope.resolve(tool: name, collectionName: nil)
-        guard case .granted(let collections) = scope else {
+        guard case .granted(let collections, _) = scope else {
             if case .failure(let envelope) = scope { return envelope }
             return ""
         }

@@ -366,4 +366,19 @@ struct AgentLoopBudgetTests {
             #expect(ui == runtime)
         }
     }
+    // MARK: - Notices staged before a mid-run steer
+
+    /// The driver stages notices before chat's `buildMessages` hook injects a
+    /// queued steer and resets the task state. A "you have made the exact same
+    /// call 3+ times" nudge staged for the PREVIOUS message must not ride into
+    /// the first request of the new one; the run-scoped budget warning does.
+    @Test
+    func noticesStagedForThePreviousMessageAreDroppedAfterASteer() {
+        let budget = AgentToolLoop.budgetWarningNotice(remaining: 3, maxIterations: 15)
+        let stale = "[System Notice] You have now made the exact same `osaurus_inspect` call with identical arguments 3+ times. Repeating it will not change the outcome — change your approach, or report what is blocking you."
+        let todo = "[System Notice] Update the todo list before continuing."
+        #expect(AgentToolLoop.noticesSurvivingNewUserMessage([budget, stale, todo]) == [budget])
+        #expect(AgentToolLoop.noticesSurvivingNewUserMessage([stale]).isEmpty)
+        #expect(AgentToolLoop.noticesSurvivingNewUserMessage([]).isEmpty)
+    }
 }

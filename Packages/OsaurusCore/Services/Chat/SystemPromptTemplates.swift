@@ -1639,6 +1639,9 @@ public enum SystemPromptTemplates {
         if !topLevel.isEmpty {
             lines.append("**Root contents:** \(topLevel)")
         }
+        if let truncation = treeTruncationLine(for: folder) {
+            lines.append(truncation)
+        }
         var section = "\n" + lines.joined(separator: "\n") + "\n"
 
         if let status = folder.gitStatus {
@@ -1685,7 +1688,7 @@ public enum SystemPromptTemplates {
         var section = """
             ## Working directory
             **Path:** \(folder.rootPath.path)
-            Native execution is trusted for this workspace. Writes are confined to this folder and temporary directories. Use relative paths.
+            \(treeTruncationLine(for: folder).map { $0 + "\n" } ?? "")Native execution is trusted for this workspace. Writes are confined to this folder and temporary directories. Use relative paths.
             Use the workspace tools to complete requested work now; do not only describe or promise it.
             After creating or changing runnable code, run an available syntax/build/test/behavior check before saying it works; a successful file mutation proves only that bytes were saved.
             To append while preserving a file, call file_write with mode append and put only the new bytes in content.
@@ -1761,6 +1764,9 @@ public enum SystemPromptTemplates {
         if !topLevel.isEmpty {
             lines.append("**Root contents:** \(topLevel)")
         }
+        if let truncation = treeTruncationLine(for: folder) {
+            lines.append(truncation)
+        }
         var section = "\n" + lines.joined(separator: "\n") + "\n"
 
         if let status = folder.gitStatus {
@@ -1833,6 +1839,21 @@ public enum SystemPromptTemplates {
 
             The workspace is read-only — you cannot create, edit, or delete files in it, so never offer to; say so if asked (the user can enable folder writes in the agent's sandbox settings). Create or change sandbox files with `file_write` / `file_edit` using `/workspace/...` paths, and run commands with `shell_run` (the sandbox has no copy of the workspace — to process a workspace file with a command, first stage it into a `/workspace/...` path with `file_copy`, a byte copy that also carries binaries `file_read` cannot open). Surface results with `share_artifact`. \(secretLine)
             """
+    }
+
+    /// "**Tree truncated:** 300 of 350 files shown …" — rendered only when
+    /// the folder holds more files than its tree lists. Names the exact
+    /// paging call so a "how many files / summarise the folder" answer is
+    /// enumerated, not estimated from the visible 300.
+    static func treeTruncationLine(for folder: FolderContext) -> String? {
+        guard folder.treeTruncated else { return nil }
+        let hidden = folder.treeTotalFiles - folder.treeShownFiles
+        return
+            "**Tree truncated:** \(folder.treeShownFiles) of \(folder.treeTotalFiles) files shown "
+            + "(\(hidden) not listed). Do not count or summarise the folder from this tree alone. "
+            + "To enumerate every file, call `file_search` with `target:\"files\"`, `pattern:\"*\"`, "
+            + "`max_results:500` and page with `offset` (the result reports `total` and `next_offset`); "
+            + "or `file_read` each subfolder."
     }
 
     private static func buildTopLevelSummary(from tree: String) -> String {

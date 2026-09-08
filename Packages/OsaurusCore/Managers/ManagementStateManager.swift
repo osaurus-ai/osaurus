@@ -95,6 +95,11 @@ public final class ManagementStateManager: ObservableObject {
     /// `AgentsView` observes this and resets it to nil after applying.
     @Published public var pendingRemoteAgentDetailId: UUID?
 
+    /// One-shot request to open the Create Agent sheet — e.g. from the chat
+    /// sidebar's New Agent button. `AgentsView` observes this and resets it
+    /// to false after presenting.
+    @Published public var pendingCreateAgent: Bool = false
+
     /// One-shot request to reveal a project's shared memory — the namespace
     /// key (`project-<uuid>`). `MemoryView` observes this, switches to its
     /// Agents subtab, opens the project's context preview, and resets it to

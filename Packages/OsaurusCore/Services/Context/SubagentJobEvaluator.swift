@@ -580,8 +580,10 @@ public enum SubagentJobEvaluator {
     /// proves the actual unload/reload, so it covers all four directions:
     ///
     ///   - orchestrator LOCAL + resident, target a DIFFERENT local + handoff ON
-    ///     → unload chat model → run target → reload (the real swap).
-    ///   - same pair, handoff OFF → rejected BEFORE evict (the gate).
+    ///     → unload chat model → run target → unload target → reload (the
+    ///     real swap; `handoff` = true in the payload).
+    ///   - same pair, handoff OFF → runs with NO sequencing (a mode, never a
+    ///     refusal; `handoff` = false, `residency_mode` = `sequencing_off`).
     ///   - local→local same / local→remote / remote→local / remote→remote
     ///     → run in place (no swap).
     ///
@@ -678,8 +680,8 @@ public enum SubagentJobEvaluator {
         }
 
         // Seed the target into the global spawnable MODEL pool and set the
-        // handoff gate to the case's value (OFF + a different local target ⇒
-        // reject-before-evict; ON ⇒ the swap is allowed).
+        // handoff toggle to the case's value (ON ⇒ the unload/reload sequence
+        // runs; OFF ⇒ the spawn runs with no sequencing — never refused).
         await MainActor.run {
             var updated = priorConfig
             if !priorConfig.isModelSpawnable(target) {
@@ -699,8 +701,8 @@ public enum SubagentJobEvaluator {
 
         // The success payload carries `handoff` (`residencyPlan.shouldUnload`) —
         // the real "did the model swap happen" signal — so surface it as
-        // `handoffWrapped`. A rejected envelope (handoff-OFF gate) has no
-        // payload, leaving it `nil`, and the case asserts `rejected` instead.
+        // `handoffWrapped`. The handoff-OFF direction now succeeds with
+        // `handoff == false` (no sequencing) and the case asserts that.
         let payload = (ToolEnvelope.resultPayload(envelope) as? [String: Any]) ?? [:]
         let handoffFlag = payload["handoff"] as? Bool
 

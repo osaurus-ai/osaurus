@@ -168,7 +168,10 @@ public final class ExecutionContext: ObservableObject {
     /// returns a prompt preamble stating which folder could not be read, so
     /// the run reports the real problem instead of introspecting whatever
     /// directory its fallback execution mode happens to be rooted in.
-    private func activateFolderContextIfNeeded() async -> String? {
+    /// Internal (not private) so the dispatch-folder contract — folder
+    /// restored onto THIS session, `folderContextFromDispatchBookmark` set —
+    /// is unit-testable without starting inference.
+    func activateFolderContextIfNeeded() async -> String? {
         // A dispatch may carry a picker bookmark (GUI-created Watcher) OR a
         // plain path (orchestrator-created Watcher, whose config tool stores
         // no bookmark). Either must reach the run — a path-only dispatch used

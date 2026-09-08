@@ -150,8 +150,9 @@ enum ConfigurationReadNextStep {
     static let statusHint =
         hint(hasShape: false)
         + " Settings sections (memory, default_agent, tools, delegation) "
-        + "are document sections, not inspect scopes — read their current values with "
-        + "osaurus_config {action: 'export', sections: [...]}. "
+        + "are document sections: read one with osaurus_inspect {action: 'describe', "
+        + "scope: '<section>'} (or osaurus_config {action: 'export', sections: [...]}), "
+        + "and change it with osaurus_config {action: 'apply', yaml: ...}. "
         + "Server runtime, chat behavior, and app settings are managed in the Settings UI, "
         + "not with these tools. "
         + "For questions about what Osaurus is or how a feature works, read the matching "
@@ -355,8 +356,9 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                 "description": .string(
                     "Configuration scope. Required for list and describe. memory, "
                         + "default_agent, active_agent, tools, and delegation are settings "
-                        + "document sections — reading one routes you to osaurus_config "
-                        + "export. server, chat, and app are Settings-UI-only."),
+                        + "document sections — list/describe returns the section's current "
+                        + "values (change them with osaurus_config apply). server, chat, and "
+                        + "app are Settings-UI-only."),
             ]),
             "id": .object([
                 "type": .string("string"),
@@ -704,6 +706,14 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
             await PluginRepositoryService.shared.ensureInstalledPluginsLoaded()
         }
 
+        // A document-section name (`memory`, `default_agent`, …) is read
+        // here, before the entity switch, so the enum's promise holds.
+        if !Self.knownReadScopes.contains(scope),
+            let read = await Self.documentSectionRead(scope: scope, tool: name)
+        {
+            return read
+        }
+
         let envelope: String = await MainActor.run {
             let payload: [String: Any]
             switch scope {
@@ -922,6 +932,43 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
         return envelope
     }
 
+    /// A settings DOCUMENT SECTION named as an inspect scope (`memory`,
+    /// `default_agent`, `tools`, …) is answered with that section's current
+    /// values — the same read `osaurus_config {action: 'export', sections:
+    /// [x]}` performs — instead of a rejection. The scope enum advertises
+    /// these names (compact-schema models see only the enum), the validator's
+    /// own rejection for a junk scope lists them as allowed, and then the
+    /// old execution path refused them as "not an inspect scope": a
+    /// self-contradicting contract. Live (build #13, Raptor as Orchestrator):
+    /// `scope: user_profile` → rejection listing `default_agent` → `scope:
+    /// default_agent` → "not an inspect scope" → the identical call 29 times
+    /// to the attempt cap. Reading the section is what the call meant.
+    /// Returns nil for anything that is not a document section.
+    static func documentSectionRead(scope: String, tool: String) async -> String? {
+        guard let section = ConfigSectionID(rawValue: scope.lowercased()),
+            !settingsUIOnlyScopes.contains(scope.lowercased())
+        else { return nil }
+        let document = await MainActor.run { ConfigExporter.export(sections: [section]) }
+        let yaml: String
+        do {
+            yaml = try ConfigYAML.encode(document)
+        } catch {
+            return nil
+        }
+        return ConfigurationReadNextStep.success(
+            tool: tool,
+            result: [
+                "scope": section.rawValue,
+                "kind": "document_section",
+                "format": "yaml",
+                "yaml": yaml,
+                "note":
+                    "`\(section.rawValue)` is a configuration document section (read-only here). "
+                    + "Change it with osaurus_config {action: 'apply', yaml: ...}.",
+            ],
+            scope: section.rawValue)
+    }
+
     // MARK: action: describe
 
     private func describeEnvelope(_ args: [String: Any]) async -> String {
@@ -929,8 +976,10 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
         guard case .value(let rawScope) = scopeReq else { return scopeReq.failureEnvelope ?? "" }
         let scope = Self.canonicalScope(rawScope)
         guard Self.knownReadScopes.contains(scope) else {
-            // Same teaching redirect as list: a document-section guess must
-            // not dead-end in a misleading "no item matched" failure.
+            // A document-section name reads the section (see
+            // `documentSectionRead`); anything else keeps the teaching
+            // failure so the model is not dead-ended on "no item matched".
+            if let read = await Self.documentSectionRead(scope: scope, tool: name) { return read }
             return Self.unknownScopeFailure(scope: scope, tool: name)
         }
         // Observed dead end: describe without `id` fails generically and the

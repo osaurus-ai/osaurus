@@ -138,6 +138,7 @@ struct MemoryView: View {
     // drive the same "Distill pending" action from the pending-signals row.
     @State var isDistilling = false
     @State private var isConsolidating = false
+    @State private var lastConsolidationRun: Date?
     @State private var showIdentityEditor = false
     @State private var showAddOverride = false
     @State private var contextPreviewItem: ContextPreviewItem?
@@ -960,23 +961,47 @@ struct MemoryView: View {
                         applyConfigEdit(newValue, range: 1 ... 168, keyPath: \.consolidationIntervalHours)
                     }
 
-                    Button {
-                        guard !isConsolidating else { return }
-                        isConsolidating = true
-                        Task.detached {
-                            await MemoryConsolidator.shared.runOnce()
-                            await MainActor.run {
-                                isConsolidating = false
-                                loadData()
-                                showToast(L("Consolidation complete"))
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Button {
+                            guard !isConsolidating else { return }
+                            isConsolidating = true
+                            Task.detached {
+                                let outcome = await MemoryConsolidator.shared.runOnce()
+                                await MainActor.run {
+                                    isConsolidating = false
+                                    loadData()
+                                    switch outcome {
+                                    case .completed:
+                                        showToast(L("Consolidation complete"))
+                                    case .skippedAlreadyRunning:
+                                        showToast(L("Consolidation is already running"))
+                                    case .skippedDisabled:
+                                        showToast(L("Enable memory to run consolidation"), isError: true)
+                                    case .skippedDatabaseClosed:
+                                        showToast(L("Memory database is not open"), isError: true)
+                                    }
+                                }
+                            }
+                        } label: {
+                            Text(isConsolidating ? "Running..." : "Run Now", bundle: .module)
+                        }
+                        .buttonStyle(SettingsButtonStyle())
+                        .disabled(isConsolidating || !config.enabled)
+
+                        HStack(spacing: 4) {
+                            Text("Last run:", bundle: .module)
+                            if let lastConsolidationRun {
+                                Text(lastConsolidationRun, style: .relative)
+                                Text("ago", bundle: .module)
+                            } else {
+                                Text("Never", bundle: .module)
                             }
                         }
-                    } label: {
-                        Text(isConsolidating ? "Running..." : "Run Now", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .help(lastConsolidationRun.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "")
                     }
-                    .buttonStyle(SettingsButtonStyle())
-                    .disabled(isConsolidating || !config.enabled)
-                    .padding(.bottom, 20)
+                    .padding(.bottom, 4)
                 }
             }
         }
@@ -1204,9 +1229,11 @@ struct MemoryView: View {
             let loadedDBOpen = MemoryDatabase.shared.isOpen
             let loadedChatActive = await InferenceLoadCoordinator.shared.chatActive
             let loadedDistillSnapshot = await DistillationCoordinator.shared.snapshot()
+            let loadedLastConsolidation = await MemoryConsolidator.shared.lastRunDate
 
             await MainActor.run {
                 identity = loadedIdentity
+                lastConsolidationRun = loadedLastConsolidation
                 processingStats = loadedStats
                 dbSizeBytes = loadedSize
                 agentMemoryCounts = resolvedCounts

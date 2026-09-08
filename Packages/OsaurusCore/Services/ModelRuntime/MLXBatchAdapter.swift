@@ -275,7 +275,12 @@ struct MLXBatchAdapter {
     static func shouldRecordAsLastEffectiveGeneration(
         _ generation: GenerationParameters
     ) -> Bool {
-        !generation.warmupPrefill
+        // Auxiliary generations (follow-up suggestions at 0.4/256, titles at
+        // 0.2/96, compaction…) run right after the user's turn and used to
+        // overwrite the row: the Live Activity readout then showed
+        // "temp 0.4 · max 256" for a chat turn that actually ran the bundle's
+        // 0.7 / 16384 (observed live 2026-09-05). Same rule as the warm-up.
+        !generation.warmupPrefill && !generation.auxiliaryCacheIntent
     }
 
     static func effectiveDraftStrategy(
@@ -1803,13 +1808,23 @@ struct MLXBatchAdapter {
             var toolEarlyStopRequested = false
             await withTaskCancellationHandler {
                 for await event in upstream {
-                    if case .info = event {
+                    if case .info(let info) = event {
                         // `.info` is terminal to every public consumer. Hold
                         // it until the upstream producer, disk/cache commit,
                         // and allocator teardown have all completed; yielding
                         // it here lets an immediate follow-up request enter
                         // ModelRuntime before this request closes its allocator
                         // window, suppressing the required inter-request clear.
+                        //
+                        // The OUTPUT is complete right now, though — and the
+                        // post-`.info` cache store behind this hold measured
+                        // 9.5–15 s on a 96 GB bundle. Announce output
+                        // completion on the relay so the chat can stop its
+                        // cursor at the last letter; the run's ordering
+                        // (lease, allocator window, send gate) is untouched.
+                        GenerationOutputRelay.shared.announce(
+                            modelName: modelName,
+                            generationTokens: info.generationTokenCount)
                         terminalInfo = event
                         continue
                     }

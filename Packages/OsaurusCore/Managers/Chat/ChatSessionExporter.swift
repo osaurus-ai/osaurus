@@ -259,8 +259,12 @@ public enum ChatSessionExporter {
             if let tokens = turn.generationTokenCount {
                 parens.append("\(tokens) tok")
             }
+            // End the generation window at the last visible delta when it
+            // was recorded: `completedAt` also waits for the runtime's
+            // post-generation cache persistence (4–13 s measured on local
+            // models), which made a 56 tok/s decode export as 28 tok/s.
             if let created = turn.createdAt,
-                let completed = turn.completedAt
+                let completed = turn.lastOutputAt ?? turn.completedAt
             {
                 let dur = completed.timeIntervalSince(created)
                 if dur > 0, let tokens = turn.generationTokenCount, tokens > 0 {

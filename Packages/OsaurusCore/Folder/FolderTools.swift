@@ -2737,7 +2737,19 @@ struct FileSearchTool: OsaurusTool {
             ]),
             "max_results": .object([
                 "type": .string("integer"),
-                "description": .string("Maximum number of results to return (default: 50)"),
+                "description": .string(
+                    "Maximum number of results to return per call (default: 50, max: "
+                        + "\(ToolOutputCaps.searchMaxResults)). With `target:\"files\"` the result "
+                        + "reports `total` and, when more remain, `next_offset`."
+                ),
+            ]),
+            "offset": .object([
+                "type": .string("integer"),
+                "description": .string(
+                    "Skip this many matches (default 0). Pass the previous result's `next_offset` to "
+                        + "page through more results than `max_results`. To enumerate every file in the "
+                        + "folder: `target:\"files\"`, `pattern:\"*\"`, `max_results:500`, then page."
+                ),
             ]),
         ]),
         "required": .array([.string("pattern")]),
@@ -2790,12 +2802,25 @@ struct FileSearchTool: OsaurusTool {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        let patternReq = requireString(
-            args,
-            "pattern",
-            expected: "search text (case-insensitive substring, e.g. `TODO`)",
-            tool: name
-        )
+        let target = (args["target"] as? String)?.lowercased() ?? "content"
+        // Files mode with an empty pattern means "every file" — the exact
+        // call Raptor makes at temperature 0 to enumerate a folder
+        // (`{"pattern":"","target":"files"}`, live 2026-09-04). Rejecting it
+        // as invalid_args produced a retry loop that the breaker ended with
+        // no answer; a content search still needs real search text.
+        let patternReq: ArgumentRequirement<String>
+        if target == "files", let raw = args["pattern"] as? String,
+            raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            patternReq = .value("*")
+        } else {
+            patternReq = requireString(
+                args,
+                "pattern",
+                expected: "search text (case-insensitive substring, e.g. `TODO`)",
+                tool: name
+            )
+        }
         guard case .value(let pattern) = patternReq else {
             return patternReq.failureEnvelope ?? ""
         }
@@ -2805,7 +2830,7 @@ struct FileSearchTool: OsaurusTool {
         // Clamp to the shared ceiling — an unclamped `max_results: 100000`
         // over a big tree is a one-call context bomb.
         let maxResults = min(max(coerceInt(args["max_results"]) ?? 50, 1), ToolOutputCaps.searchMaxResults)
-        let target = (args["target"] as? String)?.lowercased() ?? "content"
+        let offset = max(0, coerceInt(args["offset"]) ?? 0)
 
         // Combined mode: an absolute `/workspace/...` path is the Linux
         // sandbox — search it via the sandbox bridge (content or files).
@@ -2818,7 +2843,8 @@ struct FileSearchTool: OsaurusTool {
                 path: searchPath,
                 target: target,
                 filePattern: filePattern,
-                maxResults: maxResults
+                maxResults: maxResults,
+                offset: offset
             )
         }
 
@@ -2832,12 +2858,19 @@ struct FileSearchTool: OsaurusTool {
         // candidates as structured `entries[]`; which match satisfies the
         // request is the model's judgement, never auto-picked here.
         if target == "files" {
-            let found = try searchFilesByName(root: searchURL, query: pattern, maxResults: maxResults)
+            let found = try searchFilesByName(
+                root: searchURL, query: pattern, maxResults: maxResults, offset: offset)
             return filesSearchEnvelope(originalQuery: pattern, found: found)
         }
 
         var results: [String] = []
         var totalMatches = 0
+        // Content paging: skip the first `offset` matches, collect up to
+        // `maxResults`, and look for ONE more so the footer can say "more
+        // matches exist — call again with offset: N" without reading every
+        // remaining file (a full total would cost the whole scan).
+        var skipRemaining = offset
+        let collectCap = maxResults + 1
         // Files the search never looked inside (binary extension, over the
         // size cap, or undecodable). Counted so "No matches" can't silently
         // mean "the file you care about was skipped".
@@ -2872,7 +2905,7 @@ struct FileSearchTool: OsaurusTool {
 
             var visited = 0
             while let fileURL = enumerator?.nextObject() as? URL {
-                guard totalMatches < maxResults else { break }
+                guard totalMatches < collectCap else { break }
                 guard
                     try FolderToolHelpers.searchStepWithinBudget(
                         visited: &visited,
@@ -2919,9 +2952,12 @@ struct FileSearchTool: OsaurusTool {
                 switch try await searchFile(
                     fileURL,
                     pattern: pattern,
-                    maxResults: maxResults - totalMatches
+                    maxResults: collectCap - totalMatches + skipRemaining
                 ) {
-                case .matches(let matches):
+                case .matches(var matches):
+                    let drop = min(skipRemaining, matches.count)
+                    skipRemaining -= drop
+                    matches.removeFirst(drop)
                     results.append(contentsOf: matches)
                     totalMatches += matches.count
                 case .skipped:
@@ -2930,32 +2966,59 @@ struct FileSearchTool: OsaurusTool {
             }
         } else {
             // Search single file
-            switch try await searchFile(searchURL, pattern: pattern, maxResults: maxResults) {
-            case .matches(let matches):
+            switch try await searchFile(searchURL, pattern: pattern, maxResults: collectCap + skipRemaining) {
+            case .matches(var matches):
+                let drop = min(skipRemaining, matches.count)
+                skipRemaining -= drop
+                matches.removeFirst(drop)
                 results.append(contentsOf: matches)
                 totalMatches = matches.count
             case .skipped:
                 skippedFiles += 1
             }
         }
+        // The (maxResults + 1)th match is the "more exists" probe, never
+        // returned.
+        let moreMatches = results.count > maxResults
+        if moreMatches {
+            results.removeLast(results.count - maxResults)
+            totalMatches = maxResults
+        }
 
         if results.isEmpty {
             // Mode correction (deterministic, no NL parsing): a content search
             // that finds nothing is the classic "wanted files, grepped bodies"
-            // mistake. Run the files-mode search; if it finds candidates,
-            // return them so the reasonable-but-wrong `target` succeeds at the
-            // model's actual intent. Only fires on empty content, so it never
-            // overrides a real content hit.
-            let fallback = try searchFilesByName(root: searchURL, query: pattern, maxResults: maxResults)
-            if !fallback.entries.isEmpty {
-                let note =
-                    "(no content matches for '\(pattern)'; showing files named like '\(fallback.matchedQuery)')"
-                return ToolEnvelope.search(
-                    tool: name,
-                    query: fallback.matchedQuery,
+            // mistake. Run the files-mode search AT THE SAME OFFSET; if that
+            // query has matches, answer in files mode so the reasonable-but-
+            // wrong `target` succeeds at the model's actual intent — on every
+            // page, not just the first. Live (build #12): Raptor's page 1 of
+            // `pattern:"*"` fell back to files (total 350, next_offset 50),
+            // it re-issued exactly as told with `offset: 50`, and the old
+            // offset-guard below answered "the earlier pages held every
+            // match" — twenty identical times. Only fires on empty content,
+            // so it never overrides a real content hit.
+            let fallback = try searchFilesByName(
+                root: searchURL, query: pattern, maxResults: maxResults, offset: offset)
+            if !fallback.entries.isEmpty || (offset > 0 && fallback.total > 0) {
+                let corrected = FileSearchOutcome(
                     entries: fallback.entries,
+                    matchedQuery: fallback.matchedQuery,
                     truncated: fallback.truncated,
-                    warnings: fallback.truncated ? [note, Self.searchBudgetWarning] : [note]
+                    note: fallback.entries.isEmpty
+                        ? fallback.note
+                        : "(no content matches for '\(pattern)'; showing files named like '\(fallback.matchedQuery)')",
+                    total: fallback.total,
+                    offset: fallback.offset
+                )
+                return filesSearchEnvelope(originalQuery: pattern, found: corrected)
+            }
+            // Paging overrun: an `offset` past the last match is not "no
+            // matches".
+            if offset > 0 {
+                return ToolEnvelope.success(
+                    tool: name,
+                    text: "No content matches for '\(pattern)' at offset \(offset) — the earlier "
+                        + "pages held every match. Re-issue with a smaller `offset` (or 0)."
                 )
             }
             let skippedNote = Self.skippedFilesNote(skippedFiles)
@@ -2972,7 +3035,10 @@ struct FileSearchTool: OsaurusTool {
             )
         }
 
-        var output = "Found \(totalMatches) match(es):\n\n"
+        var output =
+            offset > 0
+            ? "Found \(totalMatches) match(es) (offset \(offset)):\n\n"
+            : "Found \(totalMatches) match(es):\n\n"
         var body = results.joined(separator: "\n")
 
         // Character backstop independent of the result-count clamp: a few
@@ -2994,9 +3060,13 @@ struct FileSearchTool: OsaurusTool {
                 + "tighten the pattern, or add a `file_pattern` filter."
             output += "\n\n(\(note))"
             warnings.append(note)
-        } else if totalMatches >= maxResults {
-            let note = "Results truncated at \(maxResults)."
-            output += "\n\n(\(note))"
+        } else if moreMatches {
+            let next = offset + totalMatches
+            let note =
+                "[returned=\(totalMatches), offset=\(offset), next_offset=\(next) — more matches exist. "
+                + "Call file_search again with `offset: \(next)` (same pattern/path/max_results) to continue, "
+                + "or narrow with `path` / `file_pattern`.]"
+            output += "\n\n\(note)"
             warnings.append(note)
         } else if budgetTruncated {
             output += Self.budgetTruncationNote
@@ -3037,10 +3107,10 @@ struct FileSearchTool: OsaurusTool {
     /// case-insensitive glob anchored to the full basename. Mirrors the
     /// sandbox `find … -iname` behaviour. `truncated` is true when the walk
     /// stopped at the visit budget rather than from running out of matches.
-    private func collectFileMatches(root: URL, glob: String, maxResults: Int) throws
-        -> (entries: [[String: Any]], truncated: Bool)
+    private func collectFileMatches(root: URL, glob: String, maxResults: Int, offset: Int = 0) throws
+        -> (entries: [[String: Any]], truncated: Bool, total: Int)
     {
-        guard let rootPath else { return ([], false) }
+        guard let rootPath else { return ([], false, 0) }
         let regexBody =
             NSRegularExpression.escapedPattern(for: glob)
             .replacingOccurrences(of: "\\*", with: ".*")
@@ -3050,6 +3120,10 @@ struct FileSearchTool: OsaurusTool {
 
         var entries: [[String: Any]] = []
         var budgetTruncated = false
+        // Every match is counted even once the page is full: the walk is the
+        // cost we already pay, so an exact `total` is cheap and lets the
+        // model page (`offset`) instead of guessing from a capped page.
+        var matched = 0
         let enumerator = FileManager.default.enumerator(
             at: root,
             includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
@@ -3057,7 +3131,6 @@ struct FileSearchTool: OsaurusTool {
         )
         var visited = 0
         while let fileURL = enumerator?.nextObject() as? URL {
-            guard entries.count < maxResults else { break }
             guard
                 try FolderToolHelpers.searchStepWithinBudget(
                     visited: &visited,
@@ -3089,9 +3162,11 @@ struct FileSearchTool: OsaurusTool {
             let haystack = glob.contains("/") ? relativePath : entryName
             guard haystack.range(of: regex, options: [.regularExpression, .caseInsensitive]) != nil
             else { continue }
+            matched += 1
+            guard matched > offset, entries.count < maxResults else { continue }
             entries.append(["name": entryName, "path": relativePath, "type": "file"])
         }
-        return (entries, budgetTruncated)
+        return (entries, budgetTruncated, matched)
     }
 
     /// The result of a files-mode search after any broadening: the candidate
@@ -3102,6 +3177,24 @@ struct FileSearchTool: OsaurusTool {
         let matchedQuery: String
         let truncated: Bool
         let note: String?
+        /// Matches under the walk (exact unless `truncated`), this page's
+        /// start, and the next page's start when more remain.
+        let total: Int
+        let offset: Int
+        var nextOffset: Int? {
+            let next = offset + entries.count
+            return next < total ? next : nil
+        }
+    }
+
+    /// "[total=350, returned=300, next_offset=300 …]" for a files-mode page
+    /// that did not exhaust the matches; nil when it did.
+    private static func filesPagingNote(_ found: FileSearchOutcome) -> String? {
+        guard let next = found.nextOffset else { return nil }
+        return
+            "[total=\(found.total), returned=\(found.entries.count), offset=\(found.offset), "
+            + "next_offset=\(next) — \(found.total - next) more match(es). Call file_search again with "
+            + "`offset: \(next)` (same pattern/path/max_results) to continue.]"
     }
 
     /// Files-mode search with bounded broaden-on-empty. Runs the query as
@@ -3110,35 +3203,47 @@ struct FileSearchTool: OsaurusTool {
     /// returning the first non-empty candidate set. The tokenizer is dumb on
     /// purpose (length-sorted alphanumeric tokens); no natural-language
     /// cleverness. Never decides which match the user meant.
-    private func searchFilesByName(root: URL, query: String, maxResults: Int) throws
+    private func searchFilesByName(root: URL, query: String, maxResults: Int, offset: Int = 0) throws
         -> FileSearchOutcome
     {
-        let first = try collectFileMatches(root: root, glob: query, maxResults: maxResults)
+        let first = try collectFileMatches(root: root, glob: query, maxResults: maxResults, offset: offset)
         let empty = FileSearchOutcome(
             entries: [],
             matchedQuery: query,
             truncated: first.truncated,
-            note: nil
+            note: first.total > 0 && offset >= first.total
+                ? "(offset \(offset) is past the last match; '\(query)' has \(first.total) match(es) — "
+                    + "re-issue with a smaller `offset`)"
+                : nil,
+            total: first.total,
+            offset: offset
         )
         if !first.entries.isEmpty {
             return FileSearchOutcome(
                 entries: first.entries,
                 matchedQuery: query,
                 truncated: first.truncated,
-                note: nil
+                note: nil,
+                total: first.total,
+                offset: offset
             )
         }
+        // A paging overrun (matches exist, page is past them) is not "no
+        // match" — never broaden it onto a different query.
+        guard first.total == 0 else { return empty }
 
         let tokens = Self.broadeningTokens(query)
         guard tokens.count > 1 else { return empty }
         for token in tokens.prefix(2) where token != query {
-            let broadened = try collectFileMatches(root: root, glob: token, maxResults: maxResults)
+            let broadened = try collectFileMatches(root: root, glob: token, maxResults: maxResults, offset: offset)
             if !broadened.entries.isEmpty {
                 return FileSearchOutcome(
                     entries: broadened.entries,
                     matchedQuery: token,
                     truncated: broadened.truncated,
-                    note: "(no match for '\(query)'; broadened to '\(token)')"
+                    note: "(no match for '\(query)'; broadened to '\(token)')",
+                    total: broadened.total,
+                    offset: offset
                 )
             }
         }
@@ -3164,25 +3269,32 @@ struct FileSearchTool: OsaurusTool {
     private func filesSearchEnvelope(originalQuery: String, found: FileSearchOutcome) -> String {
         if found.entries.isEmpty {
             let steer =
-                "No files matched '\(originalQuery)'. List the parent directory with `file_read` "
+                found.note
+                ?? "No files matched '\(originalQuery)'. List the parent directory with `file_read` "
                 + "to see what's there, or ask the user which file they mean."
             return ToolEnvelope.search(
                 tool: name,
                 query: originalQuery,
                 entries: [],
                 truncated: found.truncated,
-                warnings: found.truncated ? [steer, Self.searchBudgetWarning] : [steer]
+                warnings: found.truncated ? [steer, Self.searchBudgetWarning] : [steer],
+                total: found.total,
+                offset: found.offset
             )
         }
         var warnings: [String] = []
         if let note = found.note { warnings.append(note) }
+        if let paging = Self.filesPagingNote(found) { warnings.append(paging) }
         if found.truncated { warnings.append(Self.searchBudgetWarning) }
         return ToolEnvelope.search(
             tool: name,
             query: found.matchedQuery,
             entries: found.entries,
             truncated: found.truncated,
-            warnings: warnings.isEmpty ? nil : warnings
+            warnings: warnings.isEmpty ? nil : warnings,
+            total: found.total,
+            offset: found.offset,
+            nextOffset: found.nextOffset
         )
     }
 

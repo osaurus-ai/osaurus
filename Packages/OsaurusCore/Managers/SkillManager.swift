@@ -779,16 +779,72 @@ public final class SkillManager {
     /// Local models otherwise commonly turn `## Active Skill: foo` into a
     /// hallucinated `foo(...)` call (or search for the skill) instead of
     /// following the bundled instructions with their exposed file/shell tools.
-    static func activeSkillPromptSection(name: String, body: String) -> String {
-        """
-        ## Active Skill Instructions: \(name)
+    ///
+    /// `editable` adds the one line that makes skill self-improvement work
+    /// from the slash path. Without it the wrapper's own "use only the tools
+    /// exposed in this request" rule steers a compliant model AWAY from
+    /// `update_skill`: asked to change the skill it answered "Updated" with
+    /// nothing saved (a user report on 0.24.7, GPT-5.6). The tool is
+    /// pre-loaded for editable skills by `preloadedToolNames`, so the sentence
+    /// is true, and it sits in this per-turn section rather than the static
+    /// prefix, so it costs nothing in prompt-cache terms.
+    static func activeSkillPromptSection(
+        name: String,
+        body: String,
+        editable: Bool = false
+    ) -> String {
+        let editNote =
+            editable
+            ? """
 
-        This skill is already loaded for this turn. Do not search for it, call \
-        `capabilities` to load it, or invoke a tool named after the skill. Follow \
-        the instructions below using only the actual tools exposed in this request.
 
-        \(body)
-        """
+            If the user asks to change this skill's instructions, call `update_skill` \
+            (it is exposed in this request) and report only what its result says. Never \
+            state that the skill was updated unless that call succeeded.
+            """
+            : """
+
+
+            This skill is built in or provided by a plugin, so its instructions cannot be \
+            edited. If the user asks to change it, say so plainly and suggest duplicating it \
+            as a custom skill; do not describe a preference as "updated" or "saved".
+            """
+        return """
+            ## Active Skill Instructions: \(name)
+
+            This skill is already loaded for this turn. Do not search for it, call \
+            `capabilities` to load it, or invoke a tool named after the skill. Follow \
+            the instructions below using only the actual tools exposed in this request.\(editNote)
+
+            \(body)
+            """
+    }
+
+    /// Tools to ride into the turn's schema when `skill` is invoked by slash
+    /// command: the dynamic tools its instructions name (see
+    /// `toolNames(referencedIn:from:)`) plus, for a user-editable skill,
+    /// `update_skill`.
+    ///
+    /// `update_skill` is an on-demand built-in kept out of every baseline for
+    /// prompt-cache stability, and the slash wrapper forbids discovery, so
+    /// this is the ONLY way it can reach a slash-invoked turn. Loading it here
+    /// is free in cache terms: a session with an active skill already carries
+    /// that skill's text, so its prefix is unique to the session regardless.
+    /// Built-in and plugin skills are not editable, so nothing is added for
+    /// them and the wrapper does not advertise editing either.
+    public nonisolated static func preloadedToolNames(
+        for skill: Skill,
+        body: String,
+        dynamicCandidates: Set<String>
+    ) -> [String] {
+        var names = toolNames(referencedIn: body, from: dynamicCandidates)
+        if isEditable(skill) { names.append("update_skill") }
+        return names
+    }
+
+    /// Whether `update_skill` may modify this skill: user-authored only.
+    public nonisolated static func isEditable(_ skill: Skill) -> Bool {
+        !skill.isBuiltIn && !skill.isFromPlugin
     }
 
     /// Tool names out of `candidates` that `text` mentions as a whole

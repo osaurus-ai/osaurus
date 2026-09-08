@@ -148,6 +148,16 @@ public final class KnowledgeManager: ObservableObject {
         hasLoadedRegistry = true
         collections.removeAll { $0.id == id }
         NotificationCenter.default.post(name: .knowledgeCollectionsChanged, object: id)
+        // Resolve the managed content directory HERE, on the caller's actor,
+        // not inside the detached task. `OsaurusPaths.overrideRoot` is an
+        // unsynchronized static that the test harness swaps around every
+        // temp-storage test; a utility-priority task reading it seconds
+        // later, after its own test has finished and another has moved the
+        // root, took a torn `URL` and segfaulted the whole xctest process
+        // (CI, `OsaurusPaths.knowledge()` on the crashed thread). The path is
+        // fixed at delete time anyway, so capture it as a value.
+        let managedContentDir = OsaurusPaths.knowledge()
+            .appendingPathComponent(id.uuidString, isDirectory: true)
         Task.detached(priority: .utility) {
             await KnowledgeIndexService.shared.removeCollectionArtifacts(collectionId: id)
             // Discard the agent write history too. Nothing can be reverted
@@ -162,9 +172,7 @@ public final class KnowledgeManager: ObservableObject {
             // A cloned collection's content lives in our managed
             // directory; remove it with the registration. User-chosen
             // folders are never touched.
-            try? FileManager.default.removeItem(
-                at: OsaurusPaths.knowledge().appendingPathComponent(id.uuidString, isDirectory: true)
-            )
+            try? FileManager.default.removeItem(at: managedContentDir)
         }
     }
 

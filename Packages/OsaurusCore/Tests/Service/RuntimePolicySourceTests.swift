@@ -77,8 +77,13 @@ struct RuntimePolicySourceTests {
         #expect(manager.contains("if let task = activeReloadTask"))
         #expect(manager.contains("isPromptCatalogReady = true"))
 
+        // Lazy loading: the session warm-up file composes no prompt any more
+        // (there is no speculative request to compose it for).
+        #expect(
+            !(try Self.source("Services/Chat/ChatSessionWarmup.swift"))
+                .contains("SystemPromptComposer.composeChatContext")
+        )
         for path in [
-            "Services/Chat/ChatSessionWarmup.swift",
             "Views/Chat/ChatView.swift",
             "Networking/HTTPHandler.swift",
             "Services/Plugin/PluginHostAPI.swift",
@@ -100,13 +105,22 @@ struct RuntimePolicySourceTests {
         }
     }
 
-    @Test("chat warm-up uses atomic background load intent instead of a stale load probe")
+    @Test("chat loading is lazy: no speculative load, prefill or eviction outside a real request")
     func chatWarmupDoesNotSkipSameModelLoadInFlight() throws {
         let warmup = try Self.source("Services/Chat/ChatWarmupController.swift")
+        let sessionWarmup = try Self.source("Services/Chat/ChatSessionWarmup.swift")
         let runtime = try Self.source("Services/ModelRuntime.swift")
 
-        #expect(!warmup.contains("ModelRuntime.shared.hasLoadInFlight()"))
-        #expect(warmup.contains("request.backgroundModelLoad = !userIntent"))
+        for (name, src) in [("ChatWarmupController", warmup), ("ChatSessionWarmup", sessionWarmup)] {
+            #expect(!src.contains("streamChat("), "\(name) must not issue a hidden generation")
+            #expect(!src.contains(".preload("), "\(name) must not preload a model")
+            #expect(!src.contains("unloadModelsNotIn("), "\(name) must not evict on selection")
+            #expect(!src.contains("warmupPrefill"), "\(name) must not build a warm-up request")
+        }
+        let chatView = try Self.source("Views/Chat/ChatView.swift")
+        #expect(!chatView.contains("requireDSV4PreSendWarmupIfNeeded"))
+        #expect(!chatView.contains("performModelResidencySwitch"))
+        #expect(!chatView.contains("scheduleWarmup(session:"))
         #expect(runtime.contains("Diagnostics only. Do **not** gate a load on this"))
         #expect(runtime.contains("if let existingRecord = loadingTasks[name]"))
         #expect(runtime.contains("refuseBackgroundLoadIfItWouldDisturb"))
@@ -794,7 +808,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "6f01fc61cf617ff7648475585471b54fe4bf269c"
+        let expectedRuntimeHardenedRevision = "45bcb1de740d979a2322570a06edd457ce3d0697"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -1197,12 +1211,10 @@ struct RuntimePolicySourceTests {
         #expect(chatView.contains("req.cacheStableSystemPrefix ="))
         #expect(chatView.contains("finalReq.cacheStableSystemPrefix ="))
         #expect(chatView.contains("self.isRemoteAgentTarget ? nil : context.staticPrefix"))
-        #expect(chatWarmup.contains("cacheStableSystemPrefix: context.staticPrefix"))
-        #expect(
-            warmupController.contains(
-                "request.cacheStableSystemPrefix = payload.cacheStableSystemPrefix"
-            )
-        )
+        // Lazy loading: no chat warm-up request exists any more; the real
+        // send (above) is the only chat producer of the stable-prefix hint.
+        #expect(!chatWarmup.contains("cacheStableSystemPrefix"))
+        #expect(!warmupController.contains("cacheStableSystemPrefix"))
         #expect(httpHandler.contains("enriched.cacheStableSystemPrefix = composed.staticPrefix"))
         #expect(adapter.contains("cacheStableSystemPrefix: buildRawPrompt == nil"))
         #expect(adapter.contains("cacheStableSystemPrefix: cacheStableSystemPrefix"))
@@ -1522,8 +1534,12 @@ struct RuntimePolicySourceTests {
     @Test("iteration-cap wrap-up uses the typed chat stream decoder")
     func iterationCapWrapUpCannotLeakStreamingSentinels() throws {
         let chat = try Self.source("Views/Chat/ChatView.swift")
+        // The wrap-up stream lives in the nested `streamToolFreeWrapUp`
+        // (shared by the iteration-cap exit and the incomplete-work exits);
+        // the block under test runs from that function through the cap
+        // branch that calls it.
         let start = try #require(
-            chat.range(of: "if runResult.exit == .iterationCapReached && isRunActive(runId)")
+            chat.range(of: "func streamToolFreeWrapUp(notice: String, emptyText: String, failurePrefix: String) async {")
         )
         let end = try #require(
             chat.range(
@@ -1537,6 +1553,8 @@ struct RuntimePolicySourceTests {
         #expect(block.contains("assistantTurn = finalTurn"))
         #expect(block.contains("AgentLoopBudget.appendingTransientNotices("))
         #expect(block.contains("AgentToolLoop.iterationCapWrapUpNotice"))
+        #expect(block.contains("if runResult.exit == .iterationCapReached && isRunActive(runId)"))
+        #expect(block.contains("tools: nil"))
         #expect(!block.contains("let processor = StreamingDeltaProcessor("))
         #expect(!block.contains("processor.receiveDelta(delta)"))
     }
@@ -3053,6 +3071,8 @@ struct RuntimePolicySourceTests {
             "func handleSessionBecameActive(",
             in: warmup
         )
+        // Focus refreshes the residency dot from the atomic activation
+        // snapshot and schedules nothing (lazy loading).
         #expect(activationRearmBody.contains("sessionActivation = Task"))
         #expect(
             activationRearmBody.contains(
@@ -3063,13 +3083,7 @@ struct RuntimePolicySourceTests {
         #expect(activationRearmBody.contains("self.switchEpoch == epoch"))
         #expect(activationRearmBody.contains("activation.residency"))
         #expect(activationRearmBody.contains("allowDuplicateRevision: true"))
-        #expect(activationRearmBody.contains("activation.recoverableIdleDecisionID"))
-        #expect(activationRearmBody.contains("activationRecovery = ActivationRecovery("))
-        #expect(
-            activationRearmBody.contains(
-                "revalidateResidencyAfterDebounce: true"
-            )
-        )
+        #expect(!activationRearmBody.contains("scheduleWarmup("))
         let removalRecoveryBody = try Self.functionBody(
             "func handleRuntimeResidencyChanged(",
             in: warmup
@@ -3080,19 +3094,7 @@ struct RuntimePolicySourceTests {
                 "guard acceptResidencySnapshot(snapshot, selectedModel: selectedModel) else { return }"
             )
         )
-        #expect(removalRecoveryBody.contains("snapshot.reason == .idlePolicy"))
-        #expect(removalRecoveryBody.contains("recovery?.idleDecisionID == snapshot.idleDecisionID"))
-        #expect(removalRecoveryBody.contains("let matchesActivationIdleDecision = isSessionActive"))
-        #expect(
-            removalRecoveryBody.contains(
-                "if matchesActivationIdleDecision,\n            state == .warming,\n            scheduledActivationID != nil"
-            )
-        )
-        #expect(
-            removalRecoveryBody.contains(
-                "revalidateResidencyAfterDebounce: true"
-            )
-        )
+        #expect(!removalRecoveryBody.contains("scheduleWarmup("))
         let revisionGateBody = try Self.functionBody(
             "private func acceptResidencySnapshot(",
             in: warmup
@@ -3134,7 +3136,7 @@ struct RuntimePolicySourceTests {
     /// run's model sat resident until the full idle policy expired while every
     /// speculative chat warm-up was refused ("a different model is resident"),
     /// leaving an open chat cold indefinitely.
-    @Test("background task completion releases residency and re-arms chat warm-up")
+    @Test("background task completion releases residency and refreshes the chat residency dot")
     func backgroundTaskCompletionReleasesResidencyAndRearmsWarmup() throws {
         let tasks = try Self.source("Managers/BackgroundTaskManager.swift")
 
@@ -3188,17 +3190,15 @@ struct RuntimePolicySourceTests {
         #expect(rearmBody.contains("isChatWindowActive(id: id)"))
         #expect(rearmBody.contains("notifySessionBecameActive()"))
 
-        // The freed-slot rewarm closes the different-model race (rearm can
-        // fire before the release unload lands): the residency notification
-        // for the idle removal that empties the runtime schedules the
-        // warm-up, and only when the removed model was not the chat's own.
+        // Lazy loading: a freed slot never rewarms the chat; the residency
+        // notification only refreshes the dot.
         let warmup = try Self.source("Services/Chat/ChatWarmupController.swift")
         let removalBody = try Self.functionBody(
             "func handleRuntimeResidencyChanged(",
             in: warmup
         )
-        #expect(removalBody.contains("guard !wasSelectedModelResident,"))
-        #expect(removalBody.contains("snapshot.names.isEmpty"))
+        #expect(!removalBody.contains("scheduleWarmup("))
+        #expect(removalBody.contains("acceptResidencySnapshot(snapshot, selectedModel: selectedModel)"))
     }
 
     /// Management-window deeplink reuse swaps the hosting controller of a
@@ -3912,6 +3912,46 @@ struct RuntimePolicySourceTests {
         #expect(
             picker.contains("? [ModelOptionSegment(id: \"off\", label: L(\"Off\"))]"),
             "Blocked bundles must not advertise selectable Auto or explicit-depth chips."
+        )
+    }
+    @Test("Swap-pressure banner unloads through the guarded lifecycle and reports a refusal")
+    func swapBannerUnloadUsesGuardedLifecycle() throws {
+        let floatingInput = try Self.source("Views/Chat/FloatingInputCard.swift")
+        let bannerStart = try #require(floatingInput.range(of: "private func swapPressureBanner("))
+        let bannerEnd = try #require(
+            floatingInput.range(
+                of: "private func swapPrimaryButton(",
+                range: bannerStart.upperBound ..< floatingInput.endIndex
+            )
+        )
+        let banner = String(floatingInput[bannerStart.lowerBound ..< bannerEnd.lowerBound])
+
+        #expect(
+            banner.contains("await MLXService.shared.unloadRuntimeModel(named: target)"),
+            "The banner's Unload Model must take the same guarded path as the cache inspector: Stop-lifecycle preparation of every session on the model, then the timed runtime unload"
+        )
+        #expect(
+            !banner.contains("ModelRuntime.shared.unload(name:"),
+            "The banner must not call the runtime unload directly (that skipped session preparation and the lease-drain timeout, and dropped the result)"
+        )
+        #expect(
+            banner.contains("if !didUnload {") && banner.contains("swapUnloadFailure = String("),
+            "A refused unload (model still in use after the lease-drain timeout) must be reported in the banner instead of being discarded"
+        )
+        #expect(
+            banner.contains("guard let target, !swapUnloadInFlight else { return }")
+                && banner.contains(".disabled(swapUnloadInFlight)"),
+            "The Unload control must be single-flight while the runtime drains leases"
+        )
+        #expect(
+            banner.contains("let target = swap.emulated ? selectedModel : (swap.modelName ?? selectedModel)"),
+            "An emulated banner names a placeholder model; its Unload must target the chat's selected model (the live proof pressed Unload against \"Simulated Model\" and nothing was unloaded)"
+        )
+        let buttonsStart = bannerEnd.lowerBound
+        let buttons = String(floatingInput[buttonsStart...].prefix(2600))
+        #expect(
+            buttons.components(separatedBy: ".accessibilityLabel(Text(verbatim: title))").count >= 3,
+            "Both banner button helpers must expose their own title to accessibility; the banner container's label otherwise shadows Unload, Keep Running and Activity Monitor with the same sentence"
         )
     }
 }

@@ -310,6 +310,44 @@ struct SearchDiagnosticsExtractionTests {
         let data = try #require(json.data(using: .utf8))
         return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
+
+    /// A server that keeps sending bytes slower than the whole-response
+    /// budget: with the bounded configuration the transfer ends at the page
+    /// timeout, and a cancelled task returns at once. (URLSession level: the
+    /// extractor's SSRF preflight refuses loopback URLs by design, so the
+    /// mechanism is proven on the session the extractor builds.)
+    @Test func boundedSessionGivesUpOnATricklingServerAndHonoursCancellation() async throws {
+        let server = try TricklingHTTPServer(chunkEvery: 0.25, chunks: 200)
+        defer { server.stop() }
+        let url = URL(string: "http://127.0.0.1:\(server.port)/slow")!
+
+        let bounded = URLSession(configuration: SearchReadability.boundedConfiguration(.ephemeral, timeout: 2))
+        let started = Date()
+        var timedOut = false
+        do {
+            let (bytes, _) = try await bounded.bytes(for: URLRequest(url: url))
+            for try await _ in bytes { }
+        } catch {
+            timedOut = (error as? URLError)?.code == .timedOut
+        }
+        let elapsed = Date().timeIntervalSince(started)
+        #expect(timedOut, "expected the resource timeout to end the transfer")
+        #expect(elapsed < 8, "gave up after \(elapsed)s, not at the 2 s budget")
+
+        let task = Task { () -> Bool in
+            do {
+                let (bytes, _) = try await bounded.bytes(for: URLRequest(url: url))
+                for try await _ in bytes { }
+                return false
+            } catch { return true }
+        }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let cancelStarted = Date()
+        task.cancel()
+        let threw = await task.value
+        #expect(threw)
+        #expect(Date().timeIntervalSince(cancelStarted) < 2, "cancellation must return promptly")
+    }
 }
 
 private final class SearchExtractionHTTPStubProtocol: URLProtocol {
@@ -339,4 +377,63 @@ private final class SearchExtractionHTTPStubProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+
+    /// Ornith research run 2026-09-06: the second `search_and_extract` of a
+    /// blocked page held the tool loop ~5 minutes although the tool promised
+    /// 25 s — `URLRequest.timeoutInterval` only bounds idle time and a
+    /// session's default resource timeout is seven days. The per-page timeout
+    /// must bound the whole fetch.
+    @Test func extractionSessionBoundsTheWholeFetchToThePageTimeout() {
+        let configuration = SearchReadability.boundedConfiguration(.ephemeral, timeout: 7)
+        #expect(configuration.timeoutIntervalForRequest == 7)
+        #expect(configuration.timeoutIntervalForResource == 7)
+        let fresh = URLSessionConfiguration.ephemeral
+        #expect(fresh.timeoutIntervalForResource > 7, "the default resource timeout is what let the fetch run on")
+    }
+
+}
+
+/// Minimal localhost HTTP server for the timeout test: one connection at a
+/// time, headers first, then a fixed-size body dripped in small chunks.
+private final class TricklingHTTPServer: @unchecked Sendable {
+    let port: UInt16
+    private let socket: Int32
+    private let queue = DispatchQueue(label: "trickling-http")
+    private var stopped = false
+
+    init(chunkEvery: TimeInterval, chunks: Int) throws {
+        let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+        socket = fd
+        var one: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, socklen_t(MemoryLayout<Int32>.size))
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = 0
+        addr.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        let bound = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        guard bound == 0, listen(fd, 4) == 0 else { throw NSError(domain: "trickle", code: 1) }
+        var bound2 = sockaddr_in(); var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &bound2) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) } }
+        port = UInt16(bigEndian: bound2.sin_port)
+        queue.async { [weak self] in
+            while let self, !self.stopped {
+                let client = accept(fd, nil, nil)
+                guard client >= 0 else { break }
+                var noSigpipe: Int32 = 1
+                setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
+                var buf = [UInt8](repeating: 0, count: 4096)
+                _ = recv(client, &buf, buf.count, 0)
+                let chunk = [UInt8](repeating: 0x61, count: 64)
+                let header = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: \(chunk.count * chunks)\r\nConnection: close\r\n\r\n"
+                _ = header.withCString { send(client, $0, strlen($0), 0) }
+                for _ in 0..<chunks where !self.stopped {
+                    if send(client, chunk, chunk.count, 0) < 0 { break }
+                    Thread.sleep(forTimeInterval: chunkEvery)
+                }
+                close(client)
+            }
+        }
+    }
+
+    func stop() { stopped = true; close(socket) }
 }
