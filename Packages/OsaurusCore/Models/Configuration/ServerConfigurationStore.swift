@@ -23,6 +23,27 @@ enum ServerConfigurationStore {
     /// Double-optional: `.some(nil)` caches "no file on disk".
     private static var cachedLoadResult: ServerConfiguration??
 
+    /// Save provenance belongs in the same atomic JSON write as the policy.
+    /// Otherwise a first explicit `immediately` choice looks like the legacy
+    /// default on the next launch when no migration sidecar exists yet.
+    private struct SavedConfiguration: Encodable {
+        let configuration: ServerConfiguration
+
+        func encode(to encoder: Encoder) throws {
+            try configuration.encode(to: encoder)
+            var metadata = encoder.container(keyedBy: SaveMetadata.CodingKeys.self)
+            try metadata.encode(1, forKey: .idleResidencyPolicyVersion)
+        }
+    }
+
+    private struct SaveMetadata: Decodable {
+        let idleResidencyPolicyVersion: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case idleResidencyPolicyVersion = "_modelIdleResidencyPolicyVersion"
+        }
+    }
+
     static func load() -> ServerConfiguration? {
         if let cached = cachedLoadResult { return cached }
         let loaded = loadFromDisk()
@@ -34,8 +55,13 @@ enum ServerConfigurationStore {
         let url = configurationFileURL()
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         do {
-            var configuration = try JSONDecoder().decode(ServerConfiguration.self, from: Data(contentsOf: url))
-            if migrateLegacyImmediateIdleResidencyIfNeeded(&configuration) {
+            let data = try Data(contentsOf: url)
+            let decoder = JSONDecoder()
+            var configuration = try decoder.decode(ServerConfiguration.self, from: data)
+            let metadata = try decoder.decode(SaveMetadata.self, from: data)
+            if (metadata.idleResidencyPolicyVersion ?? 0) < 1,
+                migrateLegacyImmediateIdleResidencyIfNeeded(&configuration)
+            {
                 save(configuration)
             }
             return configuration
@@ -52,7 +78,7 @@ enum ServerConfigurationStore {
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(configuration)
+            let data = try encoder.encode(SavedConfiguration(configuration: configuration))
             // Persist off the main thread. Tests (override directory / root)
             // read the file back immediately, so they write synchronously.
             ConfigDiskWriter.write(

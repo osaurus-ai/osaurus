@@ -164,8 +164,56 @@ struct ServerConfigurationStoreTests {
         explicitImmediate.modelIdleResidencyPolicy = .immediately
         ServerConfigurationStore.save(explicitImmediate)
 
+        // A second read must hit disk, not the store's cached save value.
+        ServerConfigurationStore.overrideDirectory = dir
         let reloaded = try #require(ServerConfigurationStore.load())
         #expect(reloaded.modelIdleResidencyPolicy == .immediately)
+    }
+
+    @Test @MainActor func modelIdleResidencyPolicy_preservesFirstExplicitImmediateAcrossReload() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-explicit-idle-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        ServerConfigurationStore.overrideDirectory = dir
+        defer {
+            ServerConfigurationStore.overrideDirectory = nil
+            try? FileManager.default.removeItem(at: dir)
+        }
+
+        #expect(ServerConfigurationStore.load() == nil)
+        var explicit = ServerConfiguration.default
+        explicit.modelIdleResidencyPolicy = .immediately
+        ServerConfigurationStore.save(explicit)
+
+        ServerConfigurationStore.overrideDirectory = dir
+        #expect(try #require(ServerConfigurationStore.load()).modelIdleResidencyPolicy == .immediately)
+        let disk = try JSONDecoder().decode(
+            ServerConfiguration.self,
+            from: Data(contentsOf: dir.appendingPathComponent("server.json"))
+        )
+        #expect(disk.modelIdleResidencyPolicy == .immediately)
+    }
+
+    @Test @MainActor func modelIdleResidencyPolicy_preservesExplicitImmediateAfterWarmInstall() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-warm-idle-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        ServerConfigurationStore.overrideDirectory = dir
+        defer {
+            ServerConfigurationStore.overrideDirectory = nil
+            try? FileManager.default.removeItem(at: dir)
+        }
+
+        // Matches the live before-control: an existing warm configuration,
+        // but no legacy-immediate migration has ever been needed.
+        try JSONEncoder().encode(ServerConfiguration.default)
+            .write(to: dir.appendingPathComponent("server.json"), options: .atomic)
+        var explicit = try #require(ServerConfigurationStore.load())
+        explicit.modelIdleResidencyPolicy = .immediately
+        ServerConfigurationStore.save(explicit)
+
+        ServerConfigurationStore.overrideDirectory = dir
+        #expect(try #require(ServerConfigurationStore.load()).modelIdleResidencyPolicy == .immediately)
     }
 
     @Test func modelIdleResidencyPolicy_defaultsWhenMalformed() async throws {
