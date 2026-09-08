@@ -896,6 +896,43 @@ extension AgentManager {
         return AutonomousExecConfig(enabled: true)
     }
 
+    // MARK: - Host folder vs sandbox
+
+    /// The sandbox config an agent should be left with once a trusted host
+    /// folder is attached to one of its chats. A host folder and the VM are
+    /// mutually exclusive: `resolveExecutionMode` lets the sandbox win, so
+    /// while it is on the folder is silently suspended and the model only
+    /// sees `/workspace/agents/<id>/`. With the sandbox on by default for
+    /// every custom agent and no in-chat toggle, the folder selection is the
+    /// user's explicit choice and must turn the sandbox off. Takes the
+    /// *effective* config so an unconfigured (implicitly ON) agent gets an
+    /// explicit opt-out persisted. Returns nil when nothing needs to change.
+    static func autonomousExecForHostFolder(
+        effective: AutonomousExecConfig?
+    ) -> AutonomousExecConfig? {
+        guard var config = effective, config.enabled || config.allowHostFolderWrites else {
+            return nil
+        }
+        config.enabled = false
+        config.allowHostFolderWrites = false
+        return config
+    }
+
+    /// Disable the agent's sandbox because a trusted host folder was
+    /// selected for its chat (composer folder chip, or a project's working
+    /// folder applied to a new chat). Returns true when a change was
+    /// persisted, false when the sandbox was already off.
+    @discardableResult
+    public func disableSandboxForHostFolder(agentId: UUID) async throws -> Bool {
+        guard
+            let config = Self.autonomousExecForHostFolder(
+                effective: effectiveAutonomousExec(for: agentId)
+            )
+        else { return false }
+        try await updateAutonomousExec(config, for: agentId)
+        return true
+    }
+
     /// Claude Code backend config for an agent, falling back to the safe
     /// default (agent mode, read-only tools) when the agent predates the
     /// setting or doesn't exist.

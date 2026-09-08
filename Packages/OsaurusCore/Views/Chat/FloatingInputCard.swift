@@ -3523,12 +3523,8 @@ extension FloatingInputCard {
         let manager = agentManager
         Task {
             guard await folderState.selectFolder(from: window) != nil else { return }
-            var config = manager.effectiveAutonomousExec(for: agentId) ?? .default
-            guard config.enabled else { return }
-            config.enabled = false
-            config.allowHostFolderWrites = false
             do {
-                try await manager.updateAutonomousExec(config, for: agentId)
+                try await manager.disableSandboxForHostFolder(agentId: agentId)
             } catch {
                 // Fail closed: do not leave a UI state that appears trusted
                 // while the VM boundary is still authoritative.

@@ -696,9 +696,16 @@ struct ProjectDetailView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
-            Text("New chats in this project open with this folder.", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+            // Spell out the sandbox side effect: a chat works in either its
+            // folder or the sandbox, never both, so applying this folder
+            // turns the sandbox off for the chat's agent (same as the
+            // composer's folder chip).
+            Text(
+                "New chats in this project open with this folder. Their agent's sandbox is turned off, since a chat uses either a folder or the sandbox.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.secondaryText)
 
             if let path = folderDisplayPath, !path.isEmpty {
                 HStack(spacing: 10) {

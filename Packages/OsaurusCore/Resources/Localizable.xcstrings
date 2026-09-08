@@ -123265,36 +123265,36 @@
         }
       }
     },
-    "New chats in this project open with this folder.": {
+    "New chats in this project open with this folder. Their agent's sandbox is turned off, since a chat uses either a folder or the sandbox.": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Neue Chats in diesem Projekt öffnen mit diesem Ordner."
+            "value": "Neue Chats in diesem Projekt öffnen mit diesem Ordner. Die Sandbox ihres Agenten wird ausgeschaltet, da ein Chat entweder einen Ordner oder die Sandbox verwendet."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "이 프로젝트의 새 채팅은 이 폴더로 시작합니다."
+            "value": "이 프로젝트의 새 채팅은 이 폴더로 시작합니다. 채팅은 폴더 또는 샌드박스 중 하나만 사용하므로 해당 에이전트의 샌드박스는 꺼집니다."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Новые чаты в этом проекте открываются с этой папкой."
+            "value": "Новые чаты в этом проекте открываются с этой папкой. Песочница их агента отключается, так как чат использует либо папку, либо песочницу."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "此项目中的新聊天将以此文件夹打开。"
+            "value": "此项目中的新聊天将以此文件夹打开。由于聊天只能使用文件夹或沙盒之一，其代理的沙盒将被关闭。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "此專案中的新聊天將以此資料夾開啟。"
+            "value": "此專案中的新聊天將以此資料夾開啟。由於聊天只能使用資料夾或沙盒之一，其代理的沙盒將被關閉。"
           }
         }
       }

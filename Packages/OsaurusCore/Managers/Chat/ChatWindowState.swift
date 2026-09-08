@@ -445,11 +445,45 @@ final class ChatWindowState: ObservableObject {
         }
         // `reset`/`installFreshSession` clear membership; re-stamp it.
         session.projectId = project.id
-        // A default, not a lock: never overrides a folder the chat picks
-        // itself. Restoring the security-scoped bookmark is the same path
-        // a persisted chat folder takes on reopen.
-        if project.folderBookmark != nil, !session.folderState.hasActiveFolder {
-            session.folderState.restore(bookmark: project.folderBookmark, path: project.folderPath)
+        adoptProjectFolder(project)
+    }
+
+    /// Apply the project's working folder to the current (fresh) session.
+    /// A default, not a lock: never overrides a folder the chat picks
+    /// itself. Restoring the security-scoped bookmark is the same path a
+    /// persisted chat folder takes on reopen.
+    ///
+    /// Once the folder resolves, the agent's sandbox is turned off, exactly
+    /// as the composer's folder chip does on selection. The sandbox wins
+    /// over a folder in `resolveExecutionMode`, and it is on by default for
+    /// every custom agent with no in-chat toggle, so without this the chat
+    /// showed the project folder while the model was jailed to its
+    /// `/workspace/agents/<id>/` home and reported the folder unreachable.
+    /// Returns the follow-up task (nil when no folder was applied) so
+    /// callers and tests can await the sandbox change.
+    @discardableResult
+    func adoptProjectFolder(_ project: Project) -> Task<Void, Never>? {
+        let hasFolder = project.folderBookmark != nil || project.folderPath?.isEmpty == false
+        guard hasFolder, !session.folderState.hasActiveFolder else { return nil }
+        let folderState = session.folderState
+        folderState.restore(bookmark: project.folderBookmark, path: project.folderPath)
+        let agentId = agentId
+        return Task { @MainActor in
+            // Only a folder that actually resolved earns the switch: a stale
+            // bookmark whose path is gone leaves the agent as it was rather
+            // than stranding it with no sandbox AND no folder.
+            guard await folderState.contextWaitingForRestore() != nil else { return }
+            do {
+                try await AgentManager.shared.disableSandboxForHostFolder(agentId: agentId)
+            } catch {
+                // Fail closed, same as the composer chip: never show a folder
+                // as active while the VM boundary is still authoritative.
+                folderState.clearFolder()
+                debugLog(
+                    "[Workspace] Could not disable sandbox after applying project folder: "
+                        + error.localizedDescription
+                )
+            }
         }
     }
 
@@ -464,9 +498,7 @@ final class ChatWindowState: ObservableObject {
         newTab()
         guard let project else { return }
         session.projectId = project.id
-        if project.folderBookmark != nil, !session.folderState.hasActiveFolder {
-            session.folderState.restore(bookmark: project.folderBookmark, path: project.folderPath)
-        }
+        adoptProjectFolder(project)
     }
 
     /// Start a new chat. Browser-style: a blank active tab is reused in
