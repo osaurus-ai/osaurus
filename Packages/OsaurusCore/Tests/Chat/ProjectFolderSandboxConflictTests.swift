@@ -44,13 +44,15 @@ struct ProjectFolderSandboxConflictTests {
 
     // MARK: - Pure policy seam
 
-    @Test("sandbox on → explicit opt-out with host writes cleared")
+    @Test("sandbox on → explicit opt-out, other settings preserved")
     func policy_disablesEnabledSandbox() {
         var enabled = AutonomousExecConfig(enabled: true)
-        enabled.allowHostFolderWrites = true
+        enabled.sandboxNetworkEnabled = false
+        enabled.maxCommandsPerTurn = 3
         let result = AgentManager.autonomousExecForHostFolder(effective: enabled)
         #expect(result?.enabled == false)
-        #expect(result?.allowHostFolderWrites == false)
+        #expect(result?.sandboxNetworkEnabled == false)
+        #expect(result?.maxCommandsPerTurn == 3)
     }
 
     @Test("implicit default-on config (unconfigured agent) is also opted out")

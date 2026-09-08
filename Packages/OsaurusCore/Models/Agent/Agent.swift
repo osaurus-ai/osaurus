@@ -476,21 +476,10 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
     public var enabled: Bool
     public var maxCommandsPerTurn: Int
     public var pluginCreate: Bool
-    /// Combined sandbox + host-read mode: allow the host read tools to
-    /// read secret files (`.env`, keys, credentials) inside the read-only
-    /// workspace. Defaults `false` (refuse) — the user opts in explicitly,
-    /// trading the exfiltration protection for convenience.
-    public var allowHostSecretReads: Bool
-    /// Combined mode: allow `file_write` / `file_edit` to mutate the
-    /// selected host folder (writes are change-tracked and undoable via
-    /// the Changes sheet; exec stays sandbox-only). Defaults `false` —
-    /// the folder rides along read-only until the user opts in.
-    public var allowHostFolderWrites: Bool
     /// Whether the sandbox VM gets outbound network. Defaults `true`
     /// (egress on) so a first-time user's sandbox can fetch packages and
     /// live data without an extra opt-in. Set `false` to cut the network
-    /// leg of the agent-as-bridge exfiltration path — pairs naturally with
-    /// combined mode (read-only host + no egress). Honored at VM boot.
+    /// leg of the agent-as-bridge exfiltration path. Honored at VM boot.
     public var sandboxNetworkEnabled: Bool
     /// Optional egress domain allowlist. When non-empty (and
     /// `sandboxNetworkEnabled` is on), the sandbox boots on a host-only
@@ -511,8 +500,6 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
         enabled: false,
         maxCommandsPerTurn: 10,
         pluginCreate: true,
-        allowHostSecretReads: false,
-        allowHostFolderWrites: false,
         sandboxNetworkEnabled: true,
         backgroundProcessEnabled: false
     )
@@ -521,8 +508,6 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
         enabled: Bool = false,
         maxCommandsPerTurn: Int = 10,
         pluginCreate: Bool = true,
-        allowHostSecretReads: Bool = false,
-        allowHostFolderWrites: Bool = false,
         sandboxNetworkEnabled: Bool = true,
         sandboxAllowedDomains: [String]? = nil,
         backgroundProcessEnabled: Bool = false
@@ -530,8 +515,6 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
         self.enabled = enabled
         self.maxCommandsPerTurn = maxCommandsPerTurn
         self.pluginCreate = pluginCreate
-        self.allowHostSecretReads = allowHostSecretReads
-        self.allowHostFolderWrites = allowHostFolderWrites
         self.sandboxNetworkEnabled = sandboxNetworkEnabled
         self.sandboxAllowedDomains = sandboxAllowedDomains
         self.backgroundProcessEnabled = backgroundProcessEnabled
@@ -539,24 +522,22 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case enabled, maxCommandsPerTurn, pluginCreate
-        case allowHostSecretReads, allowHostFolderWrites, sandboxNetworkEnabled
+        case sandboxNetworkEnabled
         case sandboxAllowedDomains
         case backgroundProcessEnabled
     }
 
     // Custom decode so agents persisted before these fields existed keep
-    // loading: missing keys fall back to the safe defaults (secrets
-    // refused, egress on) rather than failing the whole agent decode.
-    // A legacy `commandTimeout` key may still be present in older agent
-    // JSON; keyed decoding ignores it harmlessly (the field was unused).
+    // loading: missing keys fall back to the safe defaults (egress on)
+    // rather than failing the whole agent decode. Legacy keys may still be
+    // present in older agent JSON (`commandTimeout`, and the combined-mode
+    // `allowHostSecretReads` / `allowHostFolderWrites` grants removed with
+    // combined mode); keyed decoding ignores them harmlessly.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
         maxCommandsPerTurn = try c.decodeIfPresent(Int.self, forKey: .maxCommandsPerTurn) ?? 10
         pluginCreate = try c.decodeIfPresent(Bool.self, forKey: .pluginCreate) ?? true
-        allowHostSecretReads = try c.decodeIfPresent(Bool.self, forKey: .allowHostSecretReads) ?? false
-        allowHostFolderWrites =
-            try c.decodeIfPresent(Bool.self, forKey: .allowHostFolderWrites) ?? false
         sandboxNetworkEnabled = try c.decodeIfPresent(Bool.self, forKey: .sandboxNetworkEnabled) ?? true
         sandboxAllowedDomains = try c.decodeIfPresent([String].self, forKey: .sandboxAllowedDomains)
         backgroundProcessEnabled =

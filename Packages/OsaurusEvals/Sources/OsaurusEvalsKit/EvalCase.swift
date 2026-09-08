@@ -327,16 +327,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Outbound network from the VM (honored at boot — flipping it
         /// per-case does NOT restart an already-running container).
         public let networkEnabled: Bool?
-        /// Combined mode only: let host read tools open secret-shaped
-        /// files (`.env`, keys) in the read-only host workspace.
-        public let allowHostSecretReads: Bool?
-        /// Combined mode only: the writable opt-in
-        /// (`AutonomousExecConfig.allowHostFolderWrites`) — `file_write` /
-        /// `file_edit` join the schema and may mutate the host workspace
-        /// (relative paths) or the sandbox (`/workspace/...` paths);
-        /// `sandbox_write_file` is hidden. Default false → the workspace
-        /// stays read-only.
-        public let allowHostFolderWrites: Bool?
         /// `sandbox_exec` per-turn call budget.
         public let maxCommandsPerTurn: Int?
         /// Combined mode: the case's temp workspace (with
@@ -359,8 +349,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             pluginCreate: Bool? = nil,
             backgroundProcessEnabled: Bool? = nil,
             networkEnabled: Bool? = nil,
-            allowHostSecretReads: Bool? = nil,
-            allowHostFolderWrites: Bool? = nil,
             maxCommandsPerTurn: Int? = nil,
             hostFolder: Bool? = nil,
             seedFiles: [WorkspaceFile]? = nil,
@@ -369,8 +357,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.pluginCreate = pluginCreate
             self.backgroundProcessEnabled = backgroundProcessEnabled
             self.networkEnabled = networkEnabled
-            self.allowHostSecretReads = allowHostSecretReads
-            self.allowHostFolderWrites = allowHostFolderWrites
             self.maxCommandsPerTurn = maxCommandsPerTurn
             self.hostFolder = hostFolder
             self.seedFiles = seedFiles

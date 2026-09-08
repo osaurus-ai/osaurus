@@ -60,8 +60,8 @@ struct SandboxEvalFixtureTests {
         #expect(sandbox.pluginCreate == false)
         #expect(sandbox.backgroundProcessEnabled == true)
         #expect(sandbox.networkEnabled == false)
-        #expect(sandbox.allowHostSecretReads == true)
-        #expect(sandbox.allowHostFolderWrites == true)
+        // `allowHostSecretReads` / `allowHostFolderWrites` in the JSON above
+        // are legacy combined-mode keys: still accepted, no longer surfaced.
         #expect(sandbox.maxCommandsPerTurn == 4)
         #expect(sandbox.hostFolder == true)
         #expect(sandbox.seedFiles?.first?.path == "data/info.txt")
@@ -97,8 +97,6 @@ struct SandboxEvalFixtureTests {
         #expect(config.enabled)
         #expect(config.maxCommandsPerTurn == 10)
         #expect(config.pluginCreate)
-        #expect(!config.allowHostSecretReads)
-        #expect(!config.allowHostFolderWrites)
         #expect(config.sandboxNetworkEnabled)
         #expect(!config.backgroundProcessEnabled)
     }
@@ -109,16 +107,12 @@ struct SandboxEvalFixtureTests {
                 pluginCreate: false,
                 backgroundProcessEnabled: true,
                 networkEnabled: false,
-                allowHostSecretReads: true,
-                allowHostFolderWrites: true,
                 maxCommandsPerTurn: 3
             )
         )
         #expect(config.enabled)
         #expect(config.maxCommandsPerTurn == 3)
         #expect(!config.pluginCreate)
-        #expect(config.allowHostSecretReads)
-        #expect(config.allowHostFolderWrites)
         #expect(!config.sandboxNetworkEnabled)
         #expect(config.backgroundProcessEnabled)
     }

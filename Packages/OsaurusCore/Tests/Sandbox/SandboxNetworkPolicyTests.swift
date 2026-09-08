@@ -39,17 +39,18 @@
 
         // MARK: - Per-agent config defaults + back-compat
 
-        @Test func autonomousConfigDefaultsToNetworkOnSecretsOff() {
+        @Test func autonomousConfigDefaultsToNetworkOn() {
             let config = AutonomousExecConfig.default
             #expect(config.sandboxNetworkEnabled == true)
-            #expect(config.allowHostSecretReads == false)
         }
 
         @Test func legacyConfigDecodesToSafeDefaults() throws {
             // An agent persisted before these fields existed must keep
-            // loading: egress on, secrets refused.
+            // loading: egress on. The removed combined-mode grants
+            // (`allowHostSecretReads` / `allowHostFolderWrites`) may still
+            // sit in older JSON and are ignored.
             let legacy = """
-                {"enabled":true,"maxCommandsPerTurn":10,"commandTimeout":30,"pluginCreate":true}
+                {"enabled":true,"maxCommandsPerTurn":10,"commandTimeout":30,"pluginCreate":true,"allowHostSecretReads":true,"allowHostFolderWrites":true}
                 """
             let decoded = try JSONDecoder().decode(
                 AutonomousExecConfig.self,
@@ -57,18 +58,15 @@
             )
             #expect(decoded.enabled == true)
             #expect(decoded.sandboxNetworkEnabled == true)
-            #expect(decoded.allowHostSecretReads == false)
         }
 
         @Test func newFieldsRoundTripThroughCodable() throws {
             let original = AutonomousExecConfig(
                 enabled: true,
-                allowHostSecretReads: true,
                 sandboxNetworkEnabled: false
             )
             let data = try JSONEncoder().encode(original)
             let decoded = try JSONDecoder().decode(AutonomousExecConfig.self, from: data)
-            #expect(decoded.allowHostSecretReads == true)
             #expect(decoded.sandboxNetworkEnabled == false)
         }
 

@@ -910,11 +910,8 @@ extension AgentManager {
     static func autonomousExecForHostFolder(
         effective: AutonomousExecConfig?
     ) -> AutonomousExecConfig? {
-        guard var config = effective, config.enabled || config.allowHostFolderWrites else {
-            return nil
-        }
+        guard var config = effective, config.enabled else { return nil }
         config.enabled = false
-        config.allowHostFolderWrites = false
         return config
     }
 
