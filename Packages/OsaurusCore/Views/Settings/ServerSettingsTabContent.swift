@@ -377,58 +377,7 @@ struct ServerSettingsTabContent: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    ConnectionSection(draft: $draft)
-                        .id(ServerSettingsSection.connection)
-                        .settingsSearchHighlight(landedSection == .connection)
-                    GlobalProxySection(draft: $draftLegacy)
-                        .id(ServerSettingsSection.globalProxy)
-                        .settingsSearchHighlight(landedSection == .globalProxy)
-                    AuthenticationSection(draft: $draft)
-                        .id(ServerSettingsSection.authentication)
-                        .settingsSearchHighlight(landedSection == .authentication)
-                    GenerationDefaultsSection(draft: $draft)
-                        .id(ServerSettingsSection.sampling)
-                        .settingsSearchHighlight(landedSection == .sampling)
-                    ConcurrencySection(draft: $draft)
-                        .id(ServerSettingsSection.concurrency)
-                        .settingsSearchHighlight(landedSection == .concurrency)
-                    CacheSection(
-                        draft: $draft,
-                        metadataFallbackTokens: $draftMetadataFallbackTokens,
-                        contextLengthCap: $draftContextLengthCap,
-                        savedSettings: server.runtimeSettings,
-                        savedMetadataFallbackTokens: savedMetadataFallbackTokens,
-                        savedContextLengthCap: savedContextLengthCap
-                    )
-                    .id(ServerSettingsSection.cache)
-                    .settingsSearchHighlight(landedSection == .cache)
-                    MemorySafetySection(draft: $draft)
-                        .id(ServerSettingsSection.memorySafety)
-                        .settingsSearchHighlight(landedSection == .memorySafety)
-                    DecodePerformanceSection(draft: $draft)
-                        .id(ServerSettingsSection.decodePerformance)
-                        .settingsSearchHighlight(landedSection == .decodePerformance)
-                    MTPSection(draft: $draft)
-                        .id(ServerSettingsSection.speculative)
-                        .settingsSearchHighlight(landedSection == .speculative)
-                    LiveActivitySection()
-                        .id(ServerSettingsSection.liveActivity)
-                        .settingsSearchHighlight(landedSection == .liveActivity)
-                    MultimodalSection(draft: $draft)
-                        .id(ServerSettingsSection.multimodal)
-                        .settingsSearchHighlight(landedSection == .multimodal)
-                    ToolsTemplatesSection(draft: $draft)
-                        .id(ServerSettingsSection.tools)
-                        .settingsSearchHighlight(landedSection == .tools)
-                    ModelResidencySection(draft: $draftLegacy)
-                        .id(ServerSettingsSection.modelMemory)
-                        .settingsSearchHighlight(landedSection == .modelMemory)
-                    PowerSection(draft: $draft)
-                        .id(ServerSettingsSection.power)
-                        .settingsSearchHighlight(landedSection == .power)
-                    AdvancedHTTPSection(draft: $draftLegacy)
-                        .id(ServerSettingsSection.requestLimits)
-                        .settingsSearchHighlight(landedSection == .requestLimits)
+                    settingsSections
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 24)
@@ -445,6 +394,62 @@ struct ServerSettingsTabContent: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var settingsSections: some View {
+        ConnectionSection(draft: $draft)
+            .id(ServerSettingsSection.connection)
+            .settingsSearchHighlight(landedSection == .connection)
+        GlobalProxySection(draft: $draftLegacy)
+            .id(ServerSettingsSection.globalProxy)
+            .settingsSearchHighlight(landedSection == .globalProxy)
+        AuthenticationSection(draft: $draft)
+            .id(ServerSettingsSection.authentication)
+            .settingsSearchHighlight(landedSection == .authentication)
+        GenerationDefaultsSection(draft: $draft)
+            .id(ServerSettingsSection.sampling)
+            .settingsSearchHighlight(landedSection == .sampling)
+        ConcurrencySection(draft: $draft)
+            .id(ServerSettingsSection.concurrency)
+            .settingsSearchHighlight(landedSection == .concurrency)
+        CacheSection(
+            draft: $draft,
+            metadataFallbackTokens: $draftMetadataFallbackTokens,
+            contextLengthCap: $draftContextLengthCap,
+            savedSettings: server.runtimeSettings,
+            savedMetadataFallbackTokens: savedMetadataFallbackTokens,
+            savedContextLengthCap: savedContextLengthCap
+        )
+        .id(ServerSettingsSection.cache)
+        .settingsSearchHighlight(landedSection == .cache)
+        MemorySafetySection(draft: $draft)
+            .id(ServerSettingsSection.memorySafety)
+            .settingsSearchHighlight(landedSection == .memorySafety)
+        DecodePerformanceSection(draft: $draft)
+            .id(ServerSettingsSection.decodePerformance)
+            .settingsSearchHighlight(landedSection == .decodePerformance)
+        MTPSection(draft: $draft)
+            .id(ServerSettingsSection.speculative)
+            .settingsSearchHighlight(landedSection == .speculative)
+        LiveActivitySection()
+            .id(ServerSettingsSection.liveActivity)
+            .settingsSearchHighlight(landedSection == .liveActivity)
+        MultimodalSection(draft: $draft)
+            .id(ServerSettingsSection.multimodal)
+            .settingsSearchHighlight(landedSection == .multimodal)
+        ToolsTemplatesSection(draft: $draft)
+            .id(ServerSettingsSection.tools)
+            .settingsSearchHighlight(landedSection == .tools)
+        ModelResidencySection(draft: $draftLegacy)
+            .id(ServerSettingsSection.modelMemory)
+            .settingsSearchHighlight(landedSection == .modelMemory)
+        PowerSection(draft: $draft)
+            .id(ServerSettingsSection.power)
+            .settingsSearchHighlight(landedSection == .power)
+        AdvancedHTTPSection(draft: $draftLegacy)
+            .id(ServerSettingsSection.requestLimits)
+            .settingsSearchHighlight(landedSection == .requestLimits)
     }
 
     // MARK: - Actions
