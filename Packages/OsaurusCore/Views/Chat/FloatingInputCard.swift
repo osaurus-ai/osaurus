@@ -2650,6 +2650,12 @@ extension FloatingInputCard {
         return effectiveThinkingEnabled(for: model)
     }
 
+    private var inlineThinkingUsesNativeDefault: Bool {
+        guard let model = selectedModel, !isRemoteAgentRun else { return false }
+        return LocalReasoningCapability.capability(forModelId: model).preservesOmittedThinking
+            && ModelProfileRegistry.thinkingEnabled(for: model, values: activeModelOptions) == nil
+    }
+
     /// Keep the chip and picker on the same policy as dispatch. In a local
     /// tool-capable chat, an untouched toggleable model defaults to direct
     /// answers; in ordinary no-tool chat, the bundle template still owns the
@@ -3050,14 +3056,21 @@ extension FloatingInputCard {
                             Image(systemName: "brain")
                                 .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .semibold))
                                 .foregroundColor(
-                                    thinkingOn ? theme.accentColor : theme.tertiaryText.opacity(0.55)
+                                    inlineThinkingUsesNativeDefault
+                                        ? theme.secondaryText
+                                        : thinkingOn ? theme.accentColor : theme.tertiaryText.opacity(0.55)
                                 )
-                                .localizedHelp(thinkingOn ? "Thinking on" : "Thinking off")
+                                .localizedHelp(
+                                    inlineThinkingUsesNativeDefault
+                                        ? "Default" : (thinkingOn ? "Thinking on" : "Thinking off")
+                                )
                                 .accessibilityLabel(Text("Thinking", bundle: .module))
                                 .accessibilityValue(
-                                    thinkingOn
-                                        ? Text("On", bundle: .module)
-                                        : Text("Off", bundle: .module)
+                                    inlineThinkingUsesNativeDefault
+                                        ? Text("Default", bundle: .module)
+                                        : thinkingOn
+                                            ? Text("On", bundle: .module)
+                                            : Text("Off", bundle: .module)
                                 )
                         }
 
@@ -3254,7 +3267,8 @@ extension FloatingInputCard {
                 DispatchQueue.main.async {
                     persistThinkingOverride(enabled, for: model)
                 }
-            }
+            },
+            supportsUnspecifiedDefault: LocalReasoningCapability.capability(forModelId: model).preservesOmittedThinking
         )
     }
 

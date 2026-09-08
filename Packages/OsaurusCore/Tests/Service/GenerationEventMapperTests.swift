@@ -16,6 +16,32 @@ import Testing
 
 @Suite("GenerationEventMapper bridge behaviour")
 struct GenerationEventMapperTests {
+    @Test func nativeXMLOrderSurvivesAppJSONHistory() async throws {
+        let call = MLXLMCommon.ToolCall(function: .init(
+            name: "write", arguments: ["path": .string("note.md"), "content": .string("007")],
+            argumentOrder: ["path", "content"]))
+        let out = try await collect(events: [.toolCall(call)])
+        guard case .toolInvocation(_, let json) = out.first else {
+            Issue.record("Missing tool invocation"); return
+        }
+        #expect(json == #"{"path":"note.md","content":"007"}"#)
+        let arguments = try JSONDecoder().decode([String: MLXLMCommon.JSONValue].self, from: Data(json.utf8))
+        let restored = MLXLMCommon.ToolCall.Function(name: "write", arguments: arguments, rawArgumentsJSON: json)
+        #expect(restored.argumentOrder == ["path", "content"])
+        #expect(restored.arguments == call.function.arguments)
+    }
+
+    @Test(arguments: [["path"], ["path", "path"], ["missing", "content"]])
+    func invalidXMLOrderKeepsAllArguments(_ order: [String]) async throws {
+        let call = MLXLMCommon.ToolCall(function: .init(
+            name: "write", arguments: ["path": .string("note.md"), "content": .string("007")],
+            argumentOrder: order))
+        let out = try await collect(events: [.toolCall(call)])
+        guard case .toolInvocation(_, let json) = out.first else {
+            Issue.record("Missing tool invocation"); return
+        }
+        #expect(json == #"{"content":"007","path":"note.md"}"#)
+    }
 
     private final class TerminationProbe: @unchecked Sendable {
         private let lock = NSLock()

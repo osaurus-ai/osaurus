@@ -24,6 +24,7 @@ struct ModelPickerThinkingControl {
     /// Persist a semantic enabled state; nil removes the override so the
     /// model's template default applies naturally again.
     let onSetEnabled: (Bool?) -> Void
+    var supportsUnspecifiedDefault: Bool = false
 }
 
 /// Inline model-options control state for the picker's currently selected
@@ -1041,16 +1042,33 @@ struct ModelPickerView: View {
                 compactResetButton { thinking.onSetEnabled(nil) }
             }
 
-            Toggle(
-                "",
-                isOn: Binding(
-                    get: { thinking.isEnabled },
-                    set: { thinking.onSetEnabled($0) }
+            if thinking.supportsUnspecifiedDefault {
+                Picker(
+                    "Thinking",
+                    selection: Binding(
+                        get: { thinking.isExplicit ? (thinking.isEnabled ? "on" : "off") : "default" },
+                        set: { thinking.onSetEnabled($0 == "default" ? nil : $0 == "on") }
+                    )
+                ) {
+                    Text("Default", bundle: .module).tag("default")
+                    Text("On", bundle: .module).tag("on")
+                    Text("Off", bundle: .module).tag("off")
+                }
+                .labelsHidden()
+                .controlSize(.small)
+                .accessibilityIdentifier("model-thinking-mode")
+            } else {
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { thinking.isEnabled },
+                        set: { thinking.onSetEnabled($0) }
+                    )
                 )
-            )
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -1058,9 +1076,11 @@ struct ModelPickerView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text("Thinking", bundle: .module))
         .accessibilityValue(
-            thinking.isEnabled
-                ? Text("On", bundle: .module)
-                : Text("Off", bundle: .module)
+            thinking.supportsUnspecifiedDefault && !thinking.isExplicit
+                ? Text("Default", bundle: .module)
+                : thinking.isEnabled
+                    ? Text("On", bundle: .module)
+                    : Text("Off", bundle: .module)
         )
     }
 

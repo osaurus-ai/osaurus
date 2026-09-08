@@ -36,8 +36,13 @@ enum LocalReasoningCapability {
         ///     false (`enable_thinking is false`) → absent kwarg ⇒ thinking ON.
         ///   • Gemma-4: the thinking branch is gated on an explicit truthy value
         ///     (`... and enable_thinking`) → absent kwarg ⇒ thinking OFF.
-        /// Only meaningful when `isToggleableThinking` is true.
+        /// Only meaningful when `isToggleableThinking` is true and
+        /// `preservesOmittedThinking` is false. A native third mode must be
+        /// presented as Default, not as either boolean.
         let defaultThinkingOn: Bool
+        /// Omission is a distinct native mode, not equivalent to either bool.
+        /// Explicit user choices still use enable_thinking true/false.
+        let preservesOmittedThinking: Bool
         /// The serving default the PUBLISHER explicitly stamped into
         /// `generation_config.json > default_chat_template_kwargs >
         /// enable_thinking` — the same key HF transformers honors when the
@@ -56,13 +61,15 @@ enum LocalReasoningCapability {
             hasEnableThinkingKwarg: Bool,
             templateInjectsThinkTag: Bool,
             defaultThinkingOn: Bool,
-            declaredDefaultThinkingOn: Bool? = nil
+            declaredDefaultThinkingOn: Bool? = nil,
+            preservesOmittedThinking: Bool = false
         ) {
             self.supportsThinking = supportsThinking
             self.hasEnableThinkingKwarg = hasEnableThinkingKwarg
             self.templateInjectsThinkTag = templateInjectsThinkTag
             self.defaultThinkingOn = defaultThinkingOn
             self.declaredDefaultThinkingOn = declaredDefaultThinkingOn
+            self.preservesOmittedThinking = preservesOmittedThinking
         }
 
         static let none = Capability(
@@ -240,7 +247,8 @@ enum LocalReasoningCapability {
             hasEnableThinkingKwarg: templateCapability.hasEnableThinkingKwarg,
             templateInjectsThinkTag: templateCapability.templateInjectsThinkTag,
             defaultThinkingOn: templateCapability.defaultThinkingOn,
-            declaredDefaultThinkingOn: templateCapability.declaredDefaultThinkingOn
+            declaredDefaultThinkingOn: templateCapability.declaredDefaultThinkingOn,
+            preservesOmittedThinking: templateCapability.preservesOmittedThinking
         )
     }
 
@@ -279,8 +287,56 @@ enum LocalReasoningCapability {
             supportsThinking: hasOpen || hasClose,
             hasEnableThinkingKwarg: hasKwarg,
             templateInjectsThinkTag: injects,
-            defaultThinkingOn: detectDefaultThinkingOn(lower)
+            defaultThinkingOn: detectDefaultThinkingOn(lower),
+            preservesOmittedThinking: hasExplicitOnlyThinkingTail(lower)
         )
+    }
+
+    /// Recognize a generation tail that emits either native thinking prefill
+    /// only inside an `is defined` guard with no absent-kwarg fallback. The
+    /// guard must own BOTH explicit bool branches; a negative-only Qwen gate
+    /// or a Bailing normalization fallback does not have this contract.
+    static func hasExplicitOnlyThinkingTail(_ lower: String) -> Bool {
+        guard let generation = lower.range(of: "if add_generation_prompt"),
+            let regex = try? NSRegularExpression(
+                pattern: #"\{%-?\s*(.*?)\s*-?%\}"#,
+                options: [.dotMatchesLineSeparators]
+            )
+        else { return false }
+        let tail = String(lower[generation.lowerBound...]) as NSString
+        let tags = regex.matches(in: tail as String, range: NSRange(location: 0, length: tail.length))
+        func body(_ match: NSTextCheckingResult) -> String {
+            tail.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard
+            let start = tags.firstIndex(where: {
+                ["if enable_thinking is defined", "if (enable_thinking is defined)"].contains(body($0))
+            })
+        else { return false }
+        var depth = 0
+        let contentStart = NSMaxRange(tags[start].range)
+        for tag in tags.dropFirst(start + 1) {
+            let keyword = body(tag).split(whereSeparator: \.isWhitespace).first
+            if keyword == "if" {
+                depth += 1
+            } else if keyword == "else" || keyword == "elif" {
+                if depth == 0 { return false }
+            } else if keyword == "endif" {
+                if depth == 0 {
+                    let branch = tail.substring(
+                        with: NSRange(
+                            location: contentStart,
+                            length: tag.range.location - contentStart
+                        )
+                    )
+                    return branch.contains("enable_thinking is true")
+                        && branch.contains("enable_thinking is false")
+                        && branch.contains("<think>") && branch.contains("</think>")
+                }
+                depth -= 1
+            }
+        }
+        return false
     }
 
     /// Resolve the template's default thinking state (thinking when the
@@ -408,7 +464,8 @@ enum LocalReasoningCapability {
             #"set\s+[a-z0-9_]*(think|reason)[a-z0-9_]*\s*=\s*(true|false|['"]([a-z_]+)['"])"#
         if let regex = try? NSRegularExpression(pattern: assignment),
             let match = regex.firstMatch(
-                in: branch, range: NSRange(location: 0, length: (branch as NSString).length)
+                in: branch,
+                range: NSRange(location: 0, length: (branch as NSString).length)
             )
         {
             let ns = branch as NSString

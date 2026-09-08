@@ -58,6 +58,9 @@ enum AgentReasoningPolicy {
         // are pruned to rely on reasoning for arithmetic; forcing the direct
         // rail here silently broke agent math while plain chat worked.
         guard capability.declaredDefaultThinkingOn == nil else { return nil }
+        // An explicit-only native tail has THREE states. Default must not
+        // be collapsed to the agent-specific direct rail.
+        guard !capability.preservesOmittedThinking else { return nil }
         return false
     }
 

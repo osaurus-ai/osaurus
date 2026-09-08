@@ -204,6 +204,7 @@ enum GenerationEventMapper {
                     let argsJSON = serializeArguments(
                         call.function.arguments,
                         rawArgumentsJSON: call.function.rawArgumentsJSON,
+                        argumentOrder: call.function.argumentOrder,
                         toolName: call.function.name
                     )
                     continuation.yield(
@@ -422,6 +423,7 @@ enum GenerationEventMapper {
     private static func serializeArguments(
         _ arguments: [String: MLXLMCommon.JSONValue],
         rawArgumentsJSON: String?,
+        argumentOrder: [String]?,
         toolName: String
     ) -> String {
         // Native parsers can preserve the exact JSON member order emitted by
@@ -454,6 +456,23 @@ enum GenerationEventMapper {
             return errorEnvelope(toolName: toolName)
         }
         do {
+            // XML dialects supply typed values plus emitted parameter order,
+            // not raw JSON. Retain that order on the app's JSON-string wire
+            // so persisted tool history can reconstruct the native prefix.
+            // A stale or incomplete sidecar must never drop arguments.
+            if let argumentOrder,
+                argumentOrder.count == arguments.count,
+                Set(argumentOrder).count == argumentOrder.count,
+                Set(argumentOrder) == Set(arguments.keys)
+            {
+                let members = try argumentOrder.map { key -> String in
+                    let data = try JSONSerialization.data(
+                        withJSONObject: [key: anyDict[key]!], options: .osaurusCanonical)
+                    let object = String(decoding: data, as: UTF8.self)
+                    return String(object.dropFirst().dropLast())
+                }
+                return "{" + members.joined(separator: ",") + "}"
+            }
             // Sorted keys: replayed verbatim into the next turn's
             // `tool_calls[].function.arguments`; unstable ordering would
             // invalidate the local KV prefix cache. See
