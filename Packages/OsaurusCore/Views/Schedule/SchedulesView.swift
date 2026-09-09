@@ -2025,7 +2025,7 @@ private struct AgentPicker: View {
 
     private var selectedAgentDescription: String? {
         if let option = selectedWorkspaceOption {
-            return L("Workspace agent · ") + option.subtitle
+            return String(format: L("Workspace agent · %@"), option.subtitle)
         }
         if selectedAgentId == nil {
             return L("Uses the default system behavior")

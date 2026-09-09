@@ -1149,7 +1149,7 @@ private struct WatcherAgentPicker: View {
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
                     if let option = selectedWorkspaceOption {
-                        Text(L("Workspace agent · ") + option.subtitle)
+                        Text(String(format: L("Workspace agent · %@"), option.subtitle))
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
                             .lineLimit(1)

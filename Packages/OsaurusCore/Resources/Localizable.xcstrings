@@ -239819,6 +239819,1246 @@
         }
       }
     },
+    "1 day ago": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 day ago"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "vor 1 Tag"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1일 전"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 день назад"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 天前"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 天前"
+          }
+        }
+      }
+    },
+    "1 hour ago": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 hour ago"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "vor 1 Stunde"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1시간 전"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 час назад"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 小时前"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 小時前"
+          }
+        }
+      }
+    },
+    "1 min ago": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 min ago"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "vor 1 Min."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1분 전"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 мин. назад"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 分钟前"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 分鐘前"
+          }
+        }
+      }
+    },
+    "moments ago": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "moments ago"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "gerade eben"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "방금 전"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "только что"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "刚刚"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "剛剛"
+          }
+        }
+      }
+    },
+    "%lld min ago": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld min ago"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "vor %lld Min."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld분 전"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld мин. назад"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 分钟前"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 分鐘前"
+          }
+        }
+      }
+    },
+    "%lld hours ago": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld hours ago"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "vor %lld Stunden"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld시간 전"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld ч. назад"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 小时前"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 小時前"
+          }
+        }
+      }
+    },
+    "%lld days ago": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld days ago"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "vor %lld Tagen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld일 전"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld дн. назад"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 天前"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 天前"
+          }
+        }
+      }
+    },
+    "Couldn't connect to %@ through the workspace: %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't connect to %1$@ through the workspace: %2$@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verbindung zu %1$@ über den Workspace fehlgeschlagen: %2$@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "작업 공간을 통해 %1$@에 연결할 수 없습니다: %2$@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось подключиться к %1$@ через рабочую область: %2$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法通过工作区连接到 %1$@：%2$@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法透過工作空間連線至 %1$@：%2$@"
+          }
+        }
+      }
+    },
+    "Couldn't reach the relay to check %@ (%@). Check this Mac's connection.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't reach the relay to check %1$@ (%2$@). Check this Mac's connection."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Das Relay zur Prüfung von %1$@ war nicht erreichbar (%2$@). Prüfe die Verbindung dieses Macs."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@을(를) 확인하기 위한 릴레이에 연결할 수 없습니다 (%2$@). 이 Mac의 연결을 확인하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось связаться с ретранслятором для проверки %1$@ (%2$@). Проверьте подключение этого Mac."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法连接中继以检查 %1$@（%2$@）。请检查这台 Mac 的网络连接。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法連線至中繼以檢查 %1$@（%2$@）。請檢查這台 Mac 的網路連線。"
+          }
+        }
+      }
+    },
+    "Osaurus Router is turned off, so %@ (a workspace agent) can't be reached. Turn it on in Settings → Osaurus Router.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus Router is turned off, so %@ (a workspace agent) can't be reached. Turn it on in Settings → Osaurus Router."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Osaurus Router ist ausgeschaltet, daher ist %@ (ein Workspace-Agent) nicht erreichbar. Schalte ihn unter Einstellungen → Osaurus Router ein."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus Router가 꺼져 있어 %@(작업 공간 에이전트)에 연결할 수 없습니다. 설정 → Osaurus Router에서 켜세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus Router выключен, поэтому %@ (агент рабочей области) недоступен. Включите его в Настройки → Osaurus Router."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus Router 已关闭，因此无法连接 %@（工作区智能体）。请在设置 → Osaurus Router 中开启。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus Router 已關閉，因此無法連線 %@（工作空間智能體）。請在設定 → Osaurus Router 中開啟。"
+          }
+        }
+      }
+    },
+    "This Mac has no Osaurus identity yet, so it can't sign in to the workspace to reach %@.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This Mac has no Osaurus identity yet, so it can't sign in to the workspace to reach %@."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieser Mac hat noch keine Osaurus-Identität und kann sich daher nicht im Workspace anmelden, um %@ zu erreichen."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 Mac에는 아직 Osaurus 신원이 없어 작업 공간에 로그인하여 %@에 연결할 수 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "У этого Mac ещё нет идентичности Osaurus, поэтому он не может войти в рабочую область, чтобы связаться с %@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这台 Mac 尚无 Osaurus 身份，无法登录工作区以连接 %@。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這台 Mac 尚無 Osaurus 身分，無法登入工作空間以連線 %@。"
+          }
+        }
+      }
+    },
+    "Workspace agent %@ is offline (last seen %@). Its owner's Mac is not connected to the relay.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Workspace agent %1$@ is offline (last seen %2$@). Its owner's Mac is not connected to the relay."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Workspace-Agent %1$@ ist offline (zuletzt gesehen %2$@). Der Mac des Besitzers ist nicht mit dem Relay verbunden."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "작업 공간 에이전트 %1$@이(가) 오프라인입니다 (마지막 접속: %2$@). 소유자의 Mac이 릴레이에 연결되어 있지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Агент рабочей области %1$@ не в сети (последняя активность: %2$@). Mac владельца не подключён к ретранслятору."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作区智能体 %1$@ 已离线（最后在线：%2$@）。其所有者的 Mac 未连接到中继。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作空間智能體 %1$@ 已離線（最後上線：%2$@）。其擁有者的 Mac 未連線至中繼。"
+          }
+        }
+      }
+    },
+    "Workspace agent %@ is offline. Its owner's Mac is not connected to the relay.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Workspace agent %@ is offline. Its owner's Mac is not connected to the relay."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Workspace-Agent %@ ist offline. Der Mac des Besitzers ist nicht mit dem Relay verbunden."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "작업 공간 에이전트 %@이(가) 오프라인입니다. 소유자의 Mac이 릴레이에 연결되어 있지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Агент рабочей области %@ не в сети. Mac владельца не подключён к ретранслятору."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作区智能体 %@ 已离线。其所有者的 Mac 未连接到中继。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作空間智能體 %@ 已離線。其擁有者的 Mac 未連線至中繼。"
+          }
+        }
+      }
+    },
+    "Workspace agent · %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Workspace agent · %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Workspace-Agent · %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "작업 공간 에이전트 · %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Агент рабочей области · %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作区智能体 · %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作空間智能體 · %@"
+          }
+        }
+      }
+    },
+    "You started a run on %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You started a run on %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Du hast einen Lauf auf %@ gestartet"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@에서 실행을 시작했습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вы запустили выполнение на %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你在 %@ 上启动了一次运行"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你在 %@ 上啟動了一次執行"
+          }
+        }
+      }
+    },
+    "Your run on %@ ended early": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your run on %@ ended early"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dein Lauf auf %@ wurde vorzeitig beendet"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@에서의 실행이 일찍 종료되었습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ваше выполнение на %@ завершилось досрочно"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你在 %@ 上的运行提前结束"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你在 %@ 上的執行提前結束"
+          }
+        }
+      }
+    },
+    "Your run on %@ finished": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your run on %@ finished"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dein Lauf auf %@ ist abgeschlossen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@에서의 실행이 완료되었습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ваше выполнение на %@ завершено"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你在 %@ 上的运行已完成"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你在 %@ 上的執行已完成"
+          }
+        }
+      }
+    },
+    "Your run on %@ was refused": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your run on %@ was refused"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dein Lauf auf %@ wurde abgelehnt"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@에서의 실행이 거부되었습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ваше выполнение на %@ было отклонено"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你在 %@ 上的运行被拒绝"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你在 %@ 上的執行被拒絕"
+          }
+        }
+      }
+    },
+    "%@ couldn't be reached: %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ couldn't be reached: %2$@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ war nicht erreichbar: %2$@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@에 연결할 수 없습니다: %2$@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось связаться с %1$@: %2$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法连接 %1$@：%2$@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法連線 %1$@：%2$@"
+          }
+        }
+      }
+    },
+    "%@ did not answer the liveness check (%@).": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ did not answer the liveness check (%2$@)."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ hat auf die Erreichbarkeitsprüfung nicht geantwortet (%2$@)."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@이(가) 상태 확인에 응답하지 않았습니다 (%2$@)."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ не ответил на проверку доступности (%2$@)."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ 未响应在线检查（%2$@）。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ 未回應上線檢查（%2$@）。"
+          }
+        }
+      }
+    },
+    "%@ is no longer available on its owner's Mac.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is no longer available on its owner's Mac."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ ist auf dem Mac des Besitzers nicht mehr verfügbar."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@이(가) 더 이상 소유자의 Mac에서 사용할 수 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ больше недоступен на Mac владельца."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 在其所有者的 Mac 上已不可用。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 在其擁有者的 Mac 上已不可用。"
+          }
+        }
+      }
+    },
+    "%@ is no longer shared with a workspace you belong to.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is no longer shared with a workspace you belong to."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ wird nicht mehr mit einem Workspace geteilt, dem du angehörst."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@이(가) 더 이상 내가 속한 작업 공간에 공유되지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ больше не расшарен в рабочей области, в которой вы состоите."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 已不再共享到你所属的工作区。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 已不再共享至你所屬的工作空間。"
+          }
+        }
+      }
+    },
+    "%@ is one of this Mac's own agents; run it locally instead of through the workspace.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is one of this Mac's own agents; run it locally instead of through the workspace."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ ist einer der eigenen Agenten dieses Macs; führe ihn lokal statt über den Workspace aus."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@은(는) 이 Mac의 자체 에이전트입니다. 작업 공간 대신 로컬에서 실행하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ — один из собственных агентов этого Mac; запускайте его локально, а не через рабочую область."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 是这台 Mac 自己的智能体；请在本地运行，而不是通过工作区。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 是這台 Mac 自己的智能體；請在本機執行，而不是透過工作空間。"
+          }
+        }
+      }
+    },
+    "%@ is online but the connection failed: %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ is online but the connection failed: %2$@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ ist online, aber die Verbindung ist fehlgeschlagen: %2$@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@이(가) 온라인이지만 연결에 실패했습니다: %2$@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ в сети, но подключение не удалось: %2$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ 在线，但连接失败：%2$@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ 上線中，但連線失敗：%2$@"
+          }
+        }
+      }
+    },
+    "%@ is online.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is online."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ ist online."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@이(가) 온라인입니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ в сети."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 在线。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 上線中。"
+          }
+        }
+      }
+    },
+    "%@'s host refused this Mac's workspace key. Reconnect the agent from the Workspaces tab.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@'s host refused this Mac's workspace key. Reconnect the agent from the Workspaces tab."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Host von %@ hat den Workspace-Schlüssel dieses Macs abgelehnt. Verbinde den Agenten über den Tab „Workspaces“ neu."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@의 호스트가 이 Mac의 작업 공간 키를 거부했습니다. 작업 공간 탭에서 에이전트를 다시 연결하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Хост %@ отклонил ключ рабочей области этого Mac. Переподключите агента на вкладке «Рабочие области»."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 的主机拒绝了这台 Mac 的工作区密钥。请在“工作区”标签页重新连接该智能体。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 的主機拒絕了這台 Mac 的工作空間金鑰。請在「工作空間」分頁重新連線該智能體。"
+          }
+        }
+      }
+    },
+    "%@ (workspace agent · %@)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ (workspace agent · %2$@)"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ (Workspace-Agent · %2$@)"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ (작업 공간 에이전트 · %2$@)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ (агент рабочей области · %2$@)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@（工作区智能体 · %2$@）"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@（工作空間智能體 · %2$@）"
+          }
+        }
+      }
+    },
+    "%@ (workspace agent)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ (workspace agent)"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ (Workspace-Agent)"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ (작업 공간 에이전트)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ (агент рабочей области)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@（工作区智能体）"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@（工作空間智能體）"
+          }
+        }
+      }
+    },
+    "the pairing has no provider record": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the pairing has no provider record"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "die Kopplung hat keinen Anbieter-Eintrag"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "페어링에 제공자 레코드가 없습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "у сопряжения нет записи провайдера"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "配对没有对应的提供方记录"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "配對沒有對應的提供者記錄"
+          }
+        }
+      }
+    },
+    "the workspace handshake did not complete": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the workspace handshake did not complete"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "der Workspace-Handshake wurde nicht abgeschlossen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "작업 공간 핸드셰이크가 완료되지 않았습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "рукопожатие с рабочей областью не завершилось"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作区握手未完成"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作空間握手未完成"
+          }
+        }
+      }
+    },
+    "the workspace key was refused and could not be renewed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the workspace key was refused and could not be renewed"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "der Workspace-Schlüssel wurde abgelehnt und konnte nicht erneuert werden"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "작업 공간 키가 거부되었으며 갱신할 수 없었습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ключ рабочей области был отклонён и не мог быть обновлён"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作区密钥被拒绝且无法续期"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作空間金鑰被拒絕且無法更新"
+          }
+        }
+      }
+    },
     "Orchestrator Settings": {
       "localizations": {
         "de": {
