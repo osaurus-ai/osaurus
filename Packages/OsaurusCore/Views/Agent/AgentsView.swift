@@ -2585,7 +2585,7 @@ struct AgentDetailView: View {
     /// `Menu` label draws its own chrome).
     private var shareToWorkspaceHeaderMenu: some View {
         AgentDetailHeaderActionButton(
-            icon: "person.2.fill",
+            icon: "person.2.badge.plus",
             tint: theme.accentColor,
             help: "Share to Workspace",
             action: { presentShareToWorkspaceMenu() }
