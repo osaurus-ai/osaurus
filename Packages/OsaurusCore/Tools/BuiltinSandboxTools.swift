@@ -344,7 +344,8 @@ internal func sandboxBinaryDocumentRefusal(path: String, tool: String) -> String
             + "`python-docx` / `openpyxl` after `sandbox_install`) and read the output file.",
         field: "path",
         expected: "a text file, or a document read via `read_knowledge` / `sandbox_exec` extraction",
-        tool: tool
+        tool: tool,
+        retryable: false
     )
 }
 
