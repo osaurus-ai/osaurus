@@ -131502,6 +131502,24 @@
         }
       }
     },
+    "No override — uses the active model and runtime defaults.": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "No override — uses the active model and runtime defaults." } },
+        "de": { "stringUnit": { "state": "translated", "value": "Keine Überschreibung — verwendet die Standardwerte des aktiven Modells und der Laufzeit." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "未覆盖 — 使用当前模型和运行时的默认值。" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "재정의 없음 — 현재 모델 및 런타임 기본값을 사용합니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Без переопределения — используются значения по умолчанию активной модели и среды выполнения." } }
+      }
+    },
+    "Override": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Override" } },
+        "de": { "stringUnit": { "state": "translated", "value": "Überschreiben" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "覆盖" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "재정의" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Переопределить" } }
+      }
+    },
     "No overrides set. Add explicit facts that should always be in your identity.": {
       "localizations": {
         "de": {
@@ -258583,6 +258601,210 @@
           "stringUnit": {
             "state": "translated",
             "value": "你的工作區角色不允許執行此操作。"
+          }
+        }
+      }
+    },
+    "Add to Workspace": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zum Workspace hinzufügen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "작업 공간에 추가"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавить в рабочую область"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加到工作区"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加入工作空間"
+          }
+        }
+      }
+    },
+    "Send Invite Link…": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Einladungslink senden…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "초대 링크 보내기…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отправить ссылку-приглашение…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "发送邀请链接…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "傳送邀請連結…"
+          }
+        }
+      }
+    },
+    "Agent is shared": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent ist freigegeben"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "에이전트가 공유됨"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Агент предоставлен в общий доступ"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "智能体已共享"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "智能體已共享"
+          }
+        }
+      }
+    },
+    "Unshare it from its workspace before deleting.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hebe die Freigabe im Workspace auf, bevor du ihn löschst."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "삭제하기 전에 작업 공간에서 공유를 해제하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отмените общий доступ в рабочей области перед удалением."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "删除前请先在工作区中取消共享。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "刪除前請先在工作空間中取消共享。"
+          }
+        }
+      }
+    },
+    "\"%@\" is shared with %@. Unshare it from the workspace first, then delete it. Teammates lose access when it's unshared.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "„%@“ ist für %@ freigegeben. Hebe zuerst die Freigabe im Workspace auf und lösche den Agent danach. Teammitglieder verlieren beim Aufheben sofort den Zugriff."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"%@\"은(는) %@에 공유되어 있습니다. 먼저 작업 공간에서 공유를 해제한 다음 삭제하세요. 공유를 해제하면 팀원이 접근 권한을 잃습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«%@» предоставлен %@. Сначала отмените общий доступ в рабочей области, затем удалите агента. После отмены участники команды теряют доступ."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "“%@”已与 %@ 共享。请先在工作区中取消共享，然后再删除。取消共享后，团队成员将失去访问权限。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」已與 %@ 共享。請先在工作空間中取消共享，然後再刪除。取消共享後，團隊成員將失去存取權限。"
+          }
+        }
+      }
+    },
+    "Teammates reach this agent through its relay tunnel. Turning the relay off cuts them off; unshare it here before deleting the agent.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Teammitglieder erreichen diesen Agent über seinen Relay-Tunnel. Wird das Relay ausgeschaltet, verlieren sie den Zugriff. Hebe die Freigabe hier auf, bevor du den Agent löschst."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "팀원은 릴레이 터널을 통해 이 에이전트에 접근합니다. 릴레이를 끄면 접근이 끊깁니다. 에이전트를 삭제하기 전에 여기서 공유를 해제하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Участники команды обращаются к этому агенту через relay-туннель. Отключение relay отрежет им доступ. Отмените общий доступ здесь, прежде чем удалять агента."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "团队成员通过中继隧道访问此智能体。关闭中继会切断他们的访问。删除智能体前请先在此取消共享。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "團隊成員透過中繼隧道存取此智能體。關閉中繼會切斷他們的存取。刪除智能體前請先在此取消共享。"
           }
         }
       }
