@@ -329,11 +329,11 @@ struct CacheSection: View {
                         isClearingDiskCache = true
                         let result = await ModelRuntime.shared.clearDiskCaches()
                         clearedCacheSummary =
-                            result.reclaimedBytes > 0
+                            result.error ?? (result.reclaimedBytes > 0
                             ? String(
                                 format: L("Cleared %@"),
                                 DiskCacheUsage.format(bytes: result.reclaimedBytes))
-                            : L("Cache was already empty")
+                            : L("Cache was already empty"))
                         isClearingDiskCache = false
                     }
                 } label: {
@@ -351,7 +351,7 @@ struct CacheSection: View {
                 }
             }
             Text(
-                "Deletes all saved conversation data from disk, including leftover files from an interrupted write. Your chats are not affected — the next reply just takes a little longer to start.",
+                "Clears indexed conversation cache files. Chats and models are not deleted. Unrecognized files are left untouched; future replies may rebuild a cold cache.",
                 bundle: .module
             )
             .font(.caption)

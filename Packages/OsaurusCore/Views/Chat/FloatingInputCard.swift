@@ -466,6 +466,10 @@ struct FloatingInputCard: View {
     @State private var swapUnloadFailure: String?
     @State private var memoryWarningPhase: MemoryWarningState.Phase = .unloaded
     @State private var memoryWarningModel: String?
+    @State private var ssdWarningUsage: DiskCacheUsage?
+    @State private var ssdWarningDismissedLevel = 0
+    @State private var ssdClearInProgress = false
+    @State private var ssdClearResult: String?
     @State private var memoryPredictionAcknowledged: MemoryWarningState.Prediction?
     @State private var memorySendCheckInFlight = false
     @State private var memoryAssessmentTicket = UUID()
@@ -790,6 +794,7 @@ struct FloatingInputCard: View {
                 ramPressureRow
                 swapPressureRow
                 mtpLayoutAdvisoryRow
+                ssdQuotaWarningRow
                 modelSwitchContinuityRow
             }
 
@@ -937,6 +942,21 @@ struct FloatingInputCard: View {
             // fully above it via the `.top` alignment guide.
             .overlay(alignment: .top) {
                 configContextErrorOverlay
+            }
+            .task(id: selectedModel) {
+                while !Task.isCancelled {
+                    if isSelectedModelLocal && !isRemoteAgentRun {
+                        let usage = await FloatingContextChip.readDiskCacheUsage()
+                        guard !Task.isCancelled else { return }
+                        if usage?.maxBytes != ssdWarningUsage?.maxBytes || usage?.shouldWarn != true {
+                            ssdWarningDismissedLevel = 0
+                        }
+                        ssdWarningUsage = usage
+                    } else {
+                        ssdWarningUsage = nil
+                    }
+                    try? await Task.sleep(for: .seconds(3))
+                }
             }
             .overlay(alignment: .top) {
                 if let progress = alignmentPreparation.progress(
@@ -4697,6 +4717,59 @@ extension FloatingInputCard {
                 .padding(.top, 8)
                 .padding(.bottom, -16)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+    }
+
+    @ViewBuilder
+    private var ssdQuotaWarningRow: some View {
+        if isSelectedModelLocal, !isRemoteAgentRun, !configContextTooSmall,
+            resolvedMemoryWarning == .none, modelSwitchContinuityWarning == nil,
+            mtpLayoutAdvisory == nil,
+            alignmentPreparation.progress(
+                modelID: selectedModel.flatMap { ModelManager.findInstalledModel(named: $0)?.id },
+                sessionID: inputHistoryKey) == nil,
+            let usage = ssdWarningUsage,
+            (usage.shouldWarn && (usage.usedFraction >= 1 ? 2 : 1) > ssdWarningDismissedLevel)
+                || ssdClearInProgress || ssdClearResult != nil
+        {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("SSD cache limit", bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+                Text(verbatim: usage.headlineLabel)
+                Text(verbatim: usage.warningText)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .fixedSize(horizontal: false, vertical: true)
+                if let ssdClearResult {
+                    Text(verbatim: ssdClearResult).font(.caption)
+                }
+                swapPrimaryButton(
+                    String(localized: "Clear SSD Cache", bundle: .module), tint: .orange
+                ) {
+                    ssdClearInProgress = true
+                    ssdClearResult = nil
+                    Task {
+                        let result = await ModelRuntime.shared.clearDiskCaches()
+                        ssdWarningUsage = await FloatingContextChip.readDiskCacheUsage()
+                        ssdClearResult = result.error ?? String(
+                            format: L("Cleared %@"), DiskCacheUsage.format(bytes: result.reclaimedBytes))
+                        ssdClearInProgress = false
+                    }
+                }
+                .disabled(ssdClearInProgress)
+                if ssdClearInProgress { ProgressView().controlSize(.small) }
+                swapTextButton(String(localized: "Dismiss", bundle: .module)) {
+                    ssdWarningDismissedLevel = usage.usedFraction >= 1 ? 2 : 1
+                    ssdClearResult = nil
+                }
+                .disabled(ssdClearInProgress)
+            }
+            .padding(14)
+            .background(RAMBannerShape(pointerCenterX: 28).fill(.regularMaterial))
+            .overlay(RAMBannerShape(pointerCenterX: 28).stroke(Color.orange.opacity(0.45), lineWidth: 1))
+            .frame(width: Self.ramBannerWidth, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, 20)
+            .accessibilityIdentifier("ssd-quota-warning")
         }
     }
 
@@ -9062,7 +9135,7 @@ private struct FloatingContextChip: View {
     /// Read the shared disk-cache gauge. Returns nil when no quota is
     /// configured (disk cache off), so the popover hides the section rather
     /// than showing a meaningless 0 GB.
-    static func readDiskCacheUsage() async -> DiskCacheUsage? {
+    nonisolated static func readDiskCacheUsage() async -> DiskCacheUsage? {
         // Preferred source: a resident model's coordinator, which reports both
         // the live payload bytes and the cap it is actually enforcing.
         if let snapshot = await MLXBatchAdapter.snapshotDiagnostics(),

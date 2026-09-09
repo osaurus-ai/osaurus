@@ -1,6 +1,22 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "SSD cache limit": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "SSD-Cache-Limit" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "SSD 캐시 한도" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Лимит кэша SSD" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "SSD 缓存上限" } }
+      }
+    },
+    "Clears indexed conversation cache files. Chats and models are not deleted. Unrecognized files are left untouched; future replies may rebuild a cold cache.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Löscht indizierte Gesprächs-Cachedateien. Chats und Modelle werden nicht gelöscht. Unbekannte Dateien bleiben unverändert; spätere Antworten können den Cache neu aufbauen." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "색인에 등록된 대화 캐시 파일을 지웁니다. 채팅과 모델은 삭제되지 않습니다. 인식되지 않는 파일은 그대로 두며 이후 응답에서 캐시를 다시 만들 수 있습니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Удаляет индексированные файлы кэша диалогов. Чаты и модели не удаляются. Неизвестные файлы сохраняются; последующие ответы могут заново создать кэш." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "清除已索引的对话缓存文件。不会删除聊天和模型。无法识别的文件保持不变；后续回复可能需要重建缓存。" } }
+      }
+    },
     "Preparing this model for efficient loading. This may take a while.": {
       "localizations": {
         "de": { "stringUnit": { "state": "translated", "value": "Dieses Modell wird für effizientes Laden vorbereitet. Dies kann eine Weile dauern." } },
