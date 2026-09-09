@@ -128,6 +128,10 @@ struct GenerationParameters: Sendable {
     /// Rides on `GenerationParameters` for the same reason `loadIntent` does.
     let auxiliaryCacheIntent: Bool
 
+    /// Plain completion APIs need every tool call and terminal decode stats.
+    /// Interactive agent loops keep immediate dispatch plus background cache drain.
+    /// Internal transport policy only; never forwarded to a model or provider.
+    let collectCompleteToolResponse: Bool
 
     init(
         temperature: Float?,
@@ -156,7 +160,8 @@ struct GenerationParameters: Sendable {
         loadIntent: ModelLoadIntent = .interactive,
         claudeCode: ClaudeCodeRunOptions? = nil,
         preserveExistingResidencyOwner: Bool = false,
-        auxiliaryCacheIntent: Bool = false
+        auxiliaryCacheIntent: Bool = false,
+        collectCompleteToolResponse: Bool = false
 
     ) {
         self.temperature = temperature
@@ -186,6 +191,7 @@ struct GenerationParameters: Sendable {
         self.claudeCode = claudeCode
         self.preserveExistingResidencyOwner = preserveExistingResidencyOwner
         self.auxiliaryCacheIntent = auxiliaryCacheIntent
+        self.collectCompleteToolResponse = collectCompleteToolResponse
     }
 }
 
@@ -212,9 +218,10 @@ struct ServiceToolInvocation: Error, Sendable {
 /// vmlx-swift's `BatchEngine.generate` surfaces each as its own
 /// `Generation.toolCall(ToolCall)` event; `GenerationEventMapper`
 /// translates them to `ModelRuntimeEvent.toolInvocation(...)`, and
-/// `ModelRuntime.streamWithTools` collects them into this batch error so
-/// the caller (Work loop, HTTP agent loop, plugin streaming) can execute
-/// every call in a single iteration instead of one round-trip per call.
+/// `ModelRuntime.streamWithTools` collects them for whole-completion HTTP
+/// requests. Interactive local agent streams instead dispatch the first call
+/// immediately and drain the engine tail for cache persistence. Remote
+/// providers may also return this batch form.
 ///
 /// `invocations` is guaranteed non-empty. Consumers should `catch let invs as
 /// ServiceToolInvocations` BEFORE `catch let inv as ServiceToolInvocation`

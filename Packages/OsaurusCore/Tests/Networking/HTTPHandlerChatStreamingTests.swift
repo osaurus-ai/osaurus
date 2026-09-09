@@ -19,6 +19,59 @@ fileprivate extension URLRequest {
 
 struct HTTPHandlerChatStreamingTests {
 
+    @Test(arguments: [1, 2])
+    func localToolCompletionSSEKeepsCallsChannelsAndRuntimeUsage(_ callCount: Int) async throws {
+        let capture = LocalToolCompletionContractTests.Capture()
+        let engine = ChatEngine(
+            services: [LocalToolCompletionContractTests.Service(capture: capture, callCount: callCount)],
+            installedModelsProvider: { [] }
+        )
+        let server = try await startTestServer(with: engine)
+        defer { Task { await server.shutdown() } }
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/chat/completions")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.authenticate()
+        request.disablePersistenceForTests()
+        request.httpBody = Data(#"""
+            {"model":"tool-contract-fixture","stream":true,"stream_options":{"include_usage":true},
+             "messages":[{"role":"user","content":"Read both zones."}],
+             "tools":[{"type":"function","function":{"name":"lookup_zone","parameters":{
+               "type":"object","properties":{"zone":{"type":"string"}},"required":["zone"]}}}]}
+            """#.utf8)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        #expect((response as? HTTPURLResponse)?.statusCode == 200)
+        let body = String(decoding: data, as: UTF8.self)
+        let payloads = body.components(separatedBy: .newlines).filter { $0.hasPrefix("data: ") }
+            .map { String($0.dropFirst(6)) }
+        #expect(payloads.filter { $0 == "[DONE]" }.count == 1)
+        let frames = try payloads.filter { $0 != "[DONE]" }.map {
+            try #require(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any])
+        }
+        let usages = frames.compactMap { $0["usage"] as? [String: Any] }
+        #expect(usages.count == 1)
+        #expect(usages.first?["completion_tokens"] as? Int == 59)
+        #expect(usages.first?["tokens_per_second"] as? Double == 17.5)
+        let choices = frames.flatMap { $0["choices"] as? [[String: Any]] ?? [] }
+        #expect(choices.filter { $0["finish_reason"] as? String == "tool_calls" }.count == 1)
+        let deltas = choices.compactMap { $0["delta"] as? [String: Any] }
+        #expect(deltas.compactMap { $0["content"] as? String }.joined() == "Checking both zones.")
+        #expect(deltas.compactMap { $0["reasoning_content"] as? String }.joined() == "Need both readings.")
+        let calls = deltas.flatMap { $0["tool_calls"] as? [[String: Any]] ?? [] }
+        #expect(Set(calls.compactMap { $0["index"] as? Int }) == Set(0 ..< callCount))
+        for index in 0 ..< callCount {
+            let fragments = calls.filter { $0["index"] as? Int == index }
+                .compactMap { $0["function"] as? [String: Any] }
+            #expect(fragments.compactMap { $0["name"] as? String }.joined() == "lookup_zone")
+            let arguments = fragments.compactMap { $0["arguments"] as? String }.joined()
+            let object = try #require(JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String: String])
+            #expect(object == ["zone": index == 0 ? "east" : "west"])
+        }
+        #expect(!body.contains("\u{FFFE}"))
+        #expect(!body.contains("<tool_call>"))
+    }
+
     @Test func requestTaskRegistryCancelsTaskInsertedAfterChannelCancellation() async throws {
         actor Probe {
             private(set) var cancelled = false

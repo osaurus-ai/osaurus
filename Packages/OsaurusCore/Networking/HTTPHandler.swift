@@ -9458,6 +9458,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 var contentCoalescer = Self.StreamDeltaCoalescer(
                     interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
                 )
+                // Tool completions finish by throwing after the runtime's
+                // terminal stats. Keep accounting outside do so both tool
+                // catch branches can emit the same authoritative usage.
+                var authoritativeCompletionTokens: Int?
+                var authoritativeTokensPerSecond: Double?
+                var accumulatedContent = ""
+                var accumulatedReasoning = ""
                 do {
                     httpTrace.mark("http_task_start")
                     let chatEngine = self.chatEngine
@@ -9493,10 +9500,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let stream = try await chatEngine.streamChat(request: enrichedReq)
                     httpTrace.mark("http_stream_chat_ready")
                     if disconnected.value { throw CancellationError() }
-                    var accumulatedContent = ""
-                    var accumulatedReasoning = ""
-                    var authoritativeCompletionTokens: Int?
-                    var authoritativeTokensPerSecond: Double?
                     var streamFinishReason = "stop"
                     for try await delta in stream {
                         try Task.checkCancellation()
@@ -9697,6 +9700,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // count by the agent system-prompt fragment.
                     let promptTokens = Self.estimatePromptTokens(req.messages)
                     let requestTools = req.tools
+                    let completionTokens = authoritativeCompletionTokens ?? TokenEstimator.estimate(
+                        accumulatedContent + accumulatedReasoning
+                            + invs.invocations.map { $0.toolName + $0.jsonArguments }.joined()
+                    )
+                    let finalTokensPerSecond = authoritativeTokensPerSecond
                     hop {
                         for (idx, inv) in invs.invocations.enumerated() {
                             self.writeOpenAIToolCallSSE(
@@ -9720,7 +9728,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         if includeUsage {
                             writerBound.value.writeUsageChunk(
                                 promptTokens: promptTokens,
-                                completionTokens: 0,
+                                completionTokens: completionTokens,
+                                tokensPerSecond: finalTokensPerSecond,
                                 model: model,
                                 responseId: responseId,
                                 created: created,
@@ -9770,6 +9779,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let includeUsage = req.stream_options?.include_usage == true
                     let promptTokens = Self.estimatePromptTokens(req.messages)
                     let requestTools = req.tools
+                    let completionTokens = authoritativeCompletionTokens ?? TokenEstimator.estimate(
+                        accumulatedContent + accumulatedReasoning + inv.toolName + inv.jsonArguments
+                    )
+                    let finalTokensPerSecond = authoritativeTokensPerSecond
                     hop {
                         self.writeOpenAIToolCallSSE(
                             inv,
@@ -9791,7 +9804,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         if includeUsage {
                             writerBound.value.writeUsageChunk(
                                 promptTokens: promptTokens,
-                                completionTokens: 0,
+                                completionTokens: completionTokens,
+                                tokensPerSecond: finalTokensPerSecond,
                                 model: model,
                                 responseId: responseId,
                                 created: created,

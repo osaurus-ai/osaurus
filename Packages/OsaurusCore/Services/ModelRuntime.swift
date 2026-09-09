@@ -5566,7 +5566,10 @@ public actor ModelRuntime {
             modelId: modelId,
             modelName: modelName
         )
-        return Self.bridgeToolEventStream(events)
+        return Self.bridgeToolEventStream(
+            events,
+            collectCompleteResponse: parameters.collectCompleteToolResponse
+        )
     }
 
     /// Expose a parsed tool call to the agent loop immediately, but keep
@@ -5575,7 +5578,8 @@ public actor ModelRuntime {
     /// as soon as `.toolInvocation` arrived made every following tool step
     /// re-prefill the entire growing history.
     nonisolated static func bridgeToolEventStream(
-        _ events: AsyncThrowingStream<ModelRuntimeEvent, Error>
+        _ events: AsyncThrowingStream<ModelRuntimeEvent, Error>,
+        collectCompleteResponse: Bool = false
     ) -> AsyncThrowingStream<String, Error> {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let producerTask = Task {
@@ -5589,6 +5593,7 @@ public actor ModelRuntime {
             // then silently drain the engine-owned tail so it can persist the
             // reusable cache checkpoint.
             var dispatchedTool = false
+            var completedTools: [ServiceToolInvocation] = []
             do {
                 for try await ev in events {
                     // Once the call is delivered, the public stream is already
@@ -5645,6 +5650,16 @@ public actor ModelRuntime {
                             )
                         }
                     case .toolInvocation(let name, let argsJSON):
+                        if collectCompleteResponse {
+                            // APIs describe the whole completion, unlike an
+                            // agent waiting to execute its first available call.
+                            // Preserve subsequent calls, reasoning and terminal
+                            // stats; don't end or cancel the cache-owning stream.
+                            completedTools.append(
+                                ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
+                            )
+                            continue
+                        }
                         // Surface the first parsed tool call and terminate the
                         // public generation step immediately so the tool can
                         // execute without waiting for optional stats/EOS. The
@@ -5665,7 +5680,15 @@ public actor ModelRuntime {
                         continue
                     }
                 }
-                if !dispatchedTool { continuation.finish() }
+                if !dispatchedTool {
+                    if completedTools.count == 1 {
+                        continuation.finish(throwing: completedTools[0])
+                    } else if !completedTools.isEmpty {
+                        continuation.finish(throwing: ServiceToolInvocations(invocations: completedTools))
+                    } else {
+                        continuation.finish()
+                    }
+                }
             } catch {
                 if Task.isCancelled {
                     if !dispatchedTool { continuation.finish() }

@@ -265,7 +265,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             requestSource: inferenceSource,
             loadIntent: request.backgroundModelLoad ? .background : .interactive,
             claudeCode: request.claudeCodeOptions,
-            preserveExistingResidencyOwner: request.preserveExistingResidencyOwner
+            preserveExistingResidencyOwner: request.preserveExistingResidencyOwner,
+            collectCompleteToolResponse: inferenceSource == .httpAPI && !request.isAgentRequest
         )
 
         // Mode 2 (remote agent run): route to the *selected agent's provider*,
@@ -659,6 +660,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         temperature: Float?,
         maxTokens: Int,
         tokensPerSecond: Double? = nil,
+        completionTokens: Int? = nil,
+        content: String? = nil,
+        reasoningContent: String? = nil,
         turnId: UUID? = nil,
         requestId: String? = nil,
         requestBodyJSON: String? = nil,
@@ -692,22 +696,25 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         }
         let assistant = ChatMessage(
             role: "assistant",
-            content: nil,
+            content: content,
             tool_calls: toolCalls,
-            tool_call_id: nil
+            tool_call_id: nil,
+            reasoning_content: reasoningContent
         )
         let choice = ChatChoice(index: 0, message: assistant, finish_reason: "tool_calls")
-        // `tokens_per_second` is the model's decode speed for the step that
-        // produced this tool call. The streaming runtime forwards it as a
-        // stats hint just before finishing-by-throw (see
-        // `ModelRuntime.streamWithTools`), so a tool-call turn no longer drops
-        // its decode telemetry. Token counts stay 0 here (the assistant
-        // emitted no user-visible completion text), matching the historical
-        // tool-call `usage` shape consumers depend on.
+        // Tool syntax and reasoning are generated tokens too. Prefer the
+        // runtime's complete count; older providers without stats get an
+        // estimate of all returned fields, never a hardcoded zero.
+        let outputTokens =
+            completionTokens
+            ?? TokenEstimator.estimate(
+                (content ?? "") + (reasoningContent ?? "")
+                    + invocations.map { $0.toolName + $0.jsonArguments }.joined()
+            )
         let usage = Usage(
             prompt_tokens: inputTokens,
-            completion_tokens: 0,
-            total_tokens: inputTokens,
+            completion_tokens: outputTokens,
+            total_tokens: inputTokens + outputTokens,
             tokens_per_second: tokensPerSecond
         )
 
@@ -731,7 +738,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 requestId: requestId,
                 model: effectiveModel,
                 inputTokens: inputTokens,
-                outputTokens: 0,
+                outputTokens: outputTokens,
                 durationMs: durationMs,
                 temperature: temperature,
                 maxTokens: maxTokens,
@@ -1438,6 +1445,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 // stream throws to surface the tool call, which is why tool-call
                 // turns historically reported no tok/s.
                 var toolStepTokensPerSecond: Double?
+                var toolStepTokenCount: Int?
+                var text = ""
+                var reasoning = ""
                 do {
                     let stream = try await toolSvc.streamWithTools(
                         messages: messages,
@@ -1447,13 +1457,12 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         toolChoice: dispatchToolChoice,
                         requestedModel: request.model
                     )
-                    var text = ""
-                    var reasoning = ""
                     var terminalStopReason = "stop"
                     for try await delta in stream {
                         try Task.checkCancellation()
                         if let stats = StreamingStatsHint.decode(delta) {
                             toolStepTokensPerSecond = stats.tokensPerSecond
+                            toolStepTokenCount = stats.tokenCount
                             if let stopReason = stats.stopReason, !stopReason.isEmpty {
                                 terminalStopReason = stopReason
                             }
@@ -1485,7 +1494,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                             ]
                         )
                     }
-                    let outputTokens = TokenEstimator.estimate(text)
+                    let outputTokens = toolStepTokenCount ?? TokenEstimator.estimate(text + reasoning)
                     let choice = ChatChoice(
                         index: 0,
                         message: ChatMessage(
@@ -1547,6 +1556,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         temperature: temperature,
                         maxTokens: maxTokens,
                         tokensPerSecond: toolStepTokensPerSecond,
+                        completionTokens: toolStepTokenCount,
+                        content: params.collectCompleteToolResponse && !text.isEmpty ? text : nil,
+                        reasoningContent: params.collectCompleteToolResponse && !reasoning.isEmpty ? reasoning : nil,
                         turnId: request.turnId,
                         requestId: requestId,
                         requestBodyJSON: requestBodyJSON,
@@ -1567,6 +1579,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         temperature: temperature,
                         maxTokens: maxTokens,
                         tokensPerSecond: toolStepTokensPerSecond,
+                        completionTokens: toolStepTokenCount,
+                        content: params.collectCompleteToolResponse && !text.isEmpty ? text : nil,
+                        reasoningContent: params.collectCompleteToolResponse && !reasoning.isEmpty ? reasoning : nil,
                         turnId: request.turnId,
                         requestId: requestId,
                         requestBodyJSON: requestBodyJSON,
