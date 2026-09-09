@@ -6447,11 +6447,8 @@ extension RemoteProviderService {
             for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
             if let (data, status) = await osaurusGET(req, provider: provider) {
                 reachedPeer = true
-                if status < 400,
-                    let parsed = try? JSONDecoder().decode(ModelsResponse.self, from: data),
-                    !parsed.data.isEmpty
-                {
-                    return parsed.data.map { $0.id }
+                if let catalog = Self.peerModelCatalog(status: status, data: data) {
+                    return catalog
                 }
             }
         }
@@ -6493,6 +6490,22 @@ extension RemoteProviderService {
                 ? Self.peerRejectedConnectionMessage
                 : "Could not reach the remote agent (Secure Channel handshake failed)."
         )
+    }
+
+    /// Reads a native peer's `/models` answer. A `2xx`/`3xx` body that parses
+    /// as an OpenAI models list is authoritative — INCLUDING an empty one,
+    /// which is how a host that has not shared its models for inference
+    /// (`PeerInferenceSharing`) answers a paired peer. Connecting with zero
+    /// models keeps the pairing usable for Mode 2 agent runs while leaving the
+    /// peer off every inference surface (Cloud Models, picker, `/v1/models`).
+    /// `nil` means "no catalog here" (error status or unparseable body, e.g. a
+    /// host predating `/models`) and the caller falls through to the
+    /// `default_model` probe. Pure so the contract is unit-testable.
+    nonisolated static func peerModelCatalog(status: Int, data: Data) -> [String]? {
+        guard status < 400,
+            let parsed = try? JSONDecoder().decode(ModelsResponse.self, from: data)
+        else { return nil }
+        return parsed.data.map { $0.id }
     }
 
     /// The peer answered but refused our credentials (4xx on the agent

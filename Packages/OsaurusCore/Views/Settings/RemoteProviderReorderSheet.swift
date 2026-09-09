@@ -133,7 +133,13 @@ struct RemoteProviderReorderSheet: View {
 
     /// Preserve working order on external change so an in-progress drag stays stable.
     private func syncFromManager() {
-        let incoming = manager.configuration.providers.filter { $0.providerType != .osaurusRouter }
+        // Same visibility rule as the Cloud Models list: no managed router,
+        // and no paired Osaurus agents whose owner shares no models for
+        // inference. `reorder(orderedIds:)` appends omitted providers, so
+        // hidden ones keep their relative order.
+        let incoming = manager.configuration.providers.filter {
+            $0.providerType != .osaurusRouter && manager.exposesModelsForInference($0)
+        }
         let existingIds = Set(orderedProviders.map(\.id))
         let incomingIds = Set(incoming.map(\.id))
         let kept = orderedProviders.filter { incomingIds.contains($0.id) }

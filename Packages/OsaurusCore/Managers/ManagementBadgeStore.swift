@@ -138,8 +138,14 @@ public final class ManagementBadgeStore: ObservableObject {
     /// task so the recompute itself never blocks the main thread.
     private func recompute() {
         var counts: [ManagementTab: Int] = [:]
+        // Paired Osaurus agents hidden from Cloud Models (their owner shares
+        // no models for inference) don't count toward the Cloud Models badge.
+        let providerManager = RemoteProviderManager.shared
         counts[.providers] =
-            RemoteProviderManager.shared.providerStates.values.filter(\.isConnected).count
+            providerManager.configuration.providers.filter {
+                providerManager.providerStates[$0.id]?.isConnected == true
+                    && providerManager.exposesModelsForInference($0)
+            }.count
         counts[.sandbox] = SandboxPluginLibrary.shared.plugins.count
         counts[.tools] = ToolRegistry.shared.toolCount
         counts[.skills] = SkillManager.shared.skills.count

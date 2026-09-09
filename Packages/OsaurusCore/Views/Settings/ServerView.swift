@@ -120,12 +120,60 @@ private struct OverviewTabContent: View {
             LazyVStack(alignment: .leading, spacing: 24) {
                 ServerStatusCard()
                 AccessKeysSection()
+                PeerInferenceSharingSection()
                 RelaysSectionView()
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 24)
             .frame(maxWidth: .infinity)
         }
+    }
+}
+
+// MARK: - Peer Inference Sharing
+
+/// Owner-level switch for whether agents paired with mine (workspace
+/// teammates, local-network peers, invite-link shares) may list my models
+/// and run plain inference here. Default off; see `PeerInferenceSharing`.
+/// Takes effect on the next peer request — no server restart.
+private struct PeerInferenceSharingSection: View {
+    @Environment(\.theme) private var theme
+    @State private var isEnabled = PeerInferenceSharing.isEnabled()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label {
+                Text("Shared Inference", bundle: .module)
+            } icon: {
+                Image(systemName: "person.2.wave.2")
+            }
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundColor(theme.primaryText)
+
+            Text(
+                "Agents paired with yours can always chat with the agents you share. Choose whether they may also use your models directly.",
+                bundle: .module
+            )
+            .font(.system(size: 12))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+
+            SettingsToggle(
+                title: "Share my models for inference",
+                description:
+                    "Teammates, local-network peers, and invite-link connections can list the models you expose in Server → Models and run inference through your Osaurus. Off: they see no models and inference requests are refused; shared-agent chat is unaffected.",
+                isOn: $isEnabled
+            )
+            .onChange(of: isEnabled) { _, newValue in
+                PeerInferenceSharing.setEnabled(newValue)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.secondaryBackground)
+        )
+        .onAppear { isEnabled = PeerInferenceSharing.isEnabled() }
     }
 }
 

@@ -277,6 +277,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// envelope is decrypted so the response is sealed on the way out.
     let responseEncryptor: SecureChannelResponseEncryptor?
 
+    /// Live read of the owner's "share my models for inference with paired
+    /// agents" switch (`PeerInferenceSharing`). Read per request so a toggle
+    /// takes effect without a server restart; injectable so the gate can be
+    /// tested in both positions without touching global defaults.
+    private let peerInferenceSharingProvider: @Sendable () -> Bool
+    private var peerInferenceEnabled: Bool { peerInferenceSharingProvider() }
+
     init(
         configuration: ServerConfiguration,
         apiKeyValidator: APIKeyValidator = .empty,
@@ -284,13 +291,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         eventLoop: EventLoop,
         chatEngine: ChatEngineProtocol = ChatEngine(),
         trustLoopback: Bool = true,
-        responseEncryptor: SecureChannelResponseEncryptor? = nil
+        responseEncryptor: SecureChannelResponseEncryptor? = nil,
+        peerInferenceSharingProvider: @escaping @Sendable () -> Bool = { PeerInferenceSharing.isEnabled() }
     ) {
         self.configuration = configuration
         self.apiKeyValidatorProvider = apiKeyValidatorProvider ?? { apiKeyValidator }
         self.chatEngine = chatEngine
         self.trustLoopback = trustLoopback
         self.responseEncryptor = responseEncryptor
+        self.peerInferenceSharingProvider = peerInferenceSharingProvider
         self.stateRef = NIOLoopBound(RequestState(), eventLoop: eventLoop)
     }
 
@@ -599,7 +608,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         path: path,
                         authedAudience: stateRef.value.authedAudience,
                         authedScopeIsMaster: stateRef.value.authedScopeIsMaster,
-                        isWorkspaceMintedKey: stateRef.value.authedKeyIsWorkspaceMinted
+                        isWorkspaceMintedKey: stateRef.value.authedKeyIsWorkspaceMinted,
+                        peerInferenceEnabled: peerInferenceEnabled
                     )
                     ?? Self.agentHeaderScopeRejection(
                         headerValue: head.headers.first(name: "X-Osaurus-Agent-Id"),
@@ -3451,42 +3461,109 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// disrupted:
     ///
     /// **Workspace-minted keys** (Workspaces attestation handshake; strict
-    /// default-deny allowlist — nothing shipped depends on more, and raw
-    /// inference would bypass workspace billing/mirroring):
+    /// default-deny allowlist — nothing shipped depends on more):
     /// - `GET /models` — the teammate client probes it for model discovery.
     /// - `GET /agents/{id}`, `POST /agents/{id}/run`
     ///   — the per-agent check (`agentScopeRejection`) still applies inside.
+    /// - `POST /chat/completions` only while the owner shares inference
+    ///   (`PeerInferenceSharing`), so a teammate can use this host as a plain
+    ///   OpenAI-compatible backend (Mode 1) on the owner's say-so.
     /// Detached dispatch and task routes are unavailable to workspace keys.
     ///
     /// **Legacy pairing / `AgentInvite` keys** keep their pre-existing surface
-    /// — in particular `POST /chat/completions`, which the paired-peer "Mode 1"
-    /// flow (peer used as a plain OpenAI-compatible backend) relies on. The
-    /// only route class newly closed to them is server administration
-    /// (`/admin/*`): a paired peer must never be able to change how this host
-    /// runs. Cross-agent reach is closed separately by
-    /// `agentHeaderScopeRejection` and `DispatchTaskOwnership`, neither of
-    /// which a same-agent client ever trips.
+    /// minus server administration (`/admin/*`) — a paired peer must never be
+    /// able to change how this host runs — and minus the inference routes
+    /// (`peerInferenceRouteRejection`) unless the owner shares inference.
+    /// Cross-agent reach is closed separately by `agentHeaderScopeRejection`
+    /// and `DispatchTaskOwnership`, neither of which a same-agent client ever
+    /// trips.
     ///
-    /// Rejections use the same `agent_scope_denied` shape the per-agent check
-    /// uses. Master-scoped keys and callers with no recorded audience (loopback
+    /// Scope rejections use the same `agent_scope_denied` shape the per-agent
+    /// check uses; an inference route refused because the owner has not opted
+    /// in reports `peer_inference_disabled` so the peer's UI can explain it.
+    /// Master-scoped keys and callers with no recorded audience (loopback
     /// trust, public routes) are unrestricted. `HEAD` is treated like `GET`.
     static func agentScopedRouteRejection(
         method: HTTPMethod,
         path: String,
         authedAudience: String?,
         authedScopeIsMaster: Bool,
-        isWorkspaceMintedKey: Bool
+        isWorkspaceMintedKey: Bool,
+        peerInferenceEnabled: Bool
     ) -> (code: String, message: String)? {
         guard authedAudience != nil, !authedScopeIsMaster else { return nil }
+        if let inferenceRejection = Self.peerInferenceRouteRejection(
+            method: method, path: path, peerInferenceEnabled: peerInferenceEnabled
+        ) {
+            return inferenceRejection
+        }
         let allowed =
             isWorkspaceMintedKey
-            ? Self.workspaceKeyMayReach(method: method, path: path)
+            ? Self.workspaceKeyMayReach(method: method, path: path, peerInferenceEnabled: peerInferenceEnabled)
             : Self.legacyAgentScopedKeyMayReach(method: method, path: path)
         if allowed { return nil }
         return (
             "agent_scope_denied",
             "This access key is scoped to a single agent and cannot access \(path)."
         )
+    }
+
+    /// The routes that run this host's models on a caller's behalf — text
+    /// generation, embeddings, and media generation. `path` is normalized (no
+    /// `/v1` / `/api` prefix, no query string). Model *listing* (`/models`,
+    /// `/tags`) is deliberately not here: peers may still call it, and the
+    /// handlers answer with an empty catalog while sharing is off
+    /// (`peerModelCatalogIsHidden`) so the peer client keeps connecting for
+    /// Mode 2 instead of tripping its "peer rejected the connection" path.
+    static func isPeerInferenceRoute(method: HTTPMethod, path: String) -> Bool {
+        guard method == .POST else { return false }
+        let components = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard let root = components.first else { return false }
+        switch (root, components.count) {
+        case ("chat", 1), ("completions", 1), ("generate", 1), ("messages", 1), ("responses", 1),
+            ("embeddings", 1), ("embed", 1):
+            return true
+        case ("chat", 2):
+            return components[1] == "completions"
+        case ("audio", 2):
+            return components[1] == "transcriptions"
+        case ("images", 2):
+            return ["generations", "edits", "upscale"].contains(components[1])
+        case ("videos", 2):
+            return ["quote", "generations"].contains(components[1])
+        default:
+            return false
+        }
+    }
+
+    /// Owner opt-in gate for every agent-scoped key (workspace-minted or
+    /// legacy): while the owner has not shared inference, the inference
+    /// routes are refused regardless of key origin. Callers pass the live
+    /// setting so the pure policy stays unit-testable.
+    static func peerInferenceRouteRejection(
+        method: HTTPMethod,
+        path: String,
+        peerInferenceEnabled: Bool
+    ) -> (code: String, message: String)? {
+        guard !peerInferenceEnabled, Self.isPeerInferenceRoute(method: method, path: path) else { return nil }
+        return (
+            "peer_inference_disabled",
+            "This Osaurus does not share its models for inference with paired agents. "
+                + "Ask the owner to enable it in Server → Overview."
+        )
+    }
+
+    /// Whether the model catalog (`/models`, `/tags`) should be answered with
+    /// an empty list: the caller holds an agent-scoped key (a paired peer) and
+    /// the owner has not shared inference. Loopback-trusted callers and
+    /// master-scoped keys always see the real catalog.
+    static func peerModelCatalogIsHidden(
+        authedAudience: String?,
+        authedScopeIsMaster: Bool,
+        peerInferenceEnabled: Bool
+    ) -> Bool {
+        guard authedAudience != nil, !authedScopeIsMaster else { return false }
+        return !peerInferenceEnabled
     }
 
     /// Cross-agent header check for agent-scoped keys: when a request names an
@@ -3525,13 +3602,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     /// Strict allowlist for workspace-minted keys. `path` is already
     /// normalized (no `/v1` / `/api` prefix, no query string).
-    static func workspaceKeyMayReach(method: HTTPMethod, path: String) -> Bool {
+    /// `peerInferenceEnabled` adds `POST /chat/completions` (the teammate
+    /// client's Mode 1 route) when the owner shares inference.
+    static func workspaceKeyMayReach(
+        method: HTTPMethod,
+        path: String,
+        peerInferenceEnabled: Bool = false
+    ) -> Bool {
         let effectiveMethod: HTTPMethod = method == .HEAD ? .GET : method
         let components = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
         guard let root = components.first else { return false }
         switch root {
         case "models":
             return effectiveMethod == .GET && components.count == 1
+        case "chat":
+            return peerInferenceEnabled && effectiveMethod == .POST
+                && components.count == 2 && components[1] == "completions"
         case "agents":
             guard components.count >= 2, !components[1].isEmpty else { return false }
             if components.count == 2 { return effectiveMethod == .GET }
@@ -11243,24 +11329,35 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logStartTime = startTime
         let logUserAgent = userAgent
         let logSelf = self
+        // Snapshot on the event loop: a paired peer (agent-scoped key) gets
+        // an empty catalog until the owner shares inference. See
+        // `PeerInferenceSharing`.
+        let hideCatalogFromPeer = Self.peerModelCatalogIsHidden(
+            authedAudience: stateRef.value.authedAudience,
+            authedScopeIsMaster: stateRef.value.authedScopeIsMaster,
+            peerInferenceEnabled: peerInferenceEnabled
+        )
 
         runRequestTask(priority: .userInitiated) {
-            // Get local models (filtered by the per-model exposure settings)
-            let exposure = ModelExposureStore.shared
-            var models = MLXService.getAvailableModels()
-                .filter { exposure.isExposed(id: $0, kind: .local) }
-                .map { OpenAIModel(modelName: $0) }
-            if FoundationModelService.isDefaultModelAvailable(),
-                exposure.isExposed(id: "foundation", kind: .local)
-            {
-                models.insert(OpenAIModel(modelName: "foundation"), at: 0)
-            }
+            var models: [OpenAIModel] = []
+            if !hideCatalogFromPeer {
+                // Get local models (filtered by the per-model exposure settings)
+                let exposure = ModelExposureStore.shared
+                models = MLXService.getAvailableModels()
+                    .filter { exposure.isExposed(id: $0, kind: .local) }
+                    .map { OpenAIModel(modelName: $0) }
+                if FoundationModelService.isDefaultModelAvailable(),
+                    exposure.isExposed(id: "foundation", kind: .local)
+                {
+                    models.insert(OpenAIModel(modelName: "foundation"), at: 0)
+                }
 
-            // Remote provider startup may be blocked on Keychain auth. Keep
-            // local model listing responsive and append remote models only
-            // when the MainActor snapshot is immediately available.
-            let remoteModels = await Self.remoteOpenAIModelsSnapshot()
-            models.append(contentsOf: remoteModels)
+                // Remote provider startup may be blocked on Keychain auth. Keep
+                // local model listing responsive and append remote models only
+                // when the MainActor snapshot is immediately available.
+                let remoteModels = await Self.remoteOpenAIModelsSnapshot()
+                models.append(contentsOf: remoteModels)
+            }
 
             let response = ModelsResponse(data: models)
             let json =
@@ -11303,6 +11400,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logStartTime = startTime
         let logUserAgent = userAgent
         let logSelf = self
+        // Same peer gate as `/models`: paired peers see an empty catalog
+        // until the owner shares inference.
+        let hideCatalogFromPeer = Self.peerModelCatalogIsHidden(
+            authedAudience: stateRef.value.authedAudience,
+            authedScopeIsMaster: stateRef.value.authedScopeIsMaster,
+            peerInferenceEnabled: peerInferenceEnabled
+        )
 
         runRequestTask(priority: .userInitiated) {
             let now = Date().ISO8601Format()
@@ -11310,7 +11414,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Get local models (filtered by the per-model exposure settings)
             let exposure = ModelExposureStore.shared
             var models = MLXService.getAvailableModels()
-                .filter { exposure.isExposed(id: $0, kind: .local) }
+                .filter { !hideCatalogFromPeer && exposure.isExposed(id: $0, kind: .local) }
                 .map { name -> OpenAIModel in
                     var m = OpenAIModel(from: name)
                     m.name = name
@@ -11322,7 +11426,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     return m
                 }
 
-            if FoundationModelService.isDefaultModelAvailable(),
+            if !hideCatalogFromPeer,
+                FoundationModelService.isDefaultModelAvailable(),
                 exposure.isExposed(id: "foundation", kind: .local)
             {
                 var fm = OpenAIModel(modelName: "foundation")
@@ -11344,7 +11449,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             // Keep Ollama tags usable for local models even if remote
             // provider auth is blocked during app startup.
-            let remoteModels = await Self.remoteOpenAIModelsSnapshot()
+            let remoteModels = hideCatalogFromPeer ? [] : await Self.remoteOpenAIModelsSnapshot()
             for var remoteModel in remoteModels {
                 remoteModel.modified_at = now
                 remoteModel.size = 0

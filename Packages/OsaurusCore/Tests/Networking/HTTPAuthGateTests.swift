@@ -323,9 +323,12 @@ struct HTTPAuthGateTests {
     }
 
     /// A workspace-minted agent-scoped key used to reach every Bearer-gated
-    /// route. The gate confines it: enumeration, raw inference, memory writes,
-    /// tool execution, media, and server administration all 403 before any
-    /// handler runs; the teammate client's `/models` probe still works.
+    /// route while the owner has NOT shared inference (the default). The gate
+    /// confines it: enumeration, memory writes, tool execution, and server
+    /// administration 403 as `agent_scope_denied`; the inference routes 403 as
+    /// `peer_inference_disabled`; the teammate client's `/models` probe still
+    /// answers 200 — with an empty catalog, so the peer connects for Mode 2
+    /// without seeing anything to run inference on.
     @Test func workspaceKey_isConfinedToItsAgentSurface() async throws {
         let fixture = try Self.agentScopedFixture(workspaceMinted: true)
         defer { WorkspaceAgentAccessHost.shared.nonceIndex.remove(fixture.nonce) }
@@ -334,22 +337,67 @@ struct HTTPAuthGateTests {
 
         let allowed = try await Self.send("GET", "/v1/models", token: fixture.token, server: server)
         #expect(allowed.status == 200)
+        let catalog = try JSONDecoder().decode(ModelsResponse.self, from: Data(allowed.body.utf8))
+        #expect(catalog.data.isEmpty, "peer must see an empty catalog while sharing is off: \(allowed.body)")
 
-        let denied: [(String, String)] = [
+        let scopeDenied: [(String, String)] = [
             ("GET", "/agents"),
             ("GET", "/v1/agents"),
-            ("POST", "/v1/chat/completions"),
-            ("POST", "/v1/embeddings"),
             ("POST", "/memory/ingest"),
             ("POST", "/mcp/call"),
             ("GET", "/mcp/tools"),
-            ("POST", "/v1/images/generations"),
             ("GET", "/admin/runtime-settings"),
             ("PUT", "/admin/runtime-settings"),
             ("GET", "/admin/cache-stats"),
             ("GET", "/v1/tasks/not-a-task"),
         ]
-        for (method, path) in denied {
+        for (method, path) in scopeDenied {
+            let result = try await Self.send(
+                method, path, token: fixture.token, server: server, body: Data("{}".utf8)
+            )
+            #expect(result.status == 403, "\(method) \(path) returned \(result.status)")
+            #expect(result.body.contains("agent_scope_denied"), "\(method) \(path): \(result.body)")
+        }
+        let inferenceDenied: [(String, String)] = [
+            ("POST", "/v1/chat/completions"),
+            ("POST", "/v1/embeddings"),
+            ("POST", "/v1/images/generations"),
+        ]
+        for (method, path) in inferenceDenied {
+            let result = try await Self.send(
+                method, path, token: fixture.token, server: server, body: Data("{}".utf8)
+            )
+            #expect(result.status == 403, "\(method) \(path) returned \(result.status)")
+            #expect(result.body.contains("peer_inference_disabled"), "\(method) \(path): \(result.body)")
+        }
+    }
+
+    /// Owner opted in: a workspace key now reaches `POST /chat/completions`
+    /// (Mode 1 against a teammate's host) and the catalog is real — but the
+    /// rest of the strict allowlist is unchanged.
+    @Test func workspaceKey_gainsOnlyChatCompletionsWhenOwnerShares() async throws {
+        let fixture = try Self.agentScopedFixture(workspaceMinted: true)
+        defer { WorkspaceAgentAccessHost.shared.nonceIndex.remove(fixture.nonce) }
+        let server = try await startAuthTestServer(validator: fixture.validator, peerInferenceSharing: true)
+        defer { Task { await server.shutdown() } }
+
+        // `{}` is not a valid chat request; the point is that the gate no
+        // longer turns it away (whatever the handler answers is not a 403).
+        let chat = try await Self.send(
+            "POST", "/v1/chat/completions", token: fixture.token, server: server, body: Data("{}".utf8)
+        )
+        #expect(
+            chat.status != 403,
+            "chat/completions must reach the handler when sharing: \(chat.status) \(chat.body)"
+        )
+
+        let stillDenied: [(String, String)] = [
+            ("POST", "/v1/embeddings"),
+            ("POST", "/v1/images/generations"),
+            ("GET", "/agents"),
+            ("POST", "/mcp/call"),
+        ]
+        for (method, path) in stillDenied {
             let result = try await Self.send(
                 method, path, token: fixture.token, server: server, body: Data("{}".utf8)
             )
@@ -358,11 +406,12 @@ struct HTTPAuthGateTests {
         }
     }
 
-    /// Backwards compatibility: a legacy `/pair` / invite key (not in the
-    /// workspace-key index) keeps reaching the routes existing paired peers
-    /// use — including raw `/chat/completions` (Mode 1) — and is never handed
-    /// an `agent_scope_denied` at the gate. Only `/admin/*` is newly closed.
-    @Test func legacyPairingKey_keepsItsSurfaceExceptServerAdministration() async throws {
+    /// A legacy `/pair` / invite key (not in the workspace-key index) keeps
+    /// reaching the agent routes existing paired peers use and is never
+    /// handed an `agent_scope_denied` for them. `/admin/*` is closed, and the
+    /// inference routes — including raw `/chat/completions` (Mode 1) — are
+    /// closed as `peer_inference_disabled` until the owner shares.
+    @Test func legacyPairingKey_keepsItsAgentSurfaceExceptServerAdministration() async throws {
         let fixture = try Self.agentScopedFixture(workspaceMinted: false)
         let server = try await startAuthTestServer(validator: fixture.validator)
         defer { Task { await server.shutdown() } }
@@ -371,9 +420,8 @@ struct HTTPAuthGateTests {
         // body, it is not the gate's 403).
         let stillOpen: [(String, String)] = [
             ("GET", "/v1/models"),
+            ("GET", "/api/tags"),
             ("GET", "/agents"),
-            ("POST", "/v1/chat/completions"),
-            ("POST", "/v1/embeddings"),
             ("GET", "/mcp/tools"),
         ]
         for (method, path) in stillOpen {
@@ -381,9 +429,24 @@ struct HTTPAuthGateTests {
                 method, path, token: fixture.token, server: server, body: Data("{}".utf8)
             )
             #expect(
-                !(result.status == 403 && result.body.contains("agent_scope_denied")),
+                !(result.status == 403),
                 "\(method) \(path) must not be gate-denied for a legacy key: \(result.status) \(result.body)"
             )
+        }
+        // The catalogs answer, but empty, while sharing is off.
+        let models = try await Self.send("GET", "/v1/models", token: fixture.token, server: server)
+        let parsedModels = try JSONDecoder().decode(ModelsResponse.self, from: Data(models.body.utf8))
+        #expect(parsedModels.data.isEmpty, "\(models.body)")
+        let tags = try await Self.send("GET", "/api/tags", token: fixture.token, server: server)
+        let tagsObject = try JSONSerialization.jsonObject(with: Data(tags.body.utf8)) as? [String: Any]
+        #expect((tagsObject?["models"] as? [Any])?.isEmpty == true, "\(tags.body)")
+
+        for (method, path) in [("POST", "/v1/chat/completions"), ("POST", "/v1/embeddings")] {
+            let result = try await Self.send(
+                method, path, token: fixture.token, server: server, body: Data("{}".utf8)
+            )
+            #expect(result.status == 403, "\(method) \(path) returned \(result.status)")
+            #expect(result.body.contains("peer_inference_disabled"), "\(method) \(path): \(result.body)")
         }
 
         for (method, path) in [("GET", "/admin/runtime-settings"), ("PUT", "/admin/runtime-settings"), ("GET", "/admin/cache-stats"),
@@ -394,6 +457,60 @@ struct HTTPAuthGateTests {
             #expect(result.status == 403, "\(method) \(path) returned \(result.status)")
             #expect(result.body.contains("agent_scope_denied"), "\(method) \(path): \(result.body)")
         }
+    }
+
+    /// Owner opted in: a legacy key regains raw inference (`/chat/completions`,
+    /// `/embeddings` reach their handlers) while `/admin/*` stays closed.
+    @Test func legacyPairingKey_regainsInferenceWhenOwnerShares() async throws {
+        let fixture = try Self.agentScopedFixture(workspaceMinted: false)
+        let server = try await startAuthTestServer(validator: fixture.validator, peerInferenceSharing: true)
+        defer { Task { await server.shutdown() } }
+
+        for (method, path) in [("POST", "/v1/chat/completions"), ("POST", "/v1/embeddings")] {
+            let result = try await Self.send(
+                method, path, token: fixture.token, server: server, body: Data("{}".utf8)
+            )
+            #expect(
+                result.status != 403,
+                "\(method) \(path) must reach the handler when sharing: \(result.status) \(result.body)"
+            )
+        }
+        let admin = try await Self.send("GET", "/admin/runtime-settings", token: fixture.token, server: server)
+        #expect(admin.status == 403 && admin.body.contains("agent_scope_denied"), "\(admin.body)")
+    }
+
+    /// The owner's own key never sees the peer gate. With sharing off and
+    /// loopback trust off, the master-scoped key gets the real catalog —
+    /// whatever this machine exposes, so it is compared against a
+    /// loopback-trusted read rather than pinned — while the agent-scoped key
+    /// gets nothing. (Test servers are serialized by `HTTPServerTestLock`, so
+    /// the loopback-trusted reference read runs on its own server first.)
+    @Test func masterScopedKey_isNotSubjectToThePeerCatalogGate() async throws {
+        func catalog(_ body: String) throws -> [String] {
+            try JSONDecoder().decode(ModelsResponse.self, from: Data(body.utf8)).data.map(\.id)
+        }
+        let fixture = try Self.agentScopedFixture(workspaceMinted: false)
+
+        let trusted = try await startAuthTestServer(validator: fixture.validator, trustLoopback: true)
+        let (loopbackData, loopbackResp) = try await URLSession.shared.data(
+            from: URL(string: "http://\(trusted.host):\(trusted.port)/v1/models")!
+        )
+        await trusted.shutdown()
+        #expect((loopbackResp as? HTTPURLResponse)?.statusCode == 200)
+        let reference = try catalog(String(decoding: loopbackData, as: UTF8.self))
+
+        let server = try await startAuthTestServer(validator: fixture.validator)
+        defer { Task { await server.shutdown() } }
+        let master = try TokenBuilder.build(
+            privateKey: TestKeys.alicePrivateKey, iss: TestKeys.aliceAddress, aud: TestKeys.aliceAddress
+        )
+        let owner = try await Self.send("GET", "/v1/models", token: master, server: server)
+        #expect(owner.status == 200)
+        #expect(try catalog(owner.body) == reference)
+
+        let peer = try await Self.send("GET", "/v1/models", token: fixture.token, server: server)
+        #expect(peer.status == 200)
+        #expect(try catalog(peer.body).isEmpty, "\(peer.body)")
     }
 
     /// The same routes stay open to a master-scoped key (unchanged contract),
@@ -426,10 +543,12 @@ struct HTTPAuthGateTests {
     /// `X-Osaurus-Agent-Id` naming an agent other than the key's own is refused
     /// at the gate for every agent-scoped key, so a paired peer can't persist
     /// into (or act as) another agent through `/chat/completions`, `/memory/*`
-    /// or `/mcp/call`. Naming its own agent passes through.
+    /// or `/mcp/call`. Naming its own agent passes through. Exercised with the
+    /// owner sharing inference so `/chat/completions` reaches the header check
+    /// rather than the (earlier) `peer_inference_disabled` gate.
     @Test func agentScopedKey_cannotNameAnotherAgentInHeader() async throws {
         let fixture = try Self.agentScopedFixture(workspaceMinted: false)
-        let server = try await startAuthTestServer(validator: fixture.validator)
+        let server = try await startAuthTestServer(validator: fixture.validator, peerInferenceSharing: true)
         defer { Task { await server.shutdown() } }
 
         let mine = UUID()
@@ -511,7 +630,8 @@ private struct AuthTestServer {
 
 private func startAuthTestServer(
     validator: APIKeyValidator,
-    trustLoopback: Bool = false
+    trustLoopback: Bool = false,
+    peerInferenceSharing: Bool = false
 ) async throws -> AuthTestServer {
     let config = ServerConfiguration.default
 
@@ -528,7 +648,8 @@ private func startAuthTestServer(
                             configuration: config,
                             apiKeyValidator: validator,
                             eventLoop: channel.eventLoop,
-                            trustLoopback: trustLoopback
+                            trustLoopback: trustLoopback,
+                            peerInferenceSharingProvider: { peerInferenceSharing }
                         )
                     )
                 }

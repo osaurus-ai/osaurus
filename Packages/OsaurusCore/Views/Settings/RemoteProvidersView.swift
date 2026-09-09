@@ -146,7 +146,12 @@ struct RemoteProvidersView: View {
         } else if connectedCount == 0 {
             return L("\(totalCount) provider\(totalCount == 1 ? "" : "s") configured")
         } else {
-            let modelCount = manager.providerStates.values.reduce(0) { $0 + $1.modelCount }
+            // Count only the providers this list shows, so paired agents with
+            // no shared models (and the managed router) don't inflate the total.
+            let modelCount = manager.providerStates
+                .filter { userProviderIds.contains($0.key) }
+                .values
+                .reduce(0) { $0 + $1.modelCount }
             return L("\(connectedCount) connected • \(modelCount) model\(modelCount == 1 ? "" : "s") available")
         }
     }
@@ -157,8 +162,15 @@ struct RemoteProvidersView: View {
         addSheetConfig = AddSheetConfig(preset: preset)
     }
 
+    /// Everything the user manages here: no managed router, and no paired
+    /// Osaurus agents whose owner has not shared their models for inference
+    /// (they answer `/models` with an empty catalog). Those agents stay
+    /// reachable for chat/delegation from the Workspaces tab, the Agents tab,
+    /// and the chat sidebar.
     private var userConfiguredProviders: [RemoteProvider] {
-        manager.configuration.providers.filter { $0.providerType != .osaurusRouter }
+        manager.configuration.providers.filter {
+            $0.providerType != .osaurusRouter && manager.exposesModelsForInference($0)
+        }
     }
 
     private var connectivitySnapshot: ProviderConnectivitySnapshot {

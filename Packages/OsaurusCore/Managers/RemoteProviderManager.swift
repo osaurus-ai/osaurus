@@ -1253,7 +1253,7 @@ public final class RemoteProviderManager: ObservableObject {
         ensureManagedOsaurusRouterProviderIfNeeded()
         var result: [CachedProviderModels] = []
 
-        for provider in configuration.providers {
+        for provider in configuration.providers where exposesModelsForInference(provider) {
             if let state = providerStates[provider.id], state.isConnected {
                 // Create prefixed model names. This remains the normal chat
                 // picker contract; spawn persistence uses the separate
@@ -1273,6 +1273,31 @@ public final class RemoteProviderManager: ObservableObject {
         }
 
         return result
+    }
+
+    // MARK: - Paired-peer inference exposure
+
+    /// Whether a provider belongs on the *inference* surfaces — Cloud Models,
+    /// the model picker, `/v1/models`. Third-party providers always do. A
+    /// native `.osaurus` peer (workspace teammate, LAN agent, or invite-link
+    /// share) does only when its owner shares models for inference
+    /// (`PeerInferenceSharing` on the host): the host then answers `/models`
+    /// with a real catalog; otherwise it answers with an empty one and the
+    /// peer stays a chat/delegation target (Mode 2, routed by provider id)
+    /// that never shows up as a cloud provider here. Pure over the state the
+    /// caller already holds so the rule is unit-testable.
+    nonisolated static func exposesModelsForInference(
+        providerType: RemoteProviderType,
+        discoveredModels: [String]
+    ) -> Bool {
+        providerType != .osaurus || !discoveredModels.isEmpty
+    }
+
+    func exposesModelsForInference(_ provider: RemoteProvider) -> Bool {
+        Self.exposesModelsForInference(
+            providerType: provider.providerType,
+            discoveredModels: providerStates[provider.id]?.discoveredModels ?? []
+        )
     }
 
     /// Connected billable media models. These never enter chat/spawn service
@@ -1858,7 +1883,7 @@ extension RemoteProviderManager {
         var models: [OpenAIModel] = []
         let exposure = ModelExposureStore.shared
 
-        for provider in configuration.providers {
+        for provider in configuration.providers where exposesModelsForInference(provider) {
             guard let state = providerStates[provider.id], state.isConnected else {
                 continue
             }
