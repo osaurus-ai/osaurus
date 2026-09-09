@@ -1077,9 +1077,7 @@ struct ChatSessionSidebar: View {
                         shareableWorkspaces: shareableWorkspaces(for: agent),
                         sharedWorkspaces: sharedWorkspaces(for: agent),
                         onShareToWorkspace: { workspace in
-                            workspacesService.openInSettings(
-                                workspaceId: workspace.id, tab: .sharedAgents, shareAgentId: agent.id
-                            )
+                            RemoteAgentWorkspaceAttribution.shareAgent(agent.id, toWorkspace: workspace.id)
                         },
                         onUnshareFromWorkspace: { workspace in
                             guard let address = agent.agentAddress else { return }

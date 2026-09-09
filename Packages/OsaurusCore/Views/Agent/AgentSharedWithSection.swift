@@ -43,7 +43,7 @@ struct AgentSharedWithSection: View {
                     Menu {
                         ForEach(shareableWorkspaces) { workspace in
                             Button {
-                                RemoteAgentWorkspaceAttribution.openWorkspace(id: workspace.id)
+                                RemoteAgentWorkspaceAttribution.shareAgent(agent.id, toWorkspace: workspace.id)
                             } label: {
                                 Text(workspace.name)
                             }
@@ -87,7 +87,7 @@ struct AgentSharedWithSection: View {
                     }
                 }
                 Text(
-                    "Teammates reach this agent through its relay tunnel. Turning the relay off or deleting the agent cuts them off.",
+                    "Teammates reach this agent through its relay tunnel. Turning the relay off cuts them off; unshare it here before deleting the agent.",
                     bundle: .module
                 )
                 .font(.system(size: 10))

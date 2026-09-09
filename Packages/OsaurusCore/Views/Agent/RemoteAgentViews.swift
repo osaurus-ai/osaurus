@@ -940,4 +940,12 @@ enum RemoteAgentWorkspaceAttribution {
     static func openWorkspace(id: String) {
         WorkspacesService.shared.openInSettings(workspaceId: id, tab: .sharedAgents)
     }
+
+    /// "Share to Workspace → <name>" from an agent surface: the workspace's
+    /// Shared Agents tab with the Share agent sheet open and `agentId`
+    /// already selected.
+    @MainActor
+    static func shareAgent(_ agentId: UUID, toWorkspace id: String) {
+        WorkspacesService.shared.openInSettings(workspaceId: id, tab: .sharedAgents, shareAgentId: agentId)
+    }
 }
