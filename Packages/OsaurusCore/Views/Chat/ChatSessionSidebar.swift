@@ -1902,15 +1902,14 @@ private struct AgentSidebarRow: View {
                 SessionStopButton(action: onStop)
                     .transition(.opacity)
             }
-            // Hover-only gear opening this agent's detail page in the
-            // management window. The selected row is already signalled by
-            // its background, so no checkmark. Built-ins (the default
-            // Osaurus agent) have no editable detail page, so no gear.
-            else if isHovered, !agent.isBuiltIn {
-                Button {
-                    AppDelegate.shared?.showManagementWindow(
-                        initialTab: .agents, deeplinkAgentId: agent.id)
-                } label: {
+            // Hover-only gear opening this agent's settings in the
+            // management window: the Agents detail page for a user agent,
+            // Settings → Orchestrator for the built-in Osaurus agent (it has
+            // no Agents row, but its identity and delegation helpers live
+            // there). The selected row is already signalled by its
+            // background, so no checkmark.
+            else if isHovered {
+                Button(action: openAgentSettings) {
                     Image(systemName: "gearshape")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(theme.secondaryText)
@@ -1919,7 +1918,7 @@ private struct AgentSidebarRow: View {
                 }
                 .buttonStyle(.plain)
                 .pointingHandCursor()
-                .localizedHelp("Agent Settings")
+                .localizedHelp(agent.isBuiltIn ? LocalizedStringKey("Orchestrator Settings") : LocalizedStringKey("Agent Settings"))
                 .transition(.opacity)
             }
         }
@@ -1949,16 +1948,24 @@ private struct AgentSidebarRow: View {
         .animation(theme.springAnimation(responseMultiplier: 0.8), value: isSelected)
     }
 
+    /// Where this agent is configured: a user agent's detail page under
+    /// Settings → Agents, or Settings → Orchestrator for the built-in
+    /// Osaurus agent (which has no Agents row). Shared by the hover gear and
+    /// the context menu so both land in the same place.
+    private func openAgentSettings() {
+        if agent.isBuiltIn {
+            AppDelegate.shared?.showManagementWindow(initialTab: .orchestrator)
+        } else {
+            AppDelegate.shared?.showManagementWindow(initialTab: .agents, deeplinkAgentId: agent.id)
+        }
+    }
+
     /// Parity with session / project rows: settings, address, and the
     /// share/unshare actions that otherwise live only in Settings.
     @ViewBuilder
     private var agentContextMenu: some View {
-        if !agent.isBuiltIn {
-            Button {
-                AppDelegate.shared?.showManagementWindow(initialTab: .agents, deeplinkAgentId: agent.id)
-            } label: {
-                Label(L("Open Settings"), systemImage: "gearshape")
-            }
+        Button(action: openAgentSettings) {
+            Label(L("Open Settings"), systemImage: "gearshape")
         }
         if let address = agent.agentAddress, !address.isEmpty {
             Button {

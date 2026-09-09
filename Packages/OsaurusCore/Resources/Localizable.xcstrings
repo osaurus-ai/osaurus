@@ -6824,6 +6824,286 @@
         }
       }
     },
+    "%@ left in %@'s pool.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ left in %2$@'s pool."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ verbleiben im Pool von %2$@."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%2$@의 풀에 %1$@ 남음."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В пуле %2$@ осталось %1$@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%2$@ 的额度池剩余 %1$@。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%2$@ 的額度池剩餘 %1$@。"
+          }
+        }
+      }
+    },
+    "%@'s pool is frozen.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@'s pool is frozen."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Pool von %@ ist eingefroren."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@의 풀이 동결되었습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пул %@ заморожен."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 的额度池已冻结。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 的額度池已凍結。"
+          }
+        }
+      }
+    },
+    "%@'s pool balance is still loading.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@'s pool balance is still loading."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Poolstand von %@ wird noch geladen."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@의 풀 잔액을 불러오는 중입니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Баланс пула %@ ещё загружается."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 的额度池余额仍在加载。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 的額度池餘額仍在載入。"
+          }
+        }
+      }
+    },
+    "%@ spent from this pool this session — billed to the workspace, not your wallet.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ spent from this pool this session — billed to the workspace, not your wallet."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ in dieser Sitzung aus diesem Pool ausgegeben – dem Workspace berechnet, nicht deinem Guthaben."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이번 세션에서 이 풀에서 %@ 사용됨 — 내 지갑이 아닌 작업 공간에 청구됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ потрачено из этого пула за эту сессию — списано с рабочей области, а не с вашего кошелька."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次会话已从此额度池中使用 %@——由工作区承担，而非你的钱包。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次會話已從此額度池中使用 %@——由工作空間承擔，而非你的錢包。"
+          }
+        }
+      }
+    },
+    "Click to open %@.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click to open %@."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Klicke, um %@ zu öffnen."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@을(를) 열려면 클릭하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нажмите, чтобы открыть %@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "点击打开 %@。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "點擊開啟 %@。"
+          }
+        }
+      }
+    },
+    "%@ left in %@'s workspace pool. %@ spent this session.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ left in %2$@'s workspace pool. %3$@ spent this session."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ verbleiben im Workspace-Pool von %2$@. %3$@ in dieser Sitzung ausgegeben."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%2$@의 작업 공간 풀에 %1$@ 남음. 이번 세션에서 %3$@ 사용됨."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В пуле рабочей области %2$@ осталось %1$@. За эту сессию потрачено %3$@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%2$@ 的工作区额度池剩余 %1$@。本次会话已使用 %3$@。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%2$@ 的工作空間額度池剩餘 %1$@。本次會話已使用 %3$@。"
+          }
+        }
+      }
+    },
+    "%@'s workspace pool. %@ spent this session.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@'s workspace pool. %2$@ spent this session."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Workspace-Pool von %1$@. %2$@ in dieser Sitzung ausgegeben."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@의 작업 공간 풀. 이번 세션에서 %2$@ 사용됨."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пул рабочей области %1$@. За эту сессию потрачено %2$@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ 的工作区额度池。本次会话已使用 %2$@。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ 的工作空間額度池。本次會話已使用 %2$@。"
+          }
+        }
+      }
+    },
     "%@ spent from %@'s pool this session — billed to the workspace, not your wallet. Click to open %@.": {
       "localizations": {
         "en": {
@@ -239535,6 +239815,46 @@
           "stringUnit": {
             "state": "translated",
             "value": "編排器"
+          }
+        }
+      }
+    },
+    "Orchestrator Settings": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Orchestrator-Einstellungen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Orchestrator Settings"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "오케스트레이터 설정"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Настройки оркестратора"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "编排器设置"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "編排器設定"
           }
         }
       }
