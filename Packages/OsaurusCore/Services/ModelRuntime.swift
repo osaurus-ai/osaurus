@@ -4301,7 +4301,7 @@ public actor ModelRuntime {
             }
             defer {
                 if let activity = alignmentRepairActivity {
-                    Task { @MainActor in AlignmentPreparationState.shared.finish(id: activity) }
+                    DispatchQueue.main.async { AlignmentPreparationState.shared.finish(id: activity) }
                 }
             }
             let taskStartedAt = CFAbsoluteTimeGetCurrent()
@@ -4334,7 +4334,9 @@ public actor ModelRuntime {
                     ? .disabled : .directUserSend
                 let observer: @Sendable (AlignmentRepairProgress) -> Void = { progress in
                     guard let activity = alignmentRepairActivity else { return }
-                    Task { @MainActor in
+                    // FIFO delivery preserves copy/verify/install order; the
+                    // matching finish is enqueued on this same queue.
+                    DispatchQueue.main.async {
                         AlignmentPreparationState.shared.update(id: activity, progress: progress)
                     }
                 }
