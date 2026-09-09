@@ -2515,14 +2515,11 @@ extension FloatingInputCard {
                         ModelOptionSegment(id: "3", label: "3"),
                     ]
             ),
-            // The one selector whose choice also changes SAMPLING: active
-            // MTP decodes greedy (output-equivalence is only defined under
-            // argmax). Undisclosed, "why is my temperature ignored?" is
-            // unanswerable from the UI.
+            // Depth controls speculation, not the user's sampling settings.
             help: manuallyBlocked
                 ? L("Speculative decoding is disabled for this bundle because its MTP head is not safe for production use.")
                 : L(
-                    "Auto activates from tuning or a supported family default and adapts up to depth 5. Depths 1–3 set a maximum; the runtime may lower the depth or use plain decoding when speculation stops paying. While active, this model decodes greedily (temperature 0); Off restores the configured sampling."
+                    "Auto activates from tuning or a supported family default and adapts up to depth 5. Depths 1–3 set a maximum; the runtime may lower the depth or use plain decoding when speculation stops paying. Your configured sampling stays in effect."
                 )
         )
     }
@@ -2575,8 +2572,8 @@ extension FloatingInputCard {
             // Explicit depth is a manual ACTIVATION contract, not an auto
             // hint: forceOn + explicitDepth activates a tensor-complete MTP
             // head without measured tuning (the engine validates family and
-            // tensor evidence and fails closed otherwise, e.g. JANG_1L), and
-            // the runtime enforces greedy sampling for this model+session.
+            // tensor evidence and fails closed otherwise, e.g. JANG_1L).
+            // Sampling stays independent of the depth selection.
             // The old wiring (auto + draftTokenLimit) selected a depth in the
             // UI while the engine stayed autoregressive.
             settings.mtp.mode = .forceOn

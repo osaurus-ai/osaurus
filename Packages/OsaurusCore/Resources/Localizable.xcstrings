@@ -244735,7 +244735,7 @@
         }
       }
     },
-    "Auto activates from tuning or a supported family default and adapts up to depth 5. Depths 1–3 set a maximum; the runtime may lower the depth or use plain decoding when speculation stops paying. While active, this model decodes greedily (temperature 0); Off restores the configured sampling.": {},
+    "Auto activates from tuning or a supported family default and adapts up to depth 5. Depths 1–3 set a maximum; the runtime may lower the depth or use plain decoding when speculation stops paying. Your configured sampling stays in effect.": {},
     "Auto-reload": {
       "localizations": {
         "de": {
