@@ -229,6 +229,22 @@ extension MCPProviderTool {
         switch value {
         case let stringValue as String:
             return .string(stringValue)
+        // JSONSerialization decodes every JSON number and boolean as NSNumber,
+        // and Foundation's bridging lets both `NSNumber(value: 1) as? Bool`
+        // and `NSNumber(value: 0) as? Bool` succeed. A plain `as Bool` case
+        // ahead of `as Int` therefore turned the integers 0 / 1 into
+        // `false` / `true`, so `{"offset": 1}` reached the MCP server as
+        // `{"offset": true}` and was rejected by integer-typed parameters.
+        // Use the CFBoolean type id to tell a real JSON boolean apart from a
+        // number, and the CFNumber float flag to keep `1.0` a double.
+        case let number as NSNumber:
+            if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                return .bool(number.boolValue)
+            }
+            if CFNumberIsFloatType(number) {
+                return .double(number.doubleValue)
+            }
+            return .int(number.intValue)
         case let boolValue as Bool:
             return .bool(boolValue)
         case let intValue as Int:

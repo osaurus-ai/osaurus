@@ -32,6 +32,31 @@ struct MCPArgumentsErrorTests {
         #expect(result.count == 2)
     }
 
+    /// JSONSerialization hands back NSNumber for both numbers and booleans,
+    /// and `NSNumber(1) as? Bool` succeeds, so the integers 0 / 1 used to be
+    /// forwarded to the MCP server as `false` / `true` and rejected by
+    /// integer-typed parameters.
+    @Test func integerZeroAndOneStayIntegers() throws {
+        let result = try MCPProviderTool.convertArgumentsToMCPValues(
+            "{\"offset\":1,\"page\":0,\"limit\":20,\"nested\":{\"depth\":1},\"ids\":[0,1]}"
+        )
+        #expect(result["offset"] == .int(1))
+        #expect(result["page"] == .int(0))
+        #expect(result["limit"] == .int(20))
+        #expect(result["nested"] == .object(["depth": .int(1)]))
+        #expect(result["ids"] == .array([.int(0), .int(1)]))
+    }
+
+    @Test func booleansAndDoublesKeepTheirTypes() throws {
+        let result = try MCPProviderTool.convertArgumentsToMCPValues(
+            "{\"enabled\":true,\"disabled\":false,\"ratio\":1.0,\"score\":2.5}"
+        )
+        #expect(result["enabled"] == .bool(true))
+        #expect(result["disabled"] == .bool(false))
+        #expect(result["ratio"] == .double(1.0))
+        #expect(result["score"] == .double(2.5))
+    }
+
     @Test func malformedJSONThrows() throws {
         do {
             _ = try MCPProviderTool.convertArgumentsToMCPValues("{not valid json")
