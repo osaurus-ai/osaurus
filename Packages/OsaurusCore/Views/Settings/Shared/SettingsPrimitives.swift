@@ -254,8 +254,28 @@ struct SettingsSliderField: View {
     let formatString: String
     var anchorId: String? = nil
 
-    @State private var sliderValue: Float = 0
-    @State private var isInitialized = false
+    private var hasOverride: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    // Read-only rendering must not turn an inherited value into a saved override.
+    // A numeric fallback is used only when the user explicitly enables Override.
+    var overrideEnabled: Binding<Bool> {
+        Binding(
+            get: { hasOverride },
+            set: { enabled in
+                guard enabled != hasOverride else { return }
+                text = enabled ? String(format: formatString, defaultValue) : ""
+            }
+        )
+    }
+
+    var sliderValue: Binding<Float> {
+        Binding(
+            get: { effectiveValue },
+            set: { text = String(format: formatString, $0) }
+        )
+    }
 
     private var effectiveValue: Float {
         if let v = Float(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
@@ -270,77 +290,75 @@ struct SettingsSliderField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(LocalizedStringKey(label), bundle: .module)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.primaryText)
-
-            HStack(spacing: 12) {
-                Text(String(format: formatString, range.lowerBound))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .frame(width: 28, alignment: .trailing)
-
-                Slider(
-                    value: $sliderValue,
-                    in: range,
-                    step: step
-                )
-                .tint(themeManager.currentTheme.accentColor)
-                .onChange(of: sliderValue) { _, newValue in
-                    guard isInitialized else { return }
-                    text = String(format: formatString, newValue)
-                }
-
-                Text(String(format: formatString, range.upperBound))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .frame(width: 28, alignment: .leading)
-
-                Text(displayValue)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+            HStack {
+                Text(LocalizedStringKey(label), bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(themeManager.currentTheme.primaryText)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(themeManager.currentTheme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                            )
-                    )
-                    .frame(width: 52)
+                Spacer()
+                Toggle(isOn: overrideEnabled) {
+                    Text("Override", bundle: .module)
+                }
+                .toggleStyle(.checkbox)
+                .accessibilityLabel(Text(LocalizedStringKey(label), bundle: .module))
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(themeManager.currentTheme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+
+            if hasOverride {
+                HStack(spacing: 12) {
+                    Text(String(format: formatString, range.lowerBound))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(themeManager.currentTheme.tertiaryText)
+                        .frame(width: 28, alignment: .trailing)
+
+                    Slider(
+                        value: sliderValue,
+                        in: range,
+                        step: step
                     )
-            )
-            .settingsLandingAnchor(anchorId)
+                    .tint(themeManager.currentTheme.accentColor)
+
+                    Text(String(format: formatString, range.upperBound))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(themeManager.currentTheme.tertiaryText)
+                        .frame(width: 28, alignment: .leading)
+
+                    Text(displayValue)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundColor(themeManager.currentTheme.primaryText)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(themeManager.currentTheme.inputBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                                )
+                        )
+                        .frame(width: 52)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(themeManager.currentTheme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                        )
+                )
+                .settingsLandingAnchor(anchorId)
+            } else {
+                Text("No override — uses the active model and runtime defaults.", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .settingsLandingAnchor(anchorId)
+            }
 
             if !help.isEmpty {
                 Text(LocalizedStringKey(help), bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(themeManager.currentTheme.tertiaryText)
                     .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .onAppear {
-            sliderValue = effectiveValue
-            DispatchQueue.main.async {
-                isInitialized = true
-            }
-        }
-        .onChange(of: text) { _, _ in
-            guard isInitialized else { return }
-            let newEffective = effectiveValue
-            if abs(sliderValue - newEffective) > step / 2 {
-                sliderValue = newEffective
             }
         }
     }

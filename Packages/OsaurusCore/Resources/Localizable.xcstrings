@@ -131502,6 +131502,24 @@
         }
       }
     },
+    "No override — uses the active model and runtime defaults.": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "No override — uses the active model and runtime defaults." } },
+        "de": { "stringUnit": { "state": "translated", "value": "Keine Überschreibung — verwendet die Standardwerte des aktiven Modells und der Laufzeit." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "未覆盖 — 使用当前模型和运行时的默认值。" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "재정의 없음 — 현재 모델 및 런타임 기본값을 사용합니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Без переопределения — используются значения по умолчанию активной модели и среды выполнения." } }
+      }
+    },
+    "Override": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Override" } },
+        "de": { "stringUnit": { "state": "translated", "value": "Überschreiben" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "覆盖" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "재정의" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Переопределить" } }
+      }
+    },
     "No overrides set. Add explicit facts that should always be in your identity.": {
       "localizations": {
         "de": {
