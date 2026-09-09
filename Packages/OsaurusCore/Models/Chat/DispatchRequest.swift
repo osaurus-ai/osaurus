@@ -81,6 +81,8 @@ public struct DispatchRequest: Sendable {
     public let delegationResponseTokenCap: Int?
     public let delegationAssistantTurnCap: Int?
     public let delegationContextPositionCap: Int?
+    /// Exact model resolved and priced by delegated-run admission.
+    public let delegationModel: String?
 
     /// The enforced delegation contract carried by this request, or nil.
     /// All three caps must be present to form a contract — a partial
@@ -117,7 +119,8 @@ public struct DispatchRequest: Sendable {
         loadIntent: ModelLoadIntent = .interactive,
         delegationResponseTokenCap: Int? = nil,
         delegationContextPositionCap: Int? = nil,
-        delegationAssistantTurnCap: Int? = nil
+        delegationAssistantTurnCap: Int? = nil,
+        delegationModel: String? = nil
     ) {
         self.id = id
         self.prompt = prompt
@@ -136,6 +139,7 @@ public struct DispatchRequest: Sendable {
         self.delegationResponseTokenCap = delegationResponseTokenCap
         self.delegationContextPositionCap = delegationContextPositionCap
         self.delegationAssistantTurnCap = delegationAssistantTurnCap
+        self.delegationModel = source == .delegation ? delegationModel : nil
     }
 }
 

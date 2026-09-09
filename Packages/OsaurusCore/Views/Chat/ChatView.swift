@@ -400,6 +400,13 @@ final class ChatSession: ObservableObject {
     /// every ordinary chat. Consumed at the two loop-limit sites below —
     /// RAM admission prices delegated children from exactly these values.
     var delegationBudget: DelegatedRunContract?
+    /// Request-scoped identity priced by admission; never an agent preference.
+    var delegationModel: String?
+
+    private var admittedDelegationModel: String? {
+        guard source == .delegation else { return nil }
+        return delegationModel
+    }
     var sourcePluginId: String?
     var externalSessionKey: String?
     var dispatchTaskId: UUID?
@@ -1289,6 +1296,16 @@ final class ChatSession: ObservableObject {
     /// chats (`source == .chat`), where a manual pick must survive.
     func applyAgentDefaultModelForDispatch() {
         guard source != .chat else { return }
+        if let admitted = admittedDelegationModel {
+            // Preserve an unavailable target for the runtime's ordinary error,
+            // rather than loading different weights than admission priced.
+            isLoadingModel = true
+            selectedModel = Self.resolvePickerModelId(admitted, in: pickerItems) ?? admitted
+            loadActiveModelOptions(for: selectedModel)
+            applyImageModelDefaults(for: selectedModel)
+            isLoadingModel = false
+            return
+        }
         guard
             let configured = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId),
             let model = Self.resolvePickerModelId(configured, in: pickerItems),
@@ -1565,7 +1582,9 @@ final class ChatSession: ObservableObject {
         let effectiveModel = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId)
         let newSelected: String?
 
-        if let manual = lastManualModelSelection, selectedModel == manual,
+        if let admitted = admittedDelegationModel {
+            newSelected = Self.resolvePickerModelId(admitted, in: newOptions) ?? admitted
+        } else if let manual = lastManualModelSelection, selectedModel == manual,
             newOptionIds.contains(manual)
         {
             newSelected = manual

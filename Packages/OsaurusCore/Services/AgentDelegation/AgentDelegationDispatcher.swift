@@ -6,9 +6,9 @@
 //  budget-capped `AgentSubagentRunner` mini-loop, an agent target runs as a
 //  REAL dispatched `ChatSession` via `BackgroundTaskManager.dispatchChat`:
 //
-//   • the child runs under the TARGET agent's own settings (model, tools,
-//     temperature, memory, the normal chat-loop cap) — the launcher's
-//     `SubagentBudgets` turn/tool-call/token caps do not apply;
+//   • the child retains the TARGET agent's tools, temperature and memory;
+//     its model is the exact identity resolved by spawn admission (including
+//     an explicit launcher override), and delegated budgets tighten its caps;
 //   • one fresh persisted session per delegation call (`source:
 //     .delegation`), visible in the target agent's chat history;
 //   • the dispatched run is a real background task, so the Activity row's
@@ -17,8 +17,8 @@
 //  The caller (`TextSubagentKind.run`) still owns the full host lifecycle:
 //  the spawn allow-list, permission gate, recursion guard, process-wide
 //  admission, and the local-model residency handoff all ran before this
-//  dispatcher is reached. Only the launcher's `maxElapsedSeconds` survives
-//  as a wall-clock safety budget on the awaited run.
+//  dispatcher is reached. The launcher's `maxElapsedSeconds` also bounds
+//  the awaited run's wall-clock execution time.
 //
 //  CAPABILITY SURFACE CONTRACT — the delegated child IS the target agent:
 //  it carries the target agent's full direct-chat tool surface, including
@@ -198,6 +198,7 @@ enum AgentDelegationDispatcher {
         maxResponseTokens: Int? = nil,
         maxAssistantTurns: Int? = nil,
         maxContextPositions: Int? = nil,
+        model: String,
         feed: SubagentFeed,
         interrupt: InterruptToken,
         parentSessionId: String? = nil
@@ -220,7 +221,8 @@ enum AgentDelegationDispatcher {
             // RAM admission prices the child from the SAME values.
             delegationResponseTokenCap: maxResponseTokens,
             delegationContextPositionCap: maxContextPositions,
-            delegationAssistantTurnCap: maxAssistantTurns
+            delegationAssistantTurnCap: maxAssistantTurns,
+            delegationModel: model
         )
 
         // The child is a REAL chat session of the target agent, not a

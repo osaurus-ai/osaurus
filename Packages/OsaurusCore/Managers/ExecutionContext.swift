@@ -48,7 +48,8 @@ public final class ExecutionContext: ObservableObject {
         sourcePluginId: String? = nil,
         externalSessionKey: String? = nil,
         loadIntent: ModelLoadIntent = .interactive,
-        delegationBudget: DelegatedRunContract? = nil
+        delegationBudget: DelegatedRunContract? = nil,
+        delegationModel: String? = nil
     ) {
         self.id = id
         self.agentId = agentId
@@ -58,6 +59,7 @@ public final class ExecutionContext: ObservableObject {
 
         let session = ChatSession()
         session.delegationBudget = delegationBudget
+        session.delegationModel = source == .delegation ? delegationModel : nil
         session.agentId = agentId
         // Align persisted session id with the dispatch task id so plugins
         // and HTTP pollers can deep-link to the same row, and so

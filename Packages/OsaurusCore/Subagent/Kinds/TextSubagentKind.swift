@@ -562,12 +562,8 @@ final class TextSubagentKind:
             idleWaitSeconds: self.budgets.maxElapsedSeconds,
             deniedMessage: residencyDeniedMessage,
             unavailableMessage: "Agent '\(agent.name)' has no available model configured.",
-            // True delegation runs the child as a REAL chat session of the
-            // target agent, which follows the target agent's own model
-            // (`applyAgentDefaultModelForDispatch`). The launcher's spawn
-            // model override therefore cannot apply — the residency plan
-            // must be computed for the model the child will actually load.
-            honorConfiguredOverride: !isDelegatedAgentTarget,
+            // Carry this exact model into the child so admission and execution
+            // both honor the launcher's configured agent-target override.
             defaultModel: { AgentManager.shared.effectiveModel(for: targetAgentId) }
         )
         self.residencyPlan = resolved.decision.plan
@@ -1181,6 +1177,7 @@ final class TextSubagentKind:
             maxResponseTokens: delegatedContract?.responseTokens,
             maxAssistantTurns: delegatedContract?.assistantTurns,
             maxContextPositions: delegatedContract?.contextPositions,
+            model: resolved.name,
             feed: feed,
             interrupt: interrupt,
             parentSessionId: parentSessionId

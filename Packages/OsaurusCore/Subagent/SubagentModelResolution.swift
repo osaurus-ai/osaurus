@@ -123,12 +123,8 @@ enum SubagentModelResolution {
     /// Foundation, an installed local model, or a model advertised by a
     /// currently connected provider before the residency decision can run.
     ///
-    /// `honorConfiguredOverride` (default true) lets TRUE agent delegation
-    /// skip the launching agent's per-capability model override: the
-    /// delegated child is a REAL chat session of the target agent, and
-    /// `applyAgentDefaultModelForDispatch` will run it on the target agent's
-    /// own model — so the residency plan must be computed for that exact
-    /// model, not for an override the dispatched session will never load.
+    /// The delegated dispatcher carries the resolved model into the child so
+    /// execution uses the same model admission priced.
     static func resolve(
         capabilityId: String,
         agentId: UUID?,
