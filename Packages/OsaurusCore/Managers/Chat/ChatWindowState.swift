@@ -1024,6 +1024,12 @@ final class ChatWindowState: ObservableObject {
 
     func loadSession(_ sessionData: ChatSessionData) {
         guard sessionData.id != session.sessionId else { return }
+        // Match same-window tab deduplication across windows. Do this before
+        // saving/detaching the current session: choosing an already-open chat
+        // must not mutate either transcript or create a competing writer.
+        if ChatWindowManager.shared.revealOpenSession(
+            sessionData.id, excludingWindowId: windowId
+        ) != nil { return }
         // Browser-style dedupe: if another tab already shows this
         // conversation, switch to it instead of loading a second copy of
         // the same transcript into this tab (two live instances of one row
@@ -1246,6 +1252,9 @@ final class ChatWindowState: ObservableObject {
             selectTab(id: existing.id)
             return
         }
+        if ChatWindowManager.shared.revealOpenSession(
+            sessionData.id, excludingWindowId: windowId
+        ) != nil { return }
         // Chrome-style: an untouched empty tab is reused rather than left
         // behind as a blank tab next to the one we just opened.
         let activeIsBlank = session.turns.isEmpty && !session.isStreaming
@@ -1425,6 +1434,9 @@ final class ChatWindowState: ObservableObject {
                 selectTab(id: open.id)
                 return
             }
+            if ChatWindowManager.shared.revealOpenSession(
+                sessionId, excludingWindowId: windowId
+            ) != nil { return }
             guard let data = ChatSessionStore.load(id: sessionId) else { continue }
             // Always its own tab (a blank active tab is left alone), like a
             // browser restoring a closed tab.

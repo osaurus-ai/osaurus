@@ -105,6 +105,11 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         sessionData: ChatSessionData?,
         showImmediately: Bool
     ) -> UUID {
+        if let sessionId = sessionData?.id,
+            let owner = revealOpenSession(sessionId, showImmediately: showImmediately)
+        {
+            return owner
+        }
         // Reopening a chat the registry is still running: attach the live
         // in-memory session (same `ChatSession` instance, stream keeps
         // rendering) instead of hydrating a stale copy from disk.
@@ -473,6 +478,39 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         }
         return windows.values.first { $0.sessionId == sessionId }
     }
+
+    /// A persisted conversation has one mutable window/tab owner. Hydrating
+    /// another idle copy lets either window's cleanup overwrite later edits.
+    /// Consult live tabs, not creation-time window metadata, which can be stale.
+    @discardableResult
+    func revealOpenSession(
+        _ sessionId: UUID,
+        excludingWindowId: UUID? = nil,
+        showImmediately: Bool = true
+    ) -> UUID? {
+        guard let (id, state) = windowStates.first(where: {
+            $0.key != excludingWindowId
+                && $0.value.tabSessions.contains { $0.sessionId == sessionId }
+        }) else { return nil }
+        if showImmediately {
+            guard state.focusTab(forSessionId: sessionId) else { return nil }
+            showWindow(id: id)
+        }
+        return id
+    }
+
+    #if DEBUG
+        /// Exercise ownership routing without constructing an NSWindow or
+        /// loading a model. Registration is scoped to this synchronous body.
+        func withRegisteredWindowStateForTesting<T>(
+            _ state: ChatWindowState, _ body: () throws -> T
+        ) rethrows -> T {
+            let previous = windowStates[state.windowId]
+            windowStates[state.windowId] = state
+            defer { windowStates[state.windowId] = previous }
+            return try body()
+        }
+    #endif
 
     /// The live `ChatSession` currently showing the given persisted session
     /// id in any open window. Used by `SessionActivityMonitor.stop` to route

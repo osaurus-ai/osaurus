@@ -50,6 +50,40 @@ struct ChatSessionStoreDeferredSaveTests {
         }
     }
 
+    /// Storage-only control for the observed completed batch with only its
+    /// initial user row on disk. This does not reproduce generation or prove
+    /// that ChatSession actually enqueued its final snapshot in that run.
+    @Test(arguments: [false, true])
+    func completedSnapshotSupersedesInitialAsyncSave(flushPending: Bool) throws {
+        try withOpenStores {
+            let initial = ChatSessionData(
+                id: UUID(),
+                title: "Batch snapshot storage control",
+                turns: [ChatTurnData(role: .user, content: "Run two independent jobs")]
+            )
+            var completed = initial
+            completed.updatedAt = initial.updatedAt.addingTimeInterval(120)
+            completed.turns.append(contentsOf: [
+                ChatTurnData(role: .assistant, content: "Starting both jobs"),
+                ChatTurnData(role: .tool, content: String(repeating: "first result α\n", count: 1_024)),
+                ChatTurnData(role: .tool, content: String(repeating: "second result β\n", count: 1_024)),
+                ChatTurnData(role: .assistant, content: "First job completed; second job did not complete"),
+            ])
+
+            ChatSessionStore.saveAsync(initial)
+            ChatSessionStore.saveAsync(completed)
+            if flushPending { ChatSessionStore.flushPendingSaves() }
+
+            // Read the database directly, not the pending in-memory overlay.
+            // Its serial queue drains both writes before this read executes.
+            let stored = try #require(ChatHistoryDatabase.shared.loadSession(id: initial.id))
+            #expect(stored.turns.map(\.id) == completed.turns.map(\.id))
+            #expect(stored.turns.map(\.role) == completed.turns.map(\.role))
+            #expect(stored.turns.map(\.content) == completed.turns.map(\.content))
+            #expect(abs(stored.updatedAt.timeIntervalSince(completed.updatedAt)) < 0.001)
+        }
+    }
+
     @Test func deleteDropsQueuedSaveForSession() throws {
         try withOpenStores {
             let session = ChatSessionData(
