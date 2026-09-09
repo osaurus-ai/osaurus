@@ -17,6 +17,22 @@ import Testing
 
 struct AgentDelegationDispatcherTests {
 
+    @Test func localWrapperForwardsModelAndWorkspaceKeepsHostOwnership() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("Services/AgentDelegation/AgentDelegationDispatcher.swift"),
+            encoding: .utf8
+        )
+        // Integration tripwire: the workspace dispatcher overload was added
+        // concurrently with the local admitted-model propagation change.
+        #expect(source.contains("maxContextPositions: maxContextPositions,\n            model: model,"))
+        #expect(source.contains("model: String? = nil,"))
+        #expect(source.contains("delegationModel: target.isWorkspace ? nil : model"))
+    }
+
     // MARK: - Dispatcher: title + harvest
 
     @Test func sessionTitleUsesFirstLineWithPrefixAndCap() {

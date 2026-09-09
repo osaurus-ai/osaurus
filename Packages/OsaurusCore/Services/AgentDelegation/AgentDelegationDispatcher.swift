@@ -225,6 +225,7 @@ enum AgentDelegationDispatcher {
             maxResponseTokens: maxResponseTokens,
             maxAssistantTurns: maxAssistantTurns,
             maxContextPositions: maxContextPositions,
+            model: model,
             feed: feed,
             interrupt: interrupt,
             parentSessionId: parentSessionId
@@ -245,6 +246,7 @@ enum AgentDelegationDispatcher {
         maxResponseTokens: Int? = nil,
         maxAssistantTurns: Int? = nil,
         maxContextPositions: Int? = nil,
+        model: String? = nil,
         feed: SubagentFeed,
         interrupt: InterruptToken,
         parentSessionId: String? = nil
@@ -268,7 +270,7 @@ enum AgentDelegationDispatcher {
             delegationResponseTokenCap: maxResponseTokens,
             delegationContextPositionCap: maxContextPositions,
             delegationAssistantTurnCap: maxAssistantTurns,
-            delegationModel: model
+            delegationModel: target.isWorkspace ? nil : model
         )
 
         // The child is a REAL chat session of the target agent, not a
