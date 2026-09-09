@@ -26,6 +26,19 @@ private let subagentLog = Logger(subsystem: "ai.osaurus", category: "Subagent")
 /// hook so the host stays dependency-free; richer `FeatureTelemetry` rows are
 /// emitted by individual kinds where they already exist (computer_use).
 enum SubagentTelemetry {
+    /// Some delegated surfaces report completion counts but no prompt count.
+    /// Keep absent measurements distinct from a measured zero in diagnostics.
+    static func usageDescription(_ usage: [String: Any]?) -> String {
+        guard let usage else { return "" }
+        let prompt = (usage["prompt_tokens"] as? Int).map(String.init) ?? "unknown"
+        let completion = (usage["completion_tokens"] as? Int).map(String.init) ?? "unknown"
+        var description = " promptTokens=\(prompt) completionTokens=\(completion)"
+        if let tps = usage["tokens_per_second"] as? Double {
+            description += String(format: " tokPerSec=%.1f", tps)
+        }
+        return description
+    }
+
     static func record(
         kindId: String,
         success: Bool,
@@ -33,15 +46,7 @@ enum SubagentTelemetry {
         usage: [String: Any]? = nil,
         phases: [(phase: String, seconds: Double)] = []
     ) {
-        var extra = ""
-        if let usage {
-            let prompt = usage["prompt_tokens"] as? Int ?? 0
-            let completion = usage["completion_tokens"] as? Int ?? 0
-            extra += " promptTokens=\(prompt) completionTokens=\(completion)"
-            if let tps = usage["tokens_per_second"] as? Double {
-                extra += String(format: " tokPerSec=%.1f", tps)
-            }
-        }
+        var extra = usageDescription(usage)
         if !phases.isEmpty {
             let joined = phases.map { String(format: "%@=%.2fs", $0.phase, $0.seconds) }
                 .joined(separator: " ")
