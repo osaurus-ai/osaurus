@@ -210,6 +210,22 @@ public enum ProviderCredentialPromptService {
                 return bypass(request)
             }
 
+            // A test process has nobody to paste a key. Without this the
+            // sheet mounts from `swiftpm-testing-helper` and the continuation
+            // below is never resumed, so the whole bundle wedges behind it.
+            // Observed 2026-09-09: a "Connect OpenAI-Compatible Server" panel
+            // left on screen by the full suite — `ephemeralProviders_…`
+            // re-applied a provider export that raced another suite's
+            // `Planner Probe Provider` teardown, so the entry no longer
+            // matched and apply fell through to the add-new prompt. Same
+            // guard and rationale as `ToolPermissionPromptService`: a
+            // cancelled sheet is the deterministic answer, and no passing
+            // test can depend on the prompt succeeding because it never
+            // returned before.
+            if RuntimeEnvironment.isUnderTests {
+                return .cancelled
+            }
+
             return await withCheckedContinuation {
                 (cont: CheckedContinuation<ProviderCredentialResult, Never>) in
                 present(request: request, continuation: cont)
