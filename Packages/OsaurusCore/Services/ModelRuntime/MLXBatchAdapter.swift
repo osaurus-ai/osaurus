@@ -31,6 +31,19 @@ import os.log
 private let batchAdapterLog = Logger(subsystem: "ai.osaurus", category: "BatchAdapter")
 
 struct MLXBatchAdapter {
+    /// Explicit depth buttons impose a ceiling. Auto may explore only the
+    /// range exposed by the UI, further limited by the configured token cap.
+    /// Invalid limits are left invalid for the runtime validator, not repaired
+    /// into an apparently valid activation here.
+    static func nativeMTPDepthPolicy(
+        _ settings: VMLXServerMTPSettings
+    ) -> NativeMTPDepthPolicy {
+        if settings.mode == .off
+            || (settings.mode == .forceOn && settings.explicitDepth != nil)
+        { return .fixed }
+        return .adaptive(maximumDepth: min(settings.draftTokenLimit ?? 3, 3))
+    }
+
     /// Native MTP is tuned for real chat prefixes, not tiny cold-start
     /// prompts. A 19-token cold user-only prompt reproduced a native-MTP loop
     /// while the same request decoded correctly with AR greedy fallback.
@@ -1671,6 +1684,8 @@ struct MLXBatchAdapter {
                 ?? runtime.concurrency.prefillStepSize,
             modelName: modelName
         )
+        mlxParams.nativeMTPDepthPolicy = Self.nativeMTPDepthPolicy(runtime.mtp)
+
         // Native MTP verifies drafts against the target's own argmax, so its
         // output-equivalence guarantee is only defined under greedy decoding —
         // turning MTP on is a request for greedy decoding. That coercion is
