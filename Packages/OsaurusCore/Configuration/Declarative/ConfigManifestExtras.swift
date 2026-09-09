@@ -53,7 +53,10 @@ enum ConfigManifestChannelExtras {
             ConfigKeySpec(
                 "inbound_agent", .scalar(.string, example: "null", nullable: true),
                 comment: "CUSTOM agent name for unrouted messages (never",
-                moreComments: ["\"default\"); null clears; routes stay in Settings"]),
+                moreComments: [
+                    "\"default\") or a shared workspace agent key",
+                    "`<workspace_id>:<0x-address>`; null clears; routes stay in Settings",
+                ]),
             ConfigKeySpec("require_mention", .scalar(.boolean, example: "true")),
             ConfigKeySpec("continue_threads", .scalar(.boolean, example: "true")),
             ConfigKeySpec(

@@ -1085,13 +1085,14 @@ public enum SystemPromptTemplates {
     public static func spawnGuidance(
         agents: [SpawnAgentDescriptor],
         models: [SpawnModelDescriptor],
+        workspaceAgents: [SpawnWorkspaceAgentDescriptor] = [],
         availableToolNames: Set<String>? = nil,
         toolAccess: SpawnToolAccess = .none,
         maxParallel: Int = 1
     ) -> String {
         let agentToolAvailable =
             availableToolNames?.contains(SubagentCapabilityRegistry.spawnAgentToolName)
-            ?? !agents.isEmpty
+            ?? !(agents.isEmpty && workspaceAgents.isEmpty)
         let modelToolAvailable =
             availableToolNames?.contains(SubagentCapabilityRegistry.spawnModelToolName)
             ?? !models.isEmpty
@@ -1122,6 +1123,29 @@ public enum SystemPromptTemplates {
                 lines.append("- Available agent targets for `spawn_batch`:")
             }
             for agent in agents { lines.append("  - " + agentLine(agent)) }
+        }
+        if !workspaceAgents.isEmpty {
+            // Durable roster facts only (address, name, description, workspace,
+            // owner). No model — the host decides it — and no presence: that
+            // is probed when the spawn runs, and a miss comes back as a tool
+            // result, so this block never changes when a teammate goes offline.
+            if agentToolAvailable {
+                lines.append(
+                    "- `spawn_agent(input, agent)` can also run the task on a teammate's shared "
+                        + "workspace agent (it runs on THEIR Mac, with their agent's prompt, model and "
+                        + "tools). Pass the agent's exact display name (or its `0x…` address) as "
+                        + "`agent`. Available workspace agents:"
+                )
+            } else if batchToolAvailable {
+                lines.append("- Available workspace agent targets for `spawn_batch`:")
+            }
+            for agent in workspaceAgents { lines.append("  - " + workspaceAgentLine(agent)) }
+            lines.append(
+                "- Workspace agents run on a teammate's Mac; if a spawn reports the agent "
+                    + "offline, choose another target or tell the user. Files a workspace agent "
+                    + "writes or shares stay on its host — ask it to include deliverable content "
+                    + "in its final message."
+            )
         }
         if !models.isEmpty {
             if modelToolAvailable {
@@ -1199,6 +1223,23 @@ public enum SystemPromptTemplates {
         if let isLocal = agent.isLocal { meta.append(isLocal ? "local" : "remote") }
         if let provider = agent.providerName, !provider.isEmpty { meta.append(provider) }
         if let modelId = agent.modelId, !modelId.isEmpty { meta.append("model: \(modelId)") }
+        if !meta.isEmpty { line += " (" + meta.joined(separator: " · ") + ")" }
+        return line
+    }
+
+    /// One workspace `spawn_agent` target line: `` `0x…` — Name — description
+    /// (workspace: <ws> · owner) ``. Model and presence are deliberately absent
+    /// (see `spawnGuidance`).
+    private static func workspaceAgentLine(_ agent: SpawnWorkspaceAgentDescriptor) -> String {
+        var line = "`\(agent.ref.agentAddress)` — \(agent.name)"
+        if let description = agent.description, !description.isEmpty {
+            line += " — \(description)"
+        }
+        var meta: [String] = []
+        if let workspace = agent.workspaceName, !workspace.isEmpty {
+            meta.append("workspace: \(workspace)")
+        }
+        if let owner = agent.ownerName, !owner.isEmpty { meta.append(owner) }
         if !meta.isEmpty { line += " (" + meta.joined(separator: " · ") + ")" }
         return line
     }

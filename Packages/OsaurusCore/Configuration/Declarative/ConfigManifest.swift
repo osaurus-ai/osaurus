@@ -241,6 +241,10 @@ public enum ConfigManifest {
                     "spawnable_models", .scalarList(.string, example: []),
                     comment: "raw model ids; replaces the pool"),
                 ConfigKeySpec(
+                    "spawnable_workspace_agents", .scalarList(.string, example: []),
+                    comment: "teammates' shared agents as <workspace_id>:<0x-address>;",
+                    moreComments: ["replaces the pool"]),
+                ConfigKeySpec(
                     "spawn_tool_access",
                     .scalar(
                         .string, example: "none",
@@ -523,7 +527,9 @@ public enum ConfigManifest {
                     ConfigKeySpec("name", .scalar(.string, example: "Morning news")),
                     ConfigKeySpec(
                         "agent", .scalar(.string, example: "Research Agent"),
-                        comment: "custom agent name (never \"default\")"),
+                        comment:
+                            "custom agent name (never \"default\"), or a shared workspace agent as <workspaceId>:<0x-address>"
+                    ),
                     ConfigKeySpec(
                         "instructions", .scalar(.string, example: "Summarize the news.")),
                     ConfigKeySpec(
@@ -556,7 +562,10 @@ public enum ConfigManifest {
             value: .entityList(
                 [
                     ConfigKeySpec("name", .scalar(.string, example: "Downloads sorter")),
-                    ConfigKeySpec("agent", .scalar(.string, example: "Research Agent")),
+                    ConfigKeySpec(
+                        "agent", .scalar(.string, example: "Research Agent"),
+                        comment: "custom agent name, or a shared workspace agent as <workspaceId>:<0x-address>"
+                    ),
                     ConfigKeySpec(
                         "instructions", .scalar(.string, example: "Organize new files.")),
                     ConfigKeySpec(

@@ -133,6 +133,7 @@ enum ConfigExporter {
             agents.first { $0.id == id }?.name
         }
         section.spawnableModels = config.spawnableModelNames
+        section.spawnableWorkspaceAgents = config.spawnableWorkspaceAgents.map(\.key)
         section.spawnToolAccess = config.spawnToolAccess.rawValue
         var defaults: [String: String] = [:]
         for kindId in ConfigAppBehaviorEnums.permissionKindIds {
@@ -207,11 +208,17 @@ enum ConfigExporter {
             entry.writeAllowlist = snapshot.writeAllowlist
             entry.senderAllowlist = snapshot.senderAllowlist
             entry.inboundEnabled = snapshot.inbound.enabled
-            // A dangling target id (deleted agent) exports as null.
-            entry.inboundAgent =
-                snapshot.inbound.targetAgentId
-                .flatMap { id in agents.first { $0.id == id && !$0.isBuiltIn }?.name }
-                .map { .value($0) } ?? .null
+            // A dangling target id (deleted agent) exports as null; a shared
+            // workspace agent exports as its `<workspaceId>:<address>` key.
+            switch snapshot.inbound.target {
+            case .none:
+                entry.inboundAgent = .null
+            case .local(let id):
+                entry.inboundAgent =
+                    agents.first { $0.id == id && !$0.isBuiltIn }.map { .value($0.name) } ?? .null
+            case .workspace(let ref):
+                entry.inboundAgent = .value(ref.key)
+            }
             entry.requireMention = snapshot.inbound.requireMention
             entry.continueThreads = snapshot.inbound.continueThreads
             entry.autoReplyEnabled = snapshot.inbound.autoReplyEnabled
@@ -303,15 +310,10 @@ enum ConfigExporter {
 
     // MARK: - Schedules / Watchers
 
-    private static func agentName(for id: UUID?) -> String? {
-        guard let id else { return nil }
-        return AgentManager.shared.agents.first { $0.id == id }?.name
-    }
-
     private static func exportSchedules() -> [ScheduleEntry] {
         ScheduleManager.shared.schedules.map { schedule in
             var entry = ScheduleEntry(name: schedule.name)
-            entry.agent = agentName(for: schedule.agentId)
+            entry.agent = ConfigAgentTargetReference.export(schedule.target)
             entry.instructions = schedule.instructions
             let parts = ConfigScheduleFrequency.components(of: schedule.frequency)
             entry.frequency = parts.frequency
@@ -325,7 +327,7 @@ enum ConfigExporter {
     private static func exportWatchers() -> [WatcherEntry] {
         WatcherManager.shared.watchers.map { watcher in
             var entry = WatcherEntry(name: watcher.name)
-            entry.agent = agentName(for: watcher.agentId)
+            entry.agent = ConfigAgentTargetReference.export(watcher.target)
             entry.instructions = watcher.instructions
             entry.path = watcher.watchPath
             entry.recursive = watcher.recursive
@@ -337,6 +339,43 @@ enum ConfigExporter {
 }
 
 // MARK: - Small shared key mappings
+
+/// The `agent` value of a schedule / watcher entry: a custom agent NAME for
+/// an agent hosted here, or a workspace ref key (`<workspaceId>:<0x-address>`)
+/// for a teammate's shared agent. Names never contain a `0x` address suffix
+/// after a colon, so the two forms cannot collide.
+enum ConfigAgentTargetReference {
+    @MainActor
+    static func export(_ target: AgentDispatchTarget?) -> String? {
+        switch target {
+        case .none:
+            return nil
+        case .local(let id):
+            return AgentManager.shared.agents.first { $0.id == id }?.name
+        case .workspace(let ref):
+            return ref.key
+        }
+    }
+
+    /// The workspace ref a document value names, or nil when it is a
+    /// (local) agent name.
+    static func workspaceRef(_ value: String) -> WorkspaceAgentRef? {
+        WorkspaceAgentRef(key: value.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// Human label for the target a stored row currently runs on.
+    @MainActor
+    static func currentLabel(_ target: AgentDispatchTarget?) -> String {
+        switch target {
+        case .none:
+            return "(unknown)"
+        case .local(let id):
+            return AgentManager.shared.agents.first { $0.id == id }?.name ?? "(unknown)"
+        case .workspace(let ref):
+            return ref.key
+        }
+    }
+}
 
 enum ConfigMCPAuth {
     static func key(for auth: MCPProviderAuthType) -> String {

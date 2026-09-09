@@ -40,6 +40,9 @@ public struct DelegationSection: Codable, Equatable, Sendable {
     public var spawnableAgents: [String]?
     /// Raw model ids the main chat may hand a task to. Replaces the pool.
     public var spawnableModels: [String]?
+    /// Teammates' shared workspace agents the main chat may spawn, as
+    /// `<workspace_id>:<0x-agent-address>` keys. Replaces the pool.
+    public var spawnableWorkspaceAgents: [String]?
     /// One of: none, read_only.
     public var spawnToolAccess: String?
     /// Capability kind id (spawn, image, ...) -> ask | deny | always_allow.
@@ -69,6 +72,7 @@ public struct DelegationSection: Codable, Equatable, Sendable {
         case applescriptExecutionMode = "applescript_execution_mode"
         case spawnableAgents = "spawnable_agents"
         case spawnableModels = "spawnable_models"
+        case spawnableWorkspaceAgents = "spawnable_workspace_agents"
         case spawnToolAccess = "spawn_tool_access"
         case permissionDefaults = "permission_defaults"
         case budgetMaxTokens = "budget_max_tokens"

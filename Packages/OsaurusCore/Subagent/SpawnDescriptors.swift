@@ -127,6 +127,41 @@ public struct SpawnModelDescriptor: Sendable, Equatable {
     }
 }
 
+/// One spawnable shared WORKSPACE agent (`spawn_agent` target that runs on a
+/// teammate's Mac), resolved for the prompt. Deliberately carries NO model
+/// and NO presence: the host decides the model (and may change it), and
+/// presence flips constantly — either in the prompt would reset the prefix
+/// cache on almost every turn. Liveness is probed at spawn time instead
+/// (`WorkspaceAgentLiveness`).
+public struct SpawnWorkspaceAgentDescriptor: Sendable, Equatable {
+    /// Durable identity (`(workspaceId, agentAddress)`); the tool enum value
+    /// is `ref.agentAddress`.
+    public let ref: WorkspaceAgentRef
+    /// The sharer's chosen display name (roster → pairing → last known →
+    /// shortened address).
+    public let name: String
+    /// The roster description (trimmed; nil when blank).
+    public let description: String?
+    /// Workspace display name, when the roster knows it.
+    public let workspaceName: String?
+    /// The sharer's friendly name, when the roster knows it.
+    public let ownerName: String?
+
+    public init(
+        ref: WorkspaceAgentRef,
+        name: String,
+        description: String?,
+        workspaceName: String?,
+        ownerName: String?
+    ) {
+        self.ref = ref
+        self.name = name
+        self.description = description
+        self.workspaceName = workspaceName
+        self.ownerName = ownerName
+    }
+}
+
 /// Request-local execution truth for one configured spawn target. Durable
 /// configuration remains untouched so unavailable rows can still be repaired
 /// or removed in Settings.
@@ -147,6 +182,14 @@ struct SpawnModelTarget: Sendable, Equatable {
     let state: SpawnTargetState
 }
 
+/// A workspace target is `runnable` or `missing` ONLY (never `checking` /
+/// `disconnected`): membership is durable state that changes by user action
+/// (unshare, leave workspace, router off), like deleting a local agent.
+struct SpawnWorkspaceAgentTarget: Sendable, Equatable {
+    let descriptor: SpawnWorkspaceAgentDescriptor
+    let state: SpawnTargetState
+}
+
 /// One immutable target view shared by prompt prose and every spawn schema for
 /// a request. This prevents provider/model changes between composition phases
 /// from producing zombie options or prompt/schema drift.
@@ -155,6 +198,17 @@ struct SpawnTargetAvailabilitySnapshot: Sendable, Equatable {
 
     let agentTargets: [SpawnAgentTarget]
     let modelTargets: [SpawnModelTarget]
+    let workspaceAgentTargets: [SpawnWorkspaceAgentTarget]
+
+    init(
+        agentTargets: [SpawnAgentTarget],
+        modelTargets: [SpawnModelTarget],
+        workspaceAgentTargets: [SpawnWorkspaceAgentTarget] = []
+    ) {
+        self.agentTargets = agentTargets
+        self.modelTargets = modelTargets
+        self.workspaceAgentTargets = workspaceAgentTargets
+    }
 
     var agents: [SpawnAgentDescriptor] {
         agentTargets.compactMap { $0.state == .runnable ? $0.descriptor : nil }
@@ -164,8 +218,17 @@ struct SpawnTargetAvailabilitySnapshot: Sendable, Equatable {
         modelTargets.compactMap { $0.state == .runnable ? $0.descriptor : nil }
     }
 
+    var workspaceAgents: [SpawnWorkspaceAgentDescriptor] {
+        workspaceAgentTargets.compactMap { $0.state == .runnable ? $0.descriptor : nil }
+    }
+
     var runnableAgentIDs: [UUID] { agents.map(\.id) }
     var runnableModelIds: [String] { models.map(\.id) }
+    var runnableWorkspaceAgents: [WorkspaceAgentRef] { workspaceAgents.map(\.ref) }
+    /// Whether `spawn_agent` has anything to reach (local or workspace).
+    var hasRunnableAgentTargets: Bool {
+        !runnableAgentIDs.isEmpty || !runnableWorkspaceAgents.isEmpty
+    }
 }
 
 /// Resolves configured spawn pools against current execution truth.
@@ -177,6 +240,18 @@ public enum SpawnDescriptors {
         let modelId: String?
     }
 
+    /// Durable roster view of one shared workspace agent, for the workspace
+    /// spawn line. Built from roster membership + cached names only — never
+    /// from presence or the paired provider's connection state, so a
+    /// teammate's host going to sleep cannot change composed prompt bytes.
+    struct WorkspaceAgentSource: Sendable, Equatable {
+        let ref: WorkspaceAgentRef
+        let name: String
+        let description: String
+        let workspaceName: String?
+        let ownerName: String?
+    }
+
     /// Resolve a real request against authoritative local installation truth.
     /// Cold discovery suspends off-main instead of blocking the UI or treating
     /// a valid bundle as removed.
@@ -185,7 +260,8 @@ public enum SpawnDescriptors {
         agentIDs: [UUID],
         modelNames: [String],
         modelNotes: [String: String],
-        launcherModelOverride: String?
+        launcherModelOverride: String?,
+        workspaceAgents: [WorkspaceAgentRef] = []
     ) async -> SpawnTargetAvailabilitySnapshot {
         let shouldDiscoverLocalModels = requiresLocalDiscovery(
             agentIDs: agentIDs,
@@ -214,7 +290,9 @@ public enum SpawnDescriptors {
                     }
             ),
             foundationAvailable: AppConfiguration.shared.foundationModelAvailable,
-            launcherModelOverride: launcherModelOverride
+            launcherModelOverride: launcherModelOverride,
+            workspaceAgents: workspaceAgents,
+            workspaceSources: liveWorkspaceAgentSources(for: workspaceAgents)
         )
     }
 
@@ -241,7 +319,8 @@ public enum SpawnDescriptors {
         agentIDs: [UUID],
         modelNames: [String],
         modelNotes: [String: String],
-        launcherModelOverride: String?
+        launcherModelOverride: String?,
+        workspaceAgents: [WorkspaceAgentRef] = []
     ) -> SpawnTargetAvailabilitySnapshot {
         let authoritative = ModelManager.isLocalModelsCacheWarm
         return resolve(
@@ -261,7 +340,9 @@ public enum SpawnDescriptors {
                     }
             ),
             foundationAvailable: AppConfiguration.shared.foundationModelAvailable,
-            launcherModelOverride: launcherModelOverride
+            launcherModelOverride: launcherModelOverride,
+            workspaceAgents: workspaceAgents,
+            workspaceSources: liveWorkspaceAgentSources(for: workspaceAgents)
         )
     }
 
@@ -299,7 +380,9 @@ public enum SpawnDescriptors {
         connectedRemoteTargets: RemoteProviderManager.ConnectedSpawnModelTargetIndex,
         remoteProviderNames: [UUID: String],
         foundationAvailable: Bool,
-        launcherModelOverride: String? = nil
+        launcherModelOverride: String? = nil,
+        workspaceAgents: [WorkspaceAgentRef] = [],
+        workspaceSources: [WorkspaceAgentSource]? = nil
     ) -> SpawnTargetAvailabilitySnapshot {
         let agentTargets = agentIDs.map { configuredID -> SpawnAgentTarget in
             guard
@@ -367,10 +450,99 @@ public enum SpawnDescriptors {
             )
         }
 
+        let workspaceTargets = resolveWorkspaceTargets(
+            configured: workspaceAgents,
+            sources: workspaceSources ?? []
+        )
+
         return SpawnTargetAvailabilitySnapshot(
             agentTargets: agentTargets,
-            modelTargets: modelTargets
+            modelTargets: modelTargets,
+            workspaceAgentTargets: workspaceTargets
         )
+    }
+
+    /// Pure: a configured workspace ref with a source is `runnable`; one
+    /// without is `missing` (unshared, workspace left, or router off — the
+    /// source list is built from durable roster membership only).
+    static func resolveWorkspaceTargets(
+        configured: [WorkspaceAgentRef],
+        sources: [WorkspaceAgentSource]
+    ) -> [SpawnWorkspaceAgentTarget] {
+        SubagentConfiguration.normalizedWorkspaceAgents(configured).map { ref in
+            guard let source = sources.first(where: { $0.ref == ref }) else {
+                return SpawnWorkspaceAgentTarget(
+                    descriptor: SpawnWorkspaceAgentDescriptor(
+                        ref: ref,
+                        name: OsaurusRouterWorkspacePerson.shortWallet(ref.agentAddress),
+                        description: nil,
+                        workspaceName: nil,
+                        ownerName: nil
+                    ),
+                    state: .missing
+                )
+            }
+            let description = source.description.trimmingCharacters(in: .whitespacesAndNewlines)
+            return SpawnWorkspaceAgentTarget(
+                descriptor: SpawnWorkspaceAgentDescriptor(
+                    ref: ref,
+                    name: source.name,
+                    description: description.isEmpty ? nil : description,
+                    workspaceName: source.workspaceName,
+                    ownerName: source.ownerName
+                ),
+                state: .runnable
+            )
+        }
+    }
+
+    /// Durable roster view for each configured workspace ref. A ref counts as
+    /// known when its workspace roster lists it, OR when the roster for that
+    /// workspace has not been loaded yet in this process (cold start: trust the
+    /// durable allow-list — execution still probes liveness — rather than
+    /// flipping the prompt bytes once the first poll lands). It is unknown
+    /// (→ `missing`) only when the roster IS loaded and does not list it, or
+    /// the store has refreshed and the workspace itself is gone.
+    ///
+    /// Reads NO presence (`online`, `forcedOffline`, `hostReachableAt`) and NO
+    /// `RemoteProviderManager` connection state, by design.
+    @MainActor
+    static func liveWorkspaceAgentSources(
+        for refs: [WorkspaceAgentRef]
+    ) -> [WorkspaceAgentSource] {
+        guard !refs.isEmpty else { return [] }
+        let roster = WorkspaceRosterStore.shared
+        let remoteAgents = RemoteAgentManager.shared
+        return refs.compactMap { ref -> WorkspaceAgentSource? in
+            let workspaceRoster = roster.rosters.first { $0.id == ref.workspaceId }
+            let listed = workspaceRoster?.agents.first {
+                $0.agentAddress.lowercased() == ref.agentAddress
+            }
+            if listed == nil {
+                // Loaded roster that omits the agent → unshared.
+                if workspaceRoster != nil { return nil }
+                // Store refreshed and the workspace is gone → left/removed.
+                if roster.lastRefreshedAt != nil { return nil }
+            }
+            // Never advertise one of this instance's own agents as a target.
+            if roster.isOwnAgent(address: ref.agentAddress) { return nil }
+            let paired = remoteAgents.remoteAgent(
+                forAddress: ref.agentAddress, workspaceId: ref.workspaceId
+            )
+            let rosterName = listed?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let name =
+                (rosterName?.isEmpty == false ? rosterName : nil)
+                ?? (paired?.name.isEmpty == false ? paired?.name : nil)
+                ?? roster.lastKnownName(forAddress: ref.agentAddress)
+                ?? OsaurusRouterWorkspacePerson.shortWallet(ref.agentAddress)
+            return WorkspaceAgentSource(
+                ref: ref,
+                name: name,
+                description: listed?.description ?? paired?.description ?? "",
+                workspaceName: workspaceRoster?.workspace.name,
+                ownerName: listed?.owner?.friendlyName
+            )
+        }
     }
 
     private static func resolveModelTarget(

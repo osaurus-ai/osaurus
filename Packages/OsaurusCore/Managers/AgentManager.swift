@@ -1138,6 +1138,7 @@ extension AgentManager {
             spawnableAgentNames: agent.settings.legacySpawnableAgentNames,
             spawnableModelNames: agent.settings.spawnableModelNames,
             spawnableModelNotes: agent.settings.spawnableModelNotes,
+            spawnableWorkspaceAgents: agent.settings.spawnableWorkspaceAgents,
             knowledgeEnabled: agent.settings.knowledgeEnabled,
             knowledgeCollectionIds: agent.settings.knowledgeCollectionIds,
             // Curator is a child of the knowledge opt-in.

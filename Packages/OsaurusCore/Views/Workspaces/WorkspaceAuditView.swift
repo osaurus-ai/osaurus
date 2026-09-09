@@ -348,6 +348,16 @@ struct WorkspaceAuditRow: View {
             return String(format: L("%@ was blocked from %@"), actorLabel, record.target ?? "")
         case .taskCancelled:
             return String(format: L("%@ cancelled a background task"), actorLabel)
+        case .outboundRunStarted:
+            return String(format: L("You started a run on %@"), agentLabel)
+        case .outboundRunFinished:
+            let ok = record.details["success"] == "true"
+            return String(
+                format: ok ? L("Your run on %@ finished") : L("Your run on %@ ended early"),
+                agentLabel
+            )
+        case .outboundRunRefused:
+            return String(format: L("Your run on %@ was refused"), agentLabel)
         case .workspaceCreated:
             return L("You created this workspace")
         case .workspaceRenamed:
@@ -410,6 +420,14 @@ struct WorkspaceAuditRow: View {
             if let detail = record.details["detail"] { parts.append(detail) }
         case .scopeDenied:
             parts.append(L("outside this key's allowed routes"))
+        case .outboundRunStarted, .outboundRunFinished, .outboundRunRefused:
+            if let source = record.details["source"], !source.isEmpty {
+                parts.append(source.replacingOccurrences(of: "_", with: " "))
+            }
+            if let reason = record.details["reason"], !reason.isEmpty { parts.append(reason) }
+            if record.event == .outboundRunFinished, let summary = record.details["summary"], !summary.isEmpty {
+                parts.append(summary)
+            }
         case .memberRoleChanged:
             if let previous = record.details["previous_role"] {
                 parts.append(String(format: L("was %@"), previous))
@@ -443,7 +461,9 @@ struct WorkspaceAuditRow: View {
         case .runs:
             switch record.event {
             case .runStoppedByOwner, .taskCancelled: return "stop.circle.fill"
-            case .runFinished: return record.details["success"] == "true" ? "checkmark.circle.fill" : "xmark.circle"
+            case .runFinished, .outboundRunFinished:
+                return record.details["success"] == "true" ? "checkmark.circle.fill" : "xmark.circle"
+            case .outboundRunStarted: return "arrow.up.right.circle.fill"
             default: return "play.circle.fill"
             }
         case .denials:
@@ -457,7 +477,11 @@ struct WorkspaceAuditRow: View {
         switch record.event.category {
         case .denials: return theme.errorColor
         case .runs:
-            if record.event == .runFinished, record.details["success"] != "true" { return theme.warningColor }
+            if record.event == .runFinished || record.event == .outboundRunFinished,
+                record.details["success"] != "true"
+            {
+                return theme.warningColor
+            }
             return theme.accentColor
         case .access: return record.event == .keyRevoked ? theme.warningColor : theme.successColor
         case .administration: return theme.secondaryText

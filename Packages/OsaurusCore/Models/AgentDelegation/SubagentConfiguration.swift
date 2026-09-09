@@ -457,6 +457,14 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     /// agents carry their own `AgentSettings.spawnToolAccess`; this governs the
     /// main chat only. Default `.none` (text-only spawn).
     var spawnToolAccess: SpawnToolAccess
+    /// The DEFAULT / main-chat agent's spawnable WORKSPACE agents: teammates'
+    /// shared agents (by durable `(workspaceId, agentAddress)`) the main chat
+    /// may delegate to over the relay. Opt-in, empty by default — a shared
+    /// agent never becomes a spawn target just by appearing on a roster.
+    /// Custom agents carry their OWN list in `AgentSettings`. Membership here
+    /// is durable configuration; live presence is probed at spawn time and
+    /// never changes this list (or the prompt composed from it).
+    var spawnableWorkspaceAgents: [WorkspaceAgentRef]
 
     init(
         localTextDelegationEnabled: Bool = true,
@@ -483,10 +491,12 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         subagentModelOverrides: [String: String] = [:],
         spawnableModelNames: [String] = [],
         spawnableModelNotes: [String: String] = [:],
-        spawnToolAccess: SpawnToolAccess = .none
+        spawnToolAccess: SpawnToolAccess = .none,
+        spawnableWorkspaceAgents: [WorkspaceAgentRef] = []
     ) {
         self.localTextDelegationEnabled = localTextDelegationEnabled
         self.spawnableAgentIDs = SpawnableAgentIdentity.normalizedIDs(spawnableAgentIDs)
+        self.spawnableWorkspaceAgents = Self.normalizedWorkspaceAgents(spawnableWorkspaceAgents)
         self.spawnPoolSeeded = spawnPoolSeeded
         self.legacySpawnableAgentNames = spawnableAgentNames
         self.imageDelegationEnabled = imageDelegationEnabled
@@ -542,6 +552,13 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         )
         mergeEditorField(
             \.spawnableAgentIDs,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.spawnableWorkspaceAgents,
             editor: editor,
             loadedBaseline: loadedBaseline,
             live: live,
@@ -713,6 +730,18 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         !spawnableAgentIDs.isEmpty
     }
 
+    /// Whether the shared workspace agent is in the DEFAULT / main chat's
+    /// spawn pool. Custom agents use their own list via
+    /// `SubagentToolVisibility.spawnWorkspaceAgentAllowed`.
+    func isWorkspaceAgentSpawnable(_ ref: WorkspaceAgentRef) -> Bool {
+        spawnableWorkspaceAgents.contains(ref)
+    }
+
+    /// Whether the DEFAULT / main chat has at least one spawnable workspace agent.
+    var anyWorkspaceAgentSpawnable: Bool {
+        !spawnableWorkspaceAgents.isEmpty
+    }
+
     /// Whether the raw model id is in the DEFAULT / main chat's `spawn_model`
     /// pool. Model ids are canonical, so this matches exactly (trimmed) rather
     /// than case-insensitively like agent names. Custom agents use their own list
@@ -791,7 +820,8 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             // surviving pool members, so passing the raw values here is enough.
             spawnableModelNames: spawnableModelNames,
             spawnableModelNotes: spawnableModelNotes,
-            spawnToolAccess: spawnToolAccess
+            spawnToolAccess: spawnToolAccess,
+            spawnableWorkspaceAgents: spawnableWorkspaceAgents
         )
     }
 
@@ -836,6 +866,7 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         case spawnableModelNames
         case spawnableModelNotes
         case spawnToolAccess
+        case spawnableWorkspaceAgents
     }
 
     init(from decoder: Decoder) throws {
@@ -953,7 +984,13 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             spawnToolAccess: (try? container.decodeIfPresent(
                 SpawnToolAccess.self,
                 forKey: .spawnToolAccess
-            )) ?? .none
+            )) ?? .none,
+            // Lenient: a malformed ref list must never discard the whole
+            // delegation config; absent (older config) → no workspace targets.
+            spawnableWorkspaceAgents: (try? container.decodeIfPresent(
+                [WorkspaceAgentRef].self,
+                forKey: .spawnableWorkspaceAgents
+            )) ?? []
         )
     }
 
@@ -1013,6 +1050,26 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         try container.encode(value.spawnableModelNames, forKey: .spawnableModelNames)
         try container.encode(value.spawnableModelNotes, forKey: .spawnableModelNotes)
         try container.encode(value.spawnToolAccess, forKey: .spawnToolAccess)
+        // Only written when non-empty so an untouched config keeps its exact
+        // legacy bytes (older builds ignore the key either way).
+        if !value.spawnableWorkspaceAgents.isEmpty {
+            try container.encode(value.spawnableWorkspaceAgents, forKey: .spawnableWorkspaceAgents)
+        }
+    }
+
+    /// De-dupe workspace refs (first occurrence wins, order kept) and drop
+    /// anything that is not a `<workspaceId>` + `0x…` address pair.
+    static func normalizedWorkspaceAgents(_ value: [WorkspaceAgentRef]) -> [WorkspaceAgentRef] {
+        var seen = Set<WorkspaceAgentRef>()
+        var result: [WorkspaceAgentRef] = []
+        for ref in value {
+            guard !ref.workspaceId.isEmpty,
+                WorkspaceAgentRef.looksLikeAddress(ref.agentAddress),
+                seen.insert(ref).inserted
+            else { continue }
+            result.append(ref)
+        }
+        return result
     }
 
     private static func normalizedModelId(_ value: String?) -> String? {
@@ -1086,6 +1143,7 @@ struct SpawnSharedConfigurationAuthority: Equatable, Sendable {
 struct SpawnDefaultConfigurationAuthority: Equatable, Sendable {
     let spawnableAgentIDs: [UUID]
     let spawnableModelNames: [String]
+    let spawnableWorkspaceAgents: [WorkspaceAgentRef]
     let permission: SubagentPermissionPolicy
     let budgets: SubagentBudgets
     let modelOverride: String?
@@ -1101,6 +1159,7 @@ struct SpawnCustomLauncherAgentAuthority: Equatable, Sendable {
     let spawnDelegationEnabled: Bool
     let spawnableAgentIDs: [UUID]
     let spawnableModelNames: [String]
+    let spawnableWorkspaceAgents: [WorkspaceAgentRef]
     let budgets: SubagentBudgets
     let modelOverride: String?
     let toolAccess: SpawnToolAccess
@@ -1110,6 +1169,7 @@ struct SpawnCustomLauncherAgentAuthority: Equatable, Sendable {
         spawnDelegationEnabled = settings.spawnDelegationEnabled
         spawnableAgentIDs = settings.spawnableAgentIDs
         spawnableModelNames = settings.spawnableModelNames
+        spawnableWorkspaceAgents = settings.spawnableWorkspaceAgents
         budgets = settings.subagentBudgets.normalized
         let rawOverride = settings.subagentModelOverrides[
             SubagentCapabilityRegistry.spawn.id
@@ -1152,6 +1212,7 @@ extension SubagentConfiguration {
         SpawnDefaultConfigurationAuthority(
             spawnableAgentIDs: spawnableAgentIDs,
             spawnableModelNames: spawnableModelNames,
+            spawnableWorkspaceAgents: spawnableWorkspaceAgents,
             permission: permissionDefaults.policy(
                 for: SubagentCapabilityRegistry.spawn.id
             ),
@@ -1187,6 +1248,7 @@ struct SpawnLauncherAuthority: Equatable, Sendable {
     let subagentCoexistenceEnabled: Bool
     let spawnableAgentIDs: [UUID]
     let spawnableModelNames: [String]
+    let spawnableWorkspaceAgents: [WorkspaceAgentRef]
     let budgets: SubagentBudgets
     let modelOverride: String?
     let toolAccess: SpawnToolAccess
@@ -1223,6 +1285,15 @@ struct SpawnLauncherAuthority: Equatable, Sendable {
                     settings?.spawnDelegationEnabled ?? false,
                 perAgentModelTargets:
                     settings?.spawnableModelNames ?? []
+            )
+        self.spawnableWorkspaceAgents =
+            SubagentToolVisibility.effectiveSpawnableWorkspaceAgents(
+                isDefault: isDefault,
+                config: configuration,
+                perAgentEnabled:
+                    settings?.spawnDelegationEnabled ?? false,
+                perAgentTargets:
+                    settings?.spawnableWorkspaceAgents ?? []
             )
         self.budgets = SubagentToolVisibility.effectiveBudgets(
             isDefault: isDefault,

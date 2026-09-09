@@ -24,7 +24,7 @@ struct ConfigChannelSnapshot {
 }
 
 /// The desired mutation derived from a `ChannelPlatformSection`; absent
-/// fields stay untouched. `inboundAgentId` is pre-resolved by the applier.
+/// fields stay untouched. `inboundTarget` is pre-resolved by the applier.
 struct ConfigChannelMutation {
     var writeEnabled: Bool?
     var defaultReadLimit: Int?
@@ -33,8 +33,9 @@ struct ConfigChannelMutation {
     var writeAllowlist: [String]?
     var senderAllowlist: [String]?
     var inboundEnabled: Bool?
-    /// .absent leaves the target agent alone; .null clears it.
-    var inboundAgentId: ConfigField<UUID> = .absent
+    /// .absent leaves the target agent alone; .null clears it. A local
+    /// agent or a teammate's shared workspace agent.
+    var inboundTarget: ConfigField<AgentDispatchTarget> = .absent
     var requireMention: Bool?
     var continueThreads: Bool?
     var autoReplyEnabled: Bool?
@@ -44,10 +45,10 @@ struct ConfigChannelMutation {
     {
         var out = inbound
         if let v = inboundEnabled { out.enabled = v }
-        switch inboundAgentId {
+        switch inboundTarget {
         case .absent: break
-        case .null: out.targetAgentId = nil
-        case .value(let id): out.targetAgentId = id
+        case .null: out.target = nil
+        case .value(let target): out.target = target
         }
         if let v = requireMention { out.requireMention = v }
         if let v = continueThreads { out.continueThreads = v }

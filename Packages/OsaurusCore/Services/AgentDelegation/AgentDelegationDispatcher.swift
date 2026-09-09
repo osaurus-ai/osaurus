@@ -101,9 +101,23 @@ enum AgentDelegationDispatcher {
     /// workers paste whole files into their answer (truncated by the digest
     /// cap) or end the run on intermediate commentary that becomes the
     /// digest. Pure, for unit tests.
-    static func delegatedPrompt(input: String) -> String {
-        input + "\n\n" + deliveryContract
+    static func delegatedPrompt(input: String, remote: Bool = false) -> String {
+        input + "\n\n" + (remote ? remoteDeliveryContract : deliveryContract)
     }
+
+    /// Contract for a workspace (Mode 2) child: the host runs its own agent
+    /// loop and only the final visible answer streams back, so the artifact
+    /// pass-through clause does not apply — files shared on the host stay on
+    /// the host and never reach the requesting conversation.
+    static let remoteDeliveryContract: String =
+        "[Delegated task]\n"
+        + "You are running as a delegated subtask for another agent on a teammate's "
+        + "Osaurus. The requester sees ONLY your final message, returned as a compact "
+        + "size-capped digest — intermediate commentary is lost, so finish with a "
+        + "message that stands alone as the result. Include any deliverable content "
+        + "directly in that final message; files you write or share locally do not "
+        + "reach the requester.\n"
+        + "[/Delegated task]"
 
     /// Appended to every delegated child prompt (see `delegatedPrompt`).
     static let deliveryContract: String =
@@ -202,10 +216,42 @@ enum AgentDelegationDispatcher {
         interrupt: InterruptToken,
         parentSessionId: String? = nil
     ) async throws -> AgentDelegationOutcome {
+        try await run(
+            target: .local(targetAgentId),
+            targetAgentName: targetAgentName,
+            input: input,
+            maxElapsedSeconds: maxElapsedSeconds,
+            maxResponseTokens: maxResponseTokens,
+            maxAssistantTurns: maxAssistantTurns,
+            maxContextPositions: maxContextPositions,
+            feed: feed,
+            interrupt: interrupt,
+            parentSessionId: parentSessionId
+        )
+    }
+
+    /// `run` for any `AgentDispatchTarget`. A `.workspace` target is a Mode 2 run on
+    /// the teammate's Mac: `BackgroundTaskManager.dispatchChat` probes the
+    /// host's liveness and connects before registering the task, and a
+    /// refusal (offline, lapsed key, unshared) surfaces here as
+    /// `SubagentError.unavailable` with the exact reason — the parent model
+    /// re-plans from the tool result; nothing in the prompt changes.
+    static func run(
+        target: AgentDispatchTarget,
+        targetAgentName: String,
+        input: String,
+        maxElapsedSeconds: Int,
+        maxResponseTokens: Int? = nil,
+        maxAssistantTurns: Int? = nil,
+        maxContextPositions: Int? = nil,
+        feed: SubagentFeed,
+        interrupt: InterruptToken,
+        parentSessionId: String? = nil
+    ) async throws -> AgentDelegationOutcome {
         let started = Date()
         let request = DispatchRequest(
-            prompt: delegatedPrompt(input: input),
-            agentId: targetAgentId,
+            prompt: delegatedPrompt(input: input, remote: target.isWorkspace),
+            target: target,
             title: sessionTitle(for: input),
             source: .delegation,
             // Fresh session per delegation call (user decision): no
@@ -231,10 +277,22 @@ enum AgentDelegationDispatcher {
         // Fan-out is prevented structurally instead: the composer strips
         // every spawn tool from `.delegation`-sourced sessions, and the
         // execution scope rejects tools outside the composed schema.
+        if target.isWorkspace {
+            feed.emitPhase("checking", detail: "confirming '\(targetAgentName)' is online")
+        }
         let handle = await SubagentSession.$activeKindId.withValue(nil) {
             await BackgroundTaskManager.shared.dispatchChat(request)
         }
         guard let handle else {
+            if let ref = target.workspaceRef,
+                let reason = await MainActor.run(body: {
+                    BackgroundTaskManager.shared.consumeWorkspaceDispatchRefusal(for: ref)
+                })
+            {
+                throw SubagentError.unavailable(
+                    reason + " Pick a different agent for this task, or report that it is unavailable."
+                )
+            }
             throw SubagentError.unavailable(
                 "Agent '\(targetAgentName)' could not be dispatched as a delegated chat session."
             )
@@ -243,7 +301,9 @@ enum AgentDelegationDispatcher {
         feed.setDelegatedSessionId(taskId.uuidString)
         feed.emitPhase(
             "delegated",
-            detail: "running as a chat session of '\(targetAgentName)'"
+            detail: target.isWorkspace
+                ? "running on '\(targetAgentName)' via workspace relay"
+                : "running as a chat session of '\(targetAgentName)'"
         )
 
         let reasonBox = CancelReasonBox()

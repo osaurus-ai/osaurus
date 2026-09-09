@@ -621,14 +621,16 @@ public struct SystemPromptComposer: Sendable {
         agents: [UUID],
         models: [String],
         notes: [String: String],
-        launcherModelOverride: String?
+        launcherModelOverride: String?,
+        workspaceAgents: [WorkspaceAgentRef]
     ) {
         if let frozen = snapshot.spawnConfiguration {
             return (
                 agents: frozen.agentIDs,
                 models: frozen.modelNames,
                 notes: frozen.modelNotes,
-                launcherModelOverride: frozen.launcherModelOverride
+                launcherModelOverride: frozen.launcherModelOverride,
+                workspaceAgents: frozen.workspaceAgents
             )
         }
         let config = SubagentConfigurationStore.snapshot()
@@ -653,6 +655,12 @@ public struct SystemPromptComposer: Sendable {
                 isDefault: isDefault,
                 config: config,
                 settings: settings
+            ),
+            workspaceAgents: SubagentToolVisibility.effectiveSpawnableWorkspaceAgents(
+                isDefault: isDefault,
+                config: config,
+                perAgentEnabled: snapshot.spawnDelegationEnabled,
+                perAgentTargets: snapshot.spawnableWorkspaceAgents
             )
         )
     }
@@ -699,7 +707,8 @@ public struct SystemPromptComposer: Sendable {
                 agentIDs: configuredSpawn.agents,
                 modelNames: configuredSpawn.models,
                 modelNotes: configuredSpawn.notes,
-                launcherModelOverride: configuredSpawn.launcherModelOverride
+                launcherModelOverride: configuredSpawn.launcherModelOverride,
+                workspaceAgents: configuredSpawn.workspaceAgents
             )
 
         trace?.mark("resolve_tools_start")
@@ -1408,6 +1417,8 @@ public struct SystemPromptComposer: Sendable {
                                 ? toolset.spawnTargets.agents : [],
                             models: (modelToolResolved || batchToolResolved)
                                 ? toolset.spawnTargets.models : [],
+                            workspaceAgents: (agentToolResolved || batchToolResolved)
+                                ? toolset.spawnTargets.workspaceAgents : [],
                             availableToolNames: resolvedNames,
                             toolAccess: toolAccess,
                             maxParallel: maxParallel
@@ -2401,7 +2412,8 @@ public struct SystemPromptComposer: Sendable {
                 agentIDs: configuredSpawn.agents,
                 modelNames: configuredSpawn.models,
                 modelNotes: configuredSpawn.notes,
-                launcherModelOverride: configuredSpawn.launcherModelOverride
+                launcherModelOverride: configuredSpawn.launcherModelOverride,
+                workspaceAgents: configuredSpawn.workspaceAgents
             )
         let tools = resolveTools(
             snapshot: snapshot,
@@ -3088,28 +3100,44 @@ public struct SystemPromptComposer: Sendable {
                 perAgentEnabled: snapshot.spawnDelegationEnabled,
                 perAgentModelTargets: snapshot.spawnableModelNames
             )
+        let configuredWorkspaceAgents =
+            snapshot.spawnConfiguration?.workspaceAgents
+            ?? SubagentToolVisibility.effectiveSpawnableWorkspaceAgents(
+                isDefault: isDefault,
+                config: config,
+                perAgentEnabled: snapshot.spawnDelegationEnabled,
+                perAgentTargets: snapshot.spawnableWorkspaceAgents
+            )
         let allowedAgentIDs =
             (spawnTargets?.runnableAgentIDs ?? configuredAgentIDs)
             .filter { $0 != snapshot.agentId }
         let allowedModelIds =
             spawnTargets?.runnableModelIds ?? configuredModelIds
+        // Workspace targets enter the enum by ADDRESS (durable), never by
+        // presence or provider state — see `SpawnDescriptors` and the
+        // prefix-cache invariant in `WorkspaceAgentLiveness`.
+        let allowedWorkspaceAgents =
+            spawnTargets?.workspaceAgents.map { ($0.ref, $0.name) }
+            ?? configuredWorkspaceAgents.map { ($0, AgentTargetResolver.displayName(for: $0)) }
+        let allowedWorkspaceAddresses = allowedWorkspaceAgents.map(\.0.agentAddress)
         // Display names for the allow-listed agents, in `allowedAgentIDs` order.
         // Threaded into the schema enums so a strict, enum-enforcing provider
         // accepts a name as well as a UUID (issue #2408). `constrainedSpec`
         // sorts/normalizes, so the resolved order here need not be canonical.
-        let allowedAgentNames = allowedAgentIDs.compactMap {
-            AgentManager.shared.agent(for: $0)?.name
-        }
+        let allowedAgentNames =
+            allowedAgentIDs.compactMap { AgentManager.shared.agent(for: $0)?.name }
+            + allowedWorkspaceAgents.map(\.1)
 
         if let spawnAgent = byName[SubagentCapabilityRegistry.spawnAgentToolName] {
-            if spawnTargets != nil, allowedAgentIDs.isEmpty {
+            if spawnTargets != nil, allowedAgentIDs.isEmpty, allowedWorkspaceAddresses.isEmpty {
                 byName.removeValue(forKey: SubagentCapabilityRegistry.spawnAgentToolName)
             } else {
                 byName[SubagentCapabilityRegistry.spawnAgentToolName] =
                     SpawnAgentTool.constrainedSpec(
                         spawnAgent,
                         allowedAgentIDs: allowedAgentIDs,
-                        allowedAgentNames: allowedAgentNames
+                        allowedAgentNames: allowedAgentNames,
+                        allowedWorkspaceAddresses: allowedWorkspaceAddresses
                     )
             }
         }
@@ -3125,7 +3153,9 @@ public struct SystemPromptComposer: Sendable {
             }
         }
         if let spawnBatch = byName[SubagentCapabilityRegistry.spawnBatchToolName] {
-            if spawnTargets != nil, allowedAgentIDs.isEmpty, allowedModelIds.isEmpty {
+            if spawnTargets != nil, allowedAgentIDs.isEmpty, allowedModelIds.isEmpty,
+                allowedWorkspaceAddresses.isEmpty
+            {
                 byName.removeValue(forKey: SubagentCapabilityRegistry.spawnBatchToolName)
             } else {
                 let maxParallel =
@@ -3144,6 +3174,7 @@ public struct SystemPromptComposer: Sendable {
                         allowedAgentIDs: allowedAgentIDs,
                         allowedAgentNames: allowedAgentNames,
                         allowedModelIds: allowedModelIds,
+                        allowedWorkspaceAddresses: allowedWorkspaceAddresses,
                         maxParallel: maxParallel
                     )
             }

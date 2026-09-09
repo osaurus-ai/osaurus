@@ -14,6 +14,11 @@ struct SpawnConfigurationEditor: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var modelPickerCache = ModelPickerItemCache.shared
+    /// Shared-agent roster (names, workspace membership, cached presence).
+    /// Presence is rendered on the chips ONLY — it never reaches the prompt
+    /// or the tool schema, so a teammate going offline cannot reset the KV
+    /// prefix (see `SpawnDescriptors.resolveWorkspaceTargets`).
+    @ObservedObject private var roster = WorkspaceRosterStore.shared
 
     /// A custom agent cannot spawn itself. `nil` identifies the built-in main
     /// chat, whose picker contains custom agents only.
@@ -21,6 +26,7 @@ struct SpawnConfigurationEditor: View {
     let localHandoffEnabled: Bool
     @Binding var modelOverride: String?
     @Binding var spawnableAgentIDs: [UUID]
+    @Binding var spawnableWorkspaceAgents: [WorkspaceAgentRef]
     @Binding var spawnableModelNames: [String]
     @Binding var spawnableModelNotes: [String: String]
     @Binding var permissionDefaults: SubagentPermissionDefaults
@@ -29,8 +35,10 @@ struct SpawnConfigurationEditor: View {
     let onChange: () -> Void
 
     @State private var agentPickerPresented = false
+    @State private var workspaceAgentPickerPresented = false
     @State private var modelPickerPresented = false
     @State private var agentSearch = ""
+    @State private var workspaceAgentSearch = ""
     @State private var modelSearch = ""
     @State private var limitsExpanded = false
     @State private var isRefreshingModels = false
@@ -43,6 +51,8 @@ struct SpawnConfigurationEditor: View {
             divider
             handoffWarning
             allowedAgents
+            divider
+            allowedWorkspaceAgents
             divider
             allowedModels
             divider
@@ -60,6 +70,15 @@ struct SpawnConfigurationEditor: View {
                 migrateLegacyRemoteSelections()
             }
         }
+        .task(id: workspaceAgentPickerPresented) {
+            // Opening the picker is the user's "is this list current?"
+            // affordance; the roster otherwise refreshes on its own poll.
+            if workspaceAgentPickerPresented {
+                await roster.refresh(reason: .manual)
+            }
+        }
+        .onAppear { roster.beginObserving() }
+        .onDisappear { roster.endObserving() }
     }
 
     // MARK: - Model and runtime policy
@@ -223,6 +242,212 @@ struct SpawnConfigurationEditor: View {
         }
         .padding(12)
         .frame(width: 292)
+    }
+
+    // MARK: - Allowed workspace agents
+
+    /// A shared agent the user may delegate to: every roster row minus this
+    /// instance's own agents, once per `(workspace, address)`.
+    private struct WorkspaceAgentCandidate: Identifiable {
+        let ref: WorkspaceAgentRef
+        let name: String
+        let description: String?
+        let workspaceName: String
+        let ownerName: String?
+        var id: String { ref.key }
+    }
+
+    private var workspaceAgentCandidates: [WorkspaceAgentCandidate] {
+        var seen = Set<WorkspaceAgentRef>()
+        var out: [WorkspaceAgentCandidate] = []
+        for entry in roster.rosters {
+            for agent in entry.agents where !roster.isOwnAgent(address: agent.agentAddress) {
+                let ref = WorkspaceAgentRef(workspaceId: entry.id, agentAddress: agent.agentAddress)
+                guard seen.insert(ref).inserted else { continue }
+                let description = agent.description?.trimmingCharacters(in: .whitespacesAndNewlines)
+                out.append(
+                    WorkspaceAgentCandidate(
+                        ref: ref,
+                        name: AgentTargetResolver.displayName(for: ref),
+                        description: (description?.isEmpty == false) ? description : nil,
+                        workspaceName: entry.workspace.name,
+                        ownerName: agent.owner?.friendlyName
+                    )
+                )
+            }
+        }
+        return out
+    }
+
+    private var allowedWorkspaceAgents: some View {
+        let selected = spawnableWorkspaceAgents
+        let candidates = workspaceAgentCandidates
+        let addable = candidates.filter { !selected.contains($0.ref) }
+        return VStack(alignment: .leading, spacing: 8) {
+            AgentSheetSectionLabel("Allowed workspace agents")
+            if selected.isEmpty {
+                emptyHint(
+                    "None yet. Add a teammate's shared agent to delegate a task to it. It runs on their Mac with their prompt and model; results come back over the relay."
+                )
+            } else {
+                FlowLayout(spacing: 6) {
+                    ForEach(selected, id: \.key) { ref in
+                        let candidate = candidates.first { $0.ref == ref }
+                        workspaceAgentChip(ref: ref, candidate: candidate) {
+                            setWorkspaceAgent(ref, included: false)
+                        }
+                    }
+                }
+            }
+            if !roster.hasWorkspaces {
+                emptyHint(
+                    selected.isEmpty
+                        ? "No workspaces yet — join one in Settings → Workspaces to delegate to shared agents."
+                        : "Workspace roster unavailable. Configured agents marked unavailable can still be removed."
+                )
+            } else if candidates.isEmpty {
+                emptyHint(
+                    selected.isEmpty
+                        ? "No teammate agents are shared into your workspaces yet."
+                        : "Configured agents marked unavailable can still be removed."
+                )
+            } else {
+                addButton(
+                    title: "Add workspace agent",
+                    isPresented: $workspaceAgentPickerPresented,
+                    disabled: addable.isEmpty
+                ) {
+                    workspaceAgentAddList
+                }
+            }
+        }
+    }
+
+    /// Chip label: name · workspace, with a cached presence dot. Presence is
+    /// advisory (the spawn-time probe is authoritative) and UI-only.
+    private func workspaceAgentChip(
+        ref: WorkspaceAgentRef,
+        candidate: WorkspaceAgentCandidate?,
+        onRemove: @escaping () -> Void
+    ) -> some View {
+        let presence = roster.presence(forAddress: ref.agentAddress, workspaceId: ref.workspaceId)
+        let name = candidate?.name ?? AgentTargetResolver.displayName(for: ref)
+        let workspaceName = candidate?.workspaceName ?? AgentTargetResolver.workspaceName(for: ref)
+        return HStack(spacing: 6) {
+            if candidate != nil {
+                Circle()
+                    .fill(presenceColor(presence))
+                    .frame(width: 7, height: 7)
+                    .help(presenceLabel(presence))
+                    .accessibilityLabel(Text(presenceLabel(presence)))
+            }
+            Text(name)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+            if let workspaceName, !workspaceName.isEmpty {
+                Text("· \(workspaceName)")
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+                    .lineLimit(1)
+            }
+            if candidate == nil {
+                Text("Unavailable", bundle: .module)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(theme.warningColor)
+            }
+            Button(action: onRemove) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(theme.tertiaryBackground))
+        .overlay(Capsule().stroke(theme.inputBorder, lineWidth: 1))
+        .help(ref.agentAddress)
+    }
+
+    private func presenceColor(_ presence: WorkspaceRosterStore.Presence) -> Color {
+        presence.indicatorColor(theme: theme)
+    }
+
+    private func presenceLabel(_ presence: WorkspaceRosterStore.Presence) -> String {
+        switch presence {
+        case .online: return L("Online")
+        case .offline: return L("Offline")
+        case .unknown: return L("Presence unknown")
+        }
+    }
+
+    private var workspaceAgentAddList: some View {
+        let selected = spawnableWorkspaceAgents
+        let query = workspaceAgentSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filtered = workspaceAgentCandidates.filter { candidate in
+            !selected.contains(candidate.ref)
+                && (query.isEmpty
+                    || candidate.name.localizedCaseInsensitiveContains(query)
+                    || candidate.workspaceName.localizedCaseInsensitiveContains(query)
+                    || (candidate.description ?? "").localizedCaseInsensitiveContains(query)
+                    || candidate.ref.agentAddress.localizedCaseInsensitiveContains(query))
+        }
+        return VStack(alignment: .leading, spacing: 8) {
+            SearchField(
+                text: $workspaceAgentSearch,
+                placeholder: "Search workspace agents",
+                width: 296,
+                compact: true
+            )
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    if roster.isLoading, workspaceAgentCandidates.isEmpty {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            emptyHint("Loading workspace rosters…")
+                        }
+                        .padding(.vertical, 6)
+                    } else if filtered.isEmpty {
+                        emptyHint("No matching workspace agents.").padding(.vertical, 6)
+                    } else {
+                        ForEach(filtered) { candidate in
+                            let presence = roster.presence(
+                                forAddress: candidate.ref.agentAddress,
+                                workspaceId: candidate.ref.workspaceId
+                            )
+                            addRow(
+                                title: candidate.name,
+                                subtitle: workspaceAgentSubtitle(candidate, presence: presence)
+                            ) {
+                                setWorkspaceAgent(candidate.ref, included: true)
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 240)
+        }
+        .padding(12)
+        .frame(width: 324)
+    }
+
+    private func workspaceAgentSubtitle(
+        _ candidate: WorkspaceAgentCandidate,
+        presence: WorkspaceRosterStore.Presence
+    ) -> String {
+        var parts: [String] = [candidate.workspaceName]
+        if let owner = candidate.ownerName, !owner.isEmpty { parts.append(owner) }
+        parts.append(presenceLabel(presence))
+        if let description = candidate.description { parts.append(description) }
+        return parts.joined(separator: " · ")
+    }
+
+    private func setWorkspaceAgent(_ ref: WorkspaceAgentRef, included: Bool) {
+        var refs = spawnableWorkspaceAgents.filter { $0 != ref }
+        if included { refs.append(ref) }
+        spawnableWorkspaceAgents = SubagentConfiguration.normalizedWorkspaceAgents(refs)
+        onChange()
     }
 
     // MARK: - Allowed models

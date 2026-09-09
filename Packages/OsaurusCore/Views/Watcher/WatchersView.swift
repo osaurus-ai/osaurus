@@ -46,7 +46,7 @@ struct WatchersView: View {
                     watcherManager.create(
                         name: watcher.name,
                         instructions: watcher.instructions,
-                        agentId: watcher.agentId,
+                        target: watcher.target,
                         parameters: watcher.parameters,
                         watchPath: watcher.watchPath,
                         watchBookmark: watcher.watchBookmark,
@@ -422,7 +422,10 @@ private struct WatcherCard: View {
                 statItem(icon: "clock", text: relativeTimeString(for: lastTriggered))
             }
 
-            if let agentName = agent?.name, agent?.isBuiltIn == false {
+            if let ref = watcher.workspaceTarget {
+                statDot
+                statItem(icon: "person.2.fill", text: AgentTargetResolver.displayName(for: ref))
+            } else if let agentName = agent?.name, agent?.isBuiltIn == false {
                 statDot
                 statItem(icon: "person.fill", text: agentName)
             }
@@ -466,6 +469,7 @@ struct WatcherEditorSheet: View {
 
     @Environment(\.theme) private var theme
     @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var roster = WorkspaceRosterStore.shared
 
     let mode: Mode
     let onSave: (Watcher) -> Void
@@ -474,7 +478,7 @@ struct WatcherEditorSheet: View {
 
     @State private var name = ""
     @State private var instructions = ""
-    @State private var selectedAgentId: UUID?
+    @State private var selectedTarget: AgentDispatchTarget?
     @State private var isEnabled = true
     @State private var recursive = false
     @State private var responsiveness: Responsiveness = .balanced
@@ -519,7 +523,7 @@ struct WatcherEditorSheet: View {
         guard let original = editingWatcher else { return true }
         return name.trimmingCharacters(in: .whitespacesAndNewlines) != original.name
             || instructions.trimmingCharacters(in: .whitespacesAndNewlines) != original.instructions
-            || selectedAgentId != original.agentId
+            || selectedTarget != original.target
             || isEnabled != original.isEnabled
             || recursive != original.recursive
             || responsiveness != original.responsiveness
@@ -558,12 +562,14 @@ struct WatcherEditorSheet: View {
             if case .edit(let watcher) = mode {
                 loadWatcher(watcher)
             } else if let agentId = initialAgentId {
-                selectedAgentId = agentId
+                selectedTarget = .local(agentId)
             }
+            roster.beginObserving()
             withAnimation {
                 hasAppeared = true
             }
         }
+        .onDisappear { roster.endObserving() }
     }
 
     // MARK: - Header
@@ -884,14 +890,25 @@ struct WatcherEditorSheet: View {
         WatcherEditorSection(title: L("Agent"), icon: "person.circle.fill") {
             VStack(alignment: .leading, spacing: 8) {
                 WatcherAgentPicker(
-                    selectedAgentId: $selectedAgentId,
-                    agents: agentManager.agents.filter { !$0.isBuiltIn }
+                    selectedTarget: $selectedTarget,
+                    agents: agentManager.agents.filter { !$0.isBuiltIn },
+                    workspaceAgents: WorkspaceAgentPickerOption.all(roster: roster)
                 )
                 .frame(maxWidth: .infinity)
 
-                Text("The agent determines the AI's behavior and available tools.", bundle: .module)
+                if selectedTarget?.isWorkspace == true {
+                    Text(
+                        "A workspace agent runs on its owner's Mac with their prompt, model and tools. It receives the change summary as text; the watched folder itself is not shared. If the host is offline, that change is skipped.",
+                        bundle: .module
+                    )
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("The agent determines the AI's behavior and available tools.", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                }
             }
             .frame(maxWidth: .infinity)
         }
@@ -936,7 +953,7 @@ struct WatcherEditorSheet: View {
     private func loadWatcher(_ watcher: Watcher) {
         name = watcher.name
         instructions = watcher.instructions
-        selectedAgentId = watcher.agentId
+        selectedTarget = watcher.target
         isEnabled = watcher.isEnabled
         recursive = watcher.recursive
         responsiveness = watcher.responsiveness
@@ -955,7 +972,7 @@ struct WatcherEditorSheet: View {
             id: existingId ?? UUID(),
             name: trimmedName,
             instructions: trimmedInstructions,
-            agentId: selectedAgentId,
+            target: selectedTarget,
             watchPath: selectedWatchPath,
             watchBookmark: selectedWatchBookmark,
             isEnabled: isEnabled,
@@ -1073,11 +1090,16 @@ private struct WatcherTextField: View {
 
 private struct WatcherAgentPicker: View {
     @Environment(\.theme) private var theme
-    @Binding var selectedAgentId: UUID?
+    /// Local agent (`.local`) or a teammate's shared agent (`.workspace`).
+    @Binding var selectedTarget: AgentDispatchTarget?
     let agents: [Agent]
+    /// Shared agents from every joined workspace, minus this instance's own.
+    let workspaceAgents: [WorkspaceAgentPickerOption]
 
     @State private var isHovering = false
     @State private var showingPopover = false
+
+    private var selectedAgentId: UUID? { selectedTarget?.localId }
 
     private var selectedAgent: Agent? {
         if let id = selectedAgentId {
@@ -1086,8 +1108,14 @@ private struct WatcherAgentPicker: View {
         return nil
     }
 
+    private var selectedWorkspaceOption: WorkspaceAgentPickerOption? {
+        guard let ref = selectedTarget?.workspaceRef else { return nil }
+        return WorkspaceAgentPickerOption.resolve(ref, in: workspaceAgents)
+    }
+
     private var selectedAgentName: String {
-        selectedAgent?.name ?? "Default"
+        if let option = selectedWorkspaceOption { return option.name }
+        return selectedAgent?.name ?? "Default"
     }
 
     private func agentColor(for name: String) -> Color {
@@ -1102,14 +1130,31 @@ private struct WatcherAgentPicker: View {
                     .fill(agentColor(for: selectedAgentName).opacity(0.2))
                     .frame(width: 32, height: 32)
                     .overlay(
-                        Image(systemName: "person.fill")
+                        Image(systemName: selectedWorkspaceOption == nil ? "person.fill" : "person.2.fill")
                             .font(.system(size: 14, weight: .medium))
                             .foregroundColor(agentColor(for: selectedAgentName))
                     )
+                    .overlay(alignment: .bottomTrailing) {
+                        if let option = selectedWorkspaceOption {
+                            Circle()
+                                .fill(option.presence.indicatorColor(theme: theme))
+                                .frame(width: 9, height: 9)
+                                .overlay(Circle().stroke(theme.inputBackground, lineWidth: 1.5))
+                                .help(option.presenceLabel)
+                        }
+                    }
 
-                Text(selectedAgentName)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(selectedAgentName)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    if let option = selectedWorkspaceOption {
+                        Text(L("Workspace agent · ") + option.subtitle)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                    }
+                }
 
                 Spacer(minLength: 0)
 
@@ -1145,9 +1190,9 @@ private struct WatcherAgentPicker: View {
             VStack(alignment: .leading, spacing: 0) {
                 WatcherAgentOptionRow(
                     agent: nil,
-                    isSelected: selectedAgentId == nil,
+                    isSelected: selectedTarget == nil,
                     action: {
-                        selectedAgentId = nil
+                        selectedTarget = nil
                         showingPopover = false
                     }
                 )
@@ -1161,7 +1206,30 @@ private struct WatcherAgentPicker: View {
                             agent: agent,
                             isSelected: selectedAgentId == agent.id,
                             action: {
-                                selectedAgentId = agent.id
+                                selectedTarget = .local(agent.id)
+                                showingPopover = false
+                            }
+                        )
+                    }
+                }
+
+                if !workspaceAgents.isEmpty {
+                    Divider()
+                        .padding(.vertical, 4)
+
+                    Text("Workspace agents", bundle: .module)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 2)
+
+                    ForEach(workspaceAgents) { option in
+                        WatcherAgentOptionRow(
+                            agent: nil,
+                            workspaceOption: option,
+                            isSelected: selectedTarget?.workspaceRef == option.ref,
+                            action: {
+                                selectedTarget = .workspace(option.ref)
                                 showingPopover = false
                             }
                         )
@@ -1179,22 +1247,34 @@ private struct WatcherAgentOptionRow: View {
     @Environment(\.theme) private var theme
 
     let agent: Agent?
+    /// A shared workspace agent row (when `agent` is nil and this is set).
+    var workspaceOption: WorkspaceAgentPickerOption? = nil
     let isSelected: Bool
     let action: () -> Void
 
     @State private var isHovering = false
 
     private var displayName: String {
-        agent?.name ?? L("Default")
+        if let workspaceOption { return workspaceOption.name }
+        return agent?.name ?? L("Default")
     }
 
     private var displayDescription: String {
-        agent?.description ?? L("Uses the default system behavior")
+        if let workspaceOption {
+            return workspaceOption.description.map { "\(workspaceOption.subtitle) — \($0)" }
+                ?? workspaceOption.subtitle
+        }
+        return agent?.description ?? L("Uses the default system behavior")
     }
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
+                if let workspaceOption {
+                    Circle()
+                        .fill(workspaceOption.presence.indicatorColor(theme: theme))
+                        .frame(width: 7, height: 7)
+                }
                 VStack(alignment: .leading, spacing: 4) {
                     Text(displayName)
                         .font(.system(size: 13, weight: .medium))

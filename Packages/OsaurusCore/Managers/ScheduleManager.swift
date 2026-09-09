@@ -147,6 +147,7 @@ public final class ScheduleManager {
         name: String,
         instructions: String,
         agentId: UUID? = nil,
+        target: AgentDispatchTarget? = nil,
         parameters: [String: String] = [:],
         folderPath: String? = nil,
         folderBookmark: Data? = nil,
@@ -158,6 +159,7 @@ public final class ScheduleManager {
             name: name,
             instructions: instructions,
             agentId: agentId,
+            target: target,
             parameters: parameters,
             folderPath: folderPath,
             folderBookmark: folderBookmark,
@@ -416,11 +418,17 @@ public final class ScheduleManager {
         // agentIds were previously coerced to `Agent.defaultId`, silently
         // running anonymous schedules under the Default agent. Refuse the
         // execution outright now — the Schedules tab requires a real agent
-        // selection when creating a schedule.
-        if let rejection = Agent.rejectBuiltInForExternalSurface(
-            schedule.agentId,
-            source: "schedule/executeSchedule"
-        ) {
+        // selection when creating a schedule. A shared workspace agent is a
+        // teammate's custom agent by construction (the router never shares
+        // a built-in), so the local guard applies to local targets only;
+        // `BackgroundTaskManager` runs the relay preflight for workspace
+        // targets and refuses offline / unshared hosts before queueing.
+        if schedule.workspaceTarget == nil,
+            let rejection = Agent.rejectBuiltInForExternalSurface(
+                schedule.agentId,
+                source: "schedule/executeSchedule"
+            )
+        {
             print("[Osaurus] Skipping schedule '\(schedule.name)': \(rejection.message)")
             return
         }
@@ -432,7 +440,7 @@ public final class ScheduleManager {
 
         let request = DispatchRequest(
             prompt: triggeredSchedule.instructions,
-            agentId: triggeredSchedule.agentId,
+            target: triggeredSchedule.target,
             title: triggeredSchedule.name,
             parameters: triggeredSchedule.parameters,
             folderPath: triggeredSchedule.folderPath,
@@ -446,7 +454,16 @@ public final class ScheduleManager {
 
         let task = Task { @MainActor in
             guard let handle = await TaskDispatcher.shared.dispatch(request) else {
-                print("[Osaurus] Failed to dispatch schedule: \(triggeredSchedule.name)")
+                // A refused workspace run (host offline, unshared, key
+                // lapsed) is a normal failed fire: log the reason, keep the
+                // regular next-fire time, and never retry in a loop.
+                if let ref = triggeredSchedule.workspaceTarget,
+                    let reason = BackgroundTaskManager.shared.consumeWorkspaceDispatchRefusal(for: ref)
+                {
+                    print("[Osaurus] Schedule '\(triggeredSchedule.name)' refused: \(reason)")
+                } else {
+                    print("[Osaurus] Failed to dispatch schedule: \(triggeredSchedule.name)")
+                }
                 self.executionTasks.removeValue(forKey: triggeredSchedule.id)
                 return
             }

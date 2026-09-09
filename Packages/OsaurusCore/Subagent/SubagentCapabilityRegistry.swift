@@ -410,14 +410,42 @@ public enum SubagentToolVisibility {
         return perAgentEnabled ? perAgentModelTargets : []
     }
 
+    /// The shared workspace agents effectively spawnable from a launching
+    /// agent. Same Default-vs-custom shape as `effectiveSpawnableAgents`; a
+    /// custom agent's list is live only while its `spawn` toggle is on. Pure
+    /// configuration — never filtered by live presence (see the liveness
+    /// contract in `WorkspaceAgentLiveness`).
+    static func effectiveSpawnableWorkspaceAgents(
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        perAgentEnabled: Bool,
+        perAgentTargets: [WorkspaceAgentRef]
+    ) -> [WorkspaceAgentRef] {
+        if isDefault { return config.spawnableWorkspaceAgents }
+        return perAgentEnabled ? perAgentTargets : []
+    }
+
+    /// Whether a specific shared workspace agent is reachable from a
+    /// launching agent — the execution-time check the spawn kind enforces.
+    static func spawnWorkspaceAgentAllowed(
+        _ ref: WorkspaceAgentRef,
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        perAgentTargets: [WorkspaceAgentRef]
+    ) -> Bool {
+        if isDefault { return config.isWorkspaceAgentSpawnable(ref) }
+        return perAgentTargets.contains(ref)
+    }
+
     /// Whether `spawn_agent` is available for an agent — i.e. it has at least one
-    /// spawnable agent (nothing to spawn → hide the tool). There is no global
-    /// master switch; each agent opts in for itself.
+    /// spawnable agent, local or workspace (nothing to spawn → hide the tool).
+    /// There is no global master switch; each agent opts in for itself.
     static func spawnAgentAvailable(
         isDefault: Bool,
         config: SubagentConfiguration,
         perAgentEnabled: Bool,
-        perAgentTargets: [UUID]
+        perAgentTargets: [UUID],
+        perAgentWorkspaceTargets: [WorkspaceAgentRef] = []
     ) -> Bool {
         !effectiveSpawnableAgents(
             isDefault: isDefault,
@@ -425,6 +453,12 @@ public enum SubagentToolVisibility {
             perAgentEnabled: perAgentEnabled,
             perAgentTargets: perAgentTargets
         ).isEmpty
+            || !effectiveSpawnableWorkspaceAgents(
+                isDefault: isDefault,
+                config: config,
+                perAgentEnabled: perAgentEnabled,
+                perAgentTargets: perAgentWorkspaceTargets
+            ).isEmpty
     }
 
     /// Whether `spawn_model` is available for an agent — i.e. it has at least one
@@ -541,6 +575,97 @@ public enum SubagentToolVisibility {
         )
     }
 
+    /// Result of resolving a `spawn_agent` / `spawn_batch` agent identifier
+    /// against BOTH of the launching agent's pools (local + workspace).
+    public struct SpawnableAgentTargetResolution: Sendable {
+        /// The uniquely-matching allow-listed target, or nil.
+        public let target: AgentDispatchTarget?
+        /// True when the identifier matched more than one target (a local and
+        /// a workspace agent sharing a display name, or two shared agents with
+        /// the same name in different workspaces). The caller must use the
+        /// UUID / address instead.
+        public let isAmbiguous: Bool
+        /// Display names of every allow-listed target (local first), for a
+        /// corrective error message.
+        public let allowedNames: [String]
+    }
+
+    /// Map an identifier (local UUID, local display name, workspace `0x…`
+    /// address, `<workspaceId>:<address>` key, or workspace display name) to
+    /// the launching agent's uniquely-matching spawnable target. Scoped to that
+    /// agent's own allow-lists — never widens authorization. Names match
+    /// case-insensitively and trimmed; identity forms match exactly.
+    static func resolveSpawnableAgentTarget(
+        _ raw: String,
+        scope: SubagentScope
+    ) async -> SpawnableAgentTargetResolution {
+        let needle = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isDefault = scope.agentId == Agent.defaultId
+        let config = SubagentConfigurationStore.snapshot()
+        let (local, workspace): ([(id: UUID, name: String)], [(ref: WorkspaceAgentRef, name: String)]) =
+            await MainActor.run {
+                let settings = AgentManager.shared.agent(for: scope.agentId)?.settings
+                let enabled = settings?.spawnDelegationEnabled ?? false
+                let localIDs = effectiveSpawnableAgents(
+                    isDefault: isDefault,
+                    config: config,
+                    perAgentEnabled: enabled,
+                    perAgentTargets: settings?.spawnableAgentIDs ?? []
+                )
+                let refs = effectiveSpawnableWorkspaceAgents(
+                    isDefault: isDefault,
+                    config: config,
+                    perAgentEnabled: enabled,
+                    perAgentTargets: settings?.spawnableWorkspaceAgents ?? []
+                )
+                return (
+                    localIDs.compactMap { id in
+                        AgentManager.shared.agent(for: id).map { (id, $0.name) }
+                    },
+                    refs.map { ($0, AgentTargetResolver.displayName(for: $0)) }
+                )
+            }
+        return resolveSpawnableAgentTarget(needle, local: local, workspace: workspace)
+    }
+
+    /// Pure resolution seam for `resolveSpawnableAgentTarget`.
+    static func resolveSpawnableAgentTarget(
+        _ needle: String,
+        local: [(id: UUID, name: String)],
+        workspace: [(ref: WorkspaceAgentRef, name: String)]
+    ) -> SpawnableAgentTargetResolution {
+        let allowedNames = local.map(\.name) + workspace.map(\.name)
+        func result(_ target: AgentDispatchTarget?, ambiguous: Bool = false) -> SpawnableAgentTargetResolution {
+            SpawnableAgentTargetResolution(
+                target: target, isAmbiguous: ambiguous, allowedNames: allowedNames
+            )
+        }
+        guard !needle.isEmpty else { return result(nil) }
+        if let uuid = UUID(uuidString: needle) {
+            return result(local.contains { $0.id == uuid } ? .local(uuid) : nil)
+        }
+        if WorkspaceAgentRef.looksLikeAddress(needle) {
+            let lowered = needle.lowercased()
+            let hits = workspace.filter { $0.ref.agentAddress == lowered }
+            if hits.count == 1 { return result(.workspace(hits[0].ref)) }
+            return result(nil, ambiguous: hits.count > 1)
+        }
+        if let ref = WorkspaceAgentRef(key: needle) {
+            return result(workspace.contains { $0.ref == ref } ? .workspace(ref) : nil)
+        }
+        let localHits = local.filter { $0.name.caseInsensitiveCompare(needle) == .orderedSame }
+        let workspaceHits = workspace.filter {
+            $0.name.caseInsensitiveCompare(needle) == .orderedSame
+        }
+        switch localHits.count + workspaceHits.count {
+        case 0: return result(nil)
+        case 1:
+            if let hit = localHits.first { return result(.local(hit.id)) }
+            return result(.workspace(workspaceHits[0].ref))
+        default: return result(nil, ambiguous: true)
+        }
+    }
+
     /// Whether a specific `spawn_model` TARGET model id is reachable from a
     /// launching agent — the execution-time check the spawn kind enforces before
     /// any residency handoff (reject-before-evict). Default / main chat uses its
@@ -583,12 +708,13 @@ public enum SubagentToolVisibility {
         // The two compatibility tools gate independently; the batch tool is
         // available whenever either exact target pool is non-empty.
         let hasAgents =
-            snapshot.spawnConfiguration.map { !$0.agentIDs.isEmpty }
+            snapshot.spawnConfiguration.map { !$0.agentIDs.isEmpty || !$0.workspaceAgents.isEmpty }
             ?? spawnAgentAvailable(
                 isDefault: isDefault,
                 config: config,
                 perAgentEnabled: snapshot.spawnDelegationEnabled,
-                perAgentTargets: snapshot.spawnableAgentIDs
+                perAgentTargets: snapshot.spawnableAgentIDs,
+                perAgentWorkspaceTargets: snapshot.spawnableWorkspaceAgents
             )
         let hasModels =
             snapshot.spawnConfiguration.map { !$0.modelNames.isEmpty }

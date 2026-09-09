@@ -84,8 +84,33 @@ final class AgentChannelAsyncSubstrate: @unchecked Sendable {
         providerRoute: AgentChannelProviderRoute,
         salt: Int = 0
     ) -> AgentChannelSessionPartition {
+        makeSessionPartition(
+            target: agentId.map(AgentDispatchTarget.local),
+            connectionId: connectionId,
+            providerRoute: providerRoute,
+            salt: salt
+        )
+    }
+
+    /// Partition keyed by the dispatch target. A local agent keys by its
+    /// UUID exactly as before (so existing channel sessions keep their
+    /// key); a workspace agent keys by its durable `(workspace, address)`
+    /// ref so repeated turns to the same teammate agent reattach to one
+    /// session row.
+    func makeSessionPartition(
+        target: AgentDispatchTarget?,
+        connectionId: String,
+        providerRoute: AgentChannelProviderRoute,
+        salt: Int = 0
+    ) -> AgentChannelSessionPartition {
         let normalizedConnectionId = connectionId.trimmingCharacters(in: .whitespacesAndNewlines)
-        let agentComponent = agentId?.uuidString.lowercased() ?? "default-agent"
+        let agentComponent: String
+        switch target {
+        case .none: agentComponent = "default-agent"
+        case .local(let id): agentComponent = id.uuidString.lowercased()
+        case .workspace(let ref): agentComponent = "workspace:\(ref.key)"
+        }
+        let agentId = target?.localId
         let routeMaterial = [
             "agent-channel-session",
             agentComponent,

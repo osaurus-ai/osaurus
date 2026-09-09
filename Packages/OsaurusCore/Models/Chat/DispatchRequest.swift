@@ -15,7 +15,16 @@ import Foundation
 public struct DispatchRequest: Sendable {
     public let id: UUID
     public let prompt: String
-    public let agentId: UUID?
+    /// Who runs this: an agent hosted here, or a teammate's shared workspace
+    /// agent (run on their Mac over the relay). nil = anonymous, which every
+    /// non-Chat surface refuses (`Agent.rejectBuiltInForExternalSurface`).
+    public let target: AgentDispatchTarget?
+    /// The local agent id, for the many readers that only understand local
+    /// agents. nil for anonymous AND for workspace targets — callers that
+    /// must tell those apart read `target`.
+    public var agentId: UUID? { target?.localId }
+    /// The shared workspace agent this dispatch runs, or nil for local.
+    public var workspaceTarget: WorkspaceAgentRef? { target?.workspaceRef }
     public let title: String?
     public let parameters: [String: String]
     public let folderPath: String?
@@ -100,10 +109,13 @@ public struct DispatchRequest: Sendable {
         )
     }
 
+    /// `agentId` and `target` are two spellings of the same field: pass one.
+    /// `target` wins when both are given.
     public init(
         id: UUID = UUID(),
         prompt: String,
         agentId: UUID? = nil,
+        target: AgentDispatchTarget? = nil,
         title: String? = nil,
         parameters: [String: String] = [:],
         folderPath: String? = nil,
@@ -121,7 +133,7 @@ public struct DispatchRequest: Sendable {
     ) {
         self.id = id
         self.prompt = prompt
-        self.agentId = agentId
+        self.target = target ?? agentId.map(AgentDispatchTarget.local)
         self.title = title
         self.parameters = parameters
         self.folderPath = folderPath

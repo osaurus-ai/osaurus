@@ -73,6 +73,7 @@ struct SubagentSettingsSection: View {
                             localHandoffEnabled: configuration.localTextDelegationEnabled,
                             modelOverride: mainChatSpawnModelOverride,
                             spawnableAgentIDs: $configuration.spawnableAgentIDs,
+                            spawnableWorkspaceAgents: $configuration.spawnableWorkspaceAgents,
                             spawnableModelNames: $configuration.spawnableModelNames,
                             spawnableModelNotes: $configuration.spawnableModelNotes,
                             permissionDefaults: $configuration.permissionDefaults,
@@ -133,15 +134,18 @@ struct SubagentSettingsSection: View {
         let configuredAgentIDs = configuration.spawnableAgentIDs
         let configuredCount =
             configuredAgentIDs.count + configuration.spawnableModelNames.count
+            + configuration.spawnableWorkspaceAgents.count
         let availability = SpawnDescriptors.resolveForPreview(
             agentIDs: configuredAgentIDs,
             modelNames: configuration.spawnableModelNames,
             modelNotes: configuration.spawnableModelNotes,
             launcherModelOverride:
-                configuration.subagentModelOverrides[SubagentCapabilityRegistry.spawn.id]
+                configuration.subagentModelOverrides[SubagentCapabilityRegistry.spawn.id],
+            workspaceAgents: configuration.spawnableWorkspaceAgents
         )
         let runnableCount =
             availability.runnableAgentIDs.count + availability.runnableModelIds.count
+            + availability.runnableWorkspaceAgents.count
         let checking =
             availability.agentTargets.contains { $0.state == .checking }
             || availability.modelTargets.contains { $0.state == .checking }

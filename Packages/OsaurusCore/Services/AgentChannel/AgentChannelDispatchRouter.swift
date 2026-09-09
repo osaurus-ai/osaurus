@@ -12,7 +12,11 @@
 import Foundation
 
 struct AgentChannelDispatchResolution: Equatable, Sendable {
-    let agentId: UUID
+    /// Who answers: a local agent or a teammate's shared workspace agent.
+    let target: AgentDispatchTarget
+    /// The local agent, for readers that only understand local agents; nil
+    /// for workspace targets.
+    var agentId: UUID? { target.localId }
     /// Machine label of the matched rule for telemetry:
     /// "alias:<alias>", "room:<roomId>", or "default".
     let matchedRule: String
@@ -56,7 +60,7 @@ enum AgentChannelDispatchRouter {
         }
         if let bestAlias {
             return AgentChannelDispatchResolution(
-                agentId: bestAlias.route.agentId,
+                target: bestAlias.route.target,
                 matchedRule: "alias:\(bestAlias.alias)",
                 content: bestAlias.remainder
             )
@@ -68,16 +72,16 @@ enum AgentChannelDispatchRouter {
         let roomRoutes = settings.routes.filter { $0.roomId == room }
         if let roomDefault = roomRoutes.first(where: { $0.nameAliases.isEmpty }) {
             return AgentChannelDispatchResolution(
-                agentId: roomDefault.agentId,
+                target: roomDefault.target,
                 matchedRule: "room:\(room)",
                 content: content
             )
         }
 
         // 3. Provider-wide default.
-        if let fallback = settings.targetAgentId {
+        if let fallback = settings.target {
             return AgentChannelDispatchResolution(
-                agentId: fallback,
+                target: fallback,
                 matchedRule: "default",
                 content: content
             )

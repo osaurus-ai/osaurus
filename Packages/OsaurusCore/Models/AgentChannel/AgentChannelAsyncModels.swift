@@ -319,7 +319,12 @@ struct AgentChannelDispatchRoute: Codable, Equatable, Sendable, Identifiable {
     /// Provider room/channel/chat id this route is scoped to; nil matches
     /// any room (alias-only routes).
     var roomId: String?
-    var agentId: UUID
+    /// Who answers: an agent hosted here or a teammate's shared workspace
+    /// agent (run on their Mac over the relay).
+    var target: AgentDispatchTarget
+    /// The local agent, for readers that only understand local agents; nil
+    /// for workspace targets.
+    var agentId: UUID? { target.localId }
     /// Case-insensitive leading tokens that select this route inside a
     /// room. Stored trimmed and lowercased.
     var nameAliases: [String]
@@ -330,10 +335,19 @@ struct AgentChannelDispatchRoute: Codable, Equatable, Sendable, Identifiable {
         agentId: UUID,
         nameAliases: [String] = []
     ) {
+        self.init(id: id, roomId: roomId, target: .local(agentId), nameAliases: nameAliases)
+    }
+
+    init(
+        id: UUID = UUID(),
+        roomId: String? = nil,
+        target: AgentDispatchTarget,
+        nameAliases: [String] = []
+    ) {
         self.id = id
         let trimmedRoom = roomId?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.roomId = (trimmedRoom?.isEmpty ?? true) ? nil : trimmedRoom
-        self.agentId = agentId
+        self.target = target
         self.nameAliases = Self.normalizedAliases(nameAliases)
     }
 
@@ -348,41 +362,75 @@ struct AgentChannelDispatchRoute: Codable, Equatable, Sendable, Identifiable {
         case id
         case roomId
         case agentId
+        case target
         case nameAliases
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        // `target` (new) → legacy bare `agentId`. A route with neither is
+        // malformed: routes always named an agent.
+        guard
+            let target = try container.decodeAgentTarget(targetKey: .target, legacyAgentIdKey: .agentId)
+        else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.agentId,
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "AgentChannelDispatchRoute needs `target` or `agentId`."
+                )
+            )
+        }
         self.init(
             id: try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID(),
             roomId: try container.decodeIfPresent(String.self, forKey: .roomId),
-            agentId: try container.decode(UUID.self, forKey: .agentId),
+            target: target,
             nameAliases: try container.decodeIfPresent([String].self, forKey: .nameAliases) ?? []
         )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encodeIfPresent(roomId, forKey: .roomId)
+        // Writes `target` AND (for local) the legacy `agentId` so older
+        // builds keep reading the UUID they expect.
+        try container.encodeAgentTarget(target, targetKey: .target, legacyAgentIdKey: .agentId)
+        try container.encode(nameAliases, forKey: .nameAliases)
     }
 }
 
 struct AgentChannelInboundDispatchConfiguration: Codable, Equatable, Sendable {
     var enabled: Bool
-    /// Default agent for messages no route claims. Kept for backward
-    /// compatibility with configs written before per-room routing existed.
-    var targetAgentId: UUID?
-    /// Per-room / alias routing rules, evaluated before `targetAgentId`.
+    /// Default target for messages no route claims (a local agent or a
+    /// shared workspace agent). Kept for backward compatibility with
+    /// configs written before per-room routing existed.
+    var target: AgentDispatchTarget?
+    /// The default LOCAL agent, for readers that only understand local
+    /// agents; nil for a workspace default. Setting it replaces `target`.
+    var targetAgentId: UUID? {
+        get { target?.localId }
+        set { target = newValue.map(AgentDispatchTarget.local) }
+    }
+    /// Per-room / alias routing rules, evaluated before `target`.
     var routes: [AgentChannelDispatchRoute]
     var requireMention: Bool
     var continueThreads: Bool
     var autoReplyEnabled: Bool
 
+    /// `targetAgentId` and `target` are two spellings of the same field;
+    /// `target` wins when both are given.
     init(
         enabled: Bool = false,
         targetAgentId: UUID? = nil,
+        target: AgentDispatchTarget? = nil,
         routes: [AgentChannelDispatchRoute] = [],
         requireMention: Bool = true,
         continueThreads: Bool = true,
         autoReplyEnabled: Bool = false
     ) {
         self.enabled = enabled
-        self.targetAgentId = targetAgentId
+        self.target = target ?? targetAgentId.map(AgentDispatchTarget.local)
         self.routes = routes
         self.requireMention = requireMention
         self.continueThreads = continueThreads
@@ -392,6 +440,7 @@ struct AgentChannelInboundDispatchConfiguration: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case enabled
         case targetAgentId
+        case target
         case routes
         case requireMention
         case continueThreads
@@ -402,7 +451,8 @@ struct AgentChannelInboundDispatchConfiguration: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false,
-            targetAgentId: try container.decodeIfPresent(UUID.self, forKey: .targetAgentId),
+            target: try container.decodeAgentTarget(
+                targetKey: .target, legacyAgentIdKey: .targetAgentId),
             routes: try container.decodeIfPresent(
                 [AgentChannelDispatchRoute].self, forKey: .routes) ?? [],
             requireMention: try container.decodeIfPresent(Bool.self, forKey: .requireMention)
@@ -414,21 +464,37 @@ struct AgentChannelInboundDispatchConfiguration: Codable, Equatable, Sendable {
         )
     }
 
-    var isConfigured: Bool {
-        enabled && (targetAgentId != nil || !routes.isEmpty)
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(enabled, forKey: .enabled)
+        try container.encodeAgentTarget(target, targetKey: .target, legacyAgentIdKey: .targetAgentId)
+        try container.encode(routes, forKey: .routes)
+        try container.encode(requireMention, forKey: .requireMention)
+        try container.encode(continueThreads, forKey: .continueThreads)
+        try container.encode(autoReplyEnabled, forKey: .autoReplyEnabled)
     }
 
-    /// Every agent id this configuration can dispatch to (default + routes).
+    var isConfigured: Bool {
+        enabled && (target != nil || !routes.isEmpty)
+    }
+
+    /// Every target this configuration can dispatch to (default + routes),
+    /// first occurrence wins.
+    var referencedTargets: [AgentDispatchTarget] {
+        var seen = Set<AgentDispatchTarget>()
+        var out: [AgentDispatchTarget] = []
+        if let target, seen.insert(target).inserted {
+            out.append(target)
+        }
+        for route in routes where seen.insert(route.target).inserted {
+            out.append(route.target)
+        }
+        return out
+    }
+
+    /// Every LOCAL agent id this configuration can dispatch to.
     var referencedAgentIds: [UUID] {
-        var seen = Set<UUID>()
-        var ids: [UUID] = []
-        if let targetAgentId, seen.insert(targetAgentId).inserted {
-            ids.append(targetAgentId)
-        }
-        for route in routes where seen.insert(route.agentId).inserted {
-            ids.append(route.agentId)
-        }
-        return ids
+        referencedTargets.compactMap(\.localId)
     }
 }
 

@@ -198,7 +198,23 @@ enum AgentChannelInboundActivityPresentation {
     /// stage: which agent was picked and which routing rule picked it.
     @MainActor
     static func dispatchReason(agentId: UUID, rule: String) -> String {
-        let agentName = AgentManager.shared.agent(for: agentId)?.displayName ?? L("Unknown agent")
+        dispatchReason(target: .local(agentId), rule: rule)
+    }
+
+    @MainActor
+    static func dispatchReason(target: AgentDispatchTarget, rule: String) -> String {
+        let agentName: String
+        switch target {
+        case .local(let id):
+            agentName = AgentManager.shared.agent(for: id)?.displayName ?? L("Unknown agent")
+        case .workspace(let ref):
+            let name = AgentTargetResolver.displayName(for: ref)
+            if let workspace = AgentTargetResolver.workspaceName(for: ref) {
+                agentName = L("\(name) (workspace agent · \(workspace))")
+            } else {
+                agentName = L("\(name) (workspace agent)")
+            }
+        }
         switch rule {
         case "default":
             return L("Routed to \(agentName) (default agent)")

@@ -150,11 +150,14 @@ struct SpawnConfigurationUISourceTests {
         #expect(editor.contains("Refreshing local and connected cloud models"))
         #expect(editor.contains("No local or connected cloud models are available"))
         #expect(editor.contains(#"disabled: false"#))
-        // The one remaining `addable.isEmpty` gate belongs to Add Agent. Add
-        // Model stays reachable so opening it can refresh a cold cache.
+        // The `addable.isEmpty` gates belong to Add Agent and Add Workspace
+        // Agent (the roster is refreshed when the section appears, not when
+        // the picker opens). Add Model stays reachable so opening it can
+        // refresh a cold cache.
         #expect(
-            editor.components(separatedBy: #"disabled: addable.isEmpty"#).count - 1 == 1
+            editor.components(separatedBy: #"disabled: addable.isEmpty"#).count - 1 == 2
         )
+        #expect(editor.contains(#"title: "Add workspace agent""#))
         #expect(editor.contains(#"L("Unavailable")"#))
         #expect(editor.contains(#"L("Checking…")"#))
 

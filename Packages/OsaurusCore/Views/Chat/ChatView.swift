@@ -667,7 +667,35 @@ final class ChatSession: ObservableObject {
     /// agent stays in Mode 1. Drives bare-request composition and `/run`
     /// routing in `send(...)`.
     var isRemoteAgentTarget: Bool {
-        windowState?.selectedDiscoveredAgentProviderId != nil
+        remoteAgentProviderId != nil
+    }
+
+    /// Mode 2 binding for a session with NO window: a headless run
+    /// dispatched against a teammate's shared workspace agent (spawn,
+    /// schedule, watcher, channel). `WorkspaceAgentRunClient.prepare`
+    /// produces it after the liveness probe; `ExecutionContext` installs it.
+    /// Windowed sessions never set this — their binding lives on
+    /// `ChatWindowState` so a tab switch can re-point it.
+    struct HeadlessRemoteAgentBinding: Equatable, Sendable {
+        let providerId: UUID
+        /// Host-reported model, for Insights attribution only (never on the
+        /// wire — the host decides its own model).
+        let effectiveModel: String?
+    }
+
+    var headlessRemoteAgentBinding: HeadlessRemoteAgentBinding?
+
+    /// The single source of the Mode 2 provider id: the window's selected
+    /// relay/discovered agent when there is a window, else the headless
+    /// binding. Every request-build site reads this so a headless and a
+    /// windowed remote-agent send compose identically.
+    var remoteAgentProviderId: UUID? {
+        windowState?.selectedDiscoveredAgentProviderId ?? headlessRemoteAgentBinding?.providerId
+    }
+
+    /// The remote agent's live effective model for Insights logging.
+    var remoteAgentEffectiveModel: String? {
+        windowState?.pinnedRemoteAgentEffectiveModel ?? headlessRemoteAgentBinding?.effectiveModel
     }
 
     private var currentTask: Task<Void, Never>?
@@ -1052,7 +1080,7 @@ final class ChatSession: ObservableObject {
                 // saved default — otherwise selecting a remote agent would
                 // silently overwrite the local agent's preferred model. Mode 1
                 // (plain model picks on a local agent) still persists normally.
-                if self.windowState?.selectedDiscoveredAgentProviderId == nil {
+                if self.remoteAgentProviderId == nil {
                     AgentManager.shared.updateDefaultModel(for: pid, model: model)
                 }
 
@@ -1744,7 +1772,10 @@ final class ChatSession: ObservableObject {
     /// and loading this model could evict (and cancel) the active one — so the
     /// caller surfaces an alert and refuses the send instead.
     var localModelBusyInOtherWindow: Bool {
-        selectedModelIsLocal
+        // Mode 2 (remote agent run) never touches the local runtime — the
+        // host executes the turn — so another window's local stream is not
+        // a conflict, whatever the pinned model string says.
+        !isRemoteAgentTarget && selectedModelIsLocal
             && ChatWindowManager.shared.isOtherWindowStreamingLocalModel(
                 excluding: windowState?.windowId
             )
@@ -7445,15 +7476,12 @@ final class ChatSession: ObservableObject {
                             // different local provider. `ChatEngine` resolves
                             // the service from this id and ignores the model
                             // string for agent runs.
-                            req.remoteAgentProviderId =
-                                self.isRemoteAgentTarget
-                                ? self.windowState?.selectedDiscoveredAgentProviderId : nil
+                            req.remoteAgentProviderId = self.remoteAgentProviderId
                             // Insights fidelity: in Mode 2 the wire omits the
                             // model, so log the agent's live effective model
                             // instead of the local prefixed fallback.
                             req.remoteAgentLogModel =
-                                self.isRemoteAgentTarget
-                                ? self.windowState?.pinnedRemoteAgentEffectiveModel : nil
+                                self.isRemoteAgentTarget ? self.remoteAgentEffectiveModel : nil
                             // Freeze agent semantics for the whole logical run.
                             // Tool schemas stay present on ordinary iterations,
                             // but the cap finalizer below intentionally removes
@@ -8012,12 +8040,9 @@ final class ChatSession: ObservableObject {
                                 // Mode 2 request — a `runAsRemoteAgent` send with no
                                 // provider id would fall back to model-string
                                 // routing (the exact mis-route this fix removes).
-                                finalReq.remoteAgentProviderId =
-                                    isRemoteAgentTarget
-                                    ? windowState?.selectedDiscoveredAgentProviderId : nil
+                                finalReq.remoteAgentProviderId = remoteAgentProviderId
                                 finalReq.remoteAgentLogModel =
-                                    isRemoteAgentTarget
-                                    ? windowState?.pinnedRemoteAgentEffectiveModel : nil
+                                    isRemoteAgentTarget ? remoteAgentEffectiveModel : nil
                                 finalReq.isAgentRequest = !toolSpecs.isEmpty || isRemoteAgentTarget
                                 turnGenerationControls.apply(to: &finalReq)
                                 finalReq.backgroundModelLoad = (loadIntent == .background)

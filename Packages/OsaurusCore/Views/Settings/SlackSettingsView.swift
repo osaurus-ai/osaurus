@@ -31,7 +31,7 @@ struct SlackSettingsView: View {
     @State private var allowBroadcastMentions: Bool = false
     @State private var defaultReadLimit: String = "50"
     @State private var inboundDispatchEnabled = false
-    @State private var inboundAgentId: UUID?
+    @State private var inboundTarget: AgentDispatchTarget?
     @State private var inboundRoutes: [AgentChannelDispatchRoute] = []
     @State private var inboundRequireMention = true
     @State private var inboundContinueThreads = true
@@ -74,7 +74,7 @@ struct SlackSettingsView: View {
         var allowBroadcastMentions: Bool
         var defaultReadLimit: String
         var inboundDispatchEnabled: Bool
-        var inboundAgentId: UUID?
+        var inboundTarget: AgentDispatchTarget?
         var inboundRoutes: [AgentChannelDispatchRoute]
         var inboundRequireMention: Bool
         var inboundContinueThreads: Bool
@@ -91,7 +91,7 @@ struct SlackSettingsView: View {
             allowBroadcastMentions: allowBroadcastMentions,
             defaultReadLimit: defaultReadLimit,
             inboundDispatchEnabled: inboundDispatchEnabled,
-            inboundAgentId: inboundAgentId,
+            inboundTarget: inboundTarget,
             inboundRoutes: inboundRoutes,
             inboundRequireMention: inboundRequireMention,
             inboundContinueThreads: inboundContinueThreads,
@@ -209,7 +209,7 @@ struct SlackSettingsView: View {
         case .access:
             return !parseIds(readableChannelIdsText).isEmpty && !parseIds(senderAllowlistText).isEmpty
         case .behavior:
-            return (inboundDispatchEnabled && (inboundAgentId != nil || !inboundRoutes.isEmpty)) || writeEnabled
+            return (inboundDispatchEnabled && (inboundTarget != nil || !inboundRoutes.isEmpty)) || writeEnabled
         case .verify:
             return verifySucceeded
         case nil:
@@ -523,10 +523,10 @@ struct SlackSettingsView: View {
                 AgentChannelDispatchRoutingEditor(
                     roomNoun: L("channel"),
                     rooms: routableRooms,
-                    defaultAgentId: $inboundAgentId,
+                    defaultTarget: $inboundTarget,
                     routes: $inboundRoutes
                 )
-                AgentChannelPluginPreloadOverflowNotice(agentId: inboundAgentId)
+                AgentChannelPluginPreloadOverflowNotice(agentId: inboundTarget?.localId)
                 SettingsToggle(
                     title: L("Require an @mention"),
                     description: L("Start new Slack conversations only when the bot is mentioned."),
@@ -975,7 +975,7 @@ struct SlackSettingsView: View {
         allowBroadcastMentions = configuration.allowBroadcastMentions
         defaultReadLimit = "\(configuration.defaultReadLimit)"
         inboundDispatchEnabled = configuration.inboundDispatch.enabled
-        inboundAgentId = configuration.inboundDispatch.targetAgentId
+        inboundTarget = configuration.inboundDispatch.target
         inboundRoutes = configuration.inboundDispatch.routes
         inboundRequireMention = configuration.inboundDispatch.requireMention
         inboundContinueThreads = configuration.inboundDispatch.continueThreads
@@ -1196,7 +1196,7 @@ struct SlackSettingsView: View {
             apiAppId: previous.apiAppId,
             inboundDispatch: AgentChannelInboundDispatchConfiguration(
                 enabled: inboundDispatchEnabled,
-                targetAgentId: inboundAgentId,
+                target: inboundTarget,
                 routes: inboundRoutes,
                 requireMention: inboundRequireMention,
                 continueThreads: inboundContinueThreads,
@@ -1500,7 +1500,7 @@ struct SlackSettingsView: View {
         guard Int(defaultReadLimit) != nil else {
             return (L("Default Read Limit must be a number from 1 to 100."), .access)
         }
-        if inboundDispatchEnabled, inboundAgentId == nil, inboundRoutes.isEmpty {
+        if inboundDispatchEnabled, inboundTarget == nil, inboundRoutes.isEmpty {
             return (
                 L("Choose an agent to reply, or add a rule for incoming Slack messages."),
                 .behavior

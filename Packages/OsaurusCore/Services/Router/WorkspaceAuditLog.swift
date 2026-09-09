@@ -40,6 +40,11 @@ enum WorkspaceAuditEventKind: String, Codable, CaseIterable, Sendable {
     case runRejected = "run.rejected"
     case scopeDenied = "scope.denied"
     case taskCancelled = "task.cancelled"
+    // Runs THIS instance started on a teammate's shared agent (client side:
+    // spawn / schedule / watcher / channel dispatch over the relay).
+    case outboundRunStarted = "run.outbound_started"
+    case outboundRunFinished = "run.outbound_finished"
+    case outboundRunRefused = "run.outbound_refused"
     // Owner actions taken from this app
     case workspaceCreated = "workspace.created"
     case workspaceRenamed = "workspace.renamed"
@@ -72,9 +77,10 @@ enum WorkspaceAuditEventKind: String, Codable, CaseIterable, Sendable {
         switch self {
         case .attestationGranted, .keyMinted, .keyRevoked:
             return .access
-        case .runStarted, .runFinished, .runStoppedByOwner, .taskCancelled:
+        case .runStarted, .runFinished, .runStoppedByOwner, .taskCancelled,
+            .outboundRunStarted, .outboundRunFinished:
             return .runs
-        case .attestationDenied, .runRejected, .scopeDenied:
+        case .attestationDenied, .runRejected, .scopeDenied, .outboundRunRefused:
             return .denials
         case .workspaceCreated, .workspaceRenamed, .workspaceDeleted, .workspaceReactivated, .workspaceLeft,
             .inviteCreated, .inviteRevoked, .memberRemoved, .memberRoleChanged,
@@ -526,6 +532,69 @@ actor WorkspaceAuditLog {
     /// A workspace-minted key was refused at a route it may not reach. Keys
     /// that are not workspace-minted (plain paired connectors) have no
     /// workspace to attribute to and are only in the Insights request log.
+    // MARK: Outbound runs (client side)
+
+    /// This instance started a headless run on a teammate's shared agent.
+    /// `source` is the trigger (`delegation`, `schedule`, `watcher`,
+    /// `channel`); `runKey` is the local task/session id.
+    func recordOutboundRunStarted(
+        ref: WorkspaceAgentRef,
+        agentName: String?,
+        runKey: String,
+        source: SessionSource
+    ) {
+        append(
+            .outboundRunStarted,
+            workspaceId: ref.workspaceId,
+            actor: .me(),
+            agentAddress: ref.agentAddress,
+            agentName: agentName,
+            target: runKey,
+            details: ["source": source.rawValue]
+        )
+    }
+
+    func recordOutboundRunFinished(
+        ref: WorkspaceAgentRef,
+        agentName: String?,
+        runKey: String,
+        source: SessionSource,
+        success: Bool,
+        summary: String
+    ) {
+        append(
+            .outboundRunFinished,
+            workspaceId: ref.workspaceId,
+            actor: .me(),
+            agentAddress: ref.agentAddress,
+            agentName: agentName,
+            target: runKey,
+            details: [
+                "source": source.rawValue,
+                "success": success ? "true" : "false",
+                "summary": String(summary.prefix(200)),
+            ]
+        )
+    }
+
+    /// A headless run was refused before it started (offline host, lapsed
+    /// key, agent unshared, router disabled…).
+    func recordOutboundRunRefused(
+        ref: WorkspaceAgentRef,
+        agentName: String?,
+        source: SessionSource,
+        reason: String
+    ) {
+        append(
+            .outboundRunRefused,
+            workspaceId: ref.workspaceId,
+            actor: .me(),
+            agentAddress: ref.agentAddress,
+            agentName: agentName,
+            details: ["source": source.rawValue, "reason": String(reason.prefix(200))]
+        )
+    }
+
     func recordScopeDenied(keyNonce: String?, audience: String, method: String, path: String) async {
         guard let keyNonce,
             let record = await WorkspaceAgentAccessHost.shared.workspaceKeyRecord(forKeyNonce: keyNonce)

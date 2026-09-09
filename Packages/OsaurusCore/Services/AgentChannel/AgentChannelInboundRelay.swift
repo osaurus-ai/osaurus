@@ -54,10 +54,15 @@ struct AgentChannelInboundRelayRequest: Sendable {
 }
 
 enum AgentChannelInboundRelaySubmission: Equatable, Sendable {
-    /// The message was handed to `agentId`; `rule` is the matched routing
+    /// The message was handed to `target`; `rule` is the matched routing
     /// rule ("alias:<alias>", "room:<roomId>", or "default") for telemetry.
-    case dispatched(agentId: UUID, rule: String)
+    case dispatched(target: AgentDispatchTarget, rule: String)
     case suppressed(String)
+
+    /// Convenience for the (many) local-only call sites and tests.
+    static func dispatched(agentId: UUID, rule: String) -> AgentChannelInboundRelaySubmission {
+        .dispatched(target: .local(agentId), rule: rule)
+    }
 
     var dispatchAttempted: Int {
         if case .dispatched = self { return 1 }
@@ -107,12 +112,26 @@ final class AgentChannelInboundRelay {
         ) else {
             return .suppressed("no_route_matched")
         }
-        let agentId = resolution.agentId
-        guard let agent = AgentManager.shared.agent(for: agentId),
-              !agent.isBuiltIn
-        else {
-            return .suppressed("inbound_agent_unavailable")
+        let target = resolution.target
+        // A local route must name a real custom agent; a workspace route
+        // must still be a shared agent in one of our rosters (the owner may
+        // have unshared it or we may have left the workspace). Liveness is
+        // NOT checked here — `BackgroundTaskManager.dispatchChat` runs the
+        // relay probe and the failure text flows back as the reply.
+        switch target {
+        case .local(let id):
+            guard let agent = AgentManager.shared.agent(for: id), !agent.isBuiltIn else {
+                return .suppressed("inbound_agent_unavailable")
+            }
+        case .workspace(let ref):
+            let roster = WorkspaceRosterStore.shared
+            guard roster.agent(forAddress: ref.agentAddress, workspaceId: ref.workspaceId) != nil,
+                !roster.isOwnAgent(address: ref.agentAddress)
+            else {
+                return .suppressed("inbound_workspace_agent_unavailable")
+            }
         }
+        let agentId = target.localId
         let content = resolution.content
         guard (!content.isEmpty || !request.attachments.isEmpty),
               !request.connectionId.isEmpty,
@@ -123,7 +142,7 @@ final class AgentChannelInboundRelay {
         }
 
         let partition = substrate.makeSessionPartition(
-            agentId: agentId,
+            target: target,
             connectionId: request.connectionId,
             providerRoute: request.providerRoute
         )
@@ -164,6 +183,12 @@ final class AgentChannelInboundRelay {
             source: request.sourceLabel,
             assessment: safety.contentAssessment
         )
+        var startedMetadata = [
+            "conversation_hash": partition.conversationHash,
+            "external_session_key": partition.externalSessionKey,
+            "dispatch_rule": resolution.matchedRule,
+        ]
+        if let ref = target.workspaceRef { startedMetadata["workspace_agent"] = ref.key }
         await auditLog.record(
             AgentChannelAuditEvent(
                 kind: .dispatchStarted,
@@ -172,31 +197,28 @@ final class AgentChannelInboundRelay {
                 agentId: agentId,
                 sessionId: partition.sessionId,
                 auditKey: request.providerEventId,
-                metadata: [
-                    "conversation_hash": partition.conversationHash,
-                    "external_session_key": partition.externalSessionKey,
-                    "dispatch_rule": resolution.matchedRule,
-                ]
+                metadata: startedMetadata
             )
         )
 
         Task { @MainActor [weak self] in
             await self?.run(
                 request,
-                agentId: agentId,
+                target: target,
                 partition: partition,
                 prompt: prompt
             )
         }
-        return .dispatched(agentId: agentId, rule: resolution.matchedRule)
+        return .dispatched(target: target, rule: resolution.matchedRule)
     }
 
     private func run(
         _ request: AgentChannelInboundRelayRequest,
-        agentId: UUID,
+        target: AgentDispatchTarget,
         partition: AgentChannelSessionPartition,
         prompt: String
     ) async {
+        let agentId = target.localId
         defer {
             activePartitions.remove(partition.externalSessionKey)
             Task {
@@ -215,7 +237,7 @@ final class AgentChannelInboundRelay {
         if let replyableId = taskManager.replyableTaskId(
             source: .channel,
             externalSessionKey: partition.externalSessionKey,
-            agentId: agentId
+            target: target
         ), taskManager.submitQuickReply(replyableId, text: prompt) {
             taskId = replyableId
             try? await Task.sleep(for: .milliseconds(100))
@@ -223,7 +245,7 @@ final class AgentChannelInboundRelay {
             let dispatch = DispatchRequest(
                 id: partition.sessionId,
                 prompt: prompt,
-                agentId: agentId,
+                target: target,
                 title: request.providerRoute.displayName ?? "Channel conversation",
                 // Channel turns surface in the Activity section like any other background
                 // work so the user can watch (and cancel) remote-triggered runs.
@@ -235,21 +257,35 @@ final class AgentChannelInboundRelay {
                 // loaded-tools set. Pre-load the agent's granted plugin tools
                 // so calendar/mail/etc. work without the model having to
                 // discover and load them itself every turn (#2443).
-                requestedToolNames: Self.preloadedPluginToolNames(
-                    registered: ToolRegistry.shared.registeredPluginToolNames,
-                    granted: AgentManager.shared.effectiveEnabledToolNames(for: agentId)
-                ),
+                // A workspace agent's tools are the host's business; nothing
+                // to pre-load on this side.
+                requestedToolNames: agentId.map { id in
+                    Self.preloadedPluginToolNames(
+                        registered: ToolRegistry.shared.registeredPluginToolNames,
+                        granted: AgentManager.shared.effectiveEnabledToolNames(for: id)
+                    )
+                } ?? [],
                 externalSurface: true,
                 loadIntent: .background
             )
             guard let handle = await taskManager.dispatchChat(dispatch) else {
+                // A refused workspace run carries the real reason (host
+                // offline, unshared, key lapsed); surface it as the reply so
+                // the sender learns why nothing answered.
+                let refusal = target.workspaceRef.flatMap {
+                    taskManager.consumeWorkspaceDispatchRefusal(for: $0)
+                }
+                let message = refusal ?? "The selected agent could not accept this channel message."
                 await recordFailure(
                     request,
                     agentId: agentId,
                     sessionId: partition.sessionId,
                     code: .dispatchUnavailable,
-                    message: "The selected agent could not accept this channel message."
+                    message: message
                 )
+                if let refusal, request.settings.autoReplyEnabled, let responder = request.reply {
+                    try? await responder(refusal)
+                }
                 return
             }
             taskId = handle.id
@@ -494,7 +530,7 @@ final class AgentChannelInboundRelay {
 
     private func recordFailure(
         _ request: AgentChannelInboundRelayRequest,
-        agentId: UUID,
+        agentId: UUID?,
         sessionId: UUID,
         code: AgentChannelFailureCode,
         message: String

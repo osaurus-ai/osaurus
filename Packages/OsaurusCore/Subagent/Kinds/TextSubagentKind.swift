@@ -39,6 +39,12 @@ final class TextSubagentKind:
         case agent(id: UUID)
         /// `spawn_model`: a bare spawnable model id (no agent).
         case model(id: String)
+        /// `spawn_agent`: a teammate's shared workspace agent, run on THEIR
+        /// Mac over the relay (Mode 2). No local model resolves and no
+        /// residency changes; the run is a headless dispatched chat session
+        /// (`AgentDelegationDispatcher.run(target:)`), and liveness is probed
+        /// when the run starts — a miss is a tool result, never a prompt change.
+        case workspaceAgent(WorkspaceAgentRef)
     }
 
     private let target: Target
@@ -157,6 +163,10 @@ final class TextSubagentKind:
     // Resolved up front in `resolveModel`, read by permission/handoff/run.
     private var resolvedAgentName: String = ""
     private var resolvedAgentId: UUID?
+    /// Workspace display name for a `.workspaceAgent` target, when the roster
+    /// knows it (approval card + result payload). Set by
+    /// `resolveWorkspaceAgentTarget`.
+    private var resolvedWorkspaceName: String?
     /// Delegated targets only: the enforced run contract, derived ONCE during
     /// `resolveAgentTarget` from the launcher's budgets, the seed, the target
     /// agent's tool posture, and the context window the dispatched session
@@ -327,6 +337,31 @@ final class TextSubagentKind:
         self.permissionPreauthorized = permissionPreauthorized
     }
 
+    /// `spawn_agent` entry point for a teammate's shared workspace agent.
+    /// `agentName` pre-seeds the feed title (roster / pairing name); the
+    /// resolver re-reads it. There is no eval model seam: the host picks the
+    /// model.
+    init(
+        workspaceAgent ref: WorkspaceAgentRef,
+        agentName: String? = nil,
+        input: String,
+        permissionPreauthorized: Bool = false
+    ) {
+        self.target = .workspaceAgent(ref)
+        self.input = input
+        self.modelOverride = nil
+        self.permissionPreauthorized = permissionPreauthorized
+        if let agentName, !agentName.isEmpty {
+            self.resolvedAgentName = agentName
+        }
+    }
+
+    /// The workspace ref for a `.workspaceAgent` target, else nil.
+    var workspaceTargetRef: WorkspaceAgentRef? {
+        if case .workspaceAgent(let ref) = target { return ref }
+        return nil
+    }
+
     /// Human label of the spawn target for error/result copy: the resolved
     /// agent name (or the requested name pre-resolve) in agent mode, the model
     /// id in model mode.
@@ -334,6 +369,9 @@ final class TextSubagentKind:
         switch target {
         case .agent(let id): return resolvedAgentName.isEmpty ? id.uuidString : resolvedAgentName
         case .model(let id): return id
+        case .workspaceAgent(let ref):
+            return resolvedAgentName.isEmpty
+                ? OsaurusRouterWorkspacePerson.shortWallet(ref.agentAddress) : resolvedAgentName
         }
     }
 
@@ -350,6 +388,9 @@ final class TextSubagentKind:
             return
                 "Spawning a local model requires \"Local Orchestrator Handoff\" enabled in "
                 + "Settings → Subagents (so the chat model can unload to make room)."
+        case .workspaceAgent:
+            // Never thrown: a workspace run touches no local residency.
+            return "Workspace agent runs do not use local model residency."
         }
     }
 
@@ -357,6 +398,7 @@ final class TextSubagentKind:
         switch target {
         case .agent(let id): return "spawn → \(resolvedAgentName.isEmpty ? id.uuidString : resolvedAgentName)"
         case .model(let id): return "spawn → \(id)"
+        case .workspaceAgent: return "spawn → \(targetLabel) (workspace)"
         }
     }
 
@@ -369,10 +411,14 @@ final class TextSubagentKind:
         return false
     }
 
+    /// A teammate's shared workspace agent: always a dispatched (Mode 2)
+    /// session on the host — there is no in-memory runner path for it.
+    var isWorkspaceTarget: Bool { workspaceTargetRef != nil }
+
     /// A delegated run registers its own real background task (with a
     /// working "Open Chat"), so the subagent feed must not be mirrored
     /// into a second Activity row.
-    var suppressActivityMirror: Bool { isDelegatedAgentTarget }
+    var suppressActivityMirror: Bool { isDelegatedAgentTarget || isWorkspaceTarget }
 
     func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel {
         let resolved = try await resolveCurrentModel(scope)
@@ -447,8 +493,91 @@ final class TextSubagentKind:
                 config: config,
                 settings: settings
             )
+        case .workspaceAgent(let ref):
+            return try await resolveWorkspaceAgentTarget(
+                ref,
+                scope: scope,
+                isDefault: isDefault,
+                config: config,
+                settings: settings
+            )
         }
     }
+
+    /// `spawn_agent` → a teammate's shared workspace agent: gate the
+    /// launcher's workspace allow-list, then resolve a placeholder
+    /// `ResolvedModel(isLocal: false)` from DURABLE state only (pairing's last
+    /// known host model, else a fixed label). Deliberately no relay call here:
+    /// this runs before the permission gate, and a declined spawn must never
+    /// probe. Liveness is probed when `run` dispatches
+    /// (`BackgroundTaskManager.dispatchChat` → `WorkspaceAgentRunClient.prepare`),
+    /// and a miss surfaces as `SubagentError.unavailable` in the tool result.
+    /// No residency plan (`.none` → `.remote` admission, passthrough handoff)
+    /// and no `DelegatedRunContract` — the host enforces its own budgets.
+    private func resolveWorkspaceAgentTarget(
+        _ ref: WorkspaceAgentRef,
+        scope: SubagentScope,
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        settings: AgentSettings?
+    ) async throws -> ResolvedModel {
+        let allowed = SubagentToolVisibility.effectiveSpawnableWorkspaceAgents(
+            isDefault: isDefault,
+            config: config,
+            perAgentEnabled: settings?.spawnDelegationEnabled ?? false,
+            perAgentTargets: settings?.spawnableWorkspaceAgents ?? []
+        )
+        guard
+            SubagentToolVisibility.spawnWorkspaceAgentAllowed(
+                ref,
+                isDefault: isDefault,
+                config: config,
+                perAgentTargets: allowed
+            )
+        else {
+            throw SubagentError.denied(
+                Self.notSpawnableMessage(
+                    kind: "Workspace agent",
+                    name: ref.agentAddress,
+                    isDefault: isDefault
+                )
+            )
+        }
+        let (name, pinnedModel, isOwn, workspaceName) = await MainActor.run {
+            (
+                AgentTargetResolver.displayName(for: ref),
+                RemoteAgentManager.shared
+                    .remoteAgent(forAddress: ref.agentAddress, workspaceId: ref.workspaceId)?
+                    .model?.trimmingCharacters(in: .whitespacesAndNewlines),
+                WorkspaceRosterStore.shared.isOwnAgent(address: ref.agentAddress),
+                AgentTargetResolver.workspaceName(for: ref)
+            )
+        }
+        self.resolvedWorkspaceName = workspaceName
+        // One of this instance's own shared agents is a LOCAL agent; running
+        // it over the relay would loop back through our own host.
+        guard !isOwn else {
+            throw SubagentError.denied(
+                "'\(name)' is one of this Osaurus's own agents; spawn it as a local agent instead."
+            )
+        }
+        self.resolvedAgentName = name
+        self.resolvedAgentId = nil
+        self.systemPrompt = ""
+        self.agentToolSpecs = []
+        self.temperature = nil
+        self.residencyPlan = .none
+        self.delegatedContract = nil
+        return ResolvedModel(
+            name: (pinnedModel?.isEmpty == false ? pinnedModel : nil) ?? Self.workspaceHostModelLabel,
+            id: nil,
+            isLocal: false
+        )
+    }
+
+    /// Placeholder run-model label for a workspace target whose host model is
+    /// not yet known locally (the host reports it on the first live run).
+    static let workspaceHostModelLabel = "workspace-host"
 
     /// `spawn_agent`: gate the agent allow-list, resolve the agent (its
     /// system prompt becomes the seed system message), and resolve its model
@@ -848,7 +977,7 @@ final class TextSubagentKind:
 
     private var toolName: String {
         switch target {
-        case .agent: return SubagentCapabilityRegistry.spawnAgentToolName
+        case .agent, .workspaceAgent: return SubagentCapabilityRegistry.spawnAgentToolName
         case .model: return SubagentCapabilityRegistry.spawnModelToolName
         }
     }
@@ -857,12 +986,14 @@ final class TextSubagentKind:
         switch target {
         case .agent: return "configured-agent"
         case .model: return "model"
+        case .workspaceAgent: return "workspace-agent (runs on a teammate's Mac)"
         }
     }
 
     private func approvalArgumentsJSON(resolvedModel: String) -> String {
         let targetType: String
         let targetValue: String
+        var extra: [String: Any] = [:]
         switch target {
         case .agent(let id):
             targetType = "agent"
@@ -870,13 +1001,22 @@ final class TextSubagentKind:
         case .model(let id):
             targetType = "model"
             targetValue = id
+        case .workspaceAgent(let ref):
+            targetType = "workspace_agent"
+            targetValue = ref.agentAddress
+            extra["agent_name"] = resolvedAgentName
+            extra["workspace_id"] = ref.workspaceId
+            if let workspaceName = resolvedWorkspaceName {
+                extra["workspace"] = workspaceName
+            }
         }
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "target_type": targetType,
             "target": targetValue,
             "input": input,
             "resolved_model": resolvedModel,
         ]
+        for (key, value) in extra { payload[key] = value }
         guard JSONSerialization.isValidJSONObject(payload),
             let data = try? JSONSerialization.data(
                 withJSONObject: payload,
@@ -903,6 +1043,15 @@ final class TextSubagentKind:
         feed: SubagentFeed,
         interrupt: InterruptToken
     ) async throws -> SubagentResult {
+        if let ref = workspaceTargetRef {
+            return try await runWorkspaceDelegated(
+                ref,
+                resolved,
+                parentSessionId: scope.sessionId,
+                feed: feed,
+                interrupt: interrupt
+            )
+        }
         if isDelegatedAgentTarget {
             return try await runDelegated(
                 resolved,
@@ -1217,6 +1366,88 @@ final class TextSubagentKind:
         // accounting (child transcript estimate vs the digest the parent
         // actually pays for). Omitted rather than zeroed when the child
         // recorded no counts, so a missing measurement is visible.
+        var usage: [String: Any] = [:]
+        if let completionTokens = outcome.completionTokens {
+            usage["completion_tokens"] = completionTokens
+        }
+        if let tps = outcome.tokensPerSecond {
+            usage["tokens_per_second"] = (tps * 10).rounded() / 10
+        }
+        if !usage.isEmpty {
+            payload["usage"] = usage
+        }
+        let digestTokens = TokenEstimator.estimate(capped)
+        payload["context"] = [
+            "worker_tokens_estimated": outcome.transcriptTokenEstimate,
+            "digest_tokens": digestTokens,
+            "context_saved_tokens": max(0, outcome.transcriptTokenEstimate - digestTokens),
+        ]
+        return SubagentResult(payload: payload, summary: capped)
+    }
+
+    /// Mode 2 delegation to a teammate's shared workspace agent: the
+    /// dispatcher registers a real background task whose session carries the
+    /// headless remote-agent binding, `dispatchChat` probes the host's
+    /// liveness (feed phase "checking") and connects, and the host runs its
+    /// own agent loop — only the final visible answer streams back. A refusal
+    /// (offline, lapsed key, unshared, pool dry) is `SubagentError.unavailable`
+    /// with the exact reason: the parent model sees it in this tool's result
+    /// and re-plans; nothing in the prompt or schema changes.
+    ///
+    /// No `DelegatedRunContract`: the host enforces its own agent's limits.
+    /// `maxElapsedSeconds` stays the client-side wall clock. No memory
+    /// recording here — the child is the HOST's chat session, not ours.
+    private func runWorkspaceDelegated(
+        _ ref: WorkspaceAgentRef,
+        _ resolved: ResolvedModel,
+        parentSessionId: String?,
+        feed: SubagentFeed,
+        interrupt: InterruptToken
+    ) async throws -> SubagentResult {
+        feed.emitPhase("running", detail: "\(resolvedAgentName) via workspace relay")
+        let budgets = self.budgets.normalized
+        let outcome = try await AgentDelegationDispatcher.run(
+            target: .workspace(ref),
+            targetAgentName: resolvedAgentName,
+            input: input,
+            maxElapsedSeconds: budgets.maxElapsedSeconds,
+            feed: feed,
+            interrupt: interrupt,
+            parentSessionId: parentSessionId
+        )
+        let digest = outcome.finalText
+        let capped =
+            digest.count > Self.digestMaxChars
+            ? String(digest.prefix(Self.digestMaxChars)) + "\n[digest truncated]"
+            : digest
+        feed.emitStreamDelta(kind: .response, title: "response", delta: capped)
+        // The model the host actually ran, when pairing learned it during
+        // the run; else the placeholder resolved before dispatch.
+        let hostModel = await MainActor.run {
+            RemoteAgentManager.shared
+                .remoteAgent(forAddress: ref.agentAddress, workspaceId: ref.workspaceId)?
+                .model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        var payload: [String: Any] = [
+            "kind": "spawn_result",
+            "model": (hostModel?.isEmpty == false ? hostModel : nil) ?? resolved.name,
+            "agent": resolvedAgentName,
+            "workspace_agent": ref.agentAddress,
+            "workspace_id": ref.workspaceId,
+            "summary": capped,
+            // Our client-side transcript of the host run (read-only), openable
+            // from the shared agent's row and the background task's Open Chat.
+            "session_id": outcome.sessionId.uuidString,
+            "delegated": true,
+            "remote": true,
+            "iterations": outcome.assistantTurns,
+            "elapsed_seconds": outcome.elapsed,
+            "handoff": false,
+            "residency_mode": ResidencyPlan.none.mode,
+        ]
+        if let workspaceName = resolvedWorkspaceName {
+            payload["workspace"] = workspaceName
+        }
         var usage: [String: Any] = [:]
         if let completionTokens = outcome.completionTokens {
             usage["completion_tokens"] = completionTokens

@@ -34,8 +34,9 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
             "agent": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "The target spawnable agent: its exact display name OR its UUID, "
-                        + "as shown in the configured target list."
+                    "The target spawnable agent: its exact display name OR its UUID "
+                        + "(local agent) OR its `0x…` address (a teammate's shared workspace "
+                        + "agent), as shown in the configured target list."
                 ),
             ]),
             "background": .object([
@@ -62,24 +63,35 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
     static func constrainedSpec(
         _ tool: Tool,
         allowedAgentIDs: [UUID],
-        allowedAgentNames: [String] = []
+        allowedAgentNames: [String] = [],
+        allowedWorkspaceAddresses: [String] = []
     ) -> Tool {
         let uuids = SpawnableAgentIdentity.normalizedIDs(allowedAgentIDs)
             .map(\.uuidString)
-        let uuidSet = Set(uuids)
+        // Workspace agents join the enum by lowercased address — durable
+        // identity, independent of presence — after the local UUIDs.
+        var seenAddresses = Set<String>()
+        let addresses = allowedWorkspaceAddresses.compactMap { raw -> String? in
+            let lowered = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard WorkspaceAgentRef.looksLikeAddress(lowered),
+                seenAddresses.insert(lowered).inserted
+            else { return nil }
+            return lowered
+        }
+        let identitySet = Set(uuids + addresses)
         var seenNames = Set<String>()
         let names = allowedAgentNames.filter { name in
             let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, !uuidSet.contains(trimmed) else { return false }
+            guard !trimmed.isEmpty, !identitySet.contains(trimmed) else { return false }
             return seenNames.insert(trimmed).inserted
         }
-        guard !uuids.isEmpty,
+        guard !uuids.isEmpty || !addresses.isEmpty,
             case .object(var root)? = tool.function.parameters,
             case .object(var properties)? = root["properties"],
             case .object(var agent)? = properties["agent"]
         else { return tool }
 
-        agent["enum"] = .array((uuids + names).map(JSONValue.string))
+        agent["enum"] = .array((uuids + addresses + names).map(JSONValue.string))
         properties["agent"] = .object(agent)
         root["properties"] = .object(properties)
         return Tool(
@@ -105,35 +117,43 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
         guard case .value(let rawAgentID) = agentReq else {
             return agentReq.failureEnvelope ?? ""
         }
-        let agentID: UUID
+        let target: AgentDispatchTarget
         if let parsed = UUID(uuidString: rawAgentID) {
-            agentID = parsed
+            target = .local(parsed)
         } else {
             // Small local models reliably echo a spawnable agent's display name
-            // but not its opaque UUID (issue #2408), so `agent` accepts either.
-            // Resolve the name against the launching agent's own allow-list;
-            // authorization stays UUID-exact in the spawn kind downstream.
-            let resolution = await SubagentToolVisibility.resolveSpawnableAgentName(
+            // but not its opaque UUID (issue #2408), so `agent` accepts either —
+            // and a teammate's shared workspace agent by name or `0x…` address.
+            // Resolve against the launching agent's own allow-lists (local +
+            // workspace); authorization stays identity-exact in the spawn kind.
+            let resolution = await SubagentToolVisibility.resolveSpawnableAgentTarget(
                 rawAgentID,
                 scope: SubagentScope.current()
             )
-            guard let resolved = resolution.id else {
+            guard let resolved = resolution.target else {
                 let names = resolution.allowedNames
-                let hint =
-                    names.isEmpty
-                    ? "This agent has no spawnable agents configured."
-                    : "Pass one of these exact agent names (or its UUID): "
+                let hint: String
+                if resolution.isAmbiguous {
+                    hint =
+                        "That name matches more than one spawnable agent; pass the UUID "
+                        + "(local agent) or the `0x…` address (workspace agent) instead."
+                } else if names.isEmpty {
+                    hint = "This agent has no spawnable agents configured."
+                } else {
+                    hint =
+                        "Pass one of these exact agent names (or its UUID / address): "
                         + names.map { "\"\($0)\"" }.joined(separator: ", ") + "."
+                }
                 return ToolEnvelope.failure(
                     kind: .invalidArgs,
                     message: "`agent` did not match a spawnable agent. " + hint,
                     field: "agent",
-                    expected: "a spawnable agent name or UUID",
+                    expected: "a spawnable agent name, UUID, or workspace agent address",
                     tool: name,
                     retryable: true
                 )
             }
-            agentID = resolved
+            target = resolved
         }
 
         // The shared host owns the recursion guard, live feed, permission
@@ -141,10 +161,17 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
         // telemetry; the kind owns model resolution + the bounded text loop.
         // The name lookup here only seeds the human-readable feed title;
         // `resolveModel` re-resolves the agent authoritatively.
-        let agentName = await MainActor.run {
-            AgentManager.shared.agent(for: agentID)?.name
+        let kind: TextSubagentKind
+        switch target {
+        case .local(let agentID):
+            let agentName = await MainActor.run {
+                AgentManager.shared.agent(for: agentID)?.name
+            }
+            kind = TextSubagentKind(agentID: agentID, agentName: agentName, input: input)
+        case .workspace(let ref):
+            let agentName = await MainActor.run { AgentTargetResolver.displayName(for: ref) }
+            kind = TextSubagentKind(workspaceAgent: ref, agentName: agentName, input: input)
         }
-        let kind = TextSubagentKind(agentID: agentID, agentName: agentName, input: input)
         if ArgumentCoercion.bool(args["background"]) == true {
             return await SubagentSession.dispatchInBackground(kind, tool: name)
         }

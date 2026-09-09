@@ -67,7 +67,9 @@ struct AgentDelegationDispatcherTests {
                     "Services/AgentDelegation/AgentDelegationDispatcher.swift"),
             encoding: .utf8
         )
-        #expect(source?.contains("prompt: delegatedPrompt(input: input)") == true)
+        #expect(
+            source?.contains(
+                "prompt: delegatedPrompt(input: input, remote: target.isWorkspace)") == true)
         #expect(source?.contains("title: sessionTitle(for: input)") == true)
     }
 

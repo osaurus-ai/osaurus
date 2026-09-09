@@ -32,6 +32,28 @@ public struct AgentSpawnConfigSnapshot: Sendable, Equatable {
     let budgets: SubagentBudgets
     let toolAccess: SpawnToolAccess
     let launcherModelOverride: String?
+    /// Allow-listed shared workspace agents (durable refs; presence is
+    /// deliberately NOT part of this snapshot so the composed prompt never
+    /// changes when a teammate's host goes offline).
+    let workspaceAgents: [WorkspaceAgentRef]
+
+    init(
+        agentIDs: [UUID],
+        modelNames: [String],
+        modelNotes: [String: String],
+        budgets: SubagentBudgets,
+        toolAccess: SpawnToolAccess,
+        launcherModelOverride: String?,
+        workspaceAgents: [WorkspaceAgentRef] = []
+    ) {
+        self.agentIDs = agentIDs
+        self.modelNames = modelNames
+        self.modelNotes = modelNotes
+        self.budgets = budgets
+        self.toolAccess = toolAccess
+        self.launcherModelOverride = launcherModelOverride
+        self.workspaceAgents = workspaceAgents
+    }
 }
 
 public struct AgentConfigSnapshot: Sendable, Equatable {
@@ -163,6 +185,9 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// Optional "when/how to use" note per spawnable model id, surfaced in the
     /// spawn guidance descriptor (gate stays on `spawnableModelNames`).
     public let spawnableModelNotes: [String: String]
+    /// Shared workspace agents this agent may delegate to via `spawn_agent`
+    /// (per-agent allow-list; the Default agent uses the global pool).
+    public let spawnableWorkspaceAgents: [WorkspaceAgentRef]
     /// Effective Default-vs-custom spawn settings captured with this turn. Nil
     /// exists only for source-compatible hand-built test snapshots;
     /// production `capture(...)` always supplies it.
@@ -215,6 +240,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         spawnableAgentNames: [String] = [],
         spawnableModelNames: [String] = [],
         spawnableModelNotes: [String: String] = [:],
+        spawnableWorkspaceAgents: [WorkspaceAgentRef] = [],
         spawnConfiguration: AgentSpawnConfigSnapshot? = nil,
         knowledgeEnabled: Bool = false,
         knowledgeCuratorEnabled: Bool = false,
@@ -249,6 +275,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.legacySpawnableAgentNames = spawnableAgentNames
         self.spawnableModelNames = spawnableModelNames
         self.spawnableModelNotes = spawnableModelNotes
+        self.spawnableWorkspaceAgents = spawnableWorkspaceAgents
         self.spawnConfiguration = spawnConfiguration
         self.knowledgeEnabled = knowledgeEnabled
         self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
@@ -327,6 +354,12 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
                 isDefault: isDefault,
                 config: subagentConfig,
                 settings: settings
+            ),
+            workspaceAgents: SubagentToolVisibility.effectiveSpawnableWorkspaceAgents(
+                isDefault: isDefault,
+                config: subagentConfig,
+                perAgentEnabled: caps.spawnDelegationEnabled,
+                perAgentTargets: caps.spawnableWorkspaceAgents
             )
         )
         return AgentConfigSnapshot(
@@ -356,6 +389,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             spawnableAgentNames: caps.legacySpawnableAgentNames,
             spawnableModelNames: caps.spawnableModelNames,
             spawnableModelNotes: caps.spawnableModelNotes,
+            spawnableWorkspaceAgents: caps.spawnableWorkspaceAgents,
             spawnConfiguration: spawnConfiguration,
             // Pre-fold the "anything to search?" half of the gate, like the
             // spawn tools: enabled with zero grants keeps the tools hidden.

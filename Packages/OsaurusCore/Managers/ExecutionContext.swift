@@ -20,8 +20,15 @@ public final class ExecutionContext: ObservableObject {
     /// Unique identifier for this execution
     public let id: UUID
 
-    /// Agent used for this execution
+    /// Agent used for this execution. For a workspace target this is the
+    /// hosting local agent (`Agent.defaultId`, exactly as a shared-agent chat
+    /// tab does) — the local agent's prompt and tools are NOT used, the
+    /// remote host runs its own.
     public let agentId: UUID
+
+    /// The teammate's shared agent this context runs, when it is a Mode 2
+    /// headless run; nil for every local run.
+    public let workspaceTarget: WorkspaceAgentRef?
 
     /// Display title for the execution
     public let title: String?
@@ -52,6 +59,7 @@ public final class ExecutionContext: ObservableObject {
     ) {
         self.id = id
         self.agentId = agentId
+        self.workspaceTarget = nil
         self.title = title
         self.folderBookmark = folderBookmark
         self.folderPath = folderPath
@@ -74,6 +82,50 @@ public final class ExecutionContext: ObservableObject {
         self.chatSession = session
     }
 
+    /// A headless Mode 2 run of a teammate's shared workspace agent. The
+    /// session is stamped exactly like a shared-agent chat tab
+    /// (`ChatWindowState.makeBlankTab(.workspace)`): hosted under the Default
+    /// agent, `workspaceContext` set so History files it under the team
+    /// agent, and the Mode 2 binding installed on the session itself since
+    /// there is no window to carry it. `prepared` comes from
+    /// `WorkspaceAgentRunClient.prepare`, i.e. the agent just answered a
+    /// liveness probe and its provider is connected.
+    init(
+        id: UUID = UUID(),
+        workspace prepared: WorkspaceAgentRunClient.Prepared,
+        title: String? = nil,
+        source: SessionSource,
+        externalSessionKey: String? = nil,
+        loadIntent: ModelLoadIntent = .interactive,
+        delegationBudget: DelegatedRunContract? = nil
+    ) {
+        self.id = id
+        self.agentId = Agent.defaultId
+        self.workspaceTarget = prepared.ref
+        self.title = title
+        self.folderBookmark = nil
+        self.folderPath = nil
+
+        let session = ChatSession()
+        session.delegationBudget = delegationBudget
+        session.agentId = Agent.defaultId
+        session.sessionId = id
+        session.source = source
+        session.loadIntent = loadIntent
+        session.externalSessionKey = externalSessionKey
+        session.dispatchTaskId = id
+        session.workspaceContext = WorkspaceSessionContext(
+            workspaceId: prepared.ref.workspaceId,
+            agentAddress: prepared.ref.agentAddress
+        )
+        session.headlessRemoteAgentBinding = .init(
+            providerId: prepared.providerId,
+            effectiveModel: prepared.effectiveModel
+        )
+        session.title = title ?? prepared.displayName
+        self.chatSession = session
+    }
+
     /// Reattach to a previously-persisted session so a new dispatch appends
     /// turns to the same conversation row instead of starting fresh. Used by
     /// `BackgroundTaskManager.dispatchChat` when the request carries an
@@ -82,13 +134,15 @@ public final class ExecutionContext: ObservableObject {
     /// `existing.id` is reused as the dispatch task id, so callers polling
     /// the original `task_id` continue to find a live entry. The persisted
     /// model is re-applied in `prepare()` once picker items load.
-    public init(
+    init(
         reattaching existing: ChatSessionData,
         folderBookmark: Data? = nil,
-        folderPath: String? = nil
+        folderPath: String? = nil,
+        workspace prepared: WorkspaceAgentRunClient.Prepared? = nil
     ) {
         self.id = existing.id
         self.agentId = existing.agentId ?? Agent.defaultId
+        self.workspaceTarget = prepared?.ref
         self.title = existing.title
         self.folderBookmark = folderBookmark
         self.folderPath = folderPath
@@ -99,6 +153,19 @@ public final class ExecutionContext: ObservableObject {
         // BackgroundTaskState activity feed) see the existing turns from
         // the very first publish.
         session.load(from: existing)
+        if let prepared {
+            // Reattaching to a shared-agent conversation: re-install the
+            // Mode 2 binding (a fresh provider id after a re-pair is fine —
+            // the persisted row keys on the workspace ref, not the provider).
+            session.workspaceContext = WorkspaceSessionContext(
+                workspaceId: prepared.ref.workspaceId,
+                agentAddress: prepared.ref.agentAddress
+            )
+            session.headlessRemoteAgentBinding = .init(
+                providerId: prepared.providerId,
+                effectiveModel: prepared.effectiveModel
+            )
+        }
         // `load(from:)` may have failed to restore the model if picker
         // items aren't loaded yet; `prepare()` re-applies after refresh.
         self.chatSession = session
@@ -118,6 +185,7 @@ public final class ExecutionContext: ObservableObject {
     init(adopting session: ChatSession, folderBookmark: Data? = nil, folderPath: String? = nil) {
         self.id = session.sessionId ?? UUID()
         self.agentId = session.agentId ?? Agent.defaultId
+        self.workspaceTarget = nil
         self.title = session.title
         self.folderBookmark = folderBookmark
         self.folderPath = folderPath
@@ -138,8 +206,11 @@ public final class ExecutionContext: ObservableObject {
         }
         // Headless dispatches follow the agent's current default model on
         // every turn; the persisted session model is only a fallback. No-op
-        // for window chats (see the method doc).
-        chatSession.applyAgentDefaultModelForDispatch()
+        // for window chats (see the method doc). A workspace target sends
+        // no model at all (the host picks its own), so leave the pin alone.
+        if workspaceTarget == nil {
+            chatSession.applyAgentDefaultModelForDispatch()
+        }
     }
 
     /// Begin execution with the given prompt.

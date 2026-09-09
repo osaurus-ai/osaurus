@@ -63,8 +63,9 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                         "target": .object([
                             "type": .string("string"),
                             "description": .string(
-                                "For target_type `agent`: the agent's exact display name or its "
-                                    + "UUID. For `model`: the exact allowed model id."
+                                "For target_type `agent`: the agent's exact display name, its "
+                                    + "UUID (local agent), or its `0x…` address (a teammate's shared "
+                                    + "workspace agent). For `model`: the exact allowed model id."
                             ),
                         ]),
                         "input": .object([
@@ -961,16 +962,41 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             } else {
                 switch job.targetType {
                 case .agent:
-                    guard let agentID = UUID(uuidString: job.target) else {
+                    if let agentID = UUID(uuidString: job.target) {
+                        // Seed the human name so the feed title (captured before
+                        // `resolveModel`) shows the agent, not its UUID.
+                        let agentName = await MainActor.run {
+                            AgentManager.shared.agent(for: agentID)?.name
+                        }
+                        kind = TextSubagentKind(
+                            agentID: agentID,
+                            agentName: agentName,
+                            input: job.input,
+                            modelOverride: Self.modelOverrideForTests,
+                            permissionPreauthorized: true
+                        )
+                    } else if let ref = WorkspaceAgentRef(key: job.target) {
+                        // `resolveAgentJobNames` normalized a workspace name /
+                        // address to its durable `<workspaceId>:<address>` key.
+                        let agentName = await MainActor.run {
+                            AgentTargetResolver.displayName(for: ref)
+                        }
+                        kind = TextSubagentKind(
+                            workspaceAgent: ref,
+                            agentName: agentName,
+                            input: job.input,
+                            permissionPreauthorized: true
+                        )
+                    } else {
                         failures.append(
                             (
                                 id: job.id,
                                 envelope: ToolEnvelope.failure(
                                     kind: .invalidArgs,
                                     message:
-                                        "Agent job '\(job.id)' has a target that is not a UUID.",
+                                        "Agent job '\(job.id)' has a target that is not a UUID or workspace agent address.",
                                     field: "jobs[\(job.index)].target",
-                                    expected: "spawnable agent UUID",
+                                    expected: "spawnable agent UUID or workspace agent address",
                                     tool: tool,
                                     retryable: true
                                 )
@@ -978,18 +1004,6 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                         )
                         continue
                     }
-                    // Seed the human name so the feed title (captured before
-                    // `resolveModel`) shows the agent, not its UUID.
-                    let agentName = await MainActor.run {
-                        AgentManager.shared.agent(for: agentID)?.name
-                    }
-                    kind = TextSubagentKind(
-                        agentID: agentID,
-                        agentName: agentName,
-                        input: job.input,
-                        modelOverride: Self.modelOverrideForTests,
-                        permissionPreauthorized: true
-                    )
                 case .model:
                     kind = TextSubagentKind(
                         model: job.target,
@@ -1161,17 +1175,26 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 resolved.append(job)
                 continue
             }
-            let resolution = await SubagentToolVisibility.resolveSpawnableAgentName(
+            // Name, `0x…` address, or `<workspaceId>:<address>` key → the
+            // launching agent's uniquely-matching local OR workspace target.
+            let resolution = await SubagentToolVisibility.resolveSpawnableAgentTarget(
                 job.target,
                 scope: scope
             )
-            guard let id = resolution.id else {
+            guard let target = resolution.target else {
                 let names = resolution.allowedNames
-                let hint =
-                    names.isEmpty
-                    ? "This agent has no spawnable agents configured."
-                    : "Use one of these exact agent names (or its UUID): "
+                let hint: String
+                if resolution.isAmbiguous {
+                    hint =
+                        "That name matches more than one spawnable agent; use the UUID "
+                        + "(local agent) or the `0x…` address (workspace agent) instead."
+                } else if names.isEmpty {
+                    hint = "This agent has no spawnable agents configured."
+                } else {
+                    hint =
+                        "Use one of these exact agent names (or its UUID / address): "
                         + names.map { "\"\($0)\"" }.joined(separator: ", ") + "."
+                }
                 return .failure(
                     SpawnBatchParseError(
                         envelope: ToolEnvelope.failure(
@@ -1180,19 +1203,24 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                                 "Agent job '\(job.id)' target '\(job.target)' did not match a "
                                 + "spawnable agent. " + hint,
                             field: "jobs[\(job.index)].target",
-                            expected: "a spawnable agent name or UUID",
+                            expected: "a spawnable agent name, UUID, or workspace agent address",
                             tool: tool,
                             retryable: true
                         )
                     )
                 )
             }
+            let normalizedTarget: String
+            switch target {
+            case .local(let id): normalizedTarget = id.uuidString
+            case .workspace(let ref): normalizedTarget = ref.key
+            }
             resolved.append(
                 Job(
                     index: job.index,
                     id: job.id,
                     targetType: job.targetType,
-                    target: id.uuidString,
+                    target: normalizedTarget,
                     input: job.input
                 )
             )
@@ -3087,6 +3115,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         allowedAgentIDs: [UUID],
         allowedAgentNames: [String] = [],
         allowedModelIds: [String],
+        allowedWorkspaceAddresses: [String] = [],
         maxParallel: Int
     ) -> Tool {
         let agents = SpawnableAgentIdentity.normalizedIDs(allowedAgentIDs)
@@ -3095,6 +3124,15 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         let models = SubagentConfiguration.normalizedSpawnableModelNames(
             allowedModelIds
         )
+        // Workspace agents by lowercased address (durable identity; never
+        // presence). `resolveAgentJobNames` maps an address to its ref key.
+        let workspaceAddresses = Array(
+            Set(
+                allowedWorkspaceAddresses
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                    .filter(WorkspaceAgentRef.looksLikeAddress)
+            )
+        ).sorted()
         // Agent display names join the union so a strict, enum-enforcing
         // provider accepts a name for an agent job as well as a UUID (issue
         // #2408). `resolveAgentJobNames` maps a name back before execution.
@@ -3102,7 +3140,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             allowedAgentNames
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-        let targets = Array(Set(agents + agentNames + models)).sorted()
+        let targets = Array(Set(agents + workspaceAddresses + agentNames + models)).sorted()
         guard !targets.isEmpty,
             case .object(var root)? = tool.function.parameters,
             case .object(var properties)? = root["properties"],
@@ -3113,11 +3151,16 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         else { return tool }
 
         target["enum"] = .array(targets.map(JSONValue.string))
-        target["description"] = .string(
+        var targetDescription =
             "Exact allowed target. For an agent, pass its display name or one of these "
-                + "UUIDs: \(agents.joined(separator: ", ")). "
-                + "Models: \(models.joined(separator: ", "))."
-        )
+            + "UUIDs: \(agents.joined(separator: ", ")). "
+        if !workspaceAddresses.isEmpty {
+            targetDescription +=
+                "Workspace agents (run on a teammate's Mac) by address: "
+                + "\(workspaceAddresses.joined(separator: ", ")). "
+        }
+        targetDescription += "Models: \(models.joined(separator: ", "))."
+        target["description"] = .string(targetDescription)
         jobProperties["target"] = .object(target)
         items["properties"] = .object(jobProperties)
         jobs["items"] = .object(items)

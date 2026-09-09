@@ -85,6 +85,17 @@ public final class BackgroundTaskManager: ObservableObject {
     /// All background tasks keyed by task ID
     @Published public private(set) var backgroundTasks: [UUID: BackgroundTaskState] = [:]
 
+    /// Why the most recent `dispatchChat` for a workspace target returned
+    /// nil, per agent. `dispatchChat`'s nil is otherwise silent (the local
+    /// guards log and drop); the spawn tools, schedule and watcher managers
+    /// read this once to report the real reason (offline host, lapsed key…).
+    private var workspaceDispatchRefusals: [WorkspaceAgentRef: String] = [:]
+
+    /// Take (and clear) the refusal reason recorded for `ref`.
+    public func consumeWorkspaceDispatchRefusal(for ref: WorkspaceAgentRef) -> String? {
+        workspaceDispatchRefusals.removeValue(forKey: ref)
+    }
+
     /// Ordering of visible tasks (`showToast == true`) not currently shown
     /// in a chat window, sorted by status priority then recency. Background
     /// runs surface as tabs of their agent, so no view lists this directly
@@ -257,10 +268,21 @@ public final class BackgroundTaskManager: ObservableObject {
         externalSessionKey: String,
         agentId: UUID
     ) -> UUID? {
+        replyableTaskId(source: source, externalSessionKey: externalSessionKey, target: .local(agentId))
+    }
+
+    /// `replyableTaskId` keyed by dispatch target so a channel conversation
+    /// routed to a shared workspace agent reattaches the same way a local
+    /// one does.
+    public func replyableTaskId(
+        source: SessionSource,
+        externalSessionKey: String,
+        target: AgentDispatchTarget
+    ) -> UUID? {
         backgroundTasks.values.first { state in
             guard state.source == source,
                   state.externalSessionKey == externalSessionKey,
-                  state.agentId == agentId
+                  state.target == target
             else { return false }
             switch state.status {
             case .waitingForInput, .completed:
@@ -917,16 +939,44 @@ public final class BackgroundTaskManager: ObservableObject {
 
     /// Dispatch a chat task for background execution.
     public func dispatchChat(_ request: DispatchRequest) async -> DispatchHandle? {
-        // Background dispatch is an external surface (HTTP / plugins /
-        // schedules). Built-in agents (the Default agent) are only
-        // reachable from the in-app Chat — refuse to route any non-Chat
-        // traffic to them, and refuse to silently default to the built-in
-        // agent when an anonymous request comes in.
-        if Agent.rejectBuiltInForExternalSurface(
-            request.agentId,
-            source: "background/dispatchChat"
-        ) != nil {
-            return nil
+        // A teammate's shared workspace agent runs on THEIR Mac: the local
+        // built-in-agent guard, per-agent tool grants and DB run logging
+        // don't apply, and the run must be refused up front (offline host,
+        // lapsed key, unshared) instead of failing mid-stream. Everything
+        // after preparation — registration, queueing, observation,
+        // completion — is the same funnel every local dispatch uses.
+        var workspacePrepared: WorkspaceAgentRunClient.Prepared?
+        if let ref = request.workspaceTarget {
+            // The relay probe + connect are network calls; HTTP callers never
+            // reach here (`/agents` resolves local only), so this is spawn,
+            // schedule, watcher or channel.
+            do {
+                workspacePrepared = try await WorkspaceAgentRunClient.shared.prepare(ref)
+            } catch {
+                let name = AgentTargetResolver.displayName(for: ref)
+                let message = WorkspaceAgentRunClient.message(for: error, agentName: name)
+                let reason = (error as? WorkspaceAgentRunError)?.auditReason ?? "error"
+                Task {
+                    await WorkspaceAuditLog.shared.recordOutboundRunRefused(
+                        ref: ref, agentName: name, source: request.source, reason: reason
+                    )
+                }
+                print("[BackgroundTaskManager] Refusing workspace dispatch to \(ref.key): \(message)")
+                workspaceDispatchRefusals[ref] = message
+                return nil
+            }
+        } else {
+            // Background dispatch is an external surface (HTTP / plugins /
+            // schedules). Built-in agents (the Default agent) are only
+            // reachable from the in-app Chat — refuse to route any non-Chat
+            // traffic to them, and refuse to silently default to the built-in
+            // agent when an anonymous request comes in.
+            if Agent.rejectBuiltInForExternalSurface(
+                request.agentId,
+                source: "background/dispatchChat"
+            ) != nil {
+                return nil
+            }
         }
 
         guard isDispatchRequestValid(source: request.source, agentId: request.agentId) else { return nil }
@@ -951,7 +1001,18 @@ public final class BackgroundTaskManager: ObservableObject {
             context = ExecutionContext(
                 reattaching: existing,
                 folderBookmark: request.folderBookmark,
-                folderPath: request.folderPath
+                folderPath: request.folderPath,
+                workspace: workspacePrepared
+            )
+        } else if let workspacePrepared {
+            context = ExecutionContext(
+                id: request.id,
+                workspace: workspacePrepared,
+                title: request.title,
+                source: request.source,
+                externalSessionKey: request.externalSessionKey,
+                loadIntent: request.loadIntent,
+                delegationBudget: request.delegationContract
             )
         } else {
             context = createContext(for: request)
@@ -968,8 +1029,8 @@ public final class BackgroundTaskManager: ObservableObject {
         // their own per-agent gates, not the grant list. `nil` grant means
         // the agent runs on the global registry: every registered plugin
         // tool remains allowed, and unregistered ones already drop out at
-        // spec resolution.
-        if reattach != nil,
+        // spec resolution. Workspace runs expose no local tools at all.
+        if reattach != nil, workspacePrepared == nil,
             let granted = AgentManager.shared.effectiveEnabledToolNames(for: context.agentId)
         {
             let revoked = await SessionToolStateStore.shared.retainLoadedTools(
@@ -991,7 +1052,7 @@ public final class BackgroundTaskManager: ObservableObject {
         // turn 1. Reattach reuses `existing.id` as `context.id`, so
         // successive dispatches into the same conversation accumulate
         // via the store's underlying `Set`.
-        if !request.requestedToolNames.isEmpty {
+        if !request.requestedToolNames.isEmpty, workspacePrepared == nil {
             await SessionToolStateStore.shared.appendLoadedTools(
                 context.id.uuidString,
                 names: request.requestedToolNames,
@@ -1016,8 +1077,22 @@ public final class BackgroundTaskManager: ObservableObject {
             source: request.source,
             sourcePluginId: request.sourcePluginId,
             externalSessionKey: request.externalSessionKey,
-            showToast: request.showToast
+            showToast: request.showToast,
+            target: request.target ?? .local(context.agentId)
         )
+        if let workspacePrepared {
+            state.workspaceAgentName = workspacePrepared.displayName
+            let runKey = context.id.uuidString
+            let source = request.source
+            Task {
+                await WorkspaceAuditLog.shared.recordOutboundRunStarted(
+                    ref: workspacePrepared.ref,
+                    agentName: workspacePrepared.displayName,
+                    runKey: runKey,
+                    source: source
+                )
+            }
+        }
 
         // Plugin-originated dispatches buffer their `.started` event until
         // the trampoline returns, so the plugin's `on_task_event` callback
@@ -1033,8 +1108,10 @@ public final class BackgroundTaskManager: ObservableObject {
         // Pre-seed the per-run budget caps from `Agent.settings.limits`
         // (spec §11.3). `tokensIn/Out` and `costUSD` start at 0 and are
         // updated mid-stream by `recordUsage(...)`; the dispatcher
-        // cancels the task once either threshold is crossed.
-        if let agent = AgentManager.shared.agent(for: context.agentId) {
+        // cancels the task once either threshold is crossed. Workspace
+        // runs bill the host (or its workspace pool), never a local agent's
+        // budget.
+        if workspacePrepared == nil, let agent = AgentManager.shared.agent(for: context.agentId) {
             state.runTokensLimit = agent.settings.limits.runTokensLimit
             state.runCostUSDLimit = agent.settings.limits.runCostUSDLimit
         }
@@ -1054,7 +1131,7 @@ public final class BackgroundTaskManager: ObservableObject {
             // the same behavior and the same overhead.
             var boundRunId: UUID? = nil
             var boundActor: String = "user"
-            if AgentManager.shared.effectiveDBEnabled(for: context.agentId) {
+            if context.workspaceTarget == nil, AgentManager.shared.effectiveDBEnabled(for: context.agentId) {
                 let triggerKind = Self.triggerKind(for: request.source)
                 // `triggerPayload` is intentionally minimal: persisting the
                 // full prompt here would duplicate ChatHistoryDatabase data
@@ -1148,7 +1225,9 @@ public final class BackgroundTaskManager: ObservableObject {
             !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return nil }
 
-        let agentId = request.agentId
+        // A workspace run is hosted under the Default agent (like a shared-
+        // agent chat tab); the row is disambiguated by its workspace stamp.
+        let agentId = request.workspaceTarget != nil ? Agent.defaultId : request.agentId
 
         let liveDuplicate = backgroundTasks.values.contains { state in
             guard state.status.isActive,
@@ -1181,6 +1260,16 @@ public final class BackgroundTaskManager: ObservableObject {
             metadata = db.findSession(source: request.source, externalKey: key, agentId: agentId)
         }
         guard let metadata else { return nil }
+        if let ref = request.workspaceTarget {
+            // Never append a shared-agent turn to a local conversation (or
+            // to a different teammate's agent) that happens to share the key.
+            guard let stamped = metadata.workspace,
+                stamped.agentAddress == ref.agentAddress,
+                stamped.workspaceId == ref.workspaceId
+            else { return nil }
+        } else if metadata.workspace != nil {
+            return nil
+        }
         // findSession returns metadata only; hydrate turns for ChatSession.load.
         return db.loadSession(id: metadata.id)
     }
@@ -1525,6 +1614,25 @@ public final class BackgroundTaskManager: ObservableObject {
         state.currentStep = nil
         state.captureContextPreview()
         state.executionContext?.chatSession.save()
+        if let ref = state.target.workspaceRef {
+            let name = state.workspaceAgentName
+            let runKey = state.id.uuidString
+            let source = state.source
+            // A billing/membership verdict from the host's router means our
+            // side of the relationship changed (left the workspace, agent
+            // unshared, pool dry); refresh so the roster and spawn pool
+            // reflect it before the next dispatch.
+            if !success, ChatErrorMessages.isStaleWorkspaceBillingError(summary) {
+                WorkspacesService.scheduleBillingReconciliation()
+                Task { await WorkspaceRosterStore.shared.refresh(reason: .manual) }
+            }
+            Task {
+                await WorkspaceAuditLog.shared.recordOutboundRunFinished(
+                    ref: ref, agentName: name, runKey: runKey, source: source,
+                    success: success, summary: summary
+                )
+            }
+        }
         // Close out the scheduler `agent_runs` row, if one was opened
         // for this task. `recordRunEnd` is a single UPDATE so the cost
         // is negligible; failure to write only forfeits the audit

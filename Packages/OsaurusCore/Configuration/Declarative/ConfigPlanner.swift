@@ -461,6 +461,16 @@ enum ConfigPlanner {
                             + "created by this document.")
                 }
             }
+            // Workspace targets are durable `<workspace_id>:<address>` keys;
+            // membership is not checked here (the roster may not be loaded),
+            // only the shape — execution probes the real agent at spawn time.
+            for key in section.spawnableWorkspaceAgents ?? [] {
+                if WorkspaceAgentRef(key: key.trimmingCharacters(in: .whitespacesAndNewlines)) == nil {
+                    issues.append(
+                        "delegation.spawnable_workspace_agents: `\(key)` must be a "
+                            + "`<workspace_id>:<0x-agent-address>` key.")
+                }
+            }
         }
 
         if let commands = document.commands {
@@ -554,6 +564,9 @@ enum ConfigPlanner {
                         issues.append(
                             "\(label).inbound_agent: channel dispatch needs a CUSTOM agent "
                                 + "(never the Default agent); null clears it.")
+                    } else if ConfigAgentTargetReference.workspaceRef(name) != nil {
+                        // Shared workspace agent (`<workspaceId>:<address>`);
+                        // only the key shape is checked here.
                     } else if !customAgents.contains(key) {
                         issues.append(
                             "\(label).inbound_agent: no custom agent named `\(name)` exists or "
@@ -825,6 +838,10 @@ enum ConfigPlanner {
                     if agent.lowercased() == "default" {
                         issues.append(
                             "schedules[\(entry.name)].agent: schedules cannot target the Default agent.")
+                    } else if ConfigAgentTargetReference.workspaceRef(agent) != nil {
+                        // A shared workspace agent (`<workspaceId>:<address>`).
+                        // Membership is live relay state, checked when the
+                        // schedule fires; the document only needs the key shape.
                     } else if !agentNames.contains(agent.lowercased()) {
                         issues.append(
                             "schedules[\(entry.name)].agent: no custom agent named `\(agent)` exists "
@@ -872,6 +889,8 @@ enum ConfigPlanner {
                     if agent.lowercased() == "default" {
                         issues.append(
                             "watchers[\(entry.name)].agent: watchers cannot run on the Default agent.")
+                    } else if ConfigAgentTargetReference.workspaceRef(agent) != nil {
+                        // Shared workspace agent; see the schedules note above.
                     } else if !agentNames.contains(agent.lowercased()) {
                         issues.append(
                             "watchers[\(entry.name)].agent: no custom agent named `\(agent)` exists "
@@ -1254,6 +1273,10 @@ enum ConfigPlanner {
         diffList(
             "spawnable_models", desired: desired.spawnableModels,
             current: current.spawnableModels, into: &changes)
+        diffList(
+            "spawnable_workspace_agents",
+            desired: desired.spawnableWorkspaceAgents?.map { $0.lowercased() },
+            current: current.spawnableWorkspaceAgents?.map { $0.lowercased() }, into: &changes)
         diff(
             "spawn_tool_access", desired: desired.spawnToolAccess?.lowercased(),
             current: current.spawnToolAccess, into: &changes)
@@ -1843,8 +1866,7 @@ enum ConfigPlanner {
                 matched.insert(schedule.id)
                 var changes: [String] = []
                 if let agent = entry.agent {
-                    let currentAgent = AgentManager.shared.agents
-                        .first { $0.id == schedule.agentId }?.name ?? "(unknown)"
+                    let currentAgent = ConfigAgentTargetReference.currentLabel(schedule.target)
                     if agent.lowercased() != currentAgent.lowercased() {
                         changes.append("agent: \(currentAgent) -> \(agent)")
                     }
@@ -1929,8 +1951,7 @@ enum ConfigPlanner {
                 matched.insert(watcher.id)
                 var changes: [String] = []
                 if let agent = entry.agent {
-                    let currentAgent = AgentManager.shared.agents
-                        .first { $0.id == watcher.agentId }?.name ?? "(unknown)"
+                    let currentAgent = ConfigAgentTargetReference.currentLabel(watcher.target)
                     if agent.lowercased() != currentAgent.lowercased() {
                         changes.append("agent: \(currentAgent) -> \(agent)")
                     }

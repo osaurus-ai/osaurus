@@ -404,13 +404,13 @@ final class DiscordConnectionService: @unchecked Sendable {
                 dispatchAttempted += relay.dispatchAttempted
                 dispatchSuppressed += relay.dispatchSuppressed
                 switch relay {
-                case .dispatched(let agentId, let rule):
+                case .dispatched(let target, let rule):
                     await activityCenter.record(
                         connectionId: Self.nativeConnectionId,
                         providerEventId: providerEventId,
                         stage: .dispatched,
                         reason: await AgentChannelInboundActivityPresentation.dispatchReason(
-                            agentId: agentId,
+                            target: target,
                             rule: rule
                         )
                     )

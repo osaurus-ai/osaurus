@@ -198,12 +198,25 @@ enum ConfigApplier {
             )
 
             var specs: [Tool] = []
+            // Workspace targets already in the pool ride along so the staged
+            // schema matches what the next compose would emit.
+            let workspaceCaps = AgentManager.shared.effectiveCapabilities(for: launchingAgentId)
+            let allowedWorkspaceAgents = SubagentToolVisibility.effectiveSpawnableWorkspaceAgents(
+                isDefault: launchingAgentId == Agent.defaultId,
+                config: SubagentConfigurationStore.snapshot(),
+                perAgentEnabled: workspaceCaps.spawnDelegationEnabled,
+                perAgentTargets: workspaceCaps.spawnableWorkspaceAgents
+            )
+            let allowedWorkspaceAddresses = allowedWorkspaceAgents.map(\.agentAddress)
+            let allNames =
+                allowedAgentNames + allowedWorkspaceAgents.map { AgentTargetResolver.displayName(for: $0) }
             if let spawnAgent = byName[SubagentCapabilityRegistry.spawnAgentToolName] {
                 specs.append(
                     SpawnAgentTool.constrainedSpec(
                         spawnAgent,
                         allowedAgentIDs: allowedAgentIDs,
-                        allowedAgentNames: allowedAgentNames
+                        allowedAgentNames: allNames,
+                        allowedWorkspaceAddresses: allowedWorkspaceAddresses
                     )
                 )
             }
@@ -229,8 +242,9 @@ enum ConfigApplier {
                     SpawnBatchTool.constrainedSpec(
                         spawnBatch,
                         allowedAgentIDs: allowedAgentIDs,
-                        allowedAgentNames: allowedAgentNames,
+                        allowedAgentNames: allNames,
                         allowedModelIds: allowedModelIds,
+                        allowedWorkspaceAddresses: allowedWorkspaceAddresses,
                         maxParallel: maxParallel
                     )
                 )
@@ -517,6 +531,21 @@ enum ConfigApplier {
             }
             resolvedAgentIDs = ids
         }
+        var resolvedWorkspaceRefs: [WorkspaceAgentRef]?
+        if let keys = desired.spawnableWorkspaceAgents {
+            var refs: [WorkspaceAgentRef] = []
+            for key in keys {
+                guard let ref = WorkspaceAgentRef(key: key.trimmingCharacters(in: .whitespacesAndNewlines))
+                else {
+                    return ConfigApplyResult(
+                        section: "delegation", target: "delegation", status: .failed,
+                        message:
+                            "spawnable_workspace_agents: `\(key)` is not a `<workspace_id>:<0x-address>` key.")
+                }
+                refs.append(ref)
+            }
+            resolvedWorkspaceRefs = refs
+        }
         _ = SubagentConfigurationStore.mutate { config in
             if let v = desired.localTextEnabled { config.localTextDelegationEnabled = v }
             if let v = desired.imageEnabled { config.imageDelegationEnabled = v }
@@ -529,6 +558,7 @@ enum ConfigApplier {
             }
             if let ids = resolvedAgentIDs { config.spawnableAgentIDs = ids }
             if let models = desired.spawnableModels { config.spawnableModelNames = models }
+            if let refs = resolvedWorkspaceRefs { config.spawnableWorkspaceAgents = refs }
             if let raw = desired.spawnToolAccess,
                 let access = SpawnToolAccess(rawValue: raw.lowercased())
             {
@@ -719,21 +749,26 @@ enum ConfigApplier {
 
             // The inbound agent name resolves first so an unknown name fails
             // the platform before any partial store write.
-            var inboundAgentId: ConfigField<UUID> = .absent
+            var inboundTarget: ConfigField<AgentDispatchTarget> = .absent
             switch section.inboundAgent {
             case .absent:
                 break
             case .null:
-                inboundAgentId = .null
+                inboundTarget = .null
             case .value(let name):
-                guard let id = customAgentId(named: name) else {
+                if let ref = ConfigAgentTargetReference.workspaceRef(name) {
+                    // Shared workspace agent; membership/liveness is live
+                    // relay state checked when a message arrives.
+                    inboundTarget = .value(.workspace(ref))
+                } else if let id = customAgentId(named: name) {
+                    inboundTarget = .value(.local(id))
+                } else {
                     results.append(
                         ConfigApplyResult(
                             section: "channels", target: platform.rawValue, status: .failed,
                             message: "inbound_agent: no custom agent named `\(name)`."))
                     continue
                 }
-                inboundAgentId = .value(id)
             }
 
             var mutation = ConfigChannelMutation()
@@ -744,7 +779,7 @@ enum ConfigApplier {
             mutation.writeAllowlist = section.writeAllowlist
             mutation.senderAllowlist = section.senderAllowlist
             mutation.inboundEnabled = section.inboundEnabled
-            mutation.inboundAgentId = inboundAgentId
+            mutation.inboundTarget = inboundTarget
             mutation.requireMention = section.requireMention
             mutation.continueThreads = section.continueThreads
             mutation.autoReplyEnabled = section.autoReplyEnabled
@@ -1687,21 +1722,24 @@ enum ConfigApplier {
                 }
             }
 
-            var agentId: UUID?
+            var target: AgentDispatchTarget?
             if let agentName = entry.agent {
-                guard let id = customAgentId(named: agentName) else {
+                if let ref = ConfigAgentTargetReference.workspaceRef(agentName) {
+                    target = .workspace(ref)
+                } else if let id = customAgentId(named: agentName) {
+                    target = .local(id)
+                } else {
                     results.append(
                         ConfigApplyResult(
                             section: "schedules", target: entry.name, status: .failed,
                             message: "No custom agent named `\(agentName)`."))
                     continue
                 }
-                agentId = id
             }
 
             if var schedule = existing {
                 matched.insert(schedule.id)
-                if let agentId { schedule.agentId = agentId }
+                if let target { schedule.target = target }
                 if let v = entry.instructions { schedule.instructions = v }
                 if let frequency { schedule.frequency = frequency }
                 if let v = entry.enabled { schedule.isEnabled = v }
@@ -1709,7 +1747,7 @@ enum ConfigApplier {
                 results.append(
                     ConfigApplyResult(section: "schedules", target: entry.name, status: .done))
             } else {
-                guard let agentId, let instructions = entry.instructions, let frequency else {
+                guard let target, let instructions = entry.instructions, let frequency else {
                     results.append(
                         ConfigApplyResult(
                             section: "schedules", target: entry.name, status: .failed,
@@ -1721,7 +1759,7 @@ enum ConfigApplier {
                 let schedule = manager.create(
                     name: entry.name,
                     instructions: instructions,
-                    agentId: agentId,
+                    target: target,
                     parameters: [:],
                     folderPath: nil,
                     folderBookmark: nil,
@@ -1755,16 +1793,19 @@ enum ConfigApplier {
         for entry in entries {
             let existing = manager.watchers.first { $0.name.lowercased() == entry.name.lowercased() }
 
-            var agentId: UUID?
+            var target: AgentDispatchTarget?
             if let agentName = entry.agent {
-                guard let id = customAgentId(named: agentName) else {
+                if let ref = ConfigAgentTargetReference.workspaceRef(agentName) {
+                    target = .workspace(ref)
+                } else if let id = customAgentId(named: agentName) {
+                    target = .local(id)
+                } else {
                     results.append(
                         ConfigApplyResult(
                             section: "watchers", target: entry.name, status: .failed,
                             message: "No custom agent named `\(agentName)`."))
                     continue
                 }
-                agentId = id
             }
 
             var path: String?
@@ -1789,7 +1830,7 @@ enum ConfigApplier {
 
             if var watcher = existing {
                 matched.insert(watcher.id)
-                if let agentId { watcher.agentId = agentId }
+                if let target { watcher.target = target }
                 if let v = entry.instructions { watcher.instructions = v }
                 if let path {
                     // A document-supplied path replaces any picker-granted
@@ -1805,7 +1846,7 @@ enum ConfigApplier {
                 results.append(
                     ConfigApplyResult(section: "watchers", target: entry.name, status: .done))
             } else {
-                guard let agentId, let instructions = entry.instructions, let path else {
+                guard let target, let instructions = entry.instructions, let path else {
                     results.append(
                         ConfigApplyResult(
                             section: "watchers", target: entry.name, status: .failed,
@@ -1815,7 +1856,7 @@ enum ConfigApplier {
                 let watcher = manager.create(
                     name: entry.name,
                     instructions: instructions,
-                    agentId: agentId,
+                    target: target,
                     watchPath: path,
                     watchBookmark: nil,
                     isEnabled: entry.enabled ?? true,

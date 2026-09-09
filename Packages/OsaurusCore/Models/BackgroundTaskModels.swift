@@ -157,8 +157,30 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     /// Display title for the task
     public var taskTitle: String
 
-    /// Agent ID associated with this task
+    /// Agent ID associated with this task. For a workspace target this is
+    /// the hosting Default agent; read `target` to tell the two apart.
     public let agentId: UUID
+
+    /// Who this task runs: the local agent, or a teammate's shared
+    /// workspace agent over the relay.
+    public let target: AgentDispatchTarget
+
+    /// Display name of the shared agent for workspace targets (Activity row
+    /// title/subtitle, audit rows). nil for local targets.
+    public var workspaceAgentName: String?
+
+    /// True when this task runs a teammate's shared agent (Mode 2).
+    public var isWorkspaceRun: Bool { target.isWorkspace }
+
+    /// Origin clause for the Activity row / toast: "via workspace · Alice's
+    /// Researcher" for a workspace run, else the source's plain label.
+    public func originLabel(pluginDisplayName: String? = nil) -> String? {
+        let base = source.originLabel(pluginDisplayName: pluginDisplayName)
+        guard isWorkspaceRun else { return base }
+        let agent = workspaceAgentName ?? target.workspaceRef.map { OsaurusRouterWorkspacePerson.shortWallet($0.agentAddress) }
+        let onAgent = "on \(agent ?? "workspace agent")"
+        return base.map { "\($0) · \(onAgent)" } ?? onAgent
+    }
 
     /// The chat session driving this task. Retained so the session keeps
     /// running while the user has no window open for it.
@@ -304,11 +326,13 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
         source: SessionSource = .plugin,
         sourcePluginId: String? = nil,
         externalSessionKey: String? = nil,
-        showToast: Bool = true
+        showToast: Bool = true,
+        target: AgentDispatchTarget? = nil
     ) {
         self.id = id
         self.taskTitle = taskTitle
         self.agentId = agentId
+        self.target = target ?? .local(agentId)
         self.chatSession = chatSession
         self.executionContext = executionContext
         self.status = status
@@ -335,6 +359,7 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
         self.id = id
         self.taskTitle = taskTitle
         self.agentId = agentId
+        self.target = .local(agentId)
         self.chatSession = nil
         self.executionContext = nil
         self.status = .running
@@ -362,6 +387,7 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
         self.id = id
         self.taskTitle = taskTitle
         self.agentId = agentId
+        self.target = .local(agentId)
         self.chatSession = chatSession
         self.executionContext = executionContext
         self.status = .running
@@ -392,6 +418,7 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
         self.id = id
         self.taskTitle = taskTitle
         self.agentId = agentId
+        self.target = .local(agentId)
         self.chatSession = nil
         self.executionContext = nil
         self.status = status

@@ -1137,13 +1137,13 @@ final class TelegramConnectionService: @unchecked Sendable {
                     dispatchAttempted += submission.dispatchAttempted
                     dispatchSuppressed += submission.dispatchSuppressed
                     switch submission {
-                    case .dispatched(let agentId, let rule):
+                    case .dispatched(let target, let rule):
                         await activityCenter.record(
                             connectionId: Self.connectionId,
                             providerEventId: event.providerEventId,
                             stage: .dispatched,
                             reason: await AgentChannelInboundActivityPresentation.dispatchReason(
-                                agentId: agentId,
+                                target: target,
                                 rule: rule
                             )
                         )

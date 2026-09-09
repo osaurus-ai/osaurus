@@ -20,13 +20,16 @@ struct AgentChannelRoutableRoom: Identifiable, Equatable {
 struct AgentChannelDispatchRoutingEditor: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var roster = WorkspaceRosterStore.shared
 
     /// Provider-appropriate noun for rooms ("channel" or "chat").
     let roomNoun: String
     /// Discovered rooms for the pickers; rules can still hold ids that are
     /// not in this list (they render as the raw id).
     let rooms: [AgentChannelRoutableRoom]
-    @Binding var defaultAgentId: UUID?
+    /// Default reply target: a local agent or a teammate's shared workspace
+    /// agent (which answers on the owner's Mac over the relay).
+    @Binding var defaultTarget: AgentDispatchTarget?
     @Binding var routes: [AgentChannelDispatchRoute]
 
     /// Raw alias text per route id so typing commas/spaces is not fought
@@ -37,6 +40,21 @@ struct AgentChannelDispatchRoutingEditor: View {
 
     private var selectableAgents: [Agent] {
         agentManager.agents.filter { !$0.isBuiltIn }
+    }
+
+    private var workspaceAgents: [WorkspaceAgentPickerOption] {
+        WorkspaceAgentPickerOption.all(roster: roster)
+    }
+
+    private var hasAnyTarget: Bool {
+        !selectableAgents.isEmpty || !workspaceAgents.isEmpty
+    }
+
+    private var firstAvailableTarget: AgentDispatchTarget {
+        if let defaultTarget { return defaultTarget }
+        if let local = selectableAgents.first { return .local(local.id) }
+        if let shared = workspaceAgents.first { return .workspace(shared.ref) }
+        return .local(UUID())
     }
 
     var body: some View {
@@ -63,7 +81,7 @@ struct AgentChannelDispatchRoutingEditor: View {
                 withAnimation(.easeOut(duration: 0.15)) {
                     let route = AgentChannelDispatchRoute(
                         roomId: rooms.first?.id,
-                        agentId: defaultAgentId ?? selectableAgents.first?.id ?? UUID()
+                        target: firstAvailableTarget
                     )
                     routes.append(route)
                     aliasDrafts[route.id] = ""
@@ -78,7 +96,7 @@ struct AgentChannelDispatchRoutingEditor: View {
             }
             .buttonStyle(.plain)
             .foregroundColor(theme.accentColor)
-            .disabled(selectableAgents.isEmpty)
+            .disabled(!hasAnyTarget)
 
             if routes.isEmpty {
                 Text(
@@ -94,7 +112,9 @@ struct AgentChannelDispatchRoutingEditor: View {
             for route in routes where aliasDrafts[route.id] == nil {
                 aliasDrafts[route.id] = route.nameAliases.joined(separator: ", ")
             }
+            roster.beginObserving()
         }
+        .onDisappear { roster.endObserving() }
     }
 
     private var defaultAgentPicker: some View {
@@ -102,22 +122,62 @@ struct AgentChannelDispatchRoutingEditor: View {
             Text("Agent that replies", bundle: .module)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.secondaryText)
-            Picker("", selection: $defaultAgentId) {
+            Picker("", selection: $defaultTarget) {
                 Text(
                     routes.isEmpty ? L("Choose an agent") : L("None (reply only where a rule matches)")
-                ).tag(UUID?.none)
+                ).tag(AgentDispatchTarget?.none)
                 ForEach(selectableAgents) { agent in
-                    Text(agent.name).tag(Optional(agent.id))
+                    Text(agent.name).tag(Optional(AgentDispatchTarget.local(agent.id)))
+                }
+                if !workspaceAgents.isEmpty {
+                    Section(header: Text("Workspace agents", bundle: .module)) {
+                        ForEach(workspaceAgents) { option in
+                            Text(workspaceLabel(option)).tag(Optional(AgentDispatchTarget.workspace(option.ref)))
+                        }
+                    }
+                }
+                if let current = defaultTarget, !isKnown(current) {
+                    Text(missingLabel(current)).tag(Optional(current))
                 }
             }
             .labelsHidden()
             Text(
-                "Replies to every message no rule below claims.",
-                bundle: .module
+                defaultTarget?.isWorkspace == true
+                    ? L(
+                        "Replies to every message no rule below claims. This shared agent runs on its owner's Mac; replies wait until it is online."
+                    )
+                    : L("Replies to every message no rule below claims.")
             )
             .font(.system(size: 10))
             .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    private func isKnown(_ target: AgentDispatchTarget) -> Bool {
+        switch target {
+        case .local(let id): return selectableAgents.contains { $0.id == id }
+        case .workspace(let ref): return workspaceAgents.contains { $0.ref == ref }
+        }
+    }
+
+    private func missingLabel(_ target: AgentDispatchTarget) -> String {
+        switch target {
+        case .local: return L("Missing agent")
+        case .workspace(let ref): return L("\(AgentTargetResolver.displayName(for: ref)) (unavailable)")
+        }
+    }
+
+    /// "Name · Workspace" plus a presence glyph so the picker shows at a
+    /// glance whether the teammate's Mac is currently reachable.
+    private func workspaceLabel(_ option: WorkspaceAgentPickerOption) -> String {
+        let glyph: String
+        switch option.presence {
+        case .online: glyph = "●"
+        case .offline: glyph = "○"
+        case .unknown: glyph = "◌"
+        }
+        return "\(glyph) \(option.name) · \(option.workspaceName)"
     }
 
     private func routeRow(_ route: Binding<AgentChannelDispatchRoute>) -> some View {
@@ -183,16 +243,23 @@ struct AgentChannelDispatchRoutingEditor: View {
     }
 
     private func agentPicker(_ route: Binding<AgentChannelDispatchRoute>) -> some View {
-        Picker("", selection: route.agentId) {
+        Picker("", selection: route.target) {
             ForEach(selectableAgents) { agent in
-                Text(agent.name).tag(agent.id)
+                Text(agent.name).tag(AgentDispatchTarget.local(agent.id))
             }
-            if !selectableAgents.contains(where: { $0.id == route.wrappedValue.agentId }) {
-                Text("Missing agent", bundle: .module).tag(route.wrappedValue.agentId)
+            if !workspaceAgents.isEmpty {
+                Section(header: Text("Workspace agents", bundle: .module)) {
+                    ForEach(workspaceAgents) { option in
+                        Text(workspaceLabel(option)).tag(AgentDispatchTarget.workspace(option.ref))
+                    }
+                }
+            }
+            if !isKnown(route.wrappedValue.target) {
+                Text(missingLabel(route.wrappedValue.target)).tag(route.wrappedValue.target)
             }
         }
         .labelsHidden()
-        .frame(maxWidth: 180)
+        .frame(maxWidth: 200)
     }
 
     private func aliasBinding(for routeId: UUID) -> Binding<String> {

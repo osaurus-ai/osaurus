@@ -120,6 +120,7 @@ public final class WatcherManager {
         name: String,
         instructions: String,
         agentId: UUID? = nil,
+        target: AgentDispatchTarget? = nil,
         parameters: [String: String] = [:],
         watchPath: String? = nil,
         watchBookmark: Data? = nil,
@@ -132,6 +133,7 @@ public final class WatcherManager {
             name: name,
             instructions: instructions,
             agentId: agentId,
+            target: target,
             parameters: parameters,
             watchPath: watchPath,
             watchBookmark: watchBookmark,
@@ -493,11 +495,17 @@ public final class WatcherManager {
     private func processCurrentState(for watcher: Watcher) {
         // Watchers MUST target an explicit custom agent. nil and built-in
         // agentIds were previously coerced to `Agent.defaultId`, anonymously
-        // routing filesystem-watch dispatches onto the Default agent.
-        if let rejection = Agent.rejectBuiltInForExternalSurface(
-            watcher.agentId,
-            source: "watcher/processCurrentState"
-        ) {
+        // routing filesystem-watch dispatches onto the Default agent. A
+        // shared workspace agent is a teammate's custom agent by
+        // construction, so the local guard applies to local targets only;
+        // `BackgroundTaskManager` runs the relay preflight for workspace
+        // targets and refuses offline / unshared hosts before queueing.
+        if watcher.workspaceTarget == nil,
+            let rejection = Agent.rejectBuiltInForExternalSurface(
+                watcher.agentId,
+                source: "watcher/processCurrentState"
+            )
+        {
             print("[Osaurus] [\(watcher.name)] watcher skipped: \(rejection.message)")
             phases[watcher.id] = .idle
             return
@@ -630,7 +638,16 @@ public final class WatcherManager {
                 )
 
                 guard let handle = await TaskDispatcher.shared.dispatch(request) else {
-                    print("[Osaurus] [\(watcher.name)] dispatch failed (iteration \(iteration))")
+                    // A refused workspace run (host offline, unshared, key
+                    // lapsed) ends this convergence pass; the next filesystem
+                    // change fires a fresh attempt. No retry loop here.
+                    if let ref = watcher.workspaceTarget,
+                        let reason = BackgroundTaskManager.shared.consumeWorkspaceDispatchRefusal(for: ref)
+                    {
+                        print("[Osaurus] [\(watcher.name)] dispatch refused (iteration \(iteration)): \(reason)")
+                    } else {
+                        print("[Osaurus] [\(watcher.name)] dispatch failed (iteration \(iteration))")
+                    }
                     break
                 }
 
@@ -727,7 +744,7 @@ public final class WatcherManager {
     ) -> DispatchRequest {
         DispatchRequest(
             prompt: prompt,
-            agentId: watcher.agentId,
+            target: watcher.target,
             title: watcher.name,
             parameters: watcher.parameters,
             folderPath: resolvedWatchPath ?? watcher.watchPath,

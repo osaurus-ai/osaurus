@@ -155,9 +155,11 @@ enum AgentChannelAutoDestinationResolver {
             ids.append(target)
         }
         for route in dispatch.routes {
-            guard route.roomId == nil || route.roomId == roomId else { continue }
-            if seen.insert(route.agentId).inserted {
-                ids.append(route.agentId)
+            // Workspace-agent routes answer on the host machine; they never
+            // derive a local publish destination.
+            guard route.roomId == nil || route.roomId == roomId, let agentId = route.agentId else { continue }
+            if seen.insert(agentId).inserted {
+                ids.append(agentId)
             }
         }
         return ids

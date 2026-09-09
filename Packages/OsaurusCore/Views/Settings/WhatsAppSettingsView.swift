@@ -40,7 +40,7 @@ struct WhatsAppSettingsView: View {
     @State private var allowedAttachmentRootsText: String = ""
     @State private var maxAttachmentMB: String = "25"
     @State private var inboundDispatchEnabled = false
-    @State private var inboundAgentId: UUID?
+    @State private var inboundTarget: AgentDispatchTarget?
     @State private var inboundRoutes: [AgentChannelDispatchRoute] = []
     @State private var inboundAutoReplyEnabled = false
     @State private var requireMention = false
@@ -97,7 +97,7 @@ struct WhatsAppSettingsView: View {
         var allowedAttachmentRootsText: String
         var maxAttachmentMB: String
         var inboundDispatchEnabled: Bool
-        var inboundAgentId: UUID?
+        var inboundTarget: AgentDispatchTarget?
         var inboundRoutes: [AgentChannelDispatchRoute]
         var inboundAutoReplyEnabled: Bool
         var requireMention: Bool
@@ -117,7 +117,7 @@ struct WhatsAppSettingsView: View {
             allowedAttachmentRootsText: allowedAttachmentRootsText,
             maxAttachmentMB: maxAttachmentMB,
             inboundDispatchEnabled: inboundDispatchEnabled,
-            inboundAgentId: inboundAgentId,
+            inboundTarget: inboundTarget,
             inboundRoutes: inboundRoutes,
             inboundAutoReplyEnabled: inboundAutoReplyEnabled,
             requireMention: requireMention
@@ -236,7 +236,7 @@ struct WhatsAppSettingsView: View {
             }
             return !parseIds(readableChatIdsText).isEmpty && !parseIds(senderAllowlistText).isEmpty
         case .behavior:
-            return (inboundDispatchEnabled && (inboundAgentId != nil || !inboundRoutes.isEmpty))
+            return (inboundDispatchEnabled && (inboundTarget != nil || !inboundRoutes.isEmpty))
                 || writeEnabled
         case .verify:
             return verifySucceeded
@@ -1055,10 +1055,10 @@ struct WhatsAppSettingsView: View {
                 AgentChannelDispatchRoutingEditor(
                     roomNoun: L("chat"),
                     rooms: routableRooms,
-                    defaultAgentId: $inboundAgentId,
+                    defaultTarget: $inboundTarget,
                     routes: $inboundRoutes
                 )
-                AgentChannelPluginPreloadOverflowNotice(agentId: inboundAgentId)
+                AgentChannelPluginPreloadOverflowNotice(agentId: inboundTarget?.localId)
                 SettingsToggle(
                     title: L("Reply Automatically"),
                     description: L(
@@ -1219,7 +1219,7 @@ struct WhatsAppSettingsView: View {
         allowedAttachmentRootsText = configuration.allowedAttachmentRoots.joined(separator: "\n")
         maxAttachmentMB = "\(configuration.maxAttachmentBytes / (1_024 * 1_024))"
         inboundDispatchEnabled = configuration.inboundDispatch.enabled
-        inboundAgentId = configuration.inboundDispatch.targetAgentId
+        inboundTarget = configuration.inboundDispatch.target
         inboundRoutes = configuration.inboundDispatch.routes
         inboundAutoReplyEnabled = configuration.inboundDispatch.autoReplyEnabled
         requireMention = configuration.inboundDispatch.requireMention
@@ -1229,7 +1229,7 @@ struct WhatsAppSettingsView: View {
     }
 
     private func validationFailure() -> (message: String, section: AgentChannelProviderSetupSection)? {
-        if inboundDispatchEnabled, inboundAgentId == nil, inboundRoutes.isEmpty {
+        if inboundDispatchEnabled, inboundTarget == nil, inboundRoutes.isEmpty {
             return (
                 L("Choose an agent to reply, or add a rule for incoming WhatsApp messages."),
                 .behavior
@@ -1275,7 +1275,7 @@ struct WhatsAppSettingsView: View {
             maxAttachmentBytes: (Int(maxAttachmentMB) ?? 25) * 1_024 * 1_024,
             inboundDispatch: AgentChannelInboundDispatchConfiguration(
                 enabled: inboundDispatchEnabled,
-                targetAgentId: inboundAgentId,
+                target: inboundTarget,
                 routes: inboundRoutes,
                 requireMention: requireMention,
                 continueThreads: true,

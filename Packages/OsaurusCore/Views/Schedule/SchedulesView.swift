@@ -134,7 +134,7 @@ struct SchedulesView: View {
                     scheduleManager.create(
                         name: schedule.name,
                         instructions: schedule.instructions,
-                        agentId: schedule.agentId,
+                        target: schedule.target,
                         parameters: schedule.parameters,
                         folderPath: schedule.folderPath,
                         folderBookmark: schedule.folderBookmark,
@@ -669,7 +669,10 @@ private struct ScheduleCard: View {
                 statItem(icon: latest.status.iconName, text: latest.status.displayName)
             }
 
-            if let agentName = agent?.name, agent?.isBuiltIn == false {
+            if let ref = schedule.workspaceTarget {
+                statDot
+                statItem(icon: "person.2.fill", text: AgentTargetResolver.displayName(for: ref))
+            } else if let agentName = agent?.name, agent?.isBuiltIn == false {
                 statDot
                 statItem(icon: "person.fill", text: agentName)
             }
@@ -1992,11 +1995,16 @@ private struct DayOfMonthPicker: View {
 
 private struct AgentPicker: View {
     @Environment(\.theme) private var theme
-    @Binding var selectedAgentId: UUID?
+    /// Local agent (`.local`) or a teammate's shared agent (`.workspace`).
+    @Binding var selectedTarget: AgentDispatchTarget?
     let agents: [Agent]
+    /// Shared agents from every joined workspace, minus this instance's own.
+    let workspaceAgents: [WorkspaceAgentPickerOption]
 
     @State private var isHovering = false
     @State private var showingPopover = false
+
+    private var selectedAgentId: UUID? { selectedTarget?.localId }
 
     private var selectedAgent: Agent? {
         if let id = selectedAgentId {
@@ -2005,11 +2013,20 @@ private struct AgentPicker: View {
         return nil
     }
 
+    private var selectedWorkspaceOption: WorkspaceAgentPickerOption? {
+        guard let ref = selectedTarget?.workspaceRef else { return nil }
+        return WorkspaceAgentPickerOption.resolve(ref, in: workspaceAgents)
+    }
+
     private var selectedAgentName: String {
-        selectedAgent?.name ?? L("Default")
+        if let option = selectedWorkspaceOption { return option.name }
+        return selectedAgent?.name ?? L("Default")
     }
 
     private var selectedAgentDescription: String? {
+        if let option = selectedWorkspaceOption {
+            return L("Workspace agent · ") + option.subtitle
+        }
         if selectedAgentId == nil {
             return L("Uses the default system behavior")
         }
@@ -2033,10 +2050,19 @@ private struct AgentPicker: View {
                     .fill(agentColor(for: selectedAgentName).opacity(0.2))
                     .frame(width: 32, height: 32)
                     .overlay(
-                        Image(systemName: "person.fill")
+                        Image(systemName: selectedWorkspaceOption == nil ? "person.fill" : "person.2.fill")
                             .font(.system(size: 14, weight: .medium))
                             .foregroundColor(agentColor(for: selectedAgentName))
                     )
+                    .overlay(alignment: .bottomTrailing) {
+                        if let option = selectedWorkspaceOption {
+                            Circle()
+                                .fill(option.presence.indicatorColor(theme: theme))
+                                .frame(width: 9, height: 9)
+                                .overlay(Circle().stroke(theme.inputBackground, lineWidth: 1.5))
+                                .help(option.presenceLabel)
+                        }
+                    }
 
                 if hasDescription {
                     VStack(alignment: .leading, spacing: 2) {
@@ -2090,9 +2116,9 @@ private struct AgentPicker: View {
                 AgentOptionRow(
                     name: "Default",
                     description: "Uses the default system behavior",
-                    isSelected: selectedAgentId == nil,
+                    isSelected: selectedTarget == nil,
                     action: {
-                        selectedAgentId = nil
+                        selectedTarget = nil
                         showingPopover = false
                     }
                 )
@@ -2107,7 +2133,31 @@ private struct AgentPicker: View {
                             description: agent.description,
                             isSelected: selectedAgentId == agent.id,
                             action: {
-                                selectedAgentId = agent.id
+                                selectedTarget = .local(agent.id)
+                                showingPopover = false
+                            }
+                        )
+                    }
+                }
+
+                if !workspaceAgents.isEmpty {
+                    Divider()
+                        .padding(.vertical, 4)
+
+                    Text("Workspace agents", bundle: .module)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 2)
+
+                    ForEach(workspaceAgents) { option in
+                        AgentOptionRow(
+                            name: option.name,
+                            description: option.description.map { "\(option.subtitle) — \($0)" } ?? option.subtitle,
+                            isSelected: selectedTarget?.workspaceRef == option.ref,
+                            presence: option.presence,
+                            action: {
+                                selectedTarget = .workspace(option.ref)
                                 showingPopover = false
                             }
                         )
@@ -2129,6 +2179,8 @@ private struct AgentOptionRow: View {
     let name: String
     let description: String
     let isSelected: Bool
+    /// Cached roster presence for shared workspace agents; nil for local.
+    var presence: WorkspaceRosterStore.Presence? = nil
     let action: () -> Void
 
     @State private var isHovering = false
@@ -2136,6 +2188,11 @@ private struct AgentOptionRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
+                if let presence {
+                    Circle()
+                        .fill(presence.indicatorColor(theme: theme))
+                        .frame(width: 7, height: 7)
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(name)
                         .font(.system(size: 13, weight: .medium))
@@ -2184,6 +2241,7 @@ struct ScheduleEditorSheet: View {
 
     @Environment(\.theme) private var theme
     @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var roster = WorkspaceRosterStore.shared
 
     let mode: Mode
     let onSave: (Schedule) -> Void
@@ -2192,7 +2250,7 @@ struct ScheduleEditorSheet: View {
 
     @State private var name = ""
     @State private var instructions = ""
-    @State private var selectedAgentId: UUID?
+    @State private var selectedTarget: AgentDispatchTarget?
     @State private var frequencyType: ScheduleFrequencyType = .daily
     @State private var isEnabled = true
     @State private var selectedFolderPath: String?
@@ -2264,7 +2322,7 @@ struct ScheduleEditorSheet: View {
         guard let original = editingSchedule else { return true }
         return trimmedName != original.name
             || trimmedInstructions != original.instructions
-            || selectedAgentId != original.agentId
+            || selectedTarget != original.target
             || isEnabled != original.isEnabled
             || selectedFolderPath != original.folderPath
             || selectedFolderBookmark != original.folderBookmark
@@ -2307,12 +2365,14 @@ struct ScheduleEditorSheet: View {
             if case .edit(let schedule) = mode {
                 loadSchedule(schedule)
             } else if let initialAgentId = initialAgentId {
-                selectedAgentId = initialAgentId
+                selectedTarget = .local(initialAgentId)
             }
+            roster.beginObserving()
             withAnimation {
                 hasAppeared = true
             }
         }
+        .onDisappear { roster.endObserving() }
     }
 
     // MARK: - Header
@@ -3054,14 +3114,25 @@ struct ScheduleEditorSheet: View {
         ScheduleEditorSection(title: L("Agent"), icon: "person.circle.fill") {
             VStack(alignment: .leading, spacing: 8) {
                 AgentPicker(
-                    selectedAgentId: $selectedAgentId,
-                    agents: agentManager.agents.filter { !$0.isBuiltIn }
+                    selectedTarget: $selectedTarget,
+                    agents: agentManager.agents.filter { !$0.isBuiltIn },
+                    workspaceAgents: WorkspaceAgentPickerOption.all(roster: roster)
                 )
                 .frame(maxWidth: .infinity)
 
-                Text("The agent determines the AI's behavior and available tools.", bundle: .module)
+                if selectedTarget?.isWorkspace == true {
+                    Text(
+                        "A workspace agent runs on its owner's Mac with their prompt, model and tools. If the host is offline when this fires, the run is skipped until the next scheduled time.",
+                        bundle: .module
+                    )
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("The agent determines the AI's behavior and available tools.", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                }
             }
             .frame(maxWidth: .infinity)
         }
@@ -3101,7 +3172,7 @@ struct ScheduleEditorSheet: View {
     private func loadSchedule(_ schedule: Schedule) {
         name = schedule.name
         instructions = schedule.instructions
-        selectedAgentId = schedule.agentId
+        selectedTarget = schedule.target
         isEnabled = schedule.isEnabled
         selectedFolderPath = schedule.folderPath
         selectedFolderBookmark = schedule.folderBookmark
@@ -3169,7 +3240,7 @@ struct ScheduleEditorSheet: View {
             id: existingId ?? UUID(),
             name: trimmedName,
             instructions: trimmedInstructions,
-            agentId: selectedAgentId,
+            target: selectedTarget,
             folderPath: selectedFolderPath,
             folderBookmark: selectedFolderBookmark,
             frequency: buildFrequency(),

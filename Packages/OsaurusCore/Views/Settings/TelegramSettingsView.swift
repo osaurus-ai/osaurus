@@ -29,7 +29,7 @@ struct TelegramSettingsView: View {
     @State private var longPollingLimit: String = "100"
     @State private var longPollingTimeoutSeconds: String = "20"
     @State private var inboundDispatchEnabled = false
-    @State private var inboundAgentId: UUID?
+    @State private var inboundTarget: AgentDispatchTarget?
     @State private var inboundRoutes: [AgentChannelDispatchRoute] = []
     @State private var inboundAutoReplyEnabled = false
     @State private var tokenSaved: Bool = false
@@ -71,7 +71,7 @@ struct TelegramSettingsView: View {
         var longPollingLimit: String
         var longPollingTimeoutSeconds: String
         var inboundDispatchEnabled: Bool
-        var inboundAgentId: UUID?
+        var inboundTarget: AgentDispatchTarget?
         var inboundRoutes: [AgentChannelDispatchRoute]
         var inboundAutoReplyEnabled: Bool
     }
@@ -90,7 +90,7 @@ struct TelegramSettingsView: View {
             longPollingLimit: longPollingLimit,
             longPollingTimeoutSeconds: longPollingTimeoutSeconds,
             inboundDispatchEnabled: inboundDispatchEnabled,
-            inboundAgentId: inboundAgentId,
+            inboundTarget: inboundTarget,
             inboundRoutes: inboundRoutes,
             inboundAutoReplyEnabled: inboundAutoReplyEnabled
         )
@@ -208,7 +208,7 @@ struct TelegramSettingsView: View {
         case .access:
             return !parseIds(readableChatIdsText).isEmpty && !parseIds(senderAllowlistText).isEmpty
         case .behavior:
-            return (inboundDispatchEnabled && (inboundAgentId != nil || !inboundRoutes.isEmpty)) || writeEnabled
+            return (inboundDispatchEnabled && (inboundTarget != nil || !inboundRoutes.isEmpty)) || writeEnabled
         case .verify:
             return verifySucceeded
         case nil:
@@ -576,10 +576,10 @@ struct TelegramSettingsView: View {
                 AgentChannelDispatchRoutingEditor(
                     roomNoun: L("chat"),
                     rooms: routableRooms,
-                    defaultAgentId: $inboundAgentId,
+                    defaultTarget: $inboundTarget,
                     routes: $inboundRoutes
                 )
-                AgentChannelPluginPreloadOverflowNotice(agentId: inboundAgentId)
+                AgentChannelPluginPreloadOverflowNotice(agentId: inboundTarget?.localId)
                 SettingsToggle(
                     title: L("Reply Automatically"),
                     description: L(
@@ -753,7 +753,7 @@ struct TelegramSettingsView: View {
         longPollingLimit = "\(configuration.longPollingLimit)"
         longPollingTimeoutSeconds = "\(configuration.longPollingTimeoutSeconds)"
         inboundDispatchEnabled = configuration.inboundDispatch.enabled
-        inboundAgentId = configuration.inboundDispatch.targetAgentId
+        inboundTarget = configuration.inboundDispatch.target
         inboundRoutes = configuration.inboundDispatch.routes
         inboundAutoReplyEnabled = configuration.inboundDispatch.autoReplyEnabled
         Task { tokenSaved = await TelegramConnectionService.shared.hasBotTokenOffMain() }
@@ -797,7 +797,7 @@ struct TelegramSettingsView: View {
     /// draft is persistable. Shared by autosave (skip silently) and the
     /// explicit save (show and navigate to the section).
     private func validationFailure() -> (message: String, section: AgentChannelProviderSetupSection)? {
-        if inboundDispatchEnabled, inboundAgentId == nil, inboundRoutes.isEmpty {
+        if inboundDispatchEnabled, inboundTarget == nil, inboundRoutes.isEmpty {
             return (
                 L("Choose an agent to reply, or add a rule for incoming Telegram messages."),
                 .behavior
@@ -834,7 +834,7 @@ struct TelegramSettingsView: View {
             longPollingTimeoutSeconds: Int(longPollingTimeoutSeconds) ?? 20,
             inboundDispatch: AgentChannelInboundDispatchConfiguration(
                 enabled: inboundDispatchEnabled,
-                targetAgentId: inboundAgentId,
+                target: inboundTarget,
                 routes: inboundRoutes,
                 requireMention: false,
                 continueThreads: true,

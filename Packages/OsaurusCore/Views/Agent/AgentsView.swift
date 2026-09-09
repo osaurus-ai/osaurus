@@ -1218,6 +1218,9 @@ struct AgentDetailView: View {
     /// Mirrored from / into `AgentSettings.spawnableAgentIDs`; empty hides the
     /// `spawn_agent` tool.
     @State private var spawnableAgentIDs: [UUID] = []
+    /// Per-agent shared workspace agents this agent may delegate to. Mirrored
+    /// from / into `AgentSettings.spawnableWorkspaceAgents`.
+    @State private var spawnableWorkspaceAgents: [WorkspaceAgentRef] = []
     /// Per-agent `spawn_model` allow-list (raw model ids this agent may spawn).
     /// Mirrored from / into `AgentSettings.spawnableModelNames`; empty hides the
     /// `spawn_model` tool.
@@ -1897,7 +1900,7 @@ struct AgentDetailView: View {
                         ScheduleManager.shared.create(
                             name: schedule.name,
                             instructions: schedule.instructions,
-                            agentId: schedule.agentId,
+                            target: schedule.target,
                             frequency: schedule.frequency,
                             isEnabled: schedule.isEnabled
                         )
@@ -1916,7 +1919,7 @@ struct AgentDetailView: View {
                         watcherManager.create(
                             name: watcher.name,
                             instructions: watcher.instructions,
-                            agentId: watcher.agentId,
+                            target: watcher.target,
                             watchPath: watcher.watchPath,
                             watchBookmark: watcher.watchBookmark,
                             isEnabled: watcher.isEnabled,
@@ -3276,7 +3279,8 @@ struct AgentDetailView: View {
             ),
             toolAccess: spawnToolAccess,
             launcherModelOverride:
-                subagentModelOverrides[SubagentCapabilityRegistry.spawn.id]
+                subagentModelOverrides[SubagentCapabilityRegistry.spawn.id],
+            workspaceAgents: spawnableWorkspaceAgents
         )
 
         return AgentAbilityContextPreview.Draft(
@@ -4143,16 +4147,19 @@ struct AgentDetailView: View {
             let configuredAgentIDs = spawnableAgentIDs.filter { $0 != agent.id }
             configuredSpawnTargetCount =
                 configuredAgentIDs.count + spawnableModelNames.count
+                + spawnableWorkspaceAgents.count
             let availability = SpawnDescriptors.resolveForPreview(
                 agentIDs: configuredAgentIDs,
                 modelNames: spawnableModelNames,
                 modelNotes: spawnableModelNotes,
                 launcherModelOverride:
-                    subagentModelOverrides[SubagentCapabilityRegistry.spawn.id]
+                    subagentModelOverrides[SubagentCapabilityRegistry.spawn.id],
+                workspaceAgents: spawnableWorkspaceAgents
             )
             runnableSpawnTargetCount =
                 availability.runnableAgentIDs.count
                 + availability.runnableModelIds.count
+                + availability.runnableWorkspaceAgents.count
             checkingSpawnTargets =
                 availability.agentTargets.contains { $0.state == .checking }
                 || availability.modelTargets.contains { $0.state == .checking }
@@ -4405,6 +4412,7 @@ struct AgentDetailView: View {
                 localHandoffEnabled: globalSubagentConfig.localTextDelegationEnabled,
                 modelOverride: spawnModelOverrideBinding,
                 spawnableAgentIDs: $spawnableAgentIDs,
+                spawnableWorkspaceAgents: $spawnableWorkspaceAgents,
                 spawnableModelNames: $spawnableModelNames,
                 spawnableModelNotes: $spawnableModelNotes,
                 permissionDefaults: $subagentPermissions,
@@ -6821,6 +6829,7 @@ struct AgentDetailView: View {
         computerUseCeiling = agent.settings.computerUseCeiling
         screenContextEnabled = agent.settings.screenContextEnabled
         spawnableAgentIDs = agent.settings.spawnableAgentIDs
+        spawnableWorkspaceAgents = agent.settings.spawnableWorkspaceAgents
         spawnableModelNames = agent.settings.spawnableModelNames
         spawnableModelNotes = agent.settings.spawnableModelNotes
         imageGenerationTarget = agent.settings.imageGenerationTarget
@@ -7081,7 +7090,8 @@ struct AgentDetailView: View {
                 knowledgeEnabled: knowledgeEnabled,
                 knowledgeCollectionIds: knowledgeCollectionIds,
                 knowledgeCuratorEnabled: knowledgeCuratorEnabled,
-                spawnToolAccess: spawnToolAccess
+                spawnToolAccess: spawnToolAccess,
+                spawnableWorkspaceAgents: spawnableWorkspaceAgents
             ),
             order: current.order
         )

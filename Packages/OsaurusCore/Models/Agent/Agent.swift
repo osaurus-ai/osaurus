@@ -609,6 +609,10 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// Optional "when/how to use" note per spawnable model id, surfaced in the
     /// spawn guidance descriptor. Pure metadata — the gate is `spawnableModelNames`.
     public var spawnableModelNotes: [String: String]
+    /// Shared workspace agents this agent may delegate to via `spawn_agent`.
+    /// Empty → no workspace targets. The Default agent ignores this and uses
+    /// the global `SubagentConfiguration.spawnableWorkspaceAgents` pool.
+    public var spawnableWorkspaceAgents: [WorkspaceAgentRef]
     /// Knowledge tools (`search_knowledge` / `read_knowledge` /
     /// `list_knowledge`) exposed to the model — per-agent opt-in.
     public var knowledgeEnabled: Bool
@@ -642,6 +646,7 @@ public struct AgentCapabilities: Sendable, Equatable {
         spawnableAgentNames: [String] = [],
         spawnableModelNames: [String] = [],
         spawnableModelNotes: [String: String] = [:],
+        spawnableWorkspaceAgents: [WorkspaceAgentRef] = [],
         knowledgeEnabled: Bool = false,
         knowledgeCollectionIds: [UUID] = [],
         knowledgeCuratorEnabled: Bool = false
@@ -665,6 +670,7 @@ public struct AgentCapabilities: Sendable, Equatable {
         self.legacySpawnableAgentNames = spawnableAgentNames
         self.spawnableModelNames = spawnableModelNames
         self.spawnableModelNotes = spawnableModelNotes
+        self.spawnableWorkspaceAgents = spawnableWorkspaceAgents
         self.knowledgeEnabled = knowledgeEnabled
         self.knowledgeCollectionIds = knowledgeCollectionIds
         self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
@@ -974,6 +980,13 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// Optional "when/how to use" note per spawnable model id, surfaced in the
     /// spawn guidance descriptor. Pure metadata — the gate is `spawnableModelNames`.
     public var spawnableModelNotes: [String: String]
+    /// Teammates' shared workspace agents this agent may delegate to over the
+    /// relay via `spawn_agent` (per-agent allow-list, by durable
+    /// `(workspaceId, agentAddress)`). Opt-in, empty by default. The Default
+    /// agent ignores this and uses `SubagentConfiguration
+    /// .spawnableWorkspaceAgents`. Durable configuration only — live presence
+    /// is probed at spawn time and never edits this list.
+    public var spawnableWorkspaceAgents: [WorkspaceAgentRef]
     /// Per-agent backend-qualified image-generation model. Bare legacy ids
     /// migrate to local targets during decode.
     public var imageGenerationTarget: MediaModelTarget?
@@ -1062,7 +1075,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         knowledgeEnabled: Bool = false,
         knowledgeCollectionIds: [UUID] = [],
         knowledgeCuratorEnabled: Bool = false,
-        spawnToolAccess: SpawnToolAccess = .none
+        spawnToolAccess: SpawnToolAccess = .none,
+        spawnableWorkspaceAgents: [WorkspaceAgentRef] = []
     ) {
         self.dbEnabled = dbEnabled
         self.schedule = schedule
@@ -1102,6 +1116,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.knowledgeCollectionIds = knowledgeCollectionIds
         self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
         self.spawnToolAccess = spawnToolAccess
+        self.spawnableWorkspaceAgents = SubagentConfiguration.normalizedWorkspaceAgents(spawnableWorkspaceAgents)
     }
 
     public init(from decoder: Decoder) throws {
@@ -1203,6 +1218,11 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         // safe text-only default instead of failing the whole agent decode.
         spawnToolAccess =
             (try? c.decodeIfPresent(SpawnToolAccess.self, forKey: .spawnToolAccess)) ?? .none
+        // Absent for every agent written before workspace spawn targets
+        // existed; lenient so a malformed ref never discards the settings.
+        spawnableWorkspaceAgents = SubagentConfiguration.normalizedWorkspaceAgents(
+            (try? c.decodeIfPresent([WorkspaceAgentRef].self, forKey: .spawnableWorkspaceAgents)) ?? []
+        )
     }
 
     /// Trim values and drop blank entries so a cleared override (empty string)
@@ -1269,6 +1289,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case knowledgeCollectionIds
         case knowledgeCuratorEnabled
         case spawnToolAccess
+        case spawnableWorkspaceAgents
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -1309,6 +1330,9 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(knowledgeCollectionIds, forKey: .knowledgeCollectionIds)
         try c.encode(knowledgeCuratorEnabled, forKey: .knowledgeCuratorEnabled)
         try c.encode(spawnToolAccess, forKey: .spawnToolAccess)
+        if !spawnableWorkspaceAgents.isEmpty {
+            try c.encode(spawnableWorkspaceAgents, forKey: .spawnableWorkspaceAgents)
+        }
     }
 
     /// Default settings for newly created agents (and for back-compat decoding of

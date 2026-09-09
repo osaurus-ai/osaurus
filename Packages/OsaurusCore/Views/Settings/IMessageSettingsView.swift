@@ -38,7 +38,7 @@ struct IMessageSettingsView: View {
     @State private var advancedActionsEnabled: Bool = false
     @State private var enabledAdvancedActions: Set<IMessageConnectionConfiguration.AdvancedAction> = []
     @State private var inboundDispatchEnabled = false
-    @State private var inboundAgentId: UUID?
+    @State private var inboundTarget: AgentDispatchTarget?
     @State private var inboundRoutes: [AgentChannelDispatchRoute] = []
     @State private var inboundAutoReplyEnabled = false
     @State private var statusMessage: String?
@@ -86,7 +86,7 @@ struct IMessageSettingsView: View {
         var advancedActionsEnabled: Bool
         var enabledAdvancedActions: Set<IMessageConnectionConfiguration.AdvancedAction>
         var inboundDispatchEnabled: Bool
-        var inboundAgentId: UUID?
+        var inboundTarget: AgentDispatchTarget?
         var inboundRoutes: [AgentChannelDispatchRoute]
         var inboundAutoReplyEnabled: Bool
     }
@@ -106,7 +106,7 @@ struct IMessageSettingsView: View {
             advancedActionsEnabled: advancedActionsEnabled,
             enabledAdvancedActions: enabledAdvancedActions,
             inboundDispatchEnabled: inboundDispatchEnabled,
-            inboundAgentId: inboundAgentId,
+            inboundTarget: inboundTarget,
             inboundRoutes: inboundRoutes,
             inboundAutoReplyEnabled: inboundAutoReplyEnabled
         )
@@ -230,7 +230,7 @@ struct IMessageSettingsView: View {
             }
             return !parseIds(readableChatIdsText).isEmpty && !parseIds(senderAllowlistText).isEmpty
         case .behavior:
-            return (inboundDispatchEnabled && (inboundAgentId != nil || !inboundRoutes.isEmpty)) || writeEnabled
+            return (inboundDispatchEnabled && (inboundTarget != nil || !inboundRoutes.isEmpty)) || writeEnabled
         case .verify:
             return verifySucceeded
         case nil:
@@ -852,10 +852,10 @@ struct IMessageSettingsView: View {
                 AgentChannelDispatchRoutingEditor(
                     roomNoun: L("chat"),
                     rooms: routableRooms,
-                    defaultAgentId: $inboundAgentId,
+                    defaultTarget: $inboundTarget,
                     routes: $inboundRoutes
                 )
-                AgentChannelPluginPreloadOverflowNotice(agentId: inboundAgentId)
+                AgentChannelPluginPreloadOverflowNotice(agentId: inboundTarget?.localId)
                 SettingsToggle(
                     title: L("Reply Automatically"),
                     description: L(
@@ -1100,7 +1100,7 @@ struct IMessageSettingsView: View {
         advancedActionsEnabled = configuration.advancedActionsEnabled
         enabledAdvancedActions = Set(configuration.enabledAdvancedActions)
         inboundDispatchEnabled = configuration.inboundDispatch.enabled
-        inboundAgentId = configuration.inboundDispatch.targetAgentId
+        inboundTarget = configuration.inboundDispatch.target
         inboundRoutes = configuration.inboundDispatch.routes
         inboundAutoReplyEnabled = configuration.inboundDispatch.autoReplyEnabled
         // Arm autosave only after the stored configuration has hydrated the
@@ -1109,7 +1109,7 @@ struct IMessageSettingsView: View {
     }
 
     private func validationFailure() -> (message: String, section: AgentChannelProviderSetupSection)? {
-        if inboundDispatchEnabled, inboundAgentId == nil, inboundRoutes.isEmpty {
+        if inboundDispatchEnabled, inboundTarget == nil, inboundRoutes.isEmpty {
             return (
                 L("Choose an agent to reply, or add a rule for incoming iMessages."),
                 .behavior
@@ -1147,7 +1147,7 @@ struct IMessageSettingsView: View {
             enabledAdvancedActions: Array(enabledAdvancedActions),
             inboundDispatch: AgentChannelInboundDispatchConfiguration(
                 enabled: inboundDispatchEnabled,
-                targetAgentId: inboundAgentId,
+                target: inboundTarget,
                 routes: inboundRoutes,
                 requireMention: false,
                 continueThreads: true,
