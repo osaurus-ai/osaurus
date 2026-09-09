@@ -58,7 +58,19 @@ enum SafeDiskCachePurge {
             var targets = hashes.map { root.appendingPathComponent("\($0).safetensors") }
             // Companion ownership comes from its explicit linked KV hash, not
             // from a broad ssm-* filename glob.
-            for url in try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isSymbolicLinkKey]) {
+            var companionRoots = [root]
+            let companionRoot = root.appendingPathComponent("ssm_companion")
+            if fm.fileExists(atPath: companionRoot.path) {
+                let values = try companionRoot.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
+                guard values.isSymbolicLink != true, values.isDirectory == true else {
+                    throw failure("Refusing a linked or invalid companion cache directory.")
+                }
+                companionRoots.append(companionRoot)
+            }
+            let companionFiles = try companionRoots.flatMap {
+                try fm.contentsOfDirectory(at: $0, includingPropertiesForKeys: [.isSymbolicLinkKey])
+            }
+            for url in companionFiles {
                 let name = url.lastPathComponent
                 guard name.hasPrefix("ssm-"), name.hasSuffix(".json"),
                     name.count == 4 + 64 + 5 || name.count == 4 + 32 + 5,
@@ -73,7 +85,7 @@ enum SafeDiskCachePurge {
                 let stem = String(name.dropLast(5))
                 guard stem.dropFirst(4).allSatisfy({ "0123456789abcdef".contains($0) }) else { continue }
                 targets.append(url)
-                targets.append(root.appendingPathComponent(stem + ".safetensors"))
+                targets.append(url.deletingLastPathComponent().appendingPathComponent(stem + ".safetensors"))
             }
             // Validate every target before deleting any. Never follow a link.
             for url in targets where fm.fileExists(atPath: url.path) {
