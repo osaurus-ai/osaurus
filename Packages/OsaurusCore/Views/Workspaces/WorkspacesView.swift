@@ -135,12 +135,14 @@ struct WorkspacesView: View {
             // was waiting: pick up where it left off.
             if ready { presentDeeplinkSheetsIfReady() }
         }
-        .onReceive(service.$selectedWorkspaceId) { _ in
-            applyPendingSelection()
+        .onReceive(service.$selectedWorkspaceId) { selected in
+            // A `@Published` publisher fires before the property stores the
+            // new value, so pass the delivered id instead of re-reading it.
+            applyPendingSelection(selected: selected)
         }
         .onChange(of: service.workspaces) { _, _ in
             // The list can load after a deep link selected a workspace.
-            applyPendingSelection()
+            applyPendingSelection(selected: service.selectedWorkspaceId)
         }
         .sheet(isPresented: $showDeeplinkActivateSheet) {
             ActivateWorkspaceSheet(pending: service.pendingActivation) { detail in
@@ -202,8 +204,8 @@ struct WorkspacesView: View {
     /// Deep link from the chat sidebar / Agents tab: `selectWorkspace(id:)`
     /// ran before this tab appeared (or before the list loaded), so land on
     /// that workspace's detail as soon as its summary is known.
-    private func applyPendingSelection() {
-        guard let selected = service.selectedWorkspaceId,
+    private func applyPendingSelection(selected: String?) {
+        guard let selected,
             openWorkspace?.id != selected,
             let summary = service.workspaces.first(where: { $0.id == selected })
         else { return }
