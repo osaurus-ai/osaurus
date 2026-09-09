@@ -2773,7 +2773,7 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("var loadConfiguration = mtpPlan.loadConfiguration"))
         #expect(runtime.contains("loadConfiguration: loadConfiguration"))
         #expect(runtime.contains("draftStrategy: mtpPlan.draftStrategy"))
-        #expect(runtime.contains("let requestStrategy = Self.requestDraftStrategy(holder.draftStrategy)"))
+        #expect(runtime.contains("let requestStrategy = Self.requestDraftStrategy(holder.draftStrategy, mtp: cfg.mtp)"))
         #expect(runtime.contains("draftStrategy: requestStrategy"))
         #expect(runtime.contains("params.draftStrategy = draftStrategy"))
         #expect(adapter.contains("draftStrategy: MLXLMCommon.DraftStrategy?"))

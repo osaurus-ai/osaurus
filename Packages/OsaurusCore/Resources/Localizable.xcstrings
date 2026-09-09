@@ -244735,7 +244735,7 @@
         }
       }
     },
-    "Auto activates from measured tuning or the family cold-start; 1–3 set the STARTING draft depth. Either way the depth adapts while generating — up to 5 when acceptance stays high, down (or to plain decoding) when speculation stops paying. While active, this model decodes greedily (temperature 0); Off restores the configured sampling.": {},
+    "Auto activates from tuning or a supported family default and adapts up to depth 3. Depths 1–3 set a maximum; the runtime may lower the depth or use plain decoding when speculation stops paying. While active, this model decodes greedily (temperature 0); Off restores the configured sampling.": {},
     "Auto-reload": {
       "localizations": {
         "de": {

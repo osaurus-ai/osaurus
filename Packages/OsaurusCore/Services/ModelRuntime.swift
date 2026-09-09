@@ -341,8 +341,12 @@ public actor ModelRuntime {
     /// presence flag is not.
     nonisolated static func modelTypeIsMTPControlTarget(directory: URL) -> Bool {
         let configURL = directory.appendingPathComponent("config.json")
-        guard let data = try? Data(contentsOf: configURL),
-            let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        guard let data = try? Data(contentsOf: configURL) else { return false }
+        return modelTypeIsMTPControlTarget(configData: data)
+    }
+
+    nonisolated static func modelTypeIsMTPControlTarget(configData: Data) -> Bool {
+        guard let object = (try? JSONSerialization.jsonObject(with: configData)) as? [String: Any]
         else { return false }
         var types: Set<String> = []
         if let top = object["model_type"] as? String { types.insert(top) }
@@ -1894,7 +1898,8 @@ public actor ModelRuntime {
         // Use the same bounded allocator window as a visible MTP request so
         // warmup materializes the actual D3 working set, then retain only its
         // most-recently-used portion under the persistent ceiling.
-        let warmupStrategy = Self.requestDraftStrategy(holder.draftStrategy)
+        let warmupRuntime = await getConfig()
+        let warmupStrategy = Self.requestDraftStrategy(holder.draftStrategy, mtp: warmupRuntime.mtp)
         let usesWarmupAllocatorWindow = beginGenerationAllocatorWindowIfNeeded(
             holder: holder,
             requestStrategy: warmupStrategy
@@ -1903,7 +1908,7 @@ public actor ModelRuntime {
             modelName: name,
             container: holder.container,
             draftStrategy: warmupStrategy,
-            runtime: getConfig(),
+            runtime: warmupRuntime,
             maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
         )
         finishGenerationAllocatorWindowIfNeeded(usesWarmupAllocatorWindow)
@@ -5326,7 +5331,7 @@ public actor ModelRuntime {
         await InferenceActivityRegistry.shared.update(id: activityID, phase: .prefilling)
 
         let prepared: MLXBatchAdapter.PreparedStream
-        let requestStrategy = Self.requestDraftStrategy(holder.draftStrategy)
+        let requestStrategy = Self.requestDraftStrategy(holder.draftStrategy, mtp: cfg.mtp)
         let usesGenerationAllocatorWindow = beginGenerationAllocatorWindowIfNeeded(
             holder: holder,
             requestStrategy: requestStrategy
@@ -5342,7 +5347,7 @@ public actor ModelRuntime {
                 toolChoice: toolChoice,
                 stopSequences: stopSequences,
                 draftStrategy: requestStrategy,
-                nativeMTPRequested: ServerRuntimeSettingsStore.snapshot().mtp.mode != .off,
+                nativeMTPRequested: cfg.mtp.mode != .off,
                 nativeMTPLoadResolutionReason: holder.nativeMTPReason,
                 runtime: cfg,
                 maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize,
@@ -6110,13 +6115,14 @@ public actor ModelRuntime {
     /// graph (unloading it is what a reload is for) but no longer drafts, so
     /// switching back on is instant.
     nonisolated static func requestDraftStrategy(
-        _ loaded: MLXLMCommon.DraftStrategy?
+        _ loaded: MLXLMCommon.DraftStrategy?,
+        mtp settings: VMLXServerMTPSettings? = nil
     ) -> MLXLMCommon.DraftStrategy? {
         guard case .some(.nativeMTP(let depth, let verifierMode)) = loaded else {
             // DFlash 2 and the no-drafter case are load-time decisions.
             return loaded
         }
-        let mtp = ServerRuntimeSettingsStore.snapshot().mtp
+        let mtp = settings ?? ServerRuntimeSettingsStore.snapshot().mtp
         if mtp.mode == .off { return nil }
         // An explicit user depth (the 1/2/3 buttons) governs the request
         // exactly — it is an activation contract, not a hint or a cap.

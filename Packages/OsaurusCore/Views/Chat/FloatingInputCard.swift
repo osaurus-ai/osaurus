@@ -2522,7 +2522,7 @@ extension FloatingInputCard {
             help: manuallyBlocked
                 ? L("Speculative decoding is disabled for this bundle because its MTP head is not safe for production use.")
                 : L(
-                    "Auto activates from measured tuning or the family cold-start; 1–3 set the STARTING draft depth. Either way the depth adapts while generating — up to 5 when acceptance stays high, down (or to plain decoding) when speculation stops paying. While active, this model decodes greedily (temperature 0); Off restores the configured sampling."
+                    "Auto activates from tuning or a supported family default and adapts up to depth 3. Depths 1–3 set a maximum; the runtime may lower the depth or use plain decoding when speculation stops paying. While active, this model decodes greedily (temperature 0); Off restores the configured sampling."
                 )
         )
     }
@@ -2545,17 +2545,14 @@ extension FloatingInputCard {
     /// Writes through the same path the Settings pane uses, so there is one
     /// persistence route and one enforcement route.
     ///
-    /// NOTE: saving any `mtp` field makes
-    /// `loadedModelRuntimeInputsRequireRefresh` true, which unloads resident
-    /// models — the next turn reloads. That is correct today (the launch plan,
-    /// including whether the MTP head is in the graph, is resolved at load)
-    /// but it makes this row costlier than Reasoning Effort beside it.
+    /// Depth-only changes apply to the next request; changes that require a
+    /// different loaded model graph follow the guarded reload lifecycle.
     /// UserDefaults key: the user pressed an MTP segment themselves at least
     /// once. From that point the family default logic never touches the
-    /// setting again — their choice outranks the Flash-Next d3 default.
+    /// setting again — their choice outranks the Qwen family d3 default.
     private static let mtpSegmentUserChoseKey = "nativeMTPSegmentUserChose"
     /// UserDefaults key: the CURRENT saved segment was written by the
-    /// Flash-Next family default, not by a person. Only a state we wrote is
+    /// Qwen family default, not by a person. Only a state we wrote is
     /// ours to revert when the selection leaves the family.
     private static let mtpSegmentFamilyDefaultKey = "nativeMTPSegmentIsFamilyDefault"
 
@@ -2590,28 +2587,24 @@ extension FloatingInputCard {
         Task { _ = await ServerController.applyRuntimeSettingsFromConfigureTool(settings) }
     }
 
-    /// Family-scoped MTP default (Eric, 2026-09-04): selecting a Qwen 3.8
-    /// Flash-Next JANG bundle DEFAULTS the control to the explicit d3
-    /// activation — the "3" segment, forceOn + greedy — not Auto. Scoped
-    /// hard to that family: leaving it for any other local model reverts a
-    /// default WE wrote back to Auto (27B keeps its own tuned depth), and a
-    /// segment the user ever pressed themselves is never touched in either
-    /// direction.
-    private func applyFlashNextDefaultDepthIfNeeded(isFlashNextJANG: Bool) {
+    /// Both eligible Qwen27B and Flash-Next bundles start at D3. The layout
+    /// advisory remains Flash-Next-only; defaults use the activation contract.
+    /// Only a value owned by this default may be reverted on leaving the family.
+    private func applyNativeMTPDefaultDepthIfNeeded(eligible: Bool) {
         let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: Self.mtpSegmentUserChoseKey) else { return }
         let mtp = ServerController.runtimeSettingsForConfigureTool().settings.mtp
-        if isFlashNextJANG {
-            // Lift only the FACTORY state (auto, nothing chosen): any other
-            // saved shape is a decision — ours from a previous selection
-            // (already d3) or a config-tool write we must not stomp.
-            guard mtp.mode == .auto, mtp.explicitDepth == nil, mtp.draftTokenLimit == nil
-            else { return }
+        switch NativeMTPSelectionDefault.action(
+            settings: mtp,
+            eligible: eligible,
+            userHasChosen: defaults.bool(forKey: Self.mtpSegmentUserChoseKey),
+            ownsCurrentValue: defaults.bool(forKey: Self.mtpSegmentFamilyDefaultKey)
+        ) {
+        case .keep:
+            return
+        case .selectDepthThree:
             applyNativeMTPSegment("3", userInitiated: false)
             defaults.set(true, forKey: Self.mtpSegmentFamilyDefaultKey)
-        } else if defaults.bool(forKey: Self.mtpSegmentFamilyDefaultKey),
-            mtp.mode == .forceOn, mtp.explicitDepth == 3
-        {
+        case .restoreAuto:
             applyNativeMTPSegment("auto", userInitiated: false)
             defaults.set(false, forKey: Self.mtpSegmentFamilyDefaultKey)
         }
@@ -4650,12 +4643,12 @@ extension FloatingInputCard {
         let bundleDir = installed.localDirectory
         Task.detached(priority: .utility) {
             let advisory = MTPLayoutAdvisory.evaluate(bundleDirectory: bundleDir)
-            let isFlashNextJANG = MTPLayoutAdvisory.isFlashNextJANGBundle(
+            let defaultEligible = NativeMTPSelectionDefault.isEligible(
                 bundleDirectory: bundleDir)
             await MainActor.run {
                 // The selection may have moved while we were on disk.
                 guard selectedModel == model else { return }
-                applyFlashNextDefaultDepthIfNeeded(isFlashNextJANG: isFlashNextJANG)
+                applyNativeMTPDefaultDepthIfNeeded(eligible: defaultEligible)
                 // Shown once per bundle per improper-state fingerprint: a
                 // dismissed state stays quiet across relaunches, while a
                 // DIFFERENT improper state re-arms the notice.
