@@ -2522,7 +2522,7 @@ extension FloatingInputCard {
             help: manuallyBlocked
                 ? L("Speculative decoding is disabled for this bundle because its MTP head is not safe for production use.")
                 : L(
-                    "Auto activates from tuning or a supported family default and adapts up to depth 3. Depths 1–3 set a maximum; the runtime may lower the depth or use plain decoding when speculation stops paying. While active, this model decodes greedily (temperature 0); Off restores the configured sampling."
+                    "Auto activates from tuning or a supported family default and adapts up to depth 5. Depths 1–3 set a maximum; the runtime may lower the depth or use plain decoding when speculation stops paying. While active, this model decodes greedily (temperature 0); Off restores the configured sampling."
                 )
         )
     }

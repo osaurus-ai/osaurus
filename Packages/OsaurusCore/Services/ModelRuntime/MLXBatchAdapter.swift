@@ -32,7 +32,7 @@ private let batchAdapterLog = Logger(subsystem: "ai.osaurus", category: "BatchAd
 
 struct MLXBatchAdapter {
     /// Explicit depth buttons impose a ceiling. Auto may explore only the
-    /// range exposed by the UI, further limited by the configured token cap.
+    /// existing adaptive range, further limited by the configured token cap.
     /// Invalid limits are left invalid for the runtime validator, not repaired
     /// into an apparently valid activation here.
     static func nativeMTPDepthPolicy(
@@ -41,7 +41,7 @@ struct MLXBatchAdapter {
         if settings.mode == .off
             || (settings.mode == .forceOn && settings.explicitDepth != nil)
         { return .fixed }
-        return .adaptive(maximumDepth: min(settings.draftTokenLimit ?? 3, 3))
+        return .adaptive(maximumDepth: min(settings.draftTokenLimit ?? 5, 5))
     }
 
     /// Native MTP is tuned for real chat prefixes, not tiny cold-start

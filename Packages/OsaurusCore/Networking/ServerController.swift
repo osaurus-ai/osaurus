@@ -594,6 +594,7 @@ final class ServerController: ObservableObject {
     ) -> Bool {
         previous.generation != next.generation
             || previous.concurrency != next.concurrency
+            || previous.mtp != next.mtp
     }
 
     // MARK: - Private Helpers

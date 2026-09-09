@@ -13,11 +13,11 @@ import Testing
 
     @Test func autoHasAnExplicitBoundedExplorationRange() {
         var settings = VMLXServerMTPSettings(mode: .auto)
-        #expect(MLXBatchAdapter.nativeMTPDepthPolicy(settings) == .adaptive(maximumDepth: 3))
+        #expect(MLXBatchAdapter.nativeMTPDepthPolicy(settings) == .adaptive(maximumDepth: 5))
         settings.draftTokenLimit = 2
         #expect(MLXBatchAdapter.nativeMTPDepthPolicy(settings) == .adaptive(maximumDepth: 2))
         settings.draftTokenLimit = 99
-        #expect(MLXBatchAdapter.nativeMTPDepthPolicy(settings) == .adaptive(maximumDepth: 3))
+        #expect(MLXBatchAdapter.nativeMTPDepthPolicy(settings) == .adaptive(maximumDepth: 5))
     }
 
     @Test func offDoesNotOptIntoExploration() {
@@ -26,7 +26,7 @@ import Testing
 
     @Test func autoIgnoresStaleManualDepthLikeTheLaunchResolver() {
         let settings = VMLXServerMTPSettings(mode: .auto, explicitDepth: 1)
-        #expect(MLXBatchAdapter.nativeMTPDepthPolicy(settings) == .adaptive(maximumDepth: 3))
+        #expect(MLXBatchAdapter.nativeMTPDepthPolicy(settings) == .adaptive(maximumDepth: 5))
     }
 
     @Test func invalidLimitIsNotSilentlyRepaired() {
@@ -52,5 +52,28 @@ import Testing
 
     @Test func anExplicitDepthCannotCreateAnAbsentHead() {
         #expect(ModelRuntime.requestDraftStrategy(nil, mtp: .init(mode: .forceOn, explicitDepth: 3)) == nil)
+    }
+
+    @Test func depthOnlyChangesInvalidateTheSnapshotWithoutReloadingWeights() {
+        var previous = VMLXServerRuntimeSettings()
+        previous.mtp = .init(mode: .forceOn, explicitDepth: 1)
+        var next = previous
+        next.mtp.explicitDepth = 3
+        #expect(ServerController.runtimeConfigInputsRequireInvalidate(previous: previous, next: next))
+        #expect(!ServerController.loadedModelRuntimeInputsRequireRefresh(previous: previous, next: next))
+    }
+
+    @Test func changingFixedToAutoInvalidatesPolicyWithoutReloadingWeights() {
+        var previous = VMLXServerRuntimeSettings()
+        previous.mtp = .init(mode: .forceOn, explicitDepth: 3)
+        var next = previous
+        next.mtp = .init(mode: .auto)
+        #expect(ServerController.runtimeConfigInputsRequireInvalidate(previous: previous, next: next))
+        #expect(!ServerController.loadedModelRuntimeInputsRequireRefresh(previous: previous, next: next))
+    }
+
+    @Test func unchangedSettingsDoNotInvalidateTheSnapshot() {
+        let settings = VMLXServerRuntimeSettings()
+        #expect(!ServerController.runtimeConfigInputsRequireInvalidate(previous: settings, next: settings))
     }
 }
