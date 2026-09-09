@@ -2170,21 +2170,23 @@ struct AgentDetailView: View {
     /// fields that DEFINE an agent and tucks the rarely-touched knobs behind
     /// the Advanced disclosure.
     ///
-    ///   PRIMARY: Identity, System Prompt, Model.
+    ///   PRIMARY: Identity, Model, System Prompt, Voice.
     ///   ADVANCED: Generation overrides (Temperature, Max Tokens) and the
     ///   Disable Tools / Disable Memory toggles.
     @ViewBuilder
     private var configureTabContent: some View {
         tabHelperText(DetailTab.configure.helperText)
+        // Ordered by how often each is touched from the chat menu: model
+        // right after identity, voice further down.
         identitySection
-        voiceSection
-        systemPromptSection
         defaultModelSection
         if ClaudeCodeConfiguration.isAvailable()
             || selectedModel?.hasPrefix(ClaudeCodeConfiguration.modelPrefix) == true
         {
             claudeCodeSection
         }
+        systemPromptSection
+        voiceSection
         // Follow-up model override is a custom-agent lever; the Default agent
         // always uses the shared core model.
         if agent.id != Agent.defaultId {
