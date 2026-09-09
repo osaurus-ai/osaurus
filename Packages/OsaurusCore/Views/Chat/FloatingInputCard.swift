@@ -4736,9 +4736,11 @@ extension FloatingInputCard {
                 Text("SSD cache limit", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
                 Text(verbatim: usage.headlineLabel)
-                Text(verbatim: usage.warningText)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .fixedSize(horizontal: false, vertical: true)
+                if usage.shouldWarn {
+                    Text(verbatim: usage.warningText)
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let ssdClearResult {
                     Text(verbatim: ssdClearResult).font(.caption)
                 }

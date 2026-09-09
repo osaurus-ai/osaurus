@@ -81,7 +81,7 @@ public struct DiskCacheUsage: Equatable, Sendable {
         let pct = String(format: "%.0f", usedFraction * 100)
         return
             "SSD cache is using \(pct)% of its configured limit. "
-            + (evictions > 0 ? "Older cached data has been removed; some replies may be slower to start. " : "Near the limit, older cached data may be removed and replies may be slower to start. ")
+            + (evictions > 0 ? "Older cached data has been removed; some replies may be slower to start. " : "When space is needed, older cached data may be removed and replies may be slower to start. ")
             + "Increase Disk Cache Size in Settings, or clear cached data. Clearing can make the next reply slower while the cache rebuilds."
     }
 
