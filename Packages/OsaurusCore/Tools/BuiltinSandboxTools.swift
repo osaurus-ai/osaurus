@@ -322,6 +322,32 @@ internal func hostPathRedirectHint(path: String) -> String? {
 /// the "I tried to read my Desktop with sandbox_read_file" slip that
 /// `hostPathRedirectHint` misses because the path is a valid sandbox
 /// directory rather than a rejected host path.
+/// Refusal envelope for a raw sandbox read of a binary document package
+/// (PDF, Word, Excel, PowerPoint, …). The sandbox route has no document
+/// extraction — that lives on the host `file_read` route, which is
+/// unreachable while the sandbox is on — so the raw bytes would only
+/// produce an undecodable blob. Returns `nil` for anything else.
+internal func sandboxBinaryDocumentRefusal(path: String, tool: String) -> String? {
+    let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
+    guard !ext.isEmpty, WorkspaceFileFormatPolicy.prefersDocumentExtraction(ext) else {
+        return nil
+    }
+    let label = ext == "pdf" ? "PDF" : ".\(ext) document"
+    return ToolEnvelope.failure(
+        kind: .invalidArgs,
+        message:
+            "`\(path)` is a \(label) — a binary format the sandbox file reader cannot decode "
+            + "(it returns raw bytes only). If this document belongs to a knowledge collection, "
+            + "read its text with `read_knowledge` using the collection-relative path from "
+            + "`search_knowledge` / `list_knowledge`. Otherwise extract the text inside the "
+            + "sandbox with `sandbox_exec` (e.g. `pdftotext`, or Python with `pypdf` / "
+            + "`python-docx` / `openpyxl` after `sandbox_install`) and read the output file.",
+        field: "path",
+        expected: "a text file, or a document read via `read_knowledge` / `sandbox_exec` extraction",
+        tool: tool
+    )
+}
+
 internal func sandboxDirectoryReadHint(stderr: String) -> String? {
     guard stderr.lowercased().contains("is a directory") else { return nil }
     var hint =
@@ -1620,6 +1646,16 @@ private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
 
         let resolvedReq = requirePath(path, home: home, tool: name)
         guard case .value(let resolved) = resolvedReq else { return resolvedReq.failureEnvelope ?? "" }
+
+        // The sandbox read is a raw `head`/`sed`/`tail` over the bytes; a
+        // PDF / Office package comes back as compressed streams that fail
+        // the UTF-8 decode and collapse to an empty or garbage read. The
+        // model then saw an opaque failure and abandoned the document
+        // (osaurus#2680) even though `read_knowledge` extracts the same
+        // file's text. Refuse up front and name the working paths instead.
+        if let refusal = sandboxBinaryDocumentRefusal(path: resolved, tool: name) {
+            return refusal
+        }
 
         let startLine = max(coerceInt(args["start_line"]) ?? 0, 0)
         let lineCount = max(coerceInt(args["line_count"]) ?? 0, 0)

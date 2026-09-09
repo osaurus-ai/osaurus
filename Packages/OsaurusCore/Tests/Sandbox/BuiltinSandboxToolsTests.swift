@@ -1184,6 +1184,61 @@ struct BuiltinSandboxToolsTests {
         #expect(calls.isEmpty, "no read call should be made when the path is rejected")
     }
 
+    /// osaurus#2680: a raw sandbox read of a PDF decoded to nothing and the
+    /// model abandoned the document. The read must be refused before any
+    /// exec, with a pointer to `read_knowledge` / `sandbox_exec` extraction.
+    @Test @MainActor
+    func sandboxReadFile_refusesBinaryDocumentWithExtractionHint() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_read_file",
+                argumentsJSON: #"{"path":"invoice.pdf"}"#
+            )
+        }
+
+        #expect(ToolEnvelope.isError(output))
+        let payload = try failurePayload(output)
+        #expect(payload["kind"] as? String == "invalid_args")
+        let message = payload["message"] as? String ?? ""
+        #expect(message.contains("PDF"))
+        #expect(message.contains("read_knowledge"))
+        #expect(message.contains("sandbox_exec"))
+
+        let calls = await runner.calls
+        #expect(calls.isEmpty, "no read call should be made for a binary document")
+    }
+
+    /// The combined-mode `file_read` bridge must surface the same refusal
+    /// (relabelled to `file_read`) rather than an empty-file success.
+    @Test @MainActor
+    func combinedMode_fileRead_workspacePdfRefusedWithHint() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+        let bridge = SandboxReadBridge(
+            agentName: "test-agent",
+            home: "/workspace/agents/test-agent"
+        )
+        let hostRoot = URL(fileURLWithPath: "/tmp/osaurus-combined-pdf-\(UUID().uuidString)")
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
+                try await FileReadTool(rootPath: hostRoot).execute(
+                    argumentsJSON: #"{"path":"/workspace/agents/test-agent/invoice.pdf"}"#
+                )
+            }
+        }
+
+        #expect(ToolEnvelope.isError(output))
+        let payload = try failurePayload(output)
+        #expect(payload["tool"] as? String == "file_read")
+        let message = payload["message"] as? String ?? ""
+        #expect(message.contains("read_knowledge"))
+
+        let calls = await runner.calls
+        #expect(calls.isEmpty, "no sandbox read should be issued for a binary document")
+    }
+
     // MARK: - Combined-mode unified file routing
 
     /// Combined mode: the unified host `file_read` serves an absolute
