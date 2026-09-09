@@ -225,6 +225,7 @@ enum AgentDelegationDispatcher {
             maxResponseTokens: maxResponseTokens,
             maxAssistantTurns: maxAssistantTurns,
             maxContextPositions: maxContextPositions,
+            model: model,
             feed: feed,
             interrupt: interrupt,
             parentSessionId: parentSessionId
@@ -237,6 +238,11 @@ enum AgentDelegationDispatcher {
     /// refusal (offline, lapsed key, unshared) surfaces here as
     /// `SubagentError.unavailable` with the exact reason — the parent model
     /// re-plans from the tool result; nothing in the prompt changes.
+    ///
+    /// `model` is the exact identity resolved and priced by local spawn
+    /// admission, carried into the child as `ChatSession.delegationModel`.
+    /// It is nil for `.workspace` targets: the host runs its own agent's
+    /// model and no local admission prices the child.
     static func run(
         target: AgentDispatchTarget,
         targetAgentName: String,
@@ -245,6 +251,7 @@ enum AgentDelegationDispatcher {
         maxResponseTokens: Int? = nil,
         maxAssistantTurns: Int? = nil,
         maxContextPositions: Int? = nil,
+        model: String? = nil,
         feed: SubagentFeed,
         interrupt: InterruptToken,
         parentSessionId: String? = nil
