@@ -8582,31 +8582,58 @@ private struct SendNowButton: View {
 
 /// Balance indicator shown in every session where the router is usable.
 /// Extracted from `FloatingInputCard` so wallet-panel hover/pin state and
-/// Spend chip for a chat with a teammate's shared agent. The host relays the
-/// router's per-step billing summary over the run stream, so this session's
-/// spend ticks live — but it is drawn from the workspace's pool, not this
-/// device's wallet. Reads as passive status in the meta cluster (same
-/// `SelectorChip` chrome as the credits chip); clicking opens Workspaces.
+/// Pool chip for a chat with a teammate's shared agent. Mirrors the personal
+/// credits chip: the number is what the workspace has LEFT to spend (the
+/// pool balance from `WorkspacesService.poolBalances`), because a spend
+/// figure beside a teammate's agent read as "this workspace has 0 credits".
+/// The run is drawn from that pool, not this device's wallet; the host
+/// relays each billed step over the run stream, which refreshes the balance
+/// so it ticks down live. Session spend stays in the tooltip. Passive
+/// status in the meta cluster (same `SelectorChip` chrome as the credits
+/// chip); clicking opens Workspaces.
 private struct FloatingWorkspacePoolChip: View {
     let workspaceName: String
     /// nil only when the tab's workspace is unknown; the click then falls
-    /// back to the workspace list.
+    /// back to the workspace list and no balance can be shown.
     let workspaceId: String?
     /// Total micro-USD billed to the pool by this session's turns.
     let spendMicro: Int
     let metaCompact: Bool
     let metaUltraCompact: Bool
 
+    @ObservedObject private var workspaces = WorkspacesService.shared
     @Environment(\.theme) private var theme
+
+    private var balance: OsaurusRouterWorkspacePoolBalance? {
+        workspaceId.flatMap { workspaces.poolBalances[$0] }
+    }
+
+    /// Balance for the chip; abbreviated when the cluster is squeezed.
+    /// nil until the first fetch lands (or when the workspace is unknown),
+    /// so the chip never shows a fabricated "0 credits".
+    private var balanceDisplay: String? {
+        guard let micro = balance?.balanceMicro else { return nil }
+        return metaCompact
+            ? OsaurusRouter.formatMicroAsCreditsCompact(micro)
+            : OsaurusRouter.formatMicroAsCredits(micro)
+    }
 
     private var spendDisplay: String {
         OsaurusRouter.formatMicroAsCredits(String(spendMicro))
     }
 
-    /// Names the workspace, not a generic "Workspace pool": a bare
-    /// "0 credits" beside a teammate's agent read as *your* balance. The
-    /// name is the context that makes the number legible, so it survives
-    /// compact (truncated) and only ultra-compact drops it.
+    private var isFrozen: Bool { balance?.frozen == true }
+
+    private var balanceColor: Color {
+        if isFrozen { return theme.warningColor }
+        guard let micro = balance.flatMap({ Int64($0.balanceMicro) }) else { return theme.primaryText }
+        return micro <= 0 ? theme.warningColor : theme.primaryText
+    }
+
+    /// Names the workspace, not a generic "Workspace pool": a bare number
+    /// beside a teammate's agent read as *your* balance. The name is the
+    /// context that makes the number legible, so it survives compact
+    /// (truncated) and only ultra-compact drops it.
     var body: some View {
         let caption = CGFloat(theme.captionSize)
         SelectorChip(isActive: false) {
@@ -8635,28 +8662,52 @@ private struct FloatingWorkspacePoolChip: View {
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
                     }
-                    Text(verbatim: "·")
-                        .font(.system(size: caption - 1))
-                        .foregroundColor(theme.tertiaryText)
-                    Text(verbatim: spendDisplay)
-                        .font(.system(size: caption - 1, weight: .medium, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .contentTransition(.numericText())
+                    if let balanceDisplay {
+                        Text(verbatim: "·")
+                            .font(.system(size: caption - 1))
+                            .foregroundColor(theme.tertiaryText)
+                        Text(verbatim: balanceDisplay)
+                            .font(.system(size: caption - 1, weight: .medium, design: .monospaced))
+                            .foregroundColor(balanceColor)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .contentTransition(.numericText())
+                    }
                 }
             }
         }
-        .help(
-            Text(
-                "\(spendDisplay) spent from \(workspaceName)'s pool this session — billed to the workspace, not your wallet. Click to open \(workspaceName).",
-                bundle: .module
-            )
+        .help(Text(verbatim: helpText))
+        .accessibilityLabel(Text(verbatim: accessibilityText))
+        .animation(.easeOut(duration: 0.2), value: balance?.balanceMicro)
+        // First paint and every workspace change: read the pool once. Billed
+        // steps refresh it through `WorkspacesService.noteWorkspaceBilled`.
+        .task(id: workspaceId) {
+            guard let workspaceId else { return }
+            await workspaces.refreshPoolBalance(workspaceId: workspaceId)
+        }
+    }
+
+    private var helpText: String {
+        let spend = String(
+            format: L("%@ spent from this pool this session — billed to the workspace, not your wallet."),
+            spendDisplay
         )
-        .accessibilityLabel(
-            Text("\(spendDisplay) spent from \(workspaceName)'s workspace pool this session.", bundle: .module)
-        )
-        .animation(.easeOut(duration: 0.2), value: spendMicro)
+        let balanceLine: String
+        if isFrozen {
+            balanceLine = String(format: L("%@'s pool is frozen."), workspaceName)
+        } else if let full = balance.map({ OsaurusRouter.formatMicroAsCredits($0.balanceMicro) }) {
+            balanceLine = String(format: L("%@ left in %@'s pool."), full, workspaceName)
+        } else {
+            balanceLine = String(format: L("%@'s pool balance is still loading."), workspaceName)
+        }
+        return "\(balanceLine) \(spend) \(String(format: L("Click to open %@."), workspaceName))"
+    }
+
+    private var accessibilityText: String {
+        if let full = balance.map({ OsaurusRouter.formatMicroAsCredits($0.balanceMicro) }) {
+            return String(format: L("%@ left in %@'s workspace pool. %@ spent this session."), full, workspaceName, spendDisplay)
+        }
+        return String(format: L("%@'s workspace pool. %@ spent this session."), workspaceName, spendDisplay)
     }
 }
 

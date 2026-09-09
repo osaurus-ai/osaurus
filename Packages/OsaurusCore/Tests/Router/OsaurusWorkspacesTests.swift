@@ -2350,6 +2350,50 @@ struct WorkspacesServiceTests {
         }
     }
 
+    /// The composer chip in a team-agent chat reads `poolBalances` for a
+    /// workspace that is not selected in Settings, so the per-workspace read
+    /// must work without a selection, dedupe bursts, and refresh after a
+    /// workspace-billed step.
+    @Test func poolBalances_readableWithoutSelectionAndRefreshedOnBilling() async throws {
+        let balanceCalls = Counter()
+        try await withService(handler: { request in
+            switch request.url?.path {
+            case "/workspaces/team-1/credits/balance":
+                let n = balanceCalls.increment()
+                let micro = n == 1 ? "200000000" : "199990000"
+                return json(#"{"balance_micro":"\#(micro)","frozen":false}"#)
+            default:
+                Issue.record("Unexpected path \(request.url?.path ?? "?")")
+                throw URLError(.badURL)
+            }
+        }) { service, _ in
+            #expect(service.selectedWorkspaceId == nil)
+            #expect(service.poolBalances["team-1"] == nil)
+
+            let first = await service.refreshPoolBalance(workspaceId: "team-1")
+            #expect(first?.balanceMicro == "200000000")
+            #expect(service.poolBalances["team-1"]?.balanceMicro == "200000000")
+            // Selection-scoped state stays untouched.
+            #expect(service.poolBalance == nil)
+
+            // A second ask inside the rate-limit window is served from cache.
+            let second = await service.refreshPoolBalance(workspaceId: "team-1")
+            #expect(second?.balanceMicro == "200000000")
+            #expect(balanceCalls.current == 1)
+
+            // A workspace-billed step forces a fresh read even when the
+            // workspace isn't selected; bursts coalesce into one request.
+            service.noteWorkspaceBilled(workspaceId: "team-1")
+            service.noteWorkspaceBilled(workspaceId: "team-1")
+            service.noteWorkspaceBilled(workspaceId: "team-1")
+            for _ in 0..<40 where balanceCalls.current < 2 {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            #expect(balanceCalls.current == 2)
+            #expect(service.poolBalances["team-1"]?.balanceMicro == "199990000")
+        }
+    }
+
     // MARK: helpers
 
     private func withService(

@@ -66,6 +66,14 @@ final class WorkspacesService: ObservableObject {
     /// credit) and its auto-reload state. Best-effort, refreshed with the
     /// detail; nil on a router without the breakdown endpoint fields.
     @Published private(set) var poolBalance: OsaurusRouterWorkspacePoolBalance?
+    /// Last known pool balance per workspace id, for chrome that names a
+    /// workspace without selecting it (the composer chip in a team-agent
+    /// chat). Fed by every successful balance fetch; read-only elsewhere.
+    @Published private(set) var poolBalances: [String: OsaurusRouterWorkspacePoolBalance] = [:]
+    /// When each workspace's pool balance was last fetched, so a chip that
+    /// re-asks after every billed step doesn't hammer the router.
+    private var poolBalanceFetchedAt: [String: Date] = [:]
+    private static let poolBalanceMinRefreshInterval: TimeInterval = 5
     /// The selected pool's auto-reload settings (loaded on demand by the
     /// overview/sheet; any member may read, only the owner may save).
     @Published private(set) var autoReload: OsaurusRouterWorkspaceAutoReload?
@@ -509,7 +517,7 @@ final class WorkspacesService: ObservableObject {
         }
         // Pool split + auto-reload state. Quiet on failure: the detail's
         // `balance_micro` already carries the headline figure.
-        if let balance = try? await client.workspaceBalance(id: id),
+        if let balance = await fetchPoolBalance(workspaceId: id),
             generation == selectionGeneration, selectedWorkspaceId == id
         {
             poolBalance = balance
@@ -607,11 +615,36 @@ final class WorkspacesService: ObservableObject {
     func refreshPoolBalance() async {
         guard let id = selectedWorkspaceId else { return }
         let generation = selectionGeneration
-        if let balance = try? await client.workspaceBalance(id: id),
+        if let balance = await fetchPoolBalance(workspaceId: id),
             generation == selectionGeneration, selectedWorkspaceId == id
         {
             poolBalance = balance
         }
+    }
+
+    /// Refreshes `poolBalances[workspaceId]` for a workspace that need not
+    /// be selected (any member may read the pool). Rate-limited so a chip
+    /// asking after every billed step costs at most one request per
+    /// `poolBalanceMinRefreshInterval`; pass `force` to bypass. Quiet on
+    /// failure — the last known figure stays.
+    @discardableResult
+    func refreshPoolBalance(workspaceId: String, force: Bool = false) async -> OsaurusRouterWorkspacePoolBalance? {
+        guard OsaurusRouter.isEnabled else { return poolBalances[workspaceId] }
+        if !force, let fetched = poolBalanceFetchedAt[workspaceId],
+            Date().timeIntervalSince(fetched) < Self.poolBalanceMinRefreshInterval
+        {
+            return poolBalances[workspaceId]
+        }
+        return await fetchPoolBalance(workspaceId: workspaceId)
+    }
+
+    /// The one path every balance read takes, so `poolBalances` sees every
+    /// figure the router hands us regardless of which surface asked.
+    private func fetchPoolBalance(workspaceId: String) async -> OsaurusRouterWorkspacePoolBalance? {
+        poolBalanceFetchedAt[workspaceId] = Date()
+        guard let balance = try? await client.workspaceBalance(id: workspaceId) else { return nil }
+        poolBalances[workspaceId] = balance
+        return balance
     }
 
     /// Loads the auto-reload settings for `workspaceId` (any member may read).
@@ -1023,7 +1056,10 @@ final class WorkspacesService: ObservableObject {
     // MARK: - Pool activity (read-only pass-throughs for the activity sheet)
 
     func fetchWorkspaceBalance(workspaceId: String) async throws -> OsaurusRouterWorkspacePoolBalance {
-        try await client.workspaceBalance(id: workspaceId)
+        let balance = try await client.workspaceBalance(id: workspaceId)
+        poolBalanceFetchedAt[workspaceId] = Date()
+        poolBalances[workspaceId] = balance
+        return balance
     }
 
     func fetchWorkspaceUsage(
@@ -1054,12 +1090,28 @@ final class WorkspacesService: ObservableObject {
         WorkspaceRosterStore.shared.update(workspaceId: id, agents: agents)
     }
 
-    /// Refreshes the selected workspace's pool balance after a workspace-billed SSE
-    /// summary (`billed_to: "workspace:<id>"`) so the UI tracks the right ledger.
+    /// Refreshes a workspace's pool balance after a workspace-billed SSE
+    /// summary (`billed_to: "workspace:<id>"`) so the UI tracks the right
+    /// ledger: the composer chip of every team-agent chat reads
+    /// `poolBalances`, and the Settings overview additionally reloads its
+    /// detail when that workspace is the one selected.
     func noteWorkspaceBilled(workspaceId: String) {
-        guard selectedWorkspaceId == workspaceId else { return }
-        Task { await refreshSelectedWorkspace() }
+        // Per-step summaries arrive in bursts during a tool-heavy turn;
+        // coalesce them into one balance read shortly after the last.
+        guard billedRefreshTasks[workspaceId] == nil else { return }
+        billedRefreshTasks[workspaceId] = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard let self, !Task.isCancelled else { return }
+            self.billedRefreshTasks[workspaceId] = nil
+            if self.selectedWorkspaceId == workspaceId {
+                await self.refreshSelectedWorkspace()
+            } else {
+                await self.refreshPoolBalance(workspaceId: workspaceId, force: true)
+            }
+        }
     }
+
+    private var billedRefreshTasks: [String: Task<Void, Never>] = [:]
 
     // MARK: - Billing-preference reconciliation
 
@@ -1292,7 +1344,7 @@ final class WorkspacesService: ObservableObject {
             return pendingConfirmation == nil
 
         case .topUp(let id, let topupId, let amountMicro, let before, let startedAt):
-            guard let balance = try? await client.workspaceBalance(id: id) else { return false }
+            guard let balance = await fetchPoolBalance(workspaceId: id) else { return false }
             if selectedWorkspaceId == id { poolBalance = balance }
             let ledger = try? await client.workspaceTransactions(id: id, limit: 10)
             let landed = Self.topUpLanded(
