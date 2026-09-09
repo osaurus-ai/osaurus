@@ -944,13 +944,13 @@ struct FloatingInputCard: View {
                     sessionID: inputHistoryKey)
                 {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Preparing this model for efficient loading. This may take a while.")
+                        Text(L("Preparing this model for efficient loading. This may take a while."))
                             .font(.callout.weight(.semibold))
-                        Text("Normally needed once unless model files change.")
+                        Text(L("Normally needed once unless model files change."))
                             .font(.caption)
                         Text(verbatim: progress.shard.lastPathComponent).font(.caption)
                         if progress.stage == .verifying {
-                            Text("Verifying model data before replacement…").font(.caption)
+                            Text(L("Verifying model data before replacement…")).font(.caption)
                         } else {
                             ProgressView(value: Double(progress.copiedBytes), total: Double(max(1, progress.totalBytes)))
                         }

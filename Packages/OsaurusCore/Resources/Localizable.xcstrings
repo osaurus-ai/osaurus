@@ -1,6 +1,30 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Preparing this model for efficient loading. This may take a while.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Dieses Modell wird für effizientes Laden vorbereitet. Dies kann eine Weile dauern." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "효율적인 로딩을 위해 이 모델을 준비하고 있습니다. 시간이 걸릴 수 있습니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Подготовка модели для эффективной загрузки. Это может занять некоторое время." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在准备此模型以提高加载效率。这可能需要一些时间。" } }
+      }
+    },
+    "Normally needed once unless model files change.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Normalerweise nur einmal erforderlich, sofern sich die Modelldateien nicht ändern." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "모델 파일이 변경되지 않는 한 일반적으로 한 번만 필요합니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Обычно требуется один раз, если файлы модели не изменяются." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "通常只需一次，除非模型文件发生变化。" } }
+      }
+    },
+    "Verifying model data before replacement…": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Modelldaten werden vor dem Ersetzen überprüft…" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "교체하기 전에 모델 데이터를 검증하고 있습니다…" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Проверка данных модели перед заменой…" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在替换前验证模型数据…" } }
+      }
+    },
     "Loading %@ may cause swapping or run out of memory.": {
       "localizations": {
         "de": {
