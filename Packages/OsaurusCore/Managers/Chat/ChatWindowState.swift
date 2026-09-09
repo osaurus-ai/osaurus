@@ -1106,10 +1106,21 @@ final class ChatWindowState: ObservableObject {
     /// owns it).
     func newTab(agentId newAgentId: UUID? = nil, startsConversation: Bool = true) {
         persistActiveSessionForTabSwitch()
+        // A new tab from a team-agent tab stays with that agent, same as
+        // sidebar New Chat (`startNewChat`). Without the carried context the
+        // fresh session scopes as a local tab, so the strip switches scope
+        // and the user lands in an unrelated local chat. A host-side
+        // read-only copy of a teammate's chat does not carry over, and an
+        // explicit agent pick means a local tab for that agent.
+        let carriedWorkspace =
+            newAgentId == nil
+            ? session.workspaceContext.flatMap { $0.isServedForTeammate ? nil : $0 }
+            : nil
         if let newAgentId, newAgentId != agentId {
             adoptAgent(newAgentId)
         }
         let fresh = makeFreshSession(agentId: agentId)
+        fresh.workspaceContext = carriedWorkspace
         let tab = ChatTab(id: UUID(), session: fresh)
         // One un-animated update for strip + content: letting SwiftUI's
         // implicit animations interpolate the strip growing while ChatView
