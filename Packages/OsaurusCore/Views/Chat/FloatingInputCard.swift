@@ -2547,41 +2547,56 @@ extension FloatingInputCard {
     /// UserDefaults key: the user pressed an MTP segment themselves at least
     /// once. From that point the family default logic never touches the
     /// setting again — their choice outranks the Qwen family d3 default.
-    private static let mtpSegmentUserChoseKey = "nativeMTPSegmentUserChose"
+    private static let mtpSegmentUserChoseKey = NativeMTPSelectionDefault.userChoseKey
     /// UserDefaults key: the CURRENT saved segment was written by the
     /// Qwen family default, not by a person. Only a state we wrote is
     /// ours to revert when the selection leaves the family.
-    private static let mtpSegmentFamilyDefaultKey = "nativeMTPSegmentIsFamilyDefault"
+    private static let mtpSegmentFamilyDefaultKey = NativeMTPSelectionDefault.familyDefaultKey
 
     private func applyNativeMTPSegment(_ segment: String, userInitiated: Bool = true) {
         if userInitiated {
             UserDefaults.standard.set(true, forKey: Self.mtpSegmentUserChoseKey)
             UserDefaults.standard.set(false, forKey: Self.mtpSegmentFamilyDefaultKey)
         }
-        var settings = ServerController.runtimeSettingsForConfigureTool().settings
-        switch segment {
-        case "off":
-            settings.mtp.mode = .off
-            settings.mtp.draftTokenLimit = nil
-            settings.mtp.explicitDepth = nil
-        case "auto":
-            settings.mtp.mode = .auto
-            settings.mtp.draftTokenLimit = nil
-            settings.mtp.explicitDepth = nil
-        default:
-            // Explicit depth is a manual ACTIVATION contract, not an auto
-            // hint: forceOn + explicitDepth activates a tensor-complete MTP
-            // head without measured tuning (the engine validates family and
-            // tensor evidence and fails closed otherwise, e.g. JANG_1L).
-            // Sampling stays independent of the depth selection.
-            // The old wiring (auto + draftTokenLimit) selected a depth in the
-            // UI while the engine stayed autoregressive.
-            settings.mtp.mode = .forceOn
-            settings.mtp.explicitDepth = Int(segment)
-            settings.mtp.draftTokenLimit = nil
-        }
+        let modelAtSelection = selectedModel
+        let mtpAtSelection = ServerController.runtimeSettingsForConfigureTool().settings.mtp
         nativeMTPSelection = segment
-        Task { _ = await ServerController.applyRuntimeSettingsFromConfigureTool(settings) }
+        Task { @MainActor in
+            // Read the latest document when the task actually runs: a delayed
+            // default must not replay unrelated stale settings or beat a click.
+            var settings = ServerController.runtimeSettingsForConfigureTool().settings
+            if !userInitiated {
+                guard selectedModel == modelAtSelection,
+                    !UserDefaults.standard.bool(forKey: Self.mtpSegmentUserChoseKey),
+                    settings.mtp == mtpAtSelection
+                else { return }
+            }
+            switch segment {
+            case "off":
+                settings.mtp.mode = .off
+                settings.mtp.draftTokenLimit = nil
+                settings.mtp.explicitDepth = nil
+            case "auto":
+                settings.mtp.mode = .auto
+                settings.mtp.draftTokenLimit = nil
+                settings.mtp.explicitDepth = nil
+            default:
+                // Explicit depth is a manual ACTIVATION contract, not an auto
+                // hint: forceOn + explicitDepth activates a tensor-complete MTP
+                // head without measured tuning (the engine validates family and
+                // tensor evidence and fails closed otherwise, e.g. JANG_1L).
+                // Sampling stays independent of the depth selection.
+                // The old wiring (auto + draftTokenLimit) selected a depth in the
+                // UI while the engine stayed autoregressive.
+                settings.mtp.mode = .forceOn
+                settings.mtp.explicitDepth = Int(segment)
+                settings.mtp.draftTokenLimit = nil
+            }
+            _ = await ServerController.applyRuntimeSettingsFromConfigureTool(
+                settings,
+                mtpSelectionIsFamilyDefault: !userInitiated
+            )
+        }
     }
 
     /// Both eligible Qwen27B and Flash-Next bundles start at D3. The layout
@@ -2600,17 +2615,16 @@ extension FloatingInputCard {
             return
         case .selectDepthThree:
             applyNativeMTPSegment("3", userInitiated: false)
-            defaults.set(true, forKey: Self.mtpSegmentFamilyDefaultKey)
         case .restoreAuto:
             applyNativeMTPSegment("auto", userInitiated: false)
-            defaults.set(false, forKey: Self.mtpSegmentFamilyDefaultKey)
         }
     }
 
     /// Refreshes both the capable-model set and the saved selection.
     private func refreshNativeMTPState() {
         nativeMTPSelection = Self.nativeMTPSegment(
-            ServerController.runtimeSettingsForConfigureTool().settings.mtp)
+            ServerController.runtimeSettingsForConfigureTool().settings.mtp
+        )
         Task { @MainActor in
             let summaries = await ModelRuntime.shared.cachedModelSummaries()
             // UNION, not replace: capability is a property of the bundle, and

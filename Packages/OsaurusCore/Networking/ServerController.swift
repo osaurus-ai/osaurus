@@ -63,13 +63,18 @@ final class ServerController: ObservableObject {
     /// when no controller exists yet — the settings are persisted and
     /// take effect when the server starts.
     static func applyRuntimeSettingsFromConfigureTool(
-        _ settings: VMLXServerRuntimeSettings
+        _ settings: VMLXServerRuntimeSettings,
+        mtpSelectionIsFamilyDefault: Bool = false
     ) async -> RuntimeSettingsApplyEffects? {
         guard let controller = ServerControllerHolder.shared.controller else {
-            ServerRuntimeSettingsStore.save(settings)
+            if mtpSelectionIsFamilyDefault {
+                ServerRuntimeSettingsStore.saveFamilyMTPDefault(settings)
+            } else {
+                ServerRuntimeSettingsStore.save(settings)
+            }
             return nil
         }
-        return await controller.saveRuntimeSettings(settings)
+        return await controller.saveRuntimeSettings(settings, mtpSelectionIsFamilyDefault: mtpSelectionIsFamilyDefault)
     }
 
     /// Current runtime settings + server liveness for the declarative
@@ -477,7 +482,8 @@ final class ServerController: ObservableObject {
 
     @discardableResult
     func saveRuntimeSettings(
-        _ requestedSettings: VMLXServerRuntimeSettings
+        _ requestedSettings: VMLXServerRuntimeSettings,
+        mtpSelectionIsFamilyDefault: Bool = false
     ) async -> RuntimeSettingsApplyEffects {
         let settings =
             ServerRuntimeSettingsStore.canonicalizedContextAndKVPolicy(
@@ -495,7 +501,11 @@ final class ServerController: ObservableObject {
         )
 
         runtimeSettings = settings
-        ServerRuntimeSettingsStore.save(settings)
+        if mtpSelectionIsFamilyDefault {
+            ServerRuntimeSettingsStore.saveFamilyMTPDefault(settings)
+        } else {
+            ServerRuntimeSettingsStore.save(settings)
+        }
         synchronizeSpawnBatchLimit(from: settings)
 
         let configChanged = projected != previousConfig

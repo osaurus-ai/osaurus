@@ -15,6 +15,41 @@ import Testing
 
 @Suite(.serialized)
 struct ServerRuntimeSettingsStoreTests {
+    @Test @MainActor func mtpChoiceTracksExplicitSaveButNotLegacyNormalization() async throws {
+        let defaults = UserDefaults.standard
+        let keys = [NativeMTPSelectionDefault.userChoseKey, NativeMTPSelectionDefault.familyDefaultKey]
+        let saved = keys.map { defaults.object(forKey: $0) }
+        defer {
+            for (key, value) in zip(keys, saved) { defaults.set(value, forKey: key) }
+        }
+        // No awaits inside each isolated store operation. Exercise both cold
+        // read routes that can normalize and write the legacy Off default.
+        for viaSnapshot in [false, true] {
+            let dir = try makeTempDirectory()
+            try await withOverriddenDirectory(dir) {
+                for key in keys { defaults.removeObject(forKey: key) }
+                var legacy = VMLXServerRuntimeSettings()
+                legacy.schemaVersion = nil
+                legacy.mtp = .init(mode: .off)
+                try JSONEncoder().encode(legacy).write(
+                    to: dir.appendingPathComponent("server-runtime.json"), options: .atomic)
+                ServerRuntimeSettingsStore.invalidateSnapshot()
+                let automatic = try #require(
+                    viaSnapshot ? ServerRuntimeSettingsStore.snapshot() : ServerRuntimeSettingsStore.load())
+                #expect(automatic.mtp.mode == .auto)
+                #expect(!defaults.bool(forKey: NativeMTPSelectionDefault.userChoseKey))
+
+                var selected = automatic
+                selected.mtp = .init(mode: .forceOn, explicitDepth: 3)
+                ServerRuntimeSettingsStore.saveFamilyMTPDefault(selected)
+                #expect(defaults.bool(forKey: NativeMTPSelectionDefault.familyDefaultKey))
+                #expect(!defaults.bool(forKey: NativeMTPSelectionDefault.userChoseKey))
+                ServerRuntimeSettingsStore.save(automatic)
+                #expect(defaults.bool(forKey: NativeMTPSelectionDefault.userChoseKey))
+                #expect(!defaults.bool(forKey: NativeMTPSelectionDefault.familyDefaultKey))
+            }
+        }
+    }
 
     @Test @MainActor func loadOrMigrate_buildsFromLegacyOnFirstRun() async throws {
         let dir = try makeTempDirectory()

@@ -5,6 +5,64 @@ import Testing
 @testable import OsaurusCore
 
 @Suite struct NativeMTPSelectionDefaultTests {
+    @Test func savedChoiceProvenancePreservesAutoWithoutClaimingUnrelatedEdits() throws {
+        let name = "MTPChoiceProof-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let automatic = VMLXServerMTPSettings(mode: .auto)
+        let d3 = VMLXServerMTPSettings(mode: .forceOn, explicitDepth: 3)
+
+        // An untouched MTP section in another settings save stays factory-owned.
+        NativeMTPSelectionDefault.recordSavedChoice(
+            previous: automatic,
+            next: automatic,
+            isFamilyDefault: false,
+            defaults: defaults
+        )
+        #expect(!defaults.bool(forKey: NativeMTPSelectionDefault.userChoseKey))
+
+        NativeMTPSelectionDefault.recordSavedChoice(
+            previous: automatic,
+            next: d3,
+            isFamilyDefault: true,
+            defaults: defaults
+        )
+        #expect(defaults.bool(forKey: NativeMTPSelectionDefault.familyDefaultKey))
+        #expect(!defaults.bool(forKey: NativeMTPSelectionDefault.userChoseKey))
+
+        // Settings/API Auto after the D3 default is an explicit choice.
+        NativeMTPSelectionDefault.recordSavedChoice(
+            previous: d3,
+            next: automatic,
+            isFamilyDefault: false,
+            defaults: defaults
+        )
+        #expect(defaults.bool(forKey: NativeMTPSelectionDefault.userChoseKey))
+        #expect(!defaults.bool(forKey: NativeMTPSelectionDefault.familyDefaultKey))
+        #expect(
+            NativeMTPSelectionDefault.action(
+                settings: automatic,
+                eligible: true,
+                userHasChosen: defaults.bool(forKey: NativeMTPSelectionDefault.userChoseKey),
+                ownsCurrentValue: defaults.bool(forKey: NativeMTPSelectionDefault.familyDefaultKey)
+            ) == .keep
+        )
+    }
+
+    @Test func familyRestoreDoesNotBecomeAUserChoice() throws {
+        let name = "MTPChoiceProof-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        NativeMTPSelectionDefault.recordSavedChoice(
+            previous: .init(mode: .forceOn, explicitDepth: 3),
+            next: .init(mode: .auto),
+            isFamilyDefault: true,
+            defaults: defaults
+        )
+        #expect(!defaults.bool(forKey: NativeMTPSelectionDefault.userChoseKey))
+        #expect(!defaults.bool(forKey: NativeMTPSelectionDefault.familyDefaultKey))
+    }
+
     private func status(tensors: Int = 31, blocked: Bool = false) -> MTPBundleStatus {
         MTPBundleStatus(
             bundleHasMTP: tensors > 0,
