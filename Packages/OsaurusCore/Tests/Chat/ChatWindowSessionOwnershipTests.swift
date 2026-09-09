@@ -6,7 +6,7 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct ChatWindowSessionOwnershipTests {
-    @Test(arguments: [false, true], ["history", "tab", "window"])
+    @Test(arguments: [false, true], ["history", "tab", "window", "closed-tab"])
     func historyOpenDoesNotCreateASecondWriter(ownerTabInactive: Bool, route: String) async throws {
         try await ChatHistoryTestStorage.run {
             let stored = ChatSessionData(
@@ -22,6 +22,12 @@ struct ChatWindowSessionOwnershipTests {
             let canonical = owner.session
             if ownerTabInactive { owner.newTab() }
             let other = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            if route == "closed-tab" {
+                // Record a real closed tab before registering the different
+                // window that subsequently owns this persisted conversation.
+                other.loadSession(stored)
+                other.closeTab(id: other.activeTabId)
+            }
             other.session.turns = [ChatTurn(role: .user, content: "Unrelated draft conversation")]
             other.session.save()
             let otherId = other.session.sessionId
@@ -30,6 +36,7 @@ struct ChatWindowSessionOwnershipTests {
                 switch route {
                 case "history": other.loadSession(stored)
                 case "tab": other.openSessionInNewTab(stored)
+                case "closed-tab": other.reopenLastClosedTab()
                 default:
                     #expect(ChatWindowManager.shared.createWindow(
                         agentId: Agent.defaultId, sessionData: stored,
