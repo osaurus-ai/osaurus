@@ -40,6 +40,9 @@ struct WorkspaceDetailView: View {
     @State private var selectedTab: Tab = .overview
     @State private var showInviteSheet = false
     @State private var showShareSheet = false
+    /// Agent the Share agent sheet opens with (deep link from the chat
+    /// sidebar); nil when opened from the tab's own button.
+    @State private var shareSheetPreselectedAgentId: UUID?
     @State private var showPoolActivity = false
     @State private var showTopUp = false
     @State private var showAutoReload = false
@@ -166,9 +169,10 @@ struct WorkspaceDetailView: View {
             WorkspaceAutoReloadSheet(workspaceId: workspace.id, workspaceName: workspace.name)
                 .environment(\.theme, theme)
         }
-        .sheet(isPresented: $showShareSheet) {
+        .sheet(isPresented: $showShareSheet, onDismiss: { shareSheetPreselectedAgentId = nil }) {
             WorkspaceShareAgentSheet(
                 workspaceId: workspace.id,
+                preselectedAgentId: shareSheetPreselectedAgentId,
                 onSuccess: { showSuccess(L("Agent shared with the workspace.")) }
             )
             .environment(\.theme, theme)
@@ -1365,6 +1369,16 @@ struct WorkspaceDetailView: View {
         guard let tab = service.deepLinkTab, service.selectedWorkspaceId == workspace.id else { return }
         selectedTab = tab
         service.deepLinkTab = nil
+        // "Share to Workspace" from the chat sidebar: open the Share agent
+        // sheet with that agent already selected. Viewers can't share, so
+        // for them the link just lands on the Shared agents tab.
+        if let agentId = service.deepLinkShareAgentId {
+            service.deepLinkShareAgentId = nil
+            if myRole.canShareAgents {
+                shareSheetPreselectedAgentId = agentId
+                showShareSheet = true
+            }
+        }
     }
 
     private func status(for agent: OsaurusRouterWorkspaceAgent) -> SharedAgentStatus {

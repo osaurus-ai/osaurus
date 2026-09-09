@@ -431,13 +431,22 @@ final class WorkspacesService: ObservableObject {
     /// composer pool chip → Overview). `WorkspaceDetailView` consumes and
     /// clears it, so the user's own tab clicks are never overridden later.
     @Published var deepLinkTab: WorkspaceDetailView.Tab?
+    /// Local agent a deep link wants the Share agent sheet opened for
+    /// (chat sidebar → Share to Workspace → <name>). Consumed together with
+    /// `deepLinkTab` by `WorkspaceDetailView`.
+    @Published var deepLinkShareAgentId: UUID?
 
     /// Land on one workspace's detail in Settings ▸ Workspaces from anywhere
     /// in the app: selects it (so the list pane drills in as soon as its
     /// summary is known), remembers the requested tab, and brings the
     /// management window forward. The one path every "Open workspace"
-    /// affordance uses, so they all end on the same screen.
-    func openInSettings(workspaceId: String, tab: WorkspaceDetailView.Tab = .overview) {
+    /// affordance uses, so they all end on the same screen. `shareAgentId`
+    /// additionally opens the Share agent sheet with that agent selected.
+    func openInSettings(
+        workspaceId: String, tab: WorkspaceDetailView.Tab = .overview, shareAgentId: UUID? = nil
+    ) {
+        // Set before the tab: the detail view's tab observer consumes both.
+        deepLinkShareAgentId = shareAgentId
         deepLinkTab = tab
         Task { await selectWorkspace(id: workspaceId) }
         AppDelegate.shared?.showManagementWindow(initialTab: .workspaces)

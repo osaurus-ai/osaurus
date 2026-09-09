@@ -840,6 +840,9 @@ struct WorkspaceShareAgentSheet: View {
     @ObservedObject private var agentManager = AgentManager.shared
 
     let workspaceId: String
+    /// Agent to start with selected (chat sidebar → Share to Workspace →
+    /// <name>). Ignored when it is built-in or already on the roster.
+    var preselectedAgentId: UUID? = nil
     var onSuccess: () -> Void = {}
 
     @State private var selectedAgentId: UUID?
@@ -986,6 +989,12 @@ struct WorkspaceShareAgentSheet: View {
                 SheetHintRow(kind: .error, message: errorMessage)
             }
         }
+        .onAppear {
+            guard selectedAgentId == nil, let preselectedAgentId,
+                let agent = shareableAgents.first(where: { $0.id == preselectedAgentId })
+            else { return }
+            select(agent)
+        }
     }
 
     /// Same consent copy the Agents tab's relay toggle uses: the relay
@@ -1054,22 +1063,26 @@ struct WorkspaceShareAgentSheet: View {
         }
     }
 
+    /// Select an agent and follow it with the display-name prefill (row
+    /// click and the deep-link preselect share this path).
+    private func select(_ agent: Agent) {
+        guard !isAlreadyShared(agent) else { return }
+        selectedAgentId = agent.id
+        let next = Self.nextDisplayName(
+            current: displayName,
+            prefilled: prefilledName,
+            selectedAgentName: agent.name
+        )
+        if next == agent.name {
+            prefilledName = agent.name
+        }
+        displayName = next
+    }
+
     private func agentRow(_ agent: Agent) -> some View {
         let isSelected = selectedAgentId == agent.id
         let shared = isAlreadyShared(agent)
-        return Button(action: {
-            guard !shared else { return }
-            selectedAgentId = agent.id
-            let next = Self.nextDisplayName(
-                current: displayName,
-                prefilled: prefilledName,
-                selectedAgentName: agent.name
-            )
-            if next == agent.name {
-                prefilledName = agent.name
-            }
-            displayName = next
-        }) {
+        return Button(action: { select(agent) }) {
             HStack(spacing: 10) {
                 Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
                     .font(.system(size: 13))
