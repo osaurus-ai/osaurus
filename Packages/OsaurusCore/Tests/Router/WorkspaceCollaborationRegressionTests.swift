@@ -97,28 +97,89 @@ private actor DelayedWorkspaceGate {
     func releaseA() { pending?.resume(); pending = nil }
 }
 
-private final class DelayedWorkspaceProtocol: URLProtocol, @unchecked Sendable {
+// URLProtocol is explicitly non-Sendable in the macOS 26.4 SDK. Only this
+// serialized delivery handle crosses into the asynchronous gate task, not
+// the protocol instance. stopLoading invalidates delivery under the same lock.
+private final class DelayedWorkspaceDelivery: @unchecked Sendable {
+    private let lock = NSRecursiveLock()
+    private weak var target: URLProtocol?
+
+    init(_ target: URLProtocol) { self.target = target }
+
+    func cancel() {
+        lock.lock()
+        defer { lock.unlock() }
+        target = nil
+    }
+
+    func deliver(_ data: Data, for request: URLRequest) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let target else { return }
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        target.client?.urlProtocol(target, didReceive: response, cacheStoragePolicy: .notAllowed)
+        guard self.target != nil else { return }
+        target.client?.urlProtocol(target, didLoad: data)
+        guard self.target != nil else { return }
+        self.target = nil
+        target.client?.urlProtocolDidFinishLoading(target)
+    }
+}
+
+private final class DelayedWorkspaceProtocol: URLProtocol {
     nonisolated(unsafe) static var gate: DelayedWorkspaceGate?
+    private let deliveryLock = NSLock()
+    private var delivery: DelayedWorkspaceDelivery?
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
+        let request = request
+        let gate = Self.gate!
+        let delivery = DelayedWorkspaceDelivery(self)
+        deliveryLock.lock()
+        self.delivery = delivery
+        deliveryLock.unlock()
         Task {
-            let data = await Self.gate!.response(for: request)
-            let response = HTTPURLResponse(
-                url: request.url!,
-                statusCode: 200,
-                httpVersion: nil,
-                headerFields: ["Content-Type": "application/json"]
-            )!
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
+            let data = await gate.response(for: request)
+            delivery.deliver(data, for: request)
         }
     }
-    override func stopLoading() {}
+    override func stopLoading() {
+        deliveryLock.lock()
+        let pending = delivery
+        delivery = nil
+        deliveryLock.unlock()
+        pending?.cancel()
+    }
 }
 
 extension WorkspaceCollaborationRegressionTests {
+    @Test func cancelledWorkspaceRequestDoesNotCompleteAfterGateRelease() async throws {
+        let gate = DelayedWorkspaceGate()
+        DelayedWorkspaceProtocol.gate = gate
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [DelayedWorkspaceProtocol.self]
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel(); DelayedWorkspaceProtocol.gate = nil }
+        let request = Task {
+            try await session.data(from: URL(string: "https://router.test/workspaces/a")!)
+        }
+        await gate.waitForA()
+        request.cancel()
+        do {
+            _ = try await request.value
+            Issue.record("Cancelled request unexpectedly completed")
+        } catch {
+            #expect((error as? URLError)?.code == .cancelled || error is CancellationError)
+        }
+        await gate.releaseA()
+    }
+
     @Test func delayedPreviousWorkspaceCannotOverwriteCurrentSelection() async throws {
         let gate = DelayedWorkspaceGate()
         DelayedWorkspaceProtocol.gate = gate
