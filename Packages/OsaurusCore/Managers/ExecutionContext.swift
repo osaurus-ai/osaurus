@@ -233,10 +233,15 @@ public final class ExecutionContext: ObservableObject {
     }
 
     /// Resolve the stored bookmark onto THIS context's session folder state
-    /// before execution. An explicit dispatch bookmark overrides whatever
-    /// folder the session had persisted (the dispatch asked for that folder);
-    /// without one, a reattached session keeps its own restored folder. Never
-    /// touches any other session's folder or process-wide state.
+    /// before execution. The folder this context was built with (an explicit
+    /// dispatch folder, else the agent's working folder — see
+    /// `BackgroundTaskManager.resolveDispatchFolder`) is the source of truth
+    /// for a headless run: it overrides whatever folder a reattached session
+    /// had persisted, and when it resolves to nothing the reattached session's
+    /// restored folder is dropped too, so a folder inherited on an earlier run
+    /// cannot outlive the setting that granted it (agent folder cleared,
+    /// schedule/watcher folder removed). Never touches any other session's
+    /// folder or process-wide state.
     /// Returns nil on success (or when no folder was requested). On failure
     /// returns a prompt preamble stating which folder could not be read, so
     /// the run reports the real problem instead of introspecting whatever
@@ -249,7 +254,16 @@ public final class ExecutionContext: ObservableObject {
         // plain path (orchestrator-created Watcher, whose config tool stores
         // no bookmark). Either must reach the run — a path-only dispatch used
         // to drop the folder entirely because only the bookmark was threaded.
-        guard folderBookmark != nil || (folderPath?.isEmpty == false) else { return nil }
+        //
+        // No resolved folder is also a decision: drop whatever
+        // `ChatSession.load` restored from a prior run so a cleared agent
+        // folder (or a schedule/watcher that never had one) cannot keep
+        // inheriting a stale session folder across reattach.
+        guard folderBookmark != nil || (folderPath?.isEmpty == false) else {
+            chatSession.folderState.clearFolder()
+            chatSession.folderContextFromDispatchBookmark = false
+            return nil
+        }
         let restored = await chatSession.folderState.restoreAndWait(
             bookmark: folderBookmark,
             path: folderPath
@@ -264,8 +278,9 @@ public final class ExecutionContext: ObservableObject {
                 + "be read (it is missing, not a directory, or macOS denied access). "
                 + "Do NOT inspect other directories in its place and do NOT report the "
                 + "folder as empty. Report this access problem as the outcome and stop; "
-                + "the user can restore access by re-picking the folder in Settings → "
-                + "Watchers."
+                + "the user can restore access by re-picking the folder where it was "
+                + "set — the Watcher or Schedule that owns it, or the agent's Working "
+                + "Folder (chat folder chip / agent editor)."
         }
         // This folder came from a background dispatch (Watcher / schedule /
         // plugin), not an interactive UI pick. Mark it so

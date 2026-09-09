@@ -1331,7 +1331,7 @@ struct SpawnTargetAuthority: Equatable, Sendable {
     let manualToolNames: [String]?
     let memoryEnabled: Bool
     let autonomousExec: AutonomousExecConfig?
-    let hostWorkspaceBookmark: Data?
+    let workingFolderBookmark: Data?
     let dbEnabled: Bool
     let schedule: AgentScheduleSettings
     let limits: AgentLimitsSettings
@@ -1355,7 +1355,7 @@ struct SpawnTargetAuthority: Equatable, Sendable {
         manualToolNames = agent.manualToolNames
         memoryEnabled = agent.memoryEnabled
         autonomousExec = agent.autonomousExec
-        hostWorkspaceBookmark = agent.hostWorkspaceBookmark
+        workingFolderBookmark = agent.workingFolderBookmark
         dbEnabled = agent.settings.dbEnabled
         schedule = agent.settings.schedule
         limits = agent.settings.limits

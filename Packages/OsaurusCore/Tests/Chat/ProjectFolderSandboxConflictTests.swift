@@ -199,6 +199,212 @@ struct ProjectFolderSandboxConflictTests {
         }
     }
 
+    // MARK: - Agent working folder (sticky default for fresh chats)
+
+    private func sameFolder(_ a: URL?, _ b: URL) -> Bool {
+        a?.standardizedFileURL.resolvingSymlinksInPath().path
+            == b.standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
+    @Test("new window for an agent with a working folder → folder active, sandbox persisted off")
+    func agentWorkingFolder_seedsFreshWindow() async throws {
+        try await ChatHistoryTestStorage.run {
+            let folder = try makeFolder()
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let agent = makeAgent(sandboxEnabled: true)
+            AgentManager.shared.add(agent)
+            defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
+            AgentManager.shared.updateWorkingFolder(for: agent.id, bookmark: nil, path: folder.path)
+
+            let window = ChatWindowState(windowId: UUID(), agentId: agent.id)
+            #expect(window.session.folderFromAgentDefault)
+            let context = await window.session.folderState.contextWaitingForRestore()
+            #expect(sameFolder(context?.rootPath, folder))
+            try await waitUntil(timeout: .seconds(5)) {
+                persistedSandboxEnabled(for: agent.id) == false
+            }
+            #expect(window.session.folderState.hasActiveFolder)
+            window.session.folderState.clearFolder()
+        }
+    }
+
+    @Test("New Chat / new tab / agent switch all start in the agent's working folder")
+    func agentWorkingFolder_seedsEveryFreshChatPath() async throws {
+        try await ChatHistoryTestStorage.run {
+            let folderA = try makeFolder()
+            let folderB = try makeFolder()
+            defer {
+                try? FileManager.default.removeItem(at: folderA)
+                try? FileManager.default.removeItem(at: folderB)
+            }
+            let agentA = makeAgent(sandboxEnabled: false)
+            let agentB = makeAgent(sandboxEnabled: false)
+            AgentManager.shared.add(agentA)
+            AgentManager.shared.add(agentB)
+            defer {
+                Task {
+                    _ = await AgentManager.shared.delete(id: agentA.id)
+                    _ = await AgentManager.shared.delete(id: agentB.id)
+                }
+            }
+            AgentManager.shared.updateWorkingFolder(for: agentA.id, bookmark: nil, path: folderA.path)
+            AgentManager.shared.updateWorkingFolder(for: agentB.id, bookmark: nil, path: folderB.path)
+
+            let window = ChatWindowState(windowId: UUID(), agentId: agentA.id)
+            var context = await window.session.folderState.contextWaitingForRestore()
+            #expect(sameFolder(context?.rootPath, folderA))
+
+            // The user clears the chip in THIS chat only (the manager-level
+            // forget is the composer's job); New Chat re-seeds from the agent.
+            window.session.folderState.clearFolder()
+            #expect(!window.session.folderState.hasActiveFolder)
+            window.startNewChat()
+            context = await window.session.folderState.contextWaitingForRestore()
+            #expect(sameFolder(context?.rootPath, folderA), "New Chat (reset path) re-seeds")
+
+            // ⌘T: a fresh tab for the same agent.
+            window.newTab()
+            context = await window.session.folderState.contextWaitingForRestore()
+            #expect(sameFolder(context?.rootPath, folderA), "new tab re-seeds")
+
+            // Switching to another agent lands in THAT agent's folder.
+            window.switchAgent(to: agentB.id)
+            context = await window.session.folderState.contextWaitingForRestore()
+            #expect(sameFolder(context?.rootPath, folderB), "agent switch uses the new agent's folder")
+
+            for tab in window.tabs {
+                tab.session.folderState.clearFolder()
+            }
+        }
+    }
+
+    @Test("project folder wins over the agent's working folder for chats started in the project")
+    func projectFolder_beatsAgentWorkingFolder() async throws {
+        try await ChatHistoryTestStorage.run {
+            let agentFolder = try makeFolder()
+            let projectFolder = try makeFolder()
+            defer {
+                try? FileManager.default.removeItem(at: agentFolder)
+                try? FileManager.default.removeItem(at: projectFolder)
+            }
+            let agent = makeAgent(sandboxEnabled: false)
+            AgentManager.shared.add(agent)
+            defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
+            AgentManager.shared.updateWorkingFolder(
+                for: agent.id, bookmark: nil, path: agentFolder.path)
+            let project = ProjectManager.shared.create(name: "Precedence Project")
+            defer { ProjectManager.shared.delete(id: project.id) }
+            var withFolder = project
+            withFolder.folderPath = projectFolder.path
+            ProjectManager.shared.update(withFolder)
+
+            let window = ChatWindowState(windowId: UUID(), agentId: agent.id)
+            // Let the agent-default seed fully resolve first, so the project
+            // must replace an ACTIVE agent folder, not merely a pending one.
+            _ = await window.session.folderState.contextWaitingForRestore()
+            #expect(sameFolder(window.session.folderState.rootPath, agentFolder))
+
+            window.startNewChat(in: withFolder)
+            let context = await window.session.folderState.contextWaitingForRestore()
+            #expect(sameFolder(context?.rootPath, projectFolder))
+            #expect(!window.session.folderFromAgentDefault)
+            #expect(window.session.projectId == project.id)
+
+            // And a project WITHOUT a folder leaves the agent folder in place.
+            let bare = ProjectManager.shared.create(name: "Bare Project")
+            defer { ProjectManager.shared.delete(id: bare.id) }
+            window.startNewChat(in: bare)
+            let kept = await window.session.folderState.contextWaitingForRestore()
+            #expect(sameFolder(kept?.rootPath, agentFolder))
+            #expect(window.session.folderFromAgentDefault)
+
+            for tab in window.tabs {
+                tab.session.folderState.clearFolder()
+            }
+        }
+    }
+
+    @Test("a chat's own pick is never replaced by the project folder, even after a seed")
+    func ownPick_afterAgentSeed_beatsProject() async throws {
+        try await ChatHistoryTestStorage.run {
+            let agentFolder = try makeFolder()
+            let own = try makeFolder()
+            let projectFolder = try makeFolder()
+            defer {
+                try? FileManager.default.removeItem(at: agentFolder)
+                try? FileManager.default.removeItem(at: own)
+                try? FileManager.default.removeItem(at: projectFolder)
+            }
+            let agent = makeAgent(sandboxEnabled: false)
+            AgentManager.shared.add(agent)
+            defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
+            AgentManager.shared.updateWorkingFolder(
+                for: agent.id, bookmark: nil, path: agentFolder.path)
+
+            let window = ChatWindowState(windowId: UUID(), agentId: agent.id)
+            _ = await window.session.folderState.contextWaitingForRestore()
+            #expect(window.session.folderFromAgentDefault)
+
+            // The user picks a folder in this chat (a user mutation).
+            _ = await window.session.folderState.setFolder(own)
+            #expect(!window.session.folderFromAgentDefault)
+
+            let project = Project(name: "Other", folderPath: projectFolder.path)
+            #expect(window.adoptProjectFolder(project) == nil)
+            #expect(sameFolder(window.session.folderState.rootPath, own))
+            window.session.folderState.clearFolder()
+        }
+    }
+
+    @Test("Default agent and a reopened history session never adopt a working folder")
+    func agentWorkingFolder_skipsDefaultAgentAndLoadedSessions() async throws {
+        try await ChatHistoryTestStorage.run {
+            let folder = try makeFolder()
+            defer { try? FileManager.default.removeItem(at: folder) }
+
+            // Default agent: the manager refuses the write, the window seeds nothing.
+            AgentManager.shared.updateWorkingFolder(
+                for: Agent.defaultId, bookmark: nil, path: folder.path)
+            let defaultWindow = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            #expect(defaultWindow.adoptAgentWorkingFolder() == nil)
+            #expect(!defaultWindow.session.folderState.hasActiveFolder)
+            #expect(defaultWindow.session.folderState.pendingRestore == nil)
+
+            // A session reopened from history keeps its own (empty) folder
+            // state even when the agent has since gained a working folder.
+            let agent = makeAgent(sandboxEnabled: false)
+            AgentManager.shared.add(agent)
+            defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
+            AgentManager.shared.updateWorkingFolder(for: agent.id, bookmark: nil, path: folder.path)
+            let data = ChatSessionData(title: "Old", agentId: agent.id)
+            let reopened = ChatWindowState(windowId: UUID(), agentId: agent.id, sessionData: data)
+            let restored = await reopened.session.folderState.contextWaitingForRestore()
+            #expect(restored == nil)
+            #expect(!reopened.session.folderState.hasActiveFolder)
+            #expect(!reopened.session.folderFromAgentDefault)
+        }
+    }
+
+    @Test("agent working folder that no longer exists → sandbox left untouched")
+    func missingAgentWorkingFolder_keepsSandbox() async throws {
+        try await ChatHistoryTestStorage.run {
+            let agent = makeAgent(sandboxEnabled: true)
+            AgentManager.shared.add(agent)
+            defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
+            let missing = FileManager.default.temporaryDirectory
+                .appendingPathComponent("osaurus-missing-\(UUID().uuidString)").path
+            AgentManager.shared.updateWorkingFolder(for: agent.id, bookmark: nil, path: missing)
+
+            let window = ChatWindowState(windowId: UUID(), agentId: agent.id)
+            _ = await window.session.folderState.contextWaitingForRestore()
+            // Give the follow-up (sandbox) task a beat; it must NOT flip.
+            try await Task.sleep(for: .milliseconds(100))
+            #expect(!window.session.folderState.hasActiveFolder)
+            #expect(!window.session.folderFromAgentDefault)
+            #expect(persistedSandboxEnabled(for: agent.id) == true)
+        }
+    }
+
     // MARK: - Shared with the composer chip
 
     @Test("disableSandboxForHostFolder persists an explicit opt-out and reports the change")

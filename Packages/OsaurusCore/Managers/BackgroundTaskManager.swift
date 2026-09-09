@@ -998,10 +998,14 @@ public final class BackgroundTaskManager: ObservableObject {
         let reattach = lookupReattachableSession(for: request)
         let context: ExecutionContext
         if let existing = reattach {
+            // Same folder resolution as a fresh context: an explicit dispatch
+            // folder, else the agent's sticky working folder. A workspace
+            // (remote teammate) target never gets a local folder.
+            let folder = workspacePrepared == nil ? Self.resolveDispatchFolder(for: request) : nil
             context = ExecutionContext(
                 reattaching: existing,
-                folderBookmark: request.folderBookmark,
-                folderPath: request.folderPath,
+                folderBookmark: folder?.bookmark,
+                folderPath: folder?.path,
                 workspace: workspacePrepared
             )
         } else if let workspacePrepared {
@@ -1544,12 +1548,13 @@ public final class BackgroundTaskManager: ObservableObject {
             request.agentId != nil && request.agentId != Agent.defaultId,
             "BackgroundTaskManager.createContext invoked with nil or default agentId; dispatchChat should have rejected the request."
         )
+        let folder = Self.resolveDispatchFolder(for: request)
         return ExecutionContext(
             id: request.id,
             agentId: request.agentId!,
             title: request.title,
-            folderBookmark: request.folderBookmark,
-            folderPath: request.folderPath,
+            folderBookmark: folder?.bookmark,
+            folderPath: folder?.path,
             source: request.source,
             sourcePluginId: request.sourcePluginId,
             externalSessionKey: request.externalSessionKey,
@@ -1557,6 +1562,24 @@ public final class BackgroundTaskManager: ObservableObject {
             delegationBudget: request.delegationContract,
             delegationModel: request.delegationModel
         )
+    }
+
+    /// The folder a local dispatch runs in: the request's own folder when it
+    /// names one (a Watcher's watched folder, a Schedule's folder, a plugin's
+    /// `folder_bookmark`), otherwise the target agent's sticky working folder
+    /// (`Agent.workingFolderBookmark`) so schedules and watchers created
+    /// without a folder, self-schedules, delegation, channel relays, and
+    /// `/agents/{id}/dispatch` all work where the agent's chats do. Nil when
+    /// neither is set — the run then uses the agent's sandbox/none mode as
+    /// before. Internal so the fallback contract is unit-testable.
+    static func resolveDispatchFolder(
+        for request: DispatchRequest
+    ) -> (bookmark: Data?, path: String?)? {
+        if request.folderBookmark != nil || request.folderPath?.isEmpty == false {
+            return (request.folderBookmark, request.folderPath)
+        }
+        guard let agentId = request.agentId else { return nil }
+        return AgentManager.shared.workingFolder(for: agentId)
     }
 
     // MARK: - Private: Completion Helpers

@@ -149,6 +149,11 @@ public final class ChatFolderState: ObservableObject {
         bookmark = nil
         lastKnownPath = nil
         context = nil
+        // The clear supersedes any in-flight restore (its generation is now
+        // stale, so it can't apply). Drop the handle too, so "is a restore
+        // pending?" checks (`ChatWindowState.adoptAgentWorkingFolder`) see a
+        // genuinely empty state after `reset()` reuses this session.
+        pendingRestore = nil
         // Only a real clear counts as a mutation — `reset()` and restores
         // call this on already-empty state and must not dirty the session.
         if hadFolder {

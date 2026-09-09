@@ -415,6 +415,12 @@ final class ChatWindowState: ObservableObject {
         if agentId != Agent.defaultId, sessionData?.folderBookmark == nil {
             self.session.folderState.adoptLegacyGlobalBookmarkIfNeeded()
         }
+        // A brand-new window chat (no session handed in) starts in the
+        // agent's sticky working folder, like every other fresh chat. A
+        // reopened session keeps its own persisted folder.
+        if sessionData == nil {
+            adoptAgentWorkingFolder()
+        }
 
         setupNotificationObservers()
         observeBonjourBrowser()
@@ -548,6 +554,7 @@ final class ChatWindowState: ObservableObject {
                 // A blank team-agent tab repurposed for a local agent drops
                 // its workspace identity (reset keeps it for New Chat).
                 session.workspaceContext = nil
+                adoptAgentWorkingFolder()
             }
             reconcileRemoteMode()
             refreshSessions()
@@ -631,7 +638,9 @@ final class ChatWindowState: ObservableObject {
     private func makeBlankTab(in scope: ChatTabScope) -> ChatTab {
         switch scope {
         case .local(let id):
-            return ChatTab(id: UUID(), session: makeFreshSession(agentId: id))
+            let fresh = makeFreshSession(agentId: id)
+            adoptAgentWorkingFolder(on: fresh)
+            return ChatTab(id: UUID(), session: fresh)
         case .workspace(let address, let workspaceId):
             let fresh = makeFreshSession(agentId: Agent.defaultId)
             stampWorkspaceContext(address: address, workspaceId: workspaceId, on: fresh)
@@ -919,23 +928,82 @@ final class ChatWindowState: ObservableObject {
     @discardableResult
     func adoptProjectFolder(_ project: Project) -> Task<Void, Never>? {
         let hasFolder = project.folderBookmark != nil || project.folderPath?.isEmpty == false
-        guard hasFolder, !session.folderState.hasActiveFolder else { return nil }
-        let folderState = session.folderState
-        folderState.restore(bookmark: project.folderBookmark, path: project.folderPath)
-        let agentId = agentId
+        // A project folder replaces an agent-default seed (the project is the
+        // more specific context) but never a folder this chat picked itself.
+        guard hasFolder, !session.folderState.hasActiveFolder || session.folderFromAgentDefault
+        else { return nil }
+        session.folderFromAgentDefault = false
+        return adoptDefaultFolder(
+            bookmark: project.folderBookmark,
+            path: project.folderPath,
+            on: session,
+            origin: "project folder"
+        )
+    }
+
+    /// Seed a fresh, folder-less chat with its agent's sticky working folder
+    /// (`Agent.workingFolderBookmark`, remembered from the composer chip or
+    /// the agent editor). A default, not a lock: a project's folder applied
+    /// afterwards (`adoptProjectFolder`) or a pick in the chat replaces it,
+    /// and a session restored from history keeps its own persisted folder.
+    /// The Default agent never carries a folder, and a chat that already
+    /// has one (or is mid-restore) is left alone. Returns the follow-up
+    /// task (nil when nothing was applied) so tests can await the sandbox
+    /// change.
+    @discardableResult
+    func adoptAgentWorkingFolder(on target: ChatSession? = nil) -> Task<Void, Never>? {
+        let target = target ?? session
+        guard let agentId = target.agentId, agentId != Agent.defaultId,
+            target.workspaceContext == nil,
+            let folder = AgentManager.shared.workingFolder(for: agentId),
+            !target.folderState.hasActiveFolder,
+            target.folderState.pendingRestore == nil,
+            target.folderState.persistedBookmark == nil,
+            target.folderState.persistedPath == nil
+        else { return nil }
+        target.folderFromAgentDefault = true
+        return adoptDefaultFolder(
+            bookmark: folder.bookmark,
+            path: folder.path,
+            on: target,
+            origin: "agent working folder"
+        )
+    }
+
+    /// Shared body for the project-folder and agent-folder defaults: restore
+    /// the bookmark (the same path a persisted chat folder takes on reopen)
+    /// and, once it resolves, turn the agent's sandbox off exactly as the
+    /// composer's folder chip does on selection. The sandbox wins over a
+    /// folder in `resolveExecutionMode`, and it is on by default for every
+    /// custom agent with no in-chat toggle, so without this the chat showed
+    /// the folder while the model was jailed to its `/workspace/agents/<id>/`
+    /// home and reported the folder unreachable.
+    private func adoptDefaultFolder(
+        bookmark: Data?,
+        path: String?,
+        on target: ChatSession,
+        origin: String
+    ) -> Task<Void, Never> {
+        let folderState = target.folderState
+        folderState.restore(bookmark: bookmark, path: path)
+        let agentId = target.agentId ?? agentId
         return Task { @MainActor in
             // Only a folder that actually resolved earns the switch: a stale
             // bookmark whose path is gone leaves the agent as it was rather
             // than stranding it with no sandbox AND no folder.
-            guard await folderState.contextWaitingForRestore() != nil else { return }
+            guard await folderState.contextWaitingForRestore() != nil else {
+                target.folderFromAgentDefault = false
+                return
+            }
             do {
                 try await AgentManager.shared.disableSandboxForHostFolder(agentId: agentId)
             } catch {
                 // Fail closed, same as the composer chip: never show a folder
                 // as active while the VM boundary is still authoritative.
                 folderState.clearFolder()
+                target.folderFromAgentDefault = false
                 debugLog(
-                    "[Workspace] Could not disable sandbox after applying project folder: "
+                    "[Workspace] Could not disable sandbox after applying \(origin): "
                         + error.localizedDescription
                 )
             }
@@ -979,6 +1047,9 @@ final class ChatWindowState: ObservableObject {
             session.reset(for: agentId)
         }
         session.workspaceContext = carriedWorkspace
+        // Seed the agent's sticky working folder AFTER the workspace context
+        // is settled: a team-agent tab never gets the local agent's folder.
+        adoptAgentWorkingFolder()
         reconcileRemoteMode()
         refreshSessions()
         refreshSandboxChanges()
@@ -1019,6 +1090,7 @@ final class ChatWindowState: ObservableObject {
             installFreshSession(agentId: agentId)
         } else {
             session.reset()
+            adoptAgentWorkingFolder()
         }
     }
 
@@ -1127,6 +1199,11 @@ final class ChatWindowState: ObservableObject {
         }
         let fresh = makeFreshSession(agentId: agentId)
         fresh.workspaceContext = carriedWorkspace
+        // Local tabs only: a new tab that stays with a team agent must not
+        // inherit the hosting local agent's working folder.
+        if carriedWorkspace == nil {
+            adoptAgentWorkingFolder(on: fresh)
+        }
         let tab = ChatTab(id: UUID(), session: fresh)
         // One un-animated update for strip + content: letting SwiftUI's
         // implicit animations interpolate the strip growing while ChatView
@@ -1622,6 +1699,11 @@ final class ChatWindowState: ObservableObject {
     /// registry.
     private func installFreshSession(agentId: UUID, loading data: ChatSessionData? = nil) {
         session = makeFreshSession(agentId: agentId, loading: data)
+        // A blank replacement (not a history load) starts in the agent's
+        // sticky working folder; a loaded session keeps its own.
+        if data == nil {
+            adoptAgentWorkingFolder()
+        }
     }
 
     /// Attach an existing (registry-owned) live session to this window so

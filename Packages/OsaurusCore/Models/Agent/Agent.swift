@@ -166,19 +166,30 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var settings: AgentSettings
     /// User-defined position. `nil` falls to the end, sorted alphabetically.
     public var order: Int?
-    /// Security-scoped bookmark (created on this machine) for a host folder
-    /// the agent may read/write inside. Persisted so the grant survives
-    /// relaunch. When set, an authenticated remote agent run (Secure Channel,
-    /// agent-scoped) gets host file tools (`file_read`/`file_write`/`file_edit`)
-    /// confined to this folder — shell/git stay denied. `nil` means no host
-    /// folder is granted and remote runs fall back to sandbox-only tools.
-    /// The bookmark is machine-local (it lives on the agent's own host); a
-    /// paired caller never sees it.
-    public var hostWorkspaceBookmark: Data?
-    /// Human-readable path of `hostWorkspaceBookmark` for display in the agent
-    /// editor. Advisory only — `hostWorkspaceBookmark` is the source of truth
-    /// for access; this can go stale if the folder is moved/renamed.
-    public var hostWorkspacePath: String?
+    /// Security-scoped bookmark (created on this machine) for the agent's
+    /// working folder — the ONE host folder this agent works inside. Sticky:
+    /// the composer folder chip and the agent editor both write it, so it
+    /// survives relaunch and follows the agent into
+    /// - every fresh chat opened for this agent (a project's own folder
+    ///   still wins for chats started inside that project),
+    /// - every background dispatch that names no folder of its own
+    ///   (schedules/watchers without a folder, self-schedules, delegation,
+    ///   channels, `/agents/{id}/dispatch`), and
+    /// - authenticated remote agent runs (Secure Channel, agent-scoped),
+    ///   which get host file tools (`file_read`/`file_write`/`file_edit`)
+    ///   confined to this folder — shell/git stay denied.
+    /// `nil` means no working folder: chats start folder-less and remote runs
+    /// fall back to sandbox-only tools. The bookmark is machine-local (it
+    /// lives on the agent's own host); a paired caller never sees it.
+    /// Persisted JSON key is `workingFolderBookmark`; the pre-rename
+    /// `hostWorkspaceBookmark` key is still decoded (see `init(from:)`).
+    public var workingFolderBookmark: Data?
+    /// Human-readable path of `workingFolderBookmark` for display. Advisory
+    /// only — the bookmark is the source of truth for access; this can go
+    /// stale if the folder is moved/renamed. It is also the plain-path
+    /// fallback when the bookmark no longer resolves (the app is not
+    /// App-Sandboxed, so a readable path works without a scope).
+    public var workingFolderPath: String?
 
     public init(
         id: UUID = UUID(),
@@ -211,8 +222,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         ttsVoice: String? = nil,
         settings: AgentSettings = .defaultDisabled,
         order: Int? = nil,
-        hostWorkspaceBookmark: Data? = nil,
-        hostWorkspacePath: String? = nil
+        workingFolderBookmark: Data? = nil,
+        workingFolderPath: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -244,8 +255,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.ttsVoice = ttsVoice
         self.settings = settings
         self.order = order
-        self.hostWorkspaceBookmark = hostWorkspaceBookmark
-        self.hostWorkspacePath = hostWorkspacePath
+        self.workingFolderBookmark = workingFolderBookmark
+        self.workingFolderPath = workingFolderPath
     }
 
     // MARK: - Custom avatar resolution
@@ -336,6 +347,11 @@ extension Agent {
     private enum LegacyCodingKeys: String, CodingKey {
         case disableTools
         case disableMemory
+        /// Pre-rename keys for `workingFolderBookmark` / `workingFolderPath`.
+        /// Read when the new keys are absent so an agent's folder grant
+        /// survives the rename; never written (re-save emits the new keys).
+        case hostWorkspaceBookmark
+        case hostWorkspacePath
     }
 
     /// Custom decoder that provides default values for fields added after the initial release,
@@ -389,9 +405,16 @@ extension Agent {
         ttsVoice = try c.decodeIfPresent(String.self, forKey: .ttsVoice)
         settings = try c.decodeIfPresent(AgentSettings.self, forKey: .settings) ?? .defaultDisabled
         order = try c.decodeIfPresent(Int.self, forKey: .order)
-        // Added after initial release; absent in older agent JSON.
-        hostWorkspaceBookmark = try c.decodeIfPresent(Data.self, forKey: .hostWorkspaceBookmark)
-        hostWorkspacePath = try c.decodeIfPresent(String.self, forKey: .hostWorkspacePath)
+        // Added after initial release; absent in older agent JSON. Renamed
+        // from `hostWorkspace*` once the folder became the agent-wide sticky
+        // working folder; fall back to the legacy keys so the grant persists
+        // across the rename.
+        workingFolderBookmark =
+            try c.decodeIfPresent(Data.self, forKey: .workingFolderBookmark)
+            ?? legacy.decodeIfPresent(Data.self, forKey: .hostWorkspaceBookmark)
+        workingFolderPath =
+            try c.decodeIfPresent(String.self, forKey: .workingFolderPath)
+            ?? legacy.decodeIfPresent(String.self, forKey: .hostWorkspacePath)
     }
 }
 

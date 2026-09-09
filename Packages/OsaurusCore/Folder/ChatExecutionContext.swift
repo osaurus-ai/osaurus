@@ -319,7 +319,7 @@ public enum ChatExecutionContext {
     /// Channel, agent-scoped) is permitted to read/write inside. Bound by
     /// `handleAgentRunEndpoint` ONLY after the secure-transport, built-in
     /// rejection, and agent-scope gates pass AND the agent has a configured
-    /// `Agent.hostWorkspaceBookmark`. When set, `isDeniedForCurrentSurface`
+    /// `Agent.workingFolderBookmark`. When set, `isDeniedForCurrentSurface`
     /// permits the host *file* tools (`file_write` / `file_edit`; `file_read`
     /// is never on the deny list) — confined to this folder by the folder
     /// tools' own root — while `shell_run` / `git_commit` / `file_undo` stay

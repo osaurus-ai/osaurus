@@ -1310,11 +1310,12 @@ struct AgentDetailView: View {
             }
         )
     }
-    /// Display mirror of `Agent.hostWorkspacePath`. Drives the Host Files row
-    /// so the selected folder updates immediately after the user picks/clears
-    /// it (the persisted bookmark on `Agent.hostWorkspaceBookmark` is the real
-    /// grant). `nil` means no host folder is granted.
-    @State private var hostWorkspacePath: String? = nil
+    /// Display mirror of `Agent.workingFolderPath`. Drives the Working Folder
+    /// row so the selected folder updates immediately after the user
+    /// picks/clears it (the persisted bookmark on
+    /// `Agent.workingFolderBookmark` is the real grant). `nil` means the
+    /// agent has no working folder.
+    @State private var workingFolderPath: String? = nil
     /// One live startup-context estimate shared by every Abilities sub-tab.
     /// Specialist editors report local values here before persistence lands.
     @State private var abilityContextPreview: AgentAbilityContextPreview?
@@ -3345,7 +3346,7 @@ struct AgentDetailView: View {
     }
 
     /// On/off values behind the hero's "N of M abilities on" counter, in
-    /// card order. Host Files counts as on when a folder grant exists.
+    /// card order. Working Folder counts as on when the agent has a folder.
     private var abilityFlagValues: [Bool] {
         var flags = [toolsEnabled]
         if agent.id != Agent.defaultId {
@@ -3361,7 +3362,7 @@ struct AgentDetailView: View {
                 abilityPreviewAutonomousConfig?.enabled
                     ?? agentManager.effectiveAutonomousExec(for: agent.id)?.enabled
                     ?? false,
-                hostWorkspacePath != nil,
+                workingFolderPath != nil,
             ]
         }
         return flags
@@ -3683,18 +3684,18 @@ struct AgentDetailView: View {
             codeExecutionAbilityCard
 
             AgentAbilityGroupHeader(
-                label: "Host Files",
+                label: "Working Folder",
                 description:
-                    "Let authenticated remote agent runs read and write files inside a folder you choose."
+                    "The one macOS folder this agent works inside. Remembered from the chat Folder chip or set here."
             )
             AgentAbilityCard(
-                title: "Host Files",
+                title: "Working Folder",
                 subtitle:
-                    "Grant access to one macOS folder for authenticated remote agent runs (Secure Channel, agent-scoped key). Chats inside the app do not use this grant — attach a folder with the Folder chip instead. Writes stay inside the folder; shell and git remain disabled.",
+                    "New chats with this agent open in this folder, and schedules, watchers, and other background runs that don't set their own folder work here too. Authenticated remote agent runs (Secure Channel, agent-scoped key) get file read/write confined to it; shell and git stay disabled for them. Picking or clearing the Folder chip in a chat updates this setting.",
                 icon: "folder.badge.person.crop",
-                isActive: hostWorkspacePath != nil
+                isActive: workingFolderPath != nil
             ) {
-                hostWorkspaceFolderRow
+                workingFolderRow
             }
 
             Text(
@@ -5563,43 +5564,46 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Host Files row (Abilities → Overview). Lets the user grant this agent a
-    /// real macOS folder it may read and write inside over an authenticated
-    /// remote agent run (Secure Channel, agent-scoped key) — that is the ONLY
-    /// surface that mounts the grant (`HTTPHandler.handleAgentRunEndpoint` →
-    /// `ChatExecutionContext.authenticatedHostFolderRoot`); an in-app chat
-    /// gets its workspace from the Folder chip, never from here. The grant is
-    /// a security-scoped bookmark persisted on the agent; writes are confined
-    /// to the folder and shell/git stay denied on the remote surface.
+    /// Working Folder row (Abilities → Overview). Shows and edits the agent's
+    /// sticky working folder (`Agent.workingFolderBookmark`) — the same record
+    /// the chat Folder chip writes. Fresh chats for the agent open in it
+    /// (`ChatWindowState.adoptAgentWorkingFolder`), folder-less background
+    /// dispatches run in it (`BackgroundTaskManager.resolveDispatchFolder`),
+    /// and an authenticated remote agent run (Secure Channel, agent-scoped
+    /// key) mounts it as its confined file-tool root
+    /// (`HTTPHandler.handleAgentRunEndpoint` →
+    /// `ChatExecutionContext.authenticatedHostFolderRoot`) with shell/git
+    /// denied on that surface.
     /// Independent of the Linux sandbox, so it renders regardless of sandbox
     /// availability.
     @ViewBuilder
-    private var hostWorkspaceFolderRow: some View {
+    private var workingFolderRow: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(
-                "Used by authenticated remote agent runs only. For chats in the app, attach a folder with the Folder chip.",
+                "Applies to new chats and to background runs without a folder of their own. A project's folder still wins for chats started inside that project.",
                 bundle: .module
             )
             .font(.system(size: 11))
             .foregroundColor(theme.tertiaryText)
             .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 12) {
-                Text(hostWorkspacePath ?? L("No folder selected"))
+                Text(workingFolderPath ?? L("No folder selected"))
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(
-                        hostWorkspacePath == nil ? theme.tertiaryText : theme.primaryText
+                        workingFolderPath == nil ? theme.tertiaryText : theme.primaryText
                     )
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .accessibilityIdentifier("agentEditor.workingFolderPath")
                 Spacer()
                 Button {
-                    chooseHostWorkspaceFolder()
+                    chooseWorkingFolder()
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "folder")
                             .font(.system(size: 10, weight: .semibold))
                         Text(
-                            hostWorkspacePath == nil ? L("Choose…") : L("Change…")
+                            workingFolderPath == nil ? L("Choose…") : L("Change…")
                         )
                         .font(.system(size: 11, weight: .medium))
                     }
@@ -5616,9 +5620,9 @@ struct AgentDetailView: View {
                     )
                 }
                 .buttonStyle(.plain)
-                if hostWorkspacePath != nil {
+                if workingFolderPath != nil {
                     Button {
-                        clearHostWorkspaceFolder()
+                        clearWorkingFolder()
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 10, weight: .semibold))
@@ -5626,24 +5630,25 @@ struct AgentDetailView: View {
                             .padding(6)
                     }
                     .buttonStyle(.plain)
-                    .help(L("Remove host folder access"))
+                    .help(L("Clear working folder"))
+                    .accessibilityIdentifier("agentEditor.clearWorkingFolder")
                 }
             }
         }
     }
 
     /// Present a folder picker, mint a security-scoped bookmark, and persist it
-    /// on the agent. Mirrors `FolderContextService.selectFolder`'s panel but
-    /// stores the grant per-agent instead of in the process-wide context.
-    private func chooseHostWorkspaceFolder() {
+    /// as the agent's working folder — the same record the chat Folder chip
+    /// writes, so the two surfaces always agree.
+    private func chooseWorkingFolder() {
         Task { @MainActor in
             let panel = NSOpenPanel()
             panel.canChooseFiles = false
             panel.canChooseDirectories = true
             panel.canCreateDirectories = true
             panel.allowsMultipleSelection = false
-            panel.title = L("Select Host Workspace Folder")
-            panel.message = L("Choose a folder this agent may read and write inside.")
+            panel.title = L("Select Working Folder")
+            panel.message = L("Choose the folder this agent works inside.")
             panel.prompt = L("Select")
 
             guard await panel.beginModal() == .OK, let url = panel.url else { return }
@@ -5651,21 +5656,16 @@ struct AgentDetailView: View {
                 ToastManager.shared.error(L("Failed to grant folder access"))
                 return
             }
-            guard var updated = agentManager.agent(for: agent.id) else { return }
-            updated.hostWorkspaceBookmark = bookmark
-            updated.hostWorkspacePath = url.path
-            agentManager.update(updated)
-            hostWorkspacePath = url.path
+            let path = url.standardizedFileURL.path
+            agentManager.updateWorkingFolder(for: agent.id, bookmark: bookmark, path: path)
+            workingFolderPath = path
         }
     }
 
-    /// Revoke the agent's host folder grant.
-    private func clearHostWorkspaceFolder() {
-        guard var updated = agentManager.agent(for: agent.id) else { return }
-        updated.hostWorkspaceBookmark = nil
-        updated.hostWorkspacePath = nil
-        agentManager.update(updated)
-        hostWorkspacePath = nil
+    /// Forget the agent's working folder.
+    private func clearWorkingFolder() {
+        agentManager.clearWorkingFolder(for: agent.id)
+        workingFolderPath = nil
     }
 
     /// Sandbox execution toggles, surfaced in the Sandbox tab's Execution
@@ -6848,7 +6848,7 @@ struct AgentDetailView: View {
         spawnToolAccess = agent.settings.spawnToolAccess
         // Snapshot the global subagent config for the spawn-handoff warning.
         globalSubagentConfig = globalSpawnConfiguration
-        hostWorkspacePath = agent.hostWorkspacePath
+        workingFolderPath = agent.workingFolderPath
         abilityPreviewToolMode = agentManager.effectiveToolSelectionMode(for: agent.id)
         abilityPreviewToolNames = Set(agentManager.effectiveEnabledToolNames(for: agent.id) ?? [])
         abilityPreviewAutonomousConfig = agentManager.effectiveAutonomousExec(for: agent.id)

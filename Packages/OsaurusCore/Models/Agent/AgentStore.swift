@@ -501,8 +501,8 @@ private extension Agent {
             ttsVoice: ttsVoice,
             settings: settings,
             order: order,
-            hostWorkspaceBookmark: hostWorkspaceBookmark,
-            hostWorkspacePath: hostWorkspacePath
+            workingFolderBookmark: workingFolderBookmark,
+            workingFolderPath: workingFolderPath
         )
     }
 
@@ -537,8 +537,8 @@ private extension Agent {
             ttsVoice: ttsVoice,
             settings: settings,
             order: nil,
-            hostWorkspaceBookmark: hostWorkspaceBookmark,
-            hostWorkspacePath: hostWorkspacePath
+            workingFolderBookmark: workingFolderBookmark,
+            workingFolderPath: workingFolderPath
         )
     }
 }

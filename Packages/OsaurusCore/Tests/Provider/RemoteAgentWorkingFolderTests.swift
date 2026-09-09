@@ -1,12 +1,14 @@
 //
-//  RemoteAgentHostWorkspaceTests.swift
+//  RemoteAgentWorkingFolderTests.swift
 //  osaurusTests
 //
-//  Pins the per-agent host-workspace feature that lets an AUTHENTICATED remote
-//  agent run (Mode 2) create/edit files inside a folder its owner chose on the
-//  agent's machine:
-//    • The host-workspace bookmark + display path persist on the `Agent` and
-//      decode back-compat for agents saved before the feature existed.
+//  Pins the per-agent working folder as seen by an AUTHENTICATED remote agent
+//  run (Mode 2), which may create/edit files inside the folder the agent's
+//  owner chose on the agent's machine:
+//    • The working-folder bookmark + display path persist on the `Agent`,
+//      decode back-compat for agents saved before the feature existed, and
+//      decode the pre-rename `hostWorkspace*` JSON keys (re-encoding emits
+//      only the new keys).
 //    • `resolveSecurityScopedURL` fails closed on unusable bookmark data.
 //    • `resolveExecutionMode` yields `.hostFolder` when a folder is configured.
 //    • The external-surface deny list is relaxed for `file_write`/`file_edit`
@@ -20,53 +22,97 @@ import Testing
 
 @testable import OsaurusCore
 
-@Suite("Remote agent host workspace")
-struct RemoteAgentHostWorkspaceTests {
+@Suite("Remote agent working folder")
+struct RemoteAgentWorkingFolderTests {
 
     // MARK: - Agent persistence (bookmark + display path round-trip)
 
-    @Test func agent_encodesAndDecodesHostWorkspaceFields() throws {
+    @Test func agent_encodesAndDecodesWorkingFolderFields() throws {
         let bookmark = Data([0x01, 0x02, 0x03, 0x04])
         let path = "/Users/tester/Desktop"
         let agent = Agent(
             name: "Filer",
             autonomousExec: AutonomousExecConfig(enabled: false),
-            hostWorkspaceBookmark: bookmark,
-            hostWorkspacePath: path
+            workingFolderBookmark: bookmark,
+            workingFolderPath: path
         )
         let data = try JSONEncoder().encode(agent)
         let decoded = try JSONDecoder().decode(Agent.self, from: data)
-        #expect(decoded.hostWorkspaceBookmark == bookmark)
-        #expect(decoded.hostWorkspacePath == path)
+        #expect(decoded.workingFolderBookmark == bookmark)
+        #expect(decoded.workingFolderPath == path)
     }
 
-    @Test func agent_nilHostWorkspaceFields_roundTripStaysNil() throws {
+    @Test func agent_nilWorkingFolderFields_roundTripStaysNil() throws {
         let agent = Agent(name: "NoFolder", autonomousExec: AutonomousExecConfig(enabled: false))
         let data = try JSONEncoder().encode(agent)
         let decoded = try JSONDecoder().decode(Agent.self, from: data)
-        #expect(decoded.hostWorkspaceBookmark == nil)
-        #expect(decoded.hostWorkspacePath == nil)
+        #expect(decoded.workingFolderBookmark == nil)
+        #expect(decoded.workingFolderPath == nil)
     }
 
-    @Test func agent_decodesLegacyJSONWithoutHostWorkspaceKeys() throws {
-        // Encode a normal agent, strip the new keys from the JSON object, and
-        // confirm decode still succeeds with nil host-workspace fields —
+    @Test func agent_decodesLegacyJSONWithoutWorkingFolderKeys() throws {
+        // Encode a normal agent, strip the folder keys from the JSON object,
+        // and confirm decode still succeeds with nil working-folder fields —
         // `decodeIfPresent` back-compat for agents persisted before the feature.
         let agent = Agent(
             name: "Legacy",
             autonomousExec: AutonomousExecConfig(enabled: false),
-            hostWorkspaceBookmark: Data([9, 9, 9]),
-            hostWorkspacePath: "/tmp/here"
+            workingFolderBookmark: Data([9, 9, 9]),
+            workingFolderPath: "/tmp/here"
         )
         let data = try JSONEncoder().encode(agent)
         var obj = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        obj.removeValue(forKey: "hostWorkspaceBookmark")
-        obj.removeValue(forKey: "hostWorkspacePath")
+        obj.removeValue(forKey: "workingFolderBookmark")
+        obj.removeValue(forKey: "workingFolderPath")
         let stripped = try JSONSerialization.data(withJSONObject: obj)
         let decoded = try JSONDecoder().decode(Agent.self, from: stripped)
-        #expect(decoded.hostWorkspaceBookmark == nil)
-        #expect(decoded.hostWorkspacePath == nil)
+        #expect(decoded.workingFolderBookmark == nil)
+        #expect(decoded.workingFolderPath == nil)
         #expect(decoded.name == "Legacy")
+    }
+
+    @Test func agent_decodesPreRenameHostWorkspaceKeys_andReencodesOnlyNewKeys() throws {
+        // An agent JSON written before the rename carries only the legacy
+        // `hostWorkspaceBookmark` / `hostWorkspacePath` keys. The grant must
+        // survive the rename, and the next save must emit only the new keys.
+        let legacyBookmark = Data([0xAA, 0xBB, 0xCC])
+        let legacyPath = "/Users/tester/Projects/legacy"
+        let agent = Agent(name: "PreRename", autonomousExec: AutonomousExecConfig(enabled: false))
+        let data = try JSONEncoder().encode(agent)
+        var obj = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        obj.removeValue(forKey: "workingFolderBookmark")
+        obj.removeValue(forKey: "workingFolderPath")
+        obj["hostWorkspaceBookmark"] = legacyBookmark.base64EncodedString()
+        obj["hostWorkspacePath"] = legacyPath
+        let legacyJSON = try JSONSerialization.data(withJSONObject: obj)
+
+        let decoded = try JSONDecoder().decode(Agent.self, from: legacyJSON)
+        #expect(decoded.workingFolderBookmark == legacyBookmark)
+        #expect(decoded.workingFolderPath == legacyPath)
+
+        let reencoded = try JSONEncoder().encode(decoded)
+        let reobj = try #require(JSONSerialization.jsonObject(with: reencoded) as? [String: Any])
+        #expect(reobj["hostWorkspaceBookmark"] == nil)
+        #expect(reobj["hostWorkspacePath"] == nil)
+        #expect(reobj["workingFolderBookmark"] as? String == legacyBookmark.base64EncodedString())
+        #expect(reobj["workingFolderPath"] as? String == legacyPath)
+    }
+
+    @Test func agent_newKeysWinOverLegacyKeysWhenBothPresent() throws {
+        let agent = Agent(
+            name: "Both",
+            autonomousExec: AutonomousExecConfig(enabled: false),
+            workingFolderBookmark: Data([1]),
+            workingFolderPath: "/new"
+        )
+        let data = try JSONEncoder().encode(agent)
+        var obj = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        obj["hostWorkspaceBookmark"] = Data([2]).base64EncodedString()
+        obj["hostWorkspacePath"] = "/old"
+        let both = try JSONSerialization.data(withJSONObject: obj)
+        let decoded = try JSONDecoder().decode(Agent.self, from: both)
+        #expect(decoded.workingFolderBookmark == Data([1]))
+        #expect(decoded.workingFolderPath == "/new")
     }
 
     // MARK: - Security-scoped bookmark resolution (fail-closed)

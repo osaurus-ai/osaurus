@@ -1012,11 +1012,12 @@ public final class ToolRegistry: ObservableObject {
                 return ToolErrorEnvelope(
                     kind: .toolNotFound,
                     reason:
-                        "\(name) needs a workspace attached to THIS chat and there is none. "
-                        + "The agent's Host Files folder is not active in chat (it applies "
-                        + "only to authenticated remote agent runs). Ask the user to attach "
-                        + "a folder via the Folder chip (or enable Autonomous execution). "
-                        + "Until then, deliver file content with share_artifact and say why.",
+                        "\(name) needs a working folder attached to THIS chat and there is none "
+                        + "(this chat has no folder, or its folder was cleared). Ask the user to "
+                        + "attach a folder via the Folder chip — that also becomes the agent's "
+                        + "Working Folder for future chats and background runs — or enable "
+                        + "Autonomous execution. Until then, deliver file content with "
+                        + "share_artifact and say why.",
                     toolName: name,
                     retryable: false
                 ).toJSONString()

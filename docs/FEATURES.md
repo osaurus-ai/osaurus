@@ -497,7 +497,7 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 - **Generation Settings** — Configure default model, temperature, and max tokens
 - **Import/Export** — Share agents as JSON files for backup or sharing
 - **Live Switching** — Click to activate a agent, theme updates automatically
-- **Host Files (per-agent folder grant)** — Optionally grant the agent a real macOS folder it may read and write inside, including over an authenticated remote agent run (Secure Channel). Writes stay inside the folder; shell and git remain disabled. Configure → Features → Host Files; see [SECURITY.md](SECURITY.md) and [OpenAI_API_GUIDE.md](OpenAI_API_GUIDE.md).
+- **Working Folder (sticky per-agent folder)** — The one macOS folder the agent works inside. Picking a folder with the chat Folder chip remembers it on the agent; new chats open in it, and schedules, watchers, and other background runs that set no folder of their own run in it. Authenticated remote agent runs (Secure Channel) get file read/write confined to it with shell and git disabled. Configure → Features → Working Folder; see [SECURITY.md](SECURITY.md) and [OpenAI_API_GUIDE.md](OpenAI_API_GUIDE.md).
 
 **Feature Gates (Configure → Features):** stored on `Agent.settings`; [`SystemPromptComposer.resolveTools`](../Packages/OsaurusCore/Services/Chat/SystemPromptComposer.swift) strips the matching tools when a gate is off (auto mode). Capabilities are grouped by purpose; extra ones default **off** to reduce token cost.
 
@@ -523,8 +523,8 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 | `defaultModel` | Optional model ID for this agent |
 | `temperature` | Optional temperature override |
 | `maxTokens` | Optional max tokens override |
-| `hostWorkspaceBookmark` | Machine-local security-scoped bookmark for a host folder the agent may read/write inside; mounted only for authenticated remote agent runs (never sent to a paired peer) |
-| `hostWorkspacePath` | Advisory display path for the host workspace folder (source of truth is the bookmark) |
+| `workingFolderBookmark` | Machine-local security-scoped bookmark for the agent's sticky working folder. Set by the chat composer's Folder chip or **Agent → Configure → Working Folder**; applied to every fresh chat for the agent (a project's own folder wins inside that project), to background dispatches that name no folder (schedules/watchers without one, self-schedules, delegation, channels, `/agents/{id}/dispatch`), and to authenticated remote agent runs as their confined file-tool root (never sent to a paired peer). Legacy JSON key `hostWorkspaceBookmark` is still read. |
+| `workingFolderPath` | Advisory display path for the working folder (source of truth is the bookmark; used as the plain-path fallback when the bookmark is stale). Legacy JSON key `hostWorkspacePath` is still read. |
 
 ---
 

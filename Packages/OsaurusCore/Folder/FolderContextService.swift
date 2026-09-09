@@ -22,8 +22,8 @@ public final class FolderContextService {
     // MARK: - Bookmark helpers
 
     /// Create a security-scoped bookmark for `url`, suitable for persisting on
-    /// an `Agent` (`Agent.hostWorkspaceBookmark`) so a host-folder grant
-    /// survives relaunch. Mirrors the bookmark `setFolder` creates, but does
+    /// an `Agent` (`Agent.workingFolderBookmark`) so the agent's working
+    /// folder survives relaunch. Mirrors the bookmark `setFolder` creates, but does
     /// not mutate the process-wide folder context. Returns nil if the bookmark
     /// can't be created.
     public nonisolated static func makeSecurityScopedBookmark(for url: URL) -> Data? {

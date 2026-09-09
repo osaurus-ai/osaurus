@@ -5597,7 +5597,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
-    /// Resolve a per-agent host workspace folder (`Agent.hostWorkspaceBookmark`)
+    /// Resolve the agent's working folder (`Agent.workingFolderBookmark`)
     /// into a live `FolderContext` and begin security-scoped access. Returns
     /// nil when the agent has no folder configured, the bookmark is
     /// stale/unresolvable (folder moved or deleted), or access can't be
@@ -5608,7 +5608,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         agentId: UUID
     ) async -> (url: URL, context: FolderContext)? {
         let bookmark = await MainActor.run {
-            AgentManager.shared.agent(for: agentId)?.hostWorkspaceBookmark
+            AgentManager.shared.agent(for: agentId)?.workingFolderBookmark
         }
         guard let bookmark,
             let url = FolderContextService.resolveSecurityScopedURL(from: bookmark),

@@ -381,6 +381,13 @@ final class ChatSession: ObservableObject {
     /// (`preferHostFolder`); an interactive folder keeps the historical
     /// sandbox-priority contract, where the user toggles sandbox off instead.
     var folderContextFromDispatchBookmark: Bool = false
+    /// True while this fresh chat's folder is only the AGENT's sticky
+    /// working folder, seeded by `ChatWindowState.adoptAgentWorkingFolder`
+    /// rather than picked in this chat or inherited from a project. A
+    /// project's own folder may still replace it (a project is the more
+    /// specific context), which the plain `hasActiveFolder` guard would
+    /// otherwise block. Cleared by any user pick/clear and by `reset()`.
+    var folderFromAgentDefault: Bool = false
     /// Whether this session's model loads may evict a model someone else is using.
     ///
     /// Set from `DispatchRequest.loadIntent` at the trigger boundary. Headless
@@ -897,7 +904,10 @@ final class ChatSession: ObservableObject {
         // turn). Folder mutations are rare click-driven events, so a direct
         // save (already async via `saveAsync`) needs no debounce.
         folderState.onFolderMutated = { [weak self] in
-            guard let self, !self.turns.isEmpty else { return }
+            guard let self else { return }
+            // A user pick/clear makes the folder this chat's own choice.
+            self.folderFromAgentDefault = false
+            guard !self.turns.isEmpty else { return }
             self.isDirty = true
             self.save()
         }
@@ -2895,7 +2905,10 @@ final class ChatSession: ObservableObject {
         isDirty = false
         // A new chat starts folder-less; the outgoing session's folder stays
         // persisted on its own row and does not leak into the fresh one.
+        // (`ChatWindowState` re-seeds the agent's sticky working folder
+        // right after, when the agent has one.)
         folderState.clearFolder()
+        folderFromAgentDefault = false
 
         // Reset agent-loop UI state.
         currentTodo = nil

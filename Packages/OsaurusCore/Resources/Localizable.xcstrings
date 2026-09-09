@@ -3,26 +3,86 @@
   "strings": {
     "Preparing this model for efficient loading. This may take a while.": {
       "localizations": {
-        "de": { "stringUnit": { "state": "translated", "value": "Dieses Modell wird für effizientes Laden vorbereitet. Dies kann eine Weile dauern." } },
-        "ko": { "stringUnit": { "state": "translated", "value": "효율적인 로딩을 위해 이 모델을 준비하고 있습니다. 시간이 걸릴 수 있습니다." } },
-        "ru": { "stringUnit": { "state": "translated", "value": "Подготовка модели для эффективной загрузки. Это может занять некоторое время." } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在准备此模型以提高加载效率。这可能需要一些时间。" } }
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieses Modell wird für effizientes Laden vorbereitet. Dies kann eine Weile dauern."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "효율적인 로딩을 위해 이 모델을 준비하고 있습니다. 시간이 걸릴 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Подготовка модели для эффективной загрузки. Это может занять некоторое время."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在准备此模型以提高加载效率。这可能需要一些时间。"
+          }
+        }
       }
     },
     "Normally needed once unless model files change.": {
       "localizations": {
-        "de": { "stringUnit": { "state": "translated", "value": "Normalerweise nur einmal erforderlich, sofern sich die Modelldateien nicht ändern." } },
-        "ko": { "stringUnit": { "state": "translated", "value": "모델 파일이 변경되지 않는 한 일반적으로 한 번만 필요합니다." } },
-        "ru": { "stringUnit": { "state": "translated", "value": "Обычно требуется один раз, если файлы модели не изменяются." } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "通常只需一次，除非模型文件发生变化。" } }
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Normalerweise nur einmal erforderlich, sofern sich die Modelldateien nicht ändern."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모델 파일이 변경되지 않는 한 일반적으로 한 번만 필요합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Обычно требуется один раз, если файлы модели не изменяются."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通常只需一次，除非模型文件发生变化。"
+          }
+        }
       }
     },
     "Verifying model data before replacement…": {
       "localizations": {
-        "de": { "stringUnit": { "state": "translated", "value": "Modelldaten werden vor dem Ersetzen überprüft…" } },
-        "ko": { "stringUnit": { "state": "translated", "value": "교체하기 전에 모델 데이터를 검증하고 있습니다…" } },
-        "ru": { "stringUnit": { "state": "translated", "value": "Проверка данных модели перед заменой…" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在替换前验证模型数据…" } }
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modelldaten werden vor dem Ersetzen überprüft…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "교체하기 전에 모델 데이터를 검증하고 있습니다…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверка данных модели перед заменой…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在替换前验证模型数据…"
+          }
+        }
       }
     },
     "Loading %@ may cause swapping or run out of memory.": {
@@ -131808,20 +131868,70 @@
     },
     "No override — uses the active model and runtime defaults.": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "No override — uses the active model and runtime defaults." } },
-        "de": { "stringUnit": { "state": "translated", "value": "Keine Überschreibung — verwendet die Standardwerte des aktiven Modells und der Laufzeit." } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "未覆盖 — 使用当前模型和运行时的默认值。" } },
-        "ko": { "stringUnit": { "state": "translated", "value": "재정의 없음 — 현재 모델 및 런타임 기본값을 사용합니다." } },
-        "ru": { "stringUnit": { "state": "translated", "value": "Без переопределения — используются значения по умолчанию активной модели и среды выполнения." } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No override — uses the active model and runtime defaults."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keine Überschreibung — verwendet die Standardwerte des aktiven Modells und der Laufzeit."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未覆盖 — 使用当前模型和运行时的默认值。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "재정의 없음 — 현재 모델 및 런타임 기본값을 사용합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Без переопределения — используются значения по умолчанию активной модели и среды выполнения."
+          }
+        }
       }
     },
     "Override": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Override" } },
-        "de": { "stringUnit": { "state": "translated", "value": "Überschreiben" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "覆盖" } },
-        "ko": { "stringUnit": { "state": "translated", "value": "재정의" } },
-        "ru": { "stringUnit": { "state": "translated", "value": "Переопределить" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Override"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Überschreiben"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "覆盖"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "재정의"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Переопределить"
+          }
+        }
       }
     },
     "No overrides set. Add explicit facts that should always be in your identity.": {
@@ -260393,7 +260503,211 @@
         }
       }
     },
-    "yours": {}
+    "yours": {},
+    "Select Working Folder": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Arbeitsordner auswählen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "작업 폴더 선택"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выберите рабочую папку"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择工作文件夹"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選擇工作資料夾"
+          }
+        }
+      }
+    },
+    "Choose the folder this agent works inside.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ordner wählen, in dem dieser Agent arbeitet."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 에이전트가 작업할 폴더를 선택하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выберите папку, в которой работает этот агент."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择此智能体工作的文件夹。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選擇此智能體工作的資料夾。"
+          }
+        }
+      }
+    },
+    "Clear working folder": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Arbeitsordner entfernen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "작업 폴더 지우기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Очистить рабочую папку"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清除工作文件夹"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清除工作資料夾"
+          }
+        }
+      }
+    },
+    "The one macOS folder this agent works inside. Remembered from the chat Folder chip or set here.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Der eine macOS-Ordner, in dem dieser Agent arbeitet. Wird vom Ordner-Chip im Chat gemerkt oder hier festgelegt."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 에이전트가 작업하는 하나의 macOS 폴더입니다. 채팅의 폴더 칩에서 기억되거나 여기에서 설정합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Единственная папка macOS, в которой работает этот агент. Запоминается из чипа «Папка» в чате или задаётся здесь."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此智能体工作的唯一 macOS 文件夹。由聊天中的文件夹标签记住，或在此处设置。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此智能體工作的唯一 macOS 資料夾。由聊天中的資料夾標籤記住，或在此處設定。"
+          }
+        }
+      }
+    },
+    "New chats with this agent open in this folder, and schedules, watchers, and other background runs that don't set their own folder work here too. Authenticated remote agent runs (Secure Channel, agent-scoped key) get file read/write confined to it; shell and git stay disabled for them. Picking or clearing the Folder chip in a chat updates this setting.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Neue Chats mit diesem Agenten öffnen sich in diesem Ordner; Zeitpläne, Watcher und andere Hintergrundläufe ohne eigenen Ordner arbeiten ebenfalls hier. Authentifizierte Remote-Agentenläufe (Secure Channel, agentenbezogener Schlüssel) erhalten darauf beschränkten Datei-Lese-/Schreibzugriff; Shell und Git bleiben für sie deaktiviert. Das Auswählen oder Löschen des Ordner-Chips in einem Chat aktualisiert diese Einstellung."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 에이전트와의 새 채팅은 이 폴더에서 열리며, 자체 폴더를 설정하지 않은 일정, 감시자 및 기타 백그라운드 실행도 여기서 작업합니다. 인증된 원격 에이전트 실행(Secure Channel, 에이전트 범위 키)은 이 폴더로 제한된 파일 읽기/쓰기 권한을 얻으며, 셸과 git은 비활성화된 상태로 유지됩니다. 채팅에서 폴더 칩을 선택하거나 지우면 이 설정이 업데이트됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Новые чаты с этим агентом открываются в этой папке; расписания, наблюдатели и другие фоновые запуски без собственной папки также работают здесь. Аутентифицированные удалённые запуски агента (Secure Channel, ключ уровня агента) получают чтение/запись файлов, ограниченные этой папкой; shell и git для них остаются отключёнными. Выбор или очистка чипа «Папка» в чате обновляет эту настройку."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "与此智能体的新聊天将在此文件夹中打开；未设置自己文件夹的计划任务、监视器和其他后台运行也在此处工作。经过身份验证的远程智能体运行（Secure Channel，智能体范围密钥）获得限定在此文件夹内的文件读写权限；shell 和 git 对其保持禁用。在聊天中选择或清除文件夹标签会更新此设置。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "與此智能體的新聊天將在此資料夾中開啟；未設定自己資料夾的排程、監視器和其他背景執行也在此處工作。經過身份驗證的遠端智能體執行（Secure Channel，智能體範圍金鑰）獲得限定在此資料夾內的檔案讀寫權限；shell 和 git 對其保持停用。在聊天中選擇或清除資料夾標籤會更新此設定。"
+          }
+        }
+      }
+    },
+    "Applies to new chats and to background runs without a folder of their own. A project's folder still wins for chats started inside that project.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Gilt für neue Chats und für Hintergrundläufe ohne eigenen Ordner. Der Ordner eines Projekts hat für Chats, die in diesem Projekt gestartet werden, weiterhin Vorrang."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "새 채팅과 자체 폴더가 없는 백그라운드 실행에 적용됩니다. 프로젝트 내에서 시작된 채팅에는 여전히 프로젝트의 폴더가 우선합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Применяется к новым чатам и к фоновым запускам без собственной папки. Для чатов, начатых внутри проекта, папка проекта по-прежнему имеет приоритет."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "适用于新聊天以及没有自己文件夹的后台运行。在项目内发起的聊天仍以项目的文件夹为准。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "適用於新聊天以及沒有自己資料夾的背景執行。在專案內發起的聊天仍以專案的資料夾為準。"
+          }
+        }
+      }
+    }
   },
   "version": "1.1"
 }

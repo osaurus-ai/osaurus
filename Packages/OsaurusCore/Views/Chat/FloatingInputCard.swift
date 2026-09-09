@@ -3650,16 +3650,56 @@ extension FloatingInputCard {
             guard await folderState.selectFolder(from: window) != nil else { return }
             do {
                 try await manager.disableSandboxForHostFolder(agentId: agentId)
+                // Sticky: the chip is the source of truth for the agent's
+                // working folder, so a successful pick is remembered on the
+                // agent and seeds every fresh chat / folder-less dispatch.
+                persistWorkingFolderToAgent()
             } catch {
                 // Fail closed: do not leave a UI state that appears trusted
-                // while the VM boundary is still authoritative.
+                // while the VM boundary is still authoritative — and do not
+                // leave the agent remembering a folder its chats can't use.
                 folderState.clearFolder()
+                forgetAgentWorkingFolder()
                 debugLog(
                     "[Workspace] Could not disable sandbox after folder selection: "
                         + error.localizedDescription
                 )
             }
         }
+    }
+
+    /// Whether this composer's folder picks/clears should write through to
+    /// the agent's sticky working folder. False for the Default agent (it
+    /// never carries a folder) and for a remote teammate run (the folder
+    /// belongs to the remote host's agent, not the local hosting agent —
+    /// same rule `ChatSession` applies to model pins).
+    private var persistsWorkingFolderToAgent: Bool {
+        !isDefaultConfigAgent && !isRemoteAgentRun
+    }
+
+    /// Write the chip's current folder onto the agent.
+    private func persistWorkingFolderToAgent() {
+        guard persistsWorkingFolderToAgent else { return }
+        agentManager.updateWorkingFolder(
+            for: effectiveAgentId,
+            bookmark: folderState.persistedBookmark,
+            path: folderState.persistedPath
+        )
+    }
+
+    /// Forget the agent's working folder (chip Clear).
+    private func forgetAgentWorkingFolder() {
+        guard persistsWorkingFolderToAgent else { return }
+        agentManager.clearWorkingFolder(for: effectiveAgentId)
+    }
+
+    /// Chip Clear: clear this chat's folder AND stop seeding new chats and
+    /// dispatches with it. Only the user's explicit Clear reaches here —
+    /// sandbox-on invariants and restores call `folderState.clearFolder()`
+    /// directly and leave the agent's remembered folder alone.
+    private func clearFolderFromChip() {
+        folderState.clearFolder()
+        forgetAgentWorkingFolder()
     }
 
     /// Folder chip tooltip makes the active execution boundary explicit.
@@ -4923,7 +4963,7 @@ extension FloatingInputCard {
                     }
                     Divider()
                     Button(role: .destructive) {
-                        folderState.clearFolder()
+                        clearFolderFromChip()
                     } label: {
                         Label {
                             Text("Clear Folder", bundle: .module)
@@ -4936,7 +4976,7 @@ extension FloatingInputCard {
 
             if hasFolder {
                 Button {
-                    folderState.clearFolder()
+                    clearFolderFromChip()
                 } label: {
                     Image(systemName: "xmark")
                         .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))

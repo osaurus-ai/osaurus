@@ -930,6 +930,55 @@ extension AgentManager {
         return true
     }
 
+    // MARK: - Working folder (sticky per agent)
+
+    /// The agent's persisted working folder, or nil when the agent has none,
+    /// is unknown, or is the built-in Default agent (which never carries a
+    /// folder — its chats show no folder chip). Either component may be nil
+    /// on its own: a stale bookmark leaves the path as a plain-path fallback.
+    public func workingFolder(for agentId: UUID) -> (bookmark: Data?, path: String?)? {
+        guard agentId != Agent.defaultId, let agent = agent(for: agentId) else { return nil }
+        let hasFolder =
+            agent.workingFolderBookmark != nil || agent.workingFolderPath?.isEmpty == false
+        guard hasFolder else { return nil }
+        return (agent.workingFolderBookmark, agent.workingFolderPath)
+    }
+
+    /// Remember `bookmark`/`path` as the agent's working folder so every
+    /// fresh chat and every folder-less dispatch for this agent inherits it.
+    /// Called by the composer folder chip (the chip is the source of truth:
+    /// the last user pick wins) and by the agent editor. No-op for the
+    /// Default agent and for unknown ids. Pass both nil to forget the folder
+    /// (see `clearWorkingFolder`).
+    public func updateWorkingFolder(for agentId: UUID, bookmark: Data?, path: String?) {
+        guard agentId != Agent.defaultId else { return }
+        guard var agent = agent(for: agentId), !agent.isBuiltIn else { return }
+        let normalizedPath = path?.isEmpty == false ? path : nil
+        guard agent.workingFolderBookmark != bookmark || agent.workingFolderPath != normalizedPath
+        else { return }
+        agent.workingFolderBookmark = bookmark
+        agent.workingFolderPath = normalizedPath
+        agent.updatedAt = Date()
+        AgentStore.save(agent)
+        // Update in place (same reasoning as `updateDefaultModel`): the saved
+        // agent is the only record that changed, and a full reload on the
+        // main thread is what the folder chip click would otherwise pay for.
+        if let index = agents.firstIndex(where: { $0.id == agent.id }) {
+            var updatedAgents = agents
+            updatedAgents[index] = agent
+            installAgentSnapshot(updatedAgents)
+        } else {
+            refresh()
+        }
+        NotificationCenter.default.post(name: .agentUpdated, object: agentId)
+    }
+
+    /// Forget the agent's working folder. The composer chip's Clear action
+    /// lands here so a cleared chip also stops seeding new chats/dispatches.
+    public func clearWorkingFolder(for agentId: UUID) {
+        updateWorkingFolder(for: agentId, bookmark: nil, path: nil)
+    }
+
     /// Claude Code backend config for an agent, falling back to the safe
     /// default (agent mode, read-only tools) when the agent predates the
     /// setting or doesn't exist.
