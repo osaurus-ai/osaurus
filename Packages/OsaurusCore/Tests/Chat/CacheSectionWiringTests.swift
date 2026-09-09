@@ -21,6 +21,10 @@
 import XCTest
 
 final class CacheSectionWiringTests: XCTestCase {
+    func testMTPBannerPreservesIndividualButtonAccessibility() throws {
+        let src = try source("Views/Chat/FloatingInputCard.swift")
+        XCTAssertTrue(src.contains(".accessibilityElement(children: .contain)\n        .accessibilityLabel(Text(verbatim: advisory.shortLabel))"))
+    }
 
     private func source(_ relativePath: String) throws -> String {
         // Tests/Chat/... -> package root
