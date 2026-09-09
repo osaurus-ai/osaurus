@@ -3830,7 +3830,9 @@ public actor ModelRuntime {
         id: String,
         name: String,
         intent: ModelLoadIntent = .interactive,
-        restoreOwnershipToken: ModelResidencyOwnershipToken? = nil
+        restoreOwnershipToken: ModelResidencyOwnershipToken? = nil,
+        alignmentRepairActivity: UUID? = nil,
+        alignmentRepairSession: String? = nil
     ) async throws -> SessionHolder {
         try Task.checkCancellation()
         let policy = await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
@@ -4293,6 +4295,15 @@ public actor ModelRuntime {
 
         let loadID = allocateLoadingTaskID()
         let task = Task<SessionHolder, Error> {
+            if let activity = alignmentRepairActivity {
+                await AlignmentPreparationState.shared.begin(
+                    id: activity, modelID: id, sessionID: alignmentRepairSession)
+            }
+            defer {
+                if let activity = alignmentRepairActivity {
+                    Task { @MainActor in AlignmentPreparationState.shared.finish(id: activity) }
+                }
+            }
             let taskStartedAt = CFAbsoluteTimeGetCurrent()
             genLog.info(
                 "loadContainer: task start model=\(name, privacy: .public) loadID=\(loadID, privacy: .public)"
@@ -4318,14 +4329,25 @@ public actor ModelRuntime {
             await MetalGate.shared.enterModelLoad(model: name)
             let container: ModelContainer
             do {
-                container = try await loadModelContainer(
+                var loadConfiguration = mtpPlan.loadConfiguration
+                loadConfiguration.alignmentRepairAuthorization = alignmentRepairActivity == nil
+                    ? .disabled : .directUserSend
+                let observer: @Sendable (AlignmentRepairProgress) -> Void = { progress in
+                    guard let activity = alignmentRepairActivity else { return }
+                    Task { @MainActor in
+                        AlignmentPreparationState.shared.update(id: activity, progress: progress)
+                    }
+                }
+                container = try await AlignmentRepairProgress.$observer.withValue(observer) {
+                    try await loadModelContainer(
                     from: localURL,
                     using: tokenizerLoader,
                     configuration: serverSettings.resolvedModelConfiguration(
                         base: ModelConfiguration(directory: localURL)
                     ),
-                    loadConfiguration: mtpPlan.loadConfiguration
+                    loadConfiguration: loadConfiguration
                 )
+                }
             } catch {
                 // Drain the load's GPU tail before releasing the exclusive gate
                 // even on failure (a partially-evaluated dequant still left work
@@ -5254,7 +5276,10 @@ public actor ModelRuntime {
             holder = try await loadContainer(
                 id: modelId,
                 name: modelName,
-                intent: parameters.loadIntent
+                intent: parameters.loadIntent,
+                alignmentRepairActivity: parameters.authorizesAlignmentRepair(for: modelId)
+                    ? activityID : nil,
+                alignmentRepairSession: parameters.sessionId
             )
         } catch {
             await ModelResidencyManager.shared.cancel(modelName: modelName)

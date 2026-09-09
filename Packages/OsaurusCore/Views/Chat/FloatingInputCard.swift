@@ -14,6 +14,7 @@ import UniformTypeIdentifiers
 @preconcurrency import MLXLMCommon
 
 struct FloatingInputCard: View {
+    @ObservedObject private var alignmentPreparation = AlignmentPreparationState.shared
     @Binding var text: String
     @Binding var selectedModel: String?
     @Binding var pendingAttachments: [Attachment]
@@ -936,6 +937,30 @@ struct FloatingInputCard: View {
             // fully above it via the `.top` alignment guide.
             .overlay(alignment: .top) {
                 configContextErrorOverlay
+            }
+            .overlay(alignment: .top) {
+                if let progress = alignmentPreparation.progress(
+                    modelID: selectedModel.flatMap { ModelManager.findInstalledModel(named: $0)?.id },
+                    sessionID: inputHistoryKey)
+                {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Preparing this model for efficient loading. This may take a while.")
+                            .font(.callout.weight(.semibold))
+                        Text("Normally needed once unless model files change.")
+                            .font(.caption)
+                        Text(verbatim: progress.shard.lastPathComponent).font(.caption)
+                        if progress.stage == .verifying {
+                            Text("Verifying model data before replacement…").font(.caption)
+                        } else {
+                            ProgressView(value: Double(progress.copiedBytes), total: Double(max(1, progress.totalBytes)))
+                        }
+                    }
+                    .padding(14)
+                    .frame(maxWidth: 340)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                    .accessibilityIdentifier("alignment-preparation-progress")
+                    .alignmentGuide(.top) { $0[.bottom] + 8 }
+                }
             }
             .animation(.easeOut(duration: 0.2), value: configContextTooSmall)
             .modifier(

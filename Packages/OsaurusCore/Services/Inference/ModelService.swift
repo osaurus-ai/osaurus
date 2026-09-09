@@ -104,6 +104,14 @@ struct GenerationParameters: Sendable {
     /// argument so it survives the whole ChatEngine → MLXService → ModelRuntime
     /// path without every layer having to re-plumb it.
     let loadIntent: ModelLoadIntent
+    let alignmentRepairModel: String?
+
+    func authorizesAlignmentRepair(for modelID: String) -> Bool {
+        alignmentRepairModel == modelID && requestSource == .chatUI
+            && activitySource == .chatUI && loadIntent == .interactive
+            && !auxiliaryCacheIntent && !warmupPrefill && !suppressProgressUI
+            && !runAsRemoteAgent && !preserveExistingResidencyOwner
+    }
 
     /// Per-agent options for the Claude Code subprocess backend (mode +
     /// tool opt-ins + working directory). Nil everywhere else; only
@@ -158,6 +166,7 @@ struct GenerationParameters: Sendable {
         cacheStableSystemPrefix: String? = nil,
         requestSource: RequestSource = .httpAPI,
         loadIntent: ModelLoadIntent = .interactive,
+        alignmentRepairModel: String? = nil,
         claudeCode: ClaudeCodeRunOptions? = nil,
         preserveExistingResidencyOwner: Bool = false,
         auxiliaryCacheIntent: Bool = false,
@@ -188,6 +197,7 @@ struct GenerationParameters: Sendable {
         self.cacheStableSystemPrefix = cacheStableSystemPrefix
         self.requestSource = requestSource
         self.loadIntent = loadIntent
+        self.alignmentRepairModel = alignmentRepairModel
         self.claudeCode = claudeCode
         self.preserveExistingResidencyOwner = preserveExistingResidencyOwner
         self.auxiliaryCacheIntent = auxiliaryCacheIntent

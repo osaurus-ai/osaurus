@@ -2429,7 +2429,7 @@ final class ChatSession: ObservableObject {
         }
     }
 
-    func sendCurrent() {
+    func sendCurrent(directUserSend: Bool = false) {
         // A normal UI send can arrive before SwiftUI has redrawn the composer
         // into its queue/Stop state. Preserve that draft in the existing
         // single-slot queue instead of clearing it and dropping it behind the
@@ -2462,7 +2462,7 @@ final class ChatSession: ObservableObject {
         let attachments = pendingAttachments
         input = ""
         pendingAttachments = []
-        send(text, attachments: attachments)
+        send(text, attachments: attachments, directUserSend: directUserSend)
     }
 
     /// Pre-send warm-up handshake: wait for an in-flight model switch
@@ -5776,7 +5776,9 @@ final class ChatSession: ObservableObject {
         isDirty = true
     }
 
-    func send(_ text: String, attachments: [Attachment] = []) {
+    func send(_ text: String, attachments: [Attachment] = [], directUserSend: Bool = false) {
+        let alignmentRepairModel = directUserSend && source == .chat && !isRemoteAgentTarget
+            ? selectedModel.flatMap { ModelManager.findInstalledModel(named: $0)?.id } : nil
         // The user's clock starts here, not when generation does. Everything
         // below — the warm-up handshake especially, which can wait out a whole
         // container load — happens before there is a trace to record it, so the
@@ -5845,7 +5847,8 @@ final class ChatSession: ObservableObject {
                 trimmed: trimmed,
                 attachments: attachments,
                 hasContent: hasContent,
-                sendRequestedAt: sendRequestedAt
+                sendRequestedAt: sendRequestedAt,
+                alignmentRepairModel: alignmentRepairModel
             )
             return
         }
@@ -5892,7 +5895,8 @@ final class ChatSession: ObservableObject {
                 preAppendIntroducedFirstTurn: preAppendIntroducedFirstTurn,
                 expectedPreSendHandshakeEpoch: handshakeEpoch,
                 sendRequestedAt: sendRequestedAt,
-                awaitedPreSendHandshake: true
+                awaitedPreSendHandshake: true,
+                alignmentRepairModel: alignmentRepairModel
             )
         }
     }
@@ -5908,7 +5912,8 @@ final class ChatSession: ObservableObject {
         preAppendIntroducedFirstTurn: Bool = false,
         expectedPreSendHandshakeEpoch: UInt64? = nil,
         sendRequestedAt: Date = Date(),
-        awaitedPreSendHandshake: Bool = false
+        awaitedPreSendHandshake: Bool = false,
+        alignmentRepairModel: String? = nil
     ) {
         // The pre-send task already checks this after its await. Keep the same
         // guard at the dispatch boundary so future refactors cannot restore
@@ -7510,6 +7515,9 @@ final class ChatSession: ObservableObject {
                                 !iterationToolSpecs.isEmpty || self.isRemoteAgentTarget
                             turnGenerationControls.apply(to: &req)
                             req.backgroundModelLoad = (self.loadIntent == .background)
+                            // Only the first inference of this direct Send. Tool
+                            // continuations and parent restoration cannot authorize repair.
+                            req.alignmentRepairModel = attempt == 1 ? alignmentRepairModel : nil
                             req.ttftTrace = ttftTrace
                             // Correlate the Insights log this send produces back to the
                             // assistant turn, so the per-message "Insights" button can
@@ -9503,7 +9511,7 @@ struct ChatView: View {
                                             attachments: observedSession.pendingAttachments
                                         )
                                     } else {
-                                        observedSession.sendCurrent()
+                                        observedSession.sendCurrent(directUserSend: true)
                                     }
                                 },
                                 onStop: { observedSession.stop() },

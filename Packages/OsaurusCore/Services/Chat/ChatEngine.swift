@@ -264,6 +264,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             cacheStableSystemPrefix: request.cacheStableSystemPrefix,
             requestSource: inferenceSource,
             loadIntent: request.backgroundModelLoad ? .background : .interactive,
+            alignmentRepairModel: inferenceSource == .chatUI && !request.backgroundModelLoad
+                && !request.warmupPrefill && !request.suppressProgressUI
+                ? request.alignmentRepairModel : nil,
             claudeCode: request.claudeCodeOptions,
             preserveExistingResidencyOwner: request.preserveExistingResidencyOwner,
             collectCompleteToolResponse: inferenceSource == .httpAPI && !request.isAgentRequest

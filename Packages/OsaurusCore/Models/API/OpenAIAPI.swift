@@ -819,6 +819,8 @@ struct ChatCompletionRequest: Codable, Sendable {
     ///
     /// Not decoded from OpenAI JSON, not sent to providers.
     var backgroundModelLoad: Bool = false
+    /// Internal direct-Send capability, never decoded from or encoded to the wire.
+    var alignmentRepairModel: String? = nil
     /// Local-only: a nested subagent may reuse a model that another surface
     /// already owns (for example an HTTP API model under manual multi-model
     /// residency). In that case the child request must not relabel the
@@ -883,6 +885,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         // promotes a background request back to interactive — and an interactive
         // request is allowed to evict the model someone is using.
         copy.backgroundModelLoad = backgroundModelLoad
+        copy.alignmentRepairModel = alignmentRepairModel
         copy.preserveExistingResidencyOwner = preserveExistingResidencyOwner
         copy.logprobs = logprobs
         copy.top_logprobs = top_logprobs
@@ -934,6 +937,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         // promotes a background request back to interactive — and an interactive
         // request is allowed to evict the model someone is using.
         copy.backgroundModelLoad = backgroundModelLoad
+        copy.alignmentRepairModel = alignmentRepairModel
         copy.preserveExistingResidencyOwner = preserveExistingResidencyOwner
         copy.logprobs = logprobs
         copy.top_logprobs = top_logprobs
