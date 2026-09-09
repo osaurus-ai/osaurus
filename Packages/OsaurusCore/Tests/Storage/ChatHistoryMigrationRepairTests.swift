@@ -323,6 +323,72 @@ struct ChatHistoryMigrationRepairTests {
         }
     }
 
+    /// Field report: a sibling-branch build stamped the store `user_version =
+    /// 17` (its own v17 added `turns.raw_model_content` /
+    /// `injected_context_prefix`) without ever running main's v16, so
+    /// `sessions` had no `workspace_context` and every save failed with
+    /// `failedToPrepare("table sessions has no column named
+    /// workspace_context")`. A version-ahead open must still reconcile this
+    /// build's additive columns, keep the foreign stamp, and keep the
+    /// foreign columns.
+    @Test
+    func schemaAheadWithoutThisBuildsColumnsIsRepairedOnOpen() async throws {
+        try await runWithPlaintextRoot {
+            let sid = UUID()
+            var statements = [Self.createSessionsV1]
+            statements += Self.alterV3 + Self.alterV4
+            statements += [
+                "ALTER TABLE sessions ADD COLUMN folder_bookmark BLOB",
+                "ALTER TABLE sessions ADD COLUMN folder_path TEXT",
+                "ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE sessions ADD COLUMN memory_exempt INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE sessions ADD COLUMN project_id TEXT",
+            ]
+            statements.append(Self.createTurnsV1)
+            statements +=
+                Self.alterV2 + Self.alterV5 + Self.alterV6 + Self.alterV7
+                + Self.alterV8 + Self.alterV12 + Self.alterV13 + Self.alterV14
+            // The sibling build's own v17 columns; no workspace_context /
+            // remote_agent_address anywhere.
+            statements += [
+                "ALTER TABLE turns ADD COLUMN raw_model_content TEXT",
+                "ALTER TABLE turns ADD COLUMN injected_context_prefix TEXT",
+                """
+                INSERT INTO sessions (id, title, created_at, updated_at, source, turn_count, archived, capabilities)
+                VALUES ('\(sid.uuidString)', 'From the sibling build', 1000, 2000, 'chat', 1, 0, '')
+                """,
+                """
+                INSERT INTO turns (id, session_id, seq, role, content, raw_model_content)
+                VALUES ('\(UUID().uuidString)', '\(sid.uuidString)', 0, 'user', 'kept', 'raw')
+                """,
+                "PRAGMA user_version = 17",
+            ]
+            try self.seedChatHistoryDB(statements)
+
+            let db = ChatHistoryDatabase()
+            try db.open()
+            defer { db.close() }
+
+            // This build's columns are now present…
+            #expect(self.diskColumns(table: "sessions").contains("workspace_context"))
+            #expect(self.diskColumns(table: "sessions").contains("remote_agent_address"))
+            // …the sibling build's columns and stamp are untouched…
+            #expect(self.diskColumns(table: "turns").contains("raw_model_content"))
+            #expect(self.diskUserVersion() == 17)
+            // …history survived, and the failing save now lands.
+            #expect(db.loadSession(id: sid)?.turns.first?.content == "kept")
+            let newId = UUID()
+            try db.saveSession(
+                ChatSessionData(
+                    id: newId,
+                    title: "saved after repair",
+                    turns: [ChatTurnData(role: .assistant, content: "ok")]
+                )
+            )
+            #expect(db.loadSession(id: newId)?.turns.count == 1)
+        }
+    }
+
     // MARK: - Fresh database
 
     /// Guard against migration regressions: a brand-new (empty) database

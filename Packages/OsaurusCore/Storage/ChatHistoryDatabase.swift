@@ -193,17 +193,30 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// renames / re-types an existing column, or changes its semantics), this
     /// forward-open is no longer safe. Such a change MUST introduce an explicit
     /// minimum-compatible-version gate rather than rely on this constant.
+    ///
+    /// Every step must also stay **idempotent** (`addColumnIfMissing`,
+    /// `CREATE … IF NOT EXISTS`): a version-ahead open replays the whole
+    /// ladder to pick up columns a sibling build's same-numbered step never
+    /// added (see `reconcileAdditiveSchema`).
     static let migrationsAreAdditiveOnly = true
 
     private func runMigrations() throws {
         let current = try getSchemaVersion()
         // Forward-compatible open: a DB stamped by a newer build carries only
-        // additive columns this build doesn't read (see `migrationsAreAdditiveOnly`).
-        // Open it without running the migration ladder, and leave `user_version`
-        // untouched so a future newer build still recognizes its own schema and
-        // re-applies its (idempotent) migrations. Never refuse — refusing is
-        // indistinguishable from data loss to the user.
-        if current > Self.latestSchemaVersion {
+        // additive columns (see `migrationsAreAdditiveOnly`), so never refuse
+        // it — refusing is indistinguishable from data loss to the user.
+        //
+        // But "stamped ahead" does not mean "has every column this build
+        // writes". Version numbers are claimed independently on parallel
+        // branches, so a store stamped 17 by one build may lack a column
+        // another build's v16 adds (field report: `user_version = 17`,
+        // `sessions` without `workspace_context`, every save failing with
+        // `failedToPrepare`). Every step is idempotent, so reconcile by
+        // running the whole ladder and then restoring the higher stamp, so
+        // the newer build still recognizes its own schema and re-applies its
+        // own (idempotent) steps in turn.
+        if current >= Self.latestSchemaVersion {
+            try reconcileAdditiveSchema(preservingVersion: current)
             return
         }
         // Each step runs in its own transaction: a crash/error mid-migration
@@ -225,6 +238,37 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if current < 14 { try runMigrationStep(14, migrateToV14) }
         if current < 15 { try runMigrationStep(15, migrateToV15) }
         if current < 16 { try runMigrationStep(16, migrateToV16) }
+    }
+
+    /// Every migration body in ladder order. `runMigrations` gates these by
+    /// version; `reconcileAdditiveSchema` replays all of them.
+    private var migrationLadder: [() throws -> Void] {
+        [
+            migrateToV1, migrateToV2, migrateToV3, migrateToV4, migrateToV5, migrateToV6,
+            migrateToV7, migrateToV8, migrateToV9, migrateToV10, migrateToV11, migrateToV12,
+            migrateToV13, migrateToV14, migrateToV15, migrateToV16,
+        ]
+    }
+
+    /// Re-run every (idempotent) migration body against a store whose stamp
+    /// says it is already at or past this build's schema, then put the stamp
+    /// back. Cheap when nothing is missing — each step is a `PRAGMA
+    /// table_info` scan or `IF NOT EXISTS` — and it repairs a store that
+    /// another build stamped ahead without carrying this build's columns.
+    /// One transaction: a failure leaves the store exactly as found.
+    private func reconcileAdditiveSchema(preservingVersion version: Int) throws {
+        try executeRaw("BEGIN TRANSACTION")
+        do {
+            for step in migrationLadder { try step() }
+            // Each body stamps its own version; restore the (higher) one we
+            // were handed so the build that owns it still recognizes it.
+            try setSchemaVersion(version)
+            try executeRaw("COMMIT")
+        } catch {
+            try? executeRaw("ROLLBACK")
+            throw ChatHistoryDatabaseError.migrationFailed(
+                "reconcile at v\(version): \(error.localizedDescription)")
+        }
     }
 
     /// Run one migration body atomically. Called only from `runMigrations`,
