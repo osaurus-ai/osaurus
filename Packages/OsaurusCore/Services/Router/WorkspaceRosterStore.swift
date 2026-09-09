@@ -183,7 +183,12 @@ final class WorkspaceRosterStore: ObservableObject {
         if forcedOffline[lowered] != nil {
             return .offline(lastSeen: Self.parseLastSeen(agent.lastSeen))
         }
-        if let reached = hostReachableAt[lowered], now().timeIntervalSince(reached) < Self.verificationLifetime {
+        // Our own relay evidence stays valid for as long as the roster is
+        // verified: the next roster verdict (`online` true/false) replaces
+        // it in `dropHostReachable`, and a relay failure replaces it via
+        // `noteHostUnreachable`. No separate lifetime, or an idle chat with
+        // a router that reports no presence would re-lock after 35 s.
+        if hostReachableAt[lowered] != nil {
             return .online
         }
         return Self.presence(for: agent)
@@ -356,7 +361,7 @@ final class WorkspaceRosterStore: ObservableObject {
     /// agents the router now reports online.
     func apply(rosters next: [WorkspaceRoster], verifiedWorkspaceIds: Set<String>? = nil) {
         stateGeneration = UUID()
-        hostReachableAt.removeAll()
+        dropHostReachable(supersededBy: next)
         let verified = verifiedWorkspaceIds ?? Set(next.map(\.id))
         verifiedAt = Dictionary(uniqueKeysWithValues: verified.map { ($0, now()) })
         objectWillChange.send()
@@ -398,9 +403,25 @@ final class WorkspaceRosterStore: ObservableObject {
     func renewVerification() {
         // The server has just verified its current snapshot; it supersedes
         // a successful response observed before this frame.
-        hostReachableAt.removeAll()
+        dropHostReachable(supersededBy: rosters)
         verifiedAt = Dictionary(uniqueKeysWithValues: rosters.map { ($0.id, now()) })
         objectWillChange.send()
+    }
+
+    /// Forget our own "the host answered" evidence only where the router's
+    /// roster carries a verdict of its own (`online` true/false). A row with
+    /// `online == nil` means the router has no presence for that agent; if
+    /// it also wiped our evidence, presence would read `.unknown` forever
+    /// and the composer would stay locked on "Checking access…" even though
+    /// the relay handshake just succeeded.
+    private func dropHostReachable(supersededBy rosters: [WorkspaceRoster]) {
+        guard !hostReachableAt.isEmpty else { return }
+        let decided = Set(
+            rosters.flatMap(\.agents)
+                .filter { $0.online != nil }
+                .map { $0.agentAddress.lowercased() }
+        )
+        hostReachableAt = hostReachableAt.filter { !decided.contains($0.key) }
     }
 
     func expireVerification() {

@@ -71,6 +71,53 @@ struct WorkspaceCollaborationRegressionTests {
         store.now = { now.addingTimeInterval(WorkspaceRosterStore.verificationLifetime + 1) }
         #expect(store.presence(forAddress: "0xabc", workspaceId: "a") == .unknown)
     }
+
+    /// The router can list a shared agent with no presence verdict at all
+    /// (`online: null`). Our own evidence that the host answered through
+    /// the relay must then survive every snapshot and heartbeat, or the
+    /// composer stays on "Checking access…" for a host that is reachable.
+    @Test func nullRosterVerdictKeepsHostReachablePresence() throws {
+        let store = WorkspaceRosterStore(observeAppActivation: false)
+        let summary = try JSONDecoder().decode(
+            OsaurusRouterWorkspaceSummary.self,
+            from: Data(#"{"id":"a","name":"A","role":"member"}"#.utf8)
+        )
+        let undecided = try JSONDecoder().decode(
+            OsaurusRouterWorkspaceAgent.self,
+            from: Data(#"{"agent_address":"0xabc"}"#.utf8)
+        )
+        let now = Date()
+        store.now = { now }
+        store.apply(rosters: [.init(workspace: summary, agents: [undecided])])
+        #expect(store.presence(forAddress: "0xabc", workspaceId: "a") == .unknown)
+
+        store.noteHostReachable(agentAddress: "0xabc")
+        #expect(store.presence(forAddress: "0xabc", workspaceId: "a") == .online)
+
+        // Heartbeat and a fresh snapshot with the same null verdict.
+        store.renewVerification()
+        #expect(store.presence(forAddress: "0xabc", workspaceId: "a") == .online)
+        store.apply(rosters: [.init(workspace: summary, agents: [undecided])])
+        #expect(store.presence(forAddress: "0xabc", workspaceId: "a") == .online)
+
+        // Idle for longer than the old evidence lifetime, still verified.
+        store.now = { now.addingTimeInterval(WorkspaceRosterStore.verificationLifetime + 5) }
+        store.renewVerification()
+        #expect(store.presence(forAddress: "0xabc", workspaceId: "a") == .online)
+
+        // A real relay failure still wins.
+        store.noteHostUnreachable(agentAddress: "0xabc")
+        #expect(store.presence(forAddress: "0xabc", workspaceId: "a").isOffline)
+
+        // And a definite router verdict replaces our evidence.
+        store.noteHostReachable(agentAddress: "0xabc")
+        let offline = try JSONDecoder().decode(
+            OsaurusRouterWorkspaceAgent.self,
+            from: Data(#"{"agent_address":"0xabc","online":false}"#.utf8)
+        )
+        store.apply(rosters: [.init(workspace: summary, agents: [offline])])
+        #expect(store.presence(forAddress: "0xabc", workspaceId: "a").isOffline)
+    }
 }
 
 private actor DelayedWorkspaceGate {
