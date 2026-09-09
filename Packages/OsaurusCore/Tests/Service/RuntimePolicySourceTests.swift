@@ -2944,7 +2944,7 @@ struct RuntimePolicySourceTests {
         let toolStreamStart = try #require(chatEngine.range(of: "let stream = try await toolSvc.streamWithTools("))
         let toolResponseStart = try #require(
             chatEngine.range(
-                of: "let outputTokens = TokenEstimator.estimate(text)",
+                of: "let outputTokens = toolStepTokenCount ?? TokenEstimator.estimate(text + reasoning)",
                 range: toolStreamStart.upperBound ..< chatEngine.endIndex
             )
         )
