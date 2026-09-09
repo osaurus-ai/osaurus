@@ -1960,11 +1960,8 @@ struct AgentDetailView: View {
                         icon: "square.and.arrow.up",
                         tint: theme.accentColor,
                         help: "Share Agent",
-                        action: { showingShareSheet = true }
+                        action: { presentShareMenu() }
                     )
-                    if !shareableWorkspaces.isEmpty {
-                        shareToWorkspaceHeaderMenu
-                    }
                     AgentDetailHeaderActionButton(
                         icon: "trash",
                         tint: theme.errorColor,
@@ -2577,34 +2574,45 @@ struct AgentDetailView: View {
         )
     }
 
-    /// Header "Share to Workspace" action, between Share and Delete: one
-    /// entry per workspace, each opening that workspace's Share agent sheet
-    /// with this agent preselected.
-    /// Same button as Share / Delete; the workspace list pops as an AppKit
-    /// menu so the button keeps the header's exact styling (a SwiftUI
-    /// `Menu` label draws its own chrome).
-    private var shareToWorkspaceHeaderMenu: some View {
-        AgentDetailHeaderActionButton(
-            icon: "person.2.badge.plus",
-            tint: theme.accentColor,
-            help: "Share to Workspace",
-            action: { presentShareToWorkspaceMenu() }
-        )
-    }
-
-    private func presentShareToWorkspaceMenu() {
+    /// The header Share button: one entry point for both ways an agent
+    /// leaves this Mac. "Send Invite Link…" is the existing pairing sheet;
+    /// "Add to Workspace" lists the workspaces the agent can be shared into,
+    /// each opening that workspace's Share agent sheet with this agent
+    /// preselected. Popped as an AppKit menu so the button keeps the
+    /// header's exact styling.
+    private func presentShareMenu() {
         let agentId = currentAgent.id
         let menu = NSMenu()
-        for workspace in shareableWorkspaces {
-            let item = NSMenuItem(
-                title: workspace.name, action: #selector(HeaderMenuTarget.fire(_:)), keyEquivalent: "")
-            let target = HeaderMenuTarget {
-                RemoteAgentWorkspaceAttribution.shareAgent(agentId, toWorkspace: workspace.id)
+
+        let invite = NSMenuItem(
+            title: L("Send Invite Link…"), action: #selector(HeaderMenuTarget.fire(_:)), keyEquivalent: "")
+        let inviteTarget = HeaderMenuTarget { showingShareSheet = true }
+        invite.target = inviteTarget
+        invite.representedObject = inviteTarget  // keeps the target alive with the item
+        menu.addItem(invite)
+
+        let workspaceItem = NSMenuItem(title: L("Add to Workspace"), action: nil, keyEquivalent: "")
+        let workspaces = shareableWorkspaces
+        if workspaces.isEmpty {
+            // Explains itself instead of hiding: Router off, built-in agent,
+            // no workspace with share rights, or already shared everywhere.
+            workspaceItem.isEnabled = false
+        } else {
+            let submenu = NSMenu()
+            for workspace in workspaces {
+                let item = NSMenuItem(
+                    title: workspace.name, action: #selector(HeaderMenuTarget.fire(_:)), keyEquivalent: "")
+                let target = HeaderMenuTarget {
+                    RemoteAgentWorkspaceAttribution.shareAgent(agentId, toWorkspace: workspace.id)
+                }
+                item.target = target
+                item.representedObject = target
+                submenu.addItem(item)
             }
-            item.target = target
-            item.representedObject = target  // keeps the target alive with the item
-            menu.addItem(item)
+            workspaceItem.submenu = submenu
         }
+        menu.addItem(workspaceItem)
+
         let origin = NSEvent.mouseLocation
         menu.popUp(positioning: nil, at: NSPoint(x: origin.x - 8, y: origin.y - 16), in: nil)
     }
