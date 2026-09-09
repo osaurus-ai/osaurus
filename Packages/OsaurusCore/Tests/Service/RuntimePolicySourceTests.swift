@@ -2479,7 +2479,9 @@ struct RuntimePolicySourceTests {
     func modelRuntimeUsesTypedVMLXLoadConfiguration() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
 
-        #expect(runtime.contains("loadConfiguration: mtpPlan.loadConfiguration"))
+        #expect(runtime.contains("var loadConfiguration = mtpPlan.loadConfiguration"))
+        #expect(runtime.contains("loadConfiguration.alignmentRepairAuthorization = alignmentRepairActivity == nil"))
+        #expect(runtime.contains("loadConfiguration: loadConfiguration"))
         #expect(runtime.contains("resolvedLoadConfiguration("))
         #expect(runtime.contains("resolveMemorySafetyLoadPlan("))
         #expect(runtime.contains("ServerRuntimeSettingsStore.resolvedMemorySafetyPlan("))
@@ -2768,7 +2770,8 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("resolvedMTPDraftStrategy("))
         #expect(runtime.contains("resolvedModelConfiguration("))
         #expect(runtime.contains("configuration: serverSettings.resolvedModelConfiguration("))
-        #expect(runtime.contains("loadConfiguration: mtpPlan.loadConfiguration"))
+        #expect(runtime.contains("var loadConfiguration = mtpPlan.loadConfiguration"))
+        #expect(runtime.contains("loadConfiguration: loadConfiguration"))
         #expect(runtime.contains("draftStrategy: mtpPlan.draftStrategy"))
         #expect(runtime.contains("let requestStrategy = Self.requestDraftStrategy(holder.draftStrategy)"))
         #expect(runtime.contains("draftStrategy: requestStrategy"))
