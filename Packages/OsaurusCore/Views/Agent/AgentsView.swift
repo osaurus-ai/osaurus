@@ -2580,24 +2580,33 @@ struct AgentDetailView: View {
     /// Header "Share to Workspace" action, between Share and Delete: one
     /// entry per workspace, each opening that workspace's Share agent sheet
     /// with this agent preselected.
+    /// Same button as Share / Delete; the workspace list pops as an AppKit
+    /// menu so the button keeps the header's exact styling (a SwiftUI
+    /// `Menu` label draws its own chrome).
     private var shareToWorkspaceHeaderMenu: some View {
-        Menu {
-            ForEach(shareableWorkspaces) { workspace in
-                Button(workspace.name) {
-                    RemoteAgentWorkspaceAttribution.shareAgent(currentAgent.id, toWorkspace: workspace.id)
-                }
+        AgentDetailHeaderActionButton(
+            icon: "person.2.fill",
+            tint: theme.accentColor,
+            help: "Share to Workspace",
+            action: { presentShareToWorkspaceMenu() }
+        )
+    }
+
+    private func presentShareToWorkspaceMenu() {
+        let agentId = currentAgent.id
+        let menu = NSMenu()
+        for workspace in shareableWorkspaces {
+            let item = NSMenuItem(
+                title: workspace.name, action: #selector(HeaderMenuTarget.fire(_:)), keyEquivalent: "")
+            let target = HeaderMenuTarget {
+                RemoteAgentWorkspaceAttribution.shareAgent(agentId, toWorkspace: workspace.id)
             }
-        } label: {
-            Image(systemName: "person.2.fill")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.accentColor)
-                .frame(width: 28, height: 28)
-                .background(Circle().fill(theme.accentColor.opacity(0.12)))
+            item.target = target
+            item.representedObject = target  // keeps the target alive with the item
+            menu.addItem(item)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help(Text("Share to Workspace", bundle: .module))
+        let origin = NSEvent.mouseLocation
+        menu.popUp(positioning: nil, at: NSPoint(x: origin.x - 8, y: origin.y - 16), in: nil)
     }
 
     private var deleteAgentMessage: String {
@@ -8773,3 +8782,10 @@ fileprivate struct AgentSecretRow: View {
         AgentsView()
     }
 #endif
+
+/// Closure-backed `NSMenuItem` target for header popup menus.
+private final class HeaderMenuTarget: NSObject {
+    private let handler: () -> Void
+    init(_ handler: @escaping () -> Void) { self.handler = handler }
+    @objc func fire(_ sender: Any?) { handler() }
+}
