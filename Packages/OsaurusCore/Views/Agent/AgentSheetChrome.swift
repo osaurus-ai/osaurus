@@ -80,12 +80,12 @@ struct AgentSheetHeader: View {
                         Text(subtitle, bundle: .module)
                             .font(.system(size: 12))
                             .foregroundColor(theme.secondaryText)
-                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                     } else if let subtitleText, !subtitleText.isEmpty {
                         Text(subtitleText)
                             .font(.system(size: 12))
                             .foregroundColor(theme.secondaryText)
-                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
 
