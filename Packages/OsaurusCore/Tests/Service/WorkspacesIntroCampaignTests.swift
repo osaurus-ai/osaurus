@@ -34,7 +34,9 @@ struct WorkspacesIntroCampaignTests {
             )
         }
 
-        deinit {
+        /// Explicit (not `deinit`): a main-actor class cannot touch its
+        /// non-Sendable `UserDefaults` from a nonisolated deinit in Swift 6.
+        func cleanup() {
             defaults.removePersistentDomain(forName: suiteName)
         }
     }
@@ -43,6 +45,7 @@ struct WorkspacesIntroCampaignTests {
 
     @Test func isEligible_untilSeen() {
         let fixture = Fixture()
+        defer { fixture.cleanup() }
         #expect(fixture.sut.isEligible)
         #expect(!fixture.sut.hasSeen)
     }
@@ -51,6 +54,7 @@ struct WorkspacesIntroCampaignTests {
     /// burn the one shot: the caller never called `willPresent`.
     @Test func blockedCheck_doesNotConsumeEligibility() {
         let fixture = Fixture()
+        defer { fixture.cleanup() }
         for _ in 0 ..< 5 {
             #expect(fixture.sut.isEligible)
         }
@@ -59,6 +63,7 @@ struct WorkspacesIntroCampaignTests {
 
     @Test func willPresent_persistsSeen_andGuardsDuplicates() {
         let fixture = Fixture()
+        defer { fixture.cleanup() }
         fixture.sut.willPresent()
         #expect(fixture.sut.hasSeen)
         #expect(fixture.defaults.bool(forKey: WorkspacesIntroCampaign.seenDefaultsKey))
@@ -73,6 +78,7 @@ struct WorkspacesIntroCampaignTests {
     /// (a relaunch) over the same suite stays dismissed.
     @Test func seen_survivesRelaunch() {
         let fixture = Fixture()
+        defer { fixture.cleanup() }
         fixture.sut.willPresent()
         fixture.sut.didDismiss()
         let relaunched = WorkspacesIntroCampaign(
@@ -83,6 +89,7 @@ struct WorkspacesIntroCampaignTests {
 
     @Test func markSeen_isIdempotent() {
         let fixture = Fixture()
+        defer { fixture.cleanup() }
         fixture.sut.markSeen()
         fixture.sut.markSeen()
         #expect(fixture.sut.hasSeen)
@@ -92,6 +99,7 @@ struct WorkspacesIntroCampaignTests {
     #if DEBUG
         @Test func resetForDebugTesting_clearsSeen_andPresenting() {
             let fixture = Fixture()
+            defer { fixture.cleanup() }
             fixture.sut.willPresent()
             #expect(!fixture.sut.isEligible)
             fixture.sut.resetForDebugTesting()
@@ -107,6 +115,7 @@ struct WorkspacesIntroCampaignTests {
     /// refuses to stack a copy while one is on screen.
     @Test func showsEveryTime_ignoresSeen_andNeverPersists() {
         let fixture = Fixture()
+        defer { fixture.cleanup() }
         let designTime = WorkspacesIntroCampaign(
             defaults: fixture.defaults, showsEveryTime: true)
         #expect(designTime.isEligible)
