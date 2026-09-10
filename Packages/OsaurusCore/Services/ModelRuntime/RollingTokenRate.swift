@@ -188,6 +188,15 @@ struct RollingTokenRate: Sendable {
         return currentRate(at: lastAt!)
     }
 
+    /// An engine measurement counts actual generated tokens. The rolling
+    /// estimate depends on text fragmentation and must not override it.
+    func finalRate(engineRate: Double?) -> Double? {
+        if let engineRate, engineRate.isFinite, engineRate > 0 {
+            return engineRate
+        }
+        return finalRate()
+    }
+
     // MARK: - Internal
 
     /// Drop observations older than `windowSeconds` from `now`. Cheap O(k)
