@@ -68,8 +68,8 @@ struct WorkspacesIntroModal: View {
     /// the opposite of a gentle nudge.
     @State private var userTookControl = false
 
-    /// Content width inside the dialog's 24pt horizontal padding (640 - 48).
-    static let dialogWidth: CGFloat = 640
+    /// Content width inside the dialog's 24pt horizontal padding (760 - 48).
+    static let dialogWidth: CGFloat = 760
     private var contentWidth: CGFloat { Self.dialogWidth - 48 }
 
     /// Seconds each stage stays up before the loop advances on its own.
@@ -304,7 +304,7 @@ private struct WorkspacesIntroCanvas: View {
 
     @Environment(\.theme) private var theme
 
-    static let height: CGFloat = 214
+    static let height: CGFloat = 284
 
     /// One row per team: the agent you set up, the system it is wired
     /// into, and the person who ends up with it. Rows are stable across
@@ -343,25 +343,25 @@ private struct WorkspacesIntroCanvas: View {
         ),
     ]
 
-    // Fixed geometry. The canvas is 592 x 214; rows sit at y = 30, 78,
-    // 126, 174 so four 30pt cards stack with 18pt of air between them.
+    // Fixed geometry. The canvas is 712 x 284; rows sit at y = 44, 108,
+    // 172, 236 so four 30pt cards stack with 34pt of air between them.
     private enum Layout {
-        static let midY: CGFloat = 102
-        static func rowY(_ index: Int) -> CGFloat { 30 + CGFloat(index) * 48 }
+        static let midY: CGFloat = 140
+        static func rowY(_ index: Int) -> CGFloat { 44 + CGFloat(index) * 64 }
 
-        static let ownerX: CGFloat = 56
-        static let agentX: CGFloat = 206
-        static let agentWidth: CGFloat = 128
-        static let serviceX: CGFloat = 392
-        static let serviceWidth: CGFloat = 96
-        static let memberX: CGFloat = 432
-        static let memberWidth: CGFloat = 118
-        static let deviceX: CGFloat = 236
-        static let networkX: CGFloat = 146
-        static let gateX: CGFloat = 404
-        static let cloudX: CGFloat = 528
-        static let poolX: CGFloat = 470
-        static let poolWidth: CGFloat = 176
+        static let ownerX: CGFloat = 68
+        static let agentX: CGFloat = 250
+        static let agentWidth: CGFloat = 140
+        static let serviceX: CGFloat = 470
+        static let serviceWidth: CGFloat = 108
+        static let memberX: CGFloat = 520
+        static let memberWidth: CGFloat = 130
+        static let deviceX: CGFloat = 284
+        static let networkX: CGFloat = 176
+        static let gateX: CGFloat = 486
+        static let cloudX: CGFloat = 636
+        static let poolX: CGFloat = 566
+        static let poolWidth: CGFloat = 200
     }
 
     private var animation: Animation? {
@@ -383,12 +383,12 @@ private struct WorkspacesIntroCanvas: View {
             pool
             localFreeTag
         }
-        .frame(width: 592, height: Self.height)
+        .frame(width: 712, height: Self.height)
         .clipped()
         .animation(animation, value: stage)
     }
 
-    // MARK: Owner ("You" / "Your rules")
+    // MARK: Owner ("Your company" / "Your rules")
 
     private var owner: some View {
         let isRules = stage == .yourRules || stage == .oneBill
@@ -400,7 +400,7 @@ private struct WorkspacesIntroCanvas: View {
                 Circle()
                     .stroke(theme.accentColor.opacity(0.6), lineWidth: 1.5)
                     .frame(width: 44, height: 44)
-                Image(systemName: isRules ? "checkmark.shield" : "person.fill")
+                Image(systemName: isRules ? "checkmark.shield" : "building.2.fill")
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(theme.accentColor)
                     .contentTransition(.symbolEffect(.replace))
@@ -409,7 +409,7 @@ private struct WorkspacesIntroCanvas: View {
                 if isRules {
                     Text(localized: "Your rules")
                 } else {
-                    Text(localized: "You")
+                    Text(localized: "Your company")
                 }
             }
             .font(.system(size: 11, weight: .semibold))
