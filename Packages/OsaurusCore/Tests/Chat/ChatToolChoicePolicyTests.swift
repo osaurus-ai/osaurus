@@ -9,29 +9,50 @@ import Testing
 struct ChatToolChoicePolicyTests {
 
     @Test
-    func explicitFileToolIntentRequiresToolOnFirstAttempt() {
+    func naturalLanguageDoesNotInventForcedToolChoice() {
+        let prompts = [
+            "Using the same starting balances from your example, suppose the debit succeeds but the credit fails and the transaction rolls back. What are A, B, and their total afterward? Also clarify whether your statement that every other session sees the old balances holds at every isolation level.",
+            "Explain how to complete a transaction.",
+            "What does file_read do?",
+            "Redact all names and emails in note.txt",
+        ]
+        for prompt in prompts {
+            let choice = ChatToolChoicePolicy.resolve(
+                tools: [
+                    Self.tool("clarify"), Self.tool("complete"),
+                    Self.tool("file_read"), Self.tool("redact_file"),
+                ],
+                userText: prompt,
+                attempt: 1
+            )
+            #expect(Self.isAuto(choice), "UI prose must not synthesize tool_choice: \(prompt)")
+        }
+    }
+
+    @Test
+    func explicitFileToolProseLeavesSelectionToModel() {
         let choice = ChatToolChoicePolicy.resolve(
             tools: [Self.tool("file_read")],
             userText: "Using the available file tool, autonomously read mandelbrot.py lines 39 through 41.",
             attempt: 1
         )
 
-        #expect(Self.isRequired(choice))
+        #expect(Self.isAuto(choice))
     }
 
     @Test
-    func explicitNamedSandboxToolIntentRequiresToolOnFirstAttempt() {
+    func explicitNamedSandboxToolProseLeavesSelectionToModel() {
         let choice = ChatToolChoicePolicy.resolve(
             tools: [Self.tool("sandbox_read_file")],
             userText: "Call sandbox_read_file for mandelbrot.py lines 39 through 41.",
             attempt: 1
         )
 
-        #expect(Self.isRequired(choice))
+        #expect(Self.isAuto(choice))
     }
 
     @Test
-    func subsequentAttemptFallsBackToAutoToAvoidToolLoops() {
+    func subsequentAttemptKeepsAuto() {
         let choice = ChatToolChoicePolicy.resolve(
             tools: [Self.tool("file_read")],
             userText: "Use the file_read tool for mandelbrot.py.",
@@ -87,14 +108,14 @@ struct ChatToolChoicePolicyTests {
     }
 
     @Test
-    func absolutePathWithFileActionRequiresToolChoice() {
+    func absolutePathWithFileActionKeepsAuto() {
         let choice = ChatToolChoicePolicy.resolve(
             tools: [Self.tool("file_read")],
             userText: "Read /tmp/mandelbrot/source from disk.",
             attempt: 1
         )
 
-        #expect(Self.isRequired(choice))
+        #expect(Self.isAuto(choice))
     }
 
     @Test
@@ -120,7 +141,7 @@ struct ChatToolChoicePolicyTests {
     }
 
     @Test
-    func redactionShapedRequestForcesRedactFileOnFirstAttempt() {
+    func redactionShapedRequestDoesNotForceFileMutation() {
         let choice = ChatToolChoicePolicy.resolve(
             tools: [Self.tool("file_read"), Self.tool("redact_file")],
             userText: """
@@ -131,11 +152,7 @@ struct ChatToolChoicePolicyTests {
             attempt: 1
         )
 
-        guard case .function(let fn) = choice else {
-            Issue.record("expected forced redact_file, got \(String(describing: choice))")
-            return
-        }
-        #expect(fn.function.name == "redact_file")
+        #expect(Self.isAuto(choice))
     }
 
     @Test
@@ -150,8 +167,7 @@ struct ChatToolChoicePolicyTests {
 
     @Test
     func codingRequest_withBareSingularNoun_doesNotForceRedactFile() {
-        // "name"/"email" singulars are everyday coding vocabulary; only
-        // plural/phrase PII forms may trigger the forced route.
+        // Coding vocabulary must not synthesize a file-mutating tool constraint.
         let choice = ChatToolChoicePolicy.resolve(
             tools: [Self.tool("file_edit"), Self.tool("redact_file")],
             userText: "Replace the function name in app.py with a shorter one",
@@ -178,17 +194,13 @@ struct ChatToolChoicePolicyTests {
     }
 
     @Test
-    func ambiguousNoun_withPlaceholderSignal_stillForces() {
+    func ambiguousNoun_withPlaceholderSignal_keepsAuto() {
         let choice = ChatToolChoicePolicy.resolve(
             tools: [Self.tool("redact_file")],
             userText: "Replace names with \"[REDACTED NAME]\" in note.txt",
             attempt: 1
         )
-        guard case .function(let fn) = choice else {
-            Issue.record("placeholder signal must keep the forced route")
-            return
-        }
-        #expect(fn.function.name == "redact_file")
+        #expect(Self.isAuto(choice))
     }
 
     @Test
@@ -243,11 +255,6 @@ struct ChatToolChoicePolicyTests {
             type: "function",
             function: ToolFunction(name: name, description: nil, parameters: nil)
         )
-    }
-
-    private static func isRequired(_ choice: ToolChoiceOption?) -> Bool {
-        guard case .required = choice else { return false }
-        return true
     }
 
     private static func isAuto(_ choice: ToolChoiceOption?) -> Bool {

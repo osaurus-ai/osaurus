@@ -3383,13 +3383,13 @@ struct RuntimePolicySourceTests {
         #expect(
             chatView.contains("let requestedToolChoice = ChatToolChoicePolicy.resolve(")
                 && chatView.contains("tool_choice: requestedToolChoice"),
-            "Chat UI should route explicit tool-use prompts through the shared policy instead of hard-coding auto for every tool-enabled turn."
+            "Chat UI should use the shared ordinary-chat policy; prose must not synthesize an API tool constraint."
         )
         #expect(
             chatView.contains("tools: iterationToolSpecs,")
                 && chatView.contains("userText: trimmed,")
                 && chatView.contains("attempt: attempt"),
-            "Chat UI tool-choice policy must see the current iteration tools, original user text, and attempt count so first-turn required routing cannot become a repeated tool loop."
+            "Chat UI must use the current iteration tools; the compatibility arguments must not become prose-derived forced routing."
         )
         #expect(
             chatView.contains("finalReq.samplingParametersAreImplicit = true"),
