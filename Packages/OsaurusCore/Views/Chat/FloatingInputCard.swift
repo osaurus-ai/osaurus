@@ -4654,11 +4654,26 @@ extension FloatingInputCard {
         let bundleDir = installed.localDirectory
         Task.detached(priority: .utility) {
             let advisory = MTPLayoutAdvisory.evaluate(bundleDirectory: bundleDir)
+            // Selection must expose the controls before Send. This reads only
+            // bundle metadata/headers; it neither loads nor warms the model.
+            let capability = ModelRuntime.inspectLoadingModelMTP(name: model)
             let defaultEligible = NativeMTPSelectionDefault.isEligible(
                 bundleDirectory: bundleDir)
             await MainActor.run {
                 // The selection may have moved while we were on disk.
                 guard selectedModel == model else { return }
+                let identity = Self.mtpIdentity(model)
+                if let capability, capability.bundleHasMTP, capability.isTargetMTPFamily {
+                    nativeMTPCapableModels.insert(identity)
+                    if capability.isBlocked {
+                        nativeMTPManuallyBlockedModels.insert(identity)
+                    } else {
+                        nativeMTPManuallyBlockedModels.remove(identity)
+                    }
+                } else {
+                    nativeMTPCapableModels.remove(identity)
+                    nativeMTPManuallyBlockedModels.remove(identity)
+                }
                 applyNativeMTPDefaultDepthIfNeeded(eligible: defaultEligible)
                 // Shown once per bundle per improper-state fingerprint: a
                 // dismissed state stays quiet across relaunches, while a
