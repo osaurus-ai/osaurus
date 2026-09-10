@@ -75,6 +75,14 @@ public struct SpawnAgentDescriptor: Sendable, Equatable {
     public let isLocal: Bool?
     /// Remote provider name when the model is remote (nil otherwise).
     public let providerName: String?
+    /// The agent's configured Working Folder (`Agent.workingFolderPath`),
+    /// nil when none is set. A delegated child runs as a real chat session
+    /// of the target agent in THIS folder (`BackgroundTaskManager.
+    /// resolveDispatchFolder`), so it is the only place the child can read
+    /// and write host files — surfaced in the spawn guidance so the
+    /// orchestrator can route "save X to disk" tasks to an agent that can
+    /// actually do it.
+    public let workingFolderPath: String?
 
     public init(
         id: UUID,
@@ -82,7 +90,8 @@ public struct SpawnAgentDescriptor: Sendable, Equatable {
         description: String?,
         modelId: String?,
         isLocal: Bool?,
-        providerName: String?
+        providerName: String?,
+        workingFolderPath: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -90,6 +99,7 @@ public struct SpawnAgentDescriptor: Sendable, Equatable {
         self.modelId = modelId
         self.isLocal = isLocal
         self.providerName = providerName
+        self.workingFolderPath = workingFolderPath?.isEmpty == false ? workingFolderPath : nil
     }
 }
 
@@ -238,6 +248,8 @@ public enum SpawnDescriptors {
         let name: String
         let description: String
         let modelId: String?
+        /// The agent's sticky Working Folder path, nil when none is set.
+        var workingFolderPath: String? = nil
     }
 
     /// Durable roster view of one shared workspace agent, for the workspace
@@ -431,7 +443,8 @@ public enum SpawnDescriptors {
                     description: description.isEmpty ? nil : description,
                     modelId: locality.normalizedId,
                     isLocal: locality.isLocal,
-                    providerName: locality.providerName
+                    providerName: locality.providerName,
+                    workingFolderPath: source.workingFolderPath
                 ),
                 state: effectiveTarget?.state ?? .missing
             )
@@ -645,7 +658,11 @@ public enum SpawnDescriptors {
                 id: agent.id,
                 name: agent.name,
                 description: agent.description,
-                modelId: AgentManager.shared.effectiveModel(for: agent.id)
+                modelId: AgentManager.shared.effectiveModel(for: agent.id),
+                // Same source of truth as the dispatch-folder fallback
+                // (`BackgroundTaskManager.resolveDispatchFolder`), so the
+                // folder the prompt advertises is the folder the child runs in.
+                workingFolderPath: AgentManager.shared.workingFolder(for: agent.id)?.path
             )
         }
     }

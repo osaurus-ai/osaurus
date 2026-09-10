@@ -1169,23 +1169,22 @@ public enum SystemPromptTemplates {
                     + "spawn calls when the subtasks do not depend on each other."
             )
         }
+        if !agents.isEmpty, agentToolAvailable || batchToolAvailable {
+            lines.append(agentWorkingFolderGuidance(agents: agents))
+        }
         switch toolAccess {
         case .readOnly:
             lines.append(
-                "- Target-agent workers receive only their enabled tools whose implementations are "
-                    + "cancellation-audited for spawned execution. Workers also CAN read files "
-                    + "through the added host file_read / file_search tools within a per-run call "
-                    + "budget — so you can "
-                    + "delegate \"read these files and report X\" with exact paths in `input` "
-                    + "instead of pasting file contents. Bare-model workers receive only these "
-                    + "added read-only tools."
+                "- Bare-model workers (`spawn_model`) receive only the added host file_read / "
+                    + "file_search tools within a per-run call budget — so you can delegate "
+                    + "\"read these files and report X\" with exact paths in `input` instead of "
+                    + "pasting file contents. They cannot write files."
             )
         case .none:
             lines.append(
-                "- Target-agent workers receive only their enabled tools whose implementations are "
-                    + "cancellation-audited for spawned execution; bare-model workers have no "
-                    + "tools. No extra generic read-only file tools are added, so include any "
-                    + "material not reachable through the configured target agent in `input`."
+                "- Bare-model workers (`spawn_model`) have no tools. No extra generic read-only "
+                    + "file tools are added, so include any material not reachable through a "
+                    + "configured target agent in `input`."
             )
         }
         lines.append(
@@ -1193,12 +1192,13 @@ public enum SystemPromptTemplates {
                 + "delegate a side effect that the selected worker cannot actually call."
         )
         lines.append(
-            "- Workers deliver FILES as artifacts: a worker's `share_artifact` passes through "
-                + "to THIS conversation as an artifact card once the spawn returns (the result "
-                + "carries only an `artifacts_shared` count). For a file/code deliverable, tell "
-                + "the worker to share the file with `share_artifact` and reply with a short "
-                + "summary — never ask a worker to paste full file contents into its answer; "
-                + "long replies are truncated in the digest."
+            "- Workers deliver FILES as artifacts when the file should land in THIS "
+                + "conversation (or the worker has no working folder): a worker's "
+                + "`share_artifact` passes through as an artifact card once the spawn returns "
+                + "(the result carries only an `artifacts_shared` count). For such a file/code "
+                + "deliverable, tell the worker to share the file with `share_artifact` and "
+                + "reply with a short summary — never ask a worker to paste full file contents "
+                + "into its answer; long replies are truncated in the digest."
         )
         lines.append(
             "- `input` must be the COMPLETE task as a self-contained prompt — the worker sees only that, "
@@ -1223,8 +1223,39 @@ public enum SystemPromptTemplates {
         if let isLocal = agent.isLocal { meta.append(isLocal ? "local" : "remote") }
         if let provider = agent.providerName, !provider.isEmpty { meta.append(provider) }
         if let modelId = agent.modelId, !modelId.isEmpty { meta.append("model: \(modelId)") }
+        if let folder = agent.workingFolderPath, !folder.isEmpty {
+            meta.append("working folder: \(folder)")
+        }
         if !meta.isEmpty { line += " (" + meta.joined(separator: " · ") + ")" }
         return line
+    }
+
+    /// The agent-target capability line. A delegated agent is a REAL chat
+    /// session of the target agent (`AgentDelegationDispatcher`), so it
+    /// carries that agent's own enabled tools — and, when the agent has a
+    /// configured Working Folder, the host file tools rooted there. The
+    /// orchestrator has no folder of its own, so this is the only way a
+    /// "save X to disk" request can complete through delegation; the line
+    /// names which listed agents can do it (issue #2703). Pure.
+    static func agentWorkingFolderGuidance(agents: [SpawnAgentDescriptor]) -> String {
+        let withFolder = agents.filter { $0.workingFolderPath?.isEmpty == false }
+        var text =
+            "- Agent targets run as a full chat session of that agent with its own enabled "
+            + "tools (their spawn tools and `clarify` are removed). "
+        if withFolder.isEmpty {
+            text +=
+                "None of the listed agents has a working folder, so no agent worker can read "
+                + "or write files on disk — use `share_artifact` for file deliverables."
+        } else {
+            let names = withFolder.map { "\($0.name)" }.joined(separator: ", ")
+            text +=
+                "An agent that lists a working folder (\(names)) can READ and WRITE files there "
+                + "with its file tools: delegate \"save/write X to <relative path>\" tasks to such "
+                + "an agent and put the exact relative path in `input`; its files land in that "
+                + "folder on disk and its digest names them. Agents without a working folder "
+                + "cannot write to disk — ask those to use `share_artifact` instead."
+        }
+        return text
     }
 
     /// One workspace `spawn_agent` target line: `` `0x…` — Name — description

@@ -100,9 +100,49 @@ enum AgentDelegationDispatcher {
     /// pass through to the requesting conversation. Without the contract,
     /// workers paste whole files into their answer (truncated by the digest
     /// cap) or end the run on intermediate commentary that becomes the
-    /// digest. Pure, for unit tests.
-    static func delegatedPrompt(input: String, remote: Bool = false) -> String {
-        input + "\n\n" + (remote ? remoteDeliveryContract : deliveryContract)
+    /// digest. When the local target agent has a configured Working Folder
+    /// (`workingFolderPath`), the contract also names it: the dispatched run
+    /// mounts that folder (`BackgroundTaskManager.resolveDispatchFolder`), so
+    /// the child's file tools can write there — the only on-disk delivery
+    /// path a delegation has (issue #2703). Pure, for unit tests.
+    static func delegatedPrompt(
+        input: String,
+        remote: Bool = false,
+        workingFolderPath: String? = nil
+    ) -> String {
+        let contract: String
+        if remote {
+            contract = remoteDeliveryContract
+        } else if let folder = workingFolderPath, !folder.isEmpty {
+            contract = workingFolderDeliveryContract(folderPath: folder)
+        } else {
+            contract = deliveryContract
+        }
+        return input + "\n\n" + contract
+    }
+
+    /// Delivery contract for a local child whose target agent has a Working
+    /// Folder. Same requester/digest framing as `deliveryContract`, plus the
+    /// folder: files the task asks to save/write go on disk under it via the
+    /// file tools (paths relative to the folder), and the final message names
+    /// them; `share_artifact` stays the path for content the REQUESTER should
+    /// receive. If the folder failed to mount, `ExecutionContext` already
+    /// prefixed the prompt with an explicit folder-unreadable preamble, so
+    /// this text never asks the child to invent a location.
+    static func workingFolderDeliveryContract(folderPath: String) -> String {
+        "[Delegated task]\n"
+            + "You are running as a delegated subtask for another agent. The requester "
+            + "sees ONLY your final message, returned as a compact size-capped digest — "
+            + "intermediate commentary is lost, so finish with a message that stands "
+            + "alone as the result.\n"
+            + "Your working folder is `\(folderPath)`. Your file tools operate on it with "
+            + "paths relative to that folder. When the task asks you to save, write, or "
+            + "update files, write them there with `file_write` / `file_edit` and list the "
+            + "exact relative paths you wrote in your final message — do NOT paste their "
+            + "content. Use `share_artifact` only when the task asks for a file to be "
+            + "returned to the requester rather than saved in the working folder. Never "
+            + "write outside the working folder or invent a different location.\n"
+            + "[/Delegated task]"
     }
 
     /// Contract for a workspace (Mode 2) child: the host runs its own agent
@@ -252,8 +292,21 @@ enum AgentDelegationDispatcher {
         parentSessionId: String? = nil
     ) async throws -> AgentDelegationOutcome {
         let started = Date()
+        // The folder the child will actually run in: the target agent's
+        // configured Working Folder — the SAME lookup `resolveDispatchFolder`
+        // performs for a folder-less `.delegation` request — so the contract
+        // below never advertises a folder the run does not mount. The
+        // launcher's own chat folder is deliberately NOT inherited.
+        let childWorkingFolder: String? = await MainActor.run {
+            guard case .local(let agentId) = target else { return nil }
+            return AgentManager.shared.workingFolder(for: agentId)?.path
+        }
         let request = DispatchRequest(
-            prompt: delegatedPrompt(input: input, remote: target.isWorkspace),
+            prompt: delegatedPrompt(
+                input: input,
+                remote: target.isWorkspace,
+                workingFolderPath: childWorkingFolder
+            ),
             target: target,
             title: sessionTitle(for: input),
             source: .delegation,

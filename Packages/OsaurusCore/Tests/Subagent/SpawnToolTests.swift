@@ -187,10 +187,16 @@ struct SpawnToolTests {
         )
     }
 
-    @Test func spawnAgentDescriptionStatesCancellationAuditedToolBoundary() {
+    @Test func spawnAgentDescriptionStatesTheDelegatedToolBoundary() {
         let description = SpawnAgentTool().description
-        #expect(description.contains("cancellation-audited for spawned execution"))
-        #expect(description.contains("other direct-chat tools remain parent-owned"))
+        // The child IS the target agent (a real chat session with that
+        // agent's own tools), and its on-disk reach is the agent's configured
+        // working folder — not the launcher's tools or folder.
+        #expect(description.contains("chat session of the target agent"))
+        #expect(description.contains("that agent's own enabled tools"))
+        #expect(description.contains("configured working folder"))
+        #expect(description.contains("remain parent-owned"))
+        #expect(!description.contains("cancellation-audited"))
         #expect(!description.contains("calendar agent can create events"))
     }
 

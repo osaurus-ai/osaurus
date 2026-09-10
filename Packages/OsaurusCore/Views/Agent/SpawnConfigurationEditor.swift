@@ -148,7 +148,7 @@ struct SpawnConfigurationEditor: View {
         controlRow(
             "Worker tools",
             subtitle:
-                "Configured agents receive the cancellation-audited subset of their enabled tools. Optionally add host read-only file tools so workers can inspect files without copying them into the parent context."
+                "Applies to bare-model workers (spawn_model), which have no tools of their own. Optionally add host read-only file tools so they can inspect files without copying them into the parent context. Delegated agents use their own enabled tools and Working Folder instead."
         ) {
             Picker("", selection: toolAccessSelection) {
                 Text("Agent tools only", bundle: .module).tag(SpawnToolAccess.none)
@@ -186,6 +186,13 @@ struct SpawnConfigurationEditor: View {
                         }
                     }
                 }
+                // A delegated agent runs as a real chat session of that agent,
+                // so its file access is its own Working Folder — the launcher's
+                // folder is never passed down. Point at where that is set so a
+                // "save this to disk" delegation can be made to work (#2703).
+                emptyHint(
+                    "Delegated agents run with their own tools. An agent with a Working Folder (agent editor → Abilities → Working Folder) reads and writes files there; agents without one deliver files as artifacts."
+                )
             }
             if agentCandidates.isEmpty {
                 emptyHint(

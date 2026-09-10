@@ -179,15 +179,13 @@ struct SpawnGuidanceTests {
             models: [],
             toolAccess: SpawnToolAccess.none
         )
-        #expect(
-            textOnly.contains(
-                "Target-agent workers receive only their enabled tools whose implementations are "
-                    + "cancellation-audited for spawned execution"
-            )
-        )
-        #expect(textOnly.contains("bare-model workers have no tools"))
+        // Agent targets are TRUE delegations (the child IS the agent, with
+        // its own tools + Working Folder), so the grant line speaks only
+        // about bare-model workers.
+        #expect(textOnly.contains("Agent targets run as a full chat session of that agent"))
+        #expect(textOnly.contains("Bare-model workers (`spawn_model`) have no tools"))
         #expect(textOnly.contains("No extra generic read-only file tools"))
-        #expect(!textOnly.contains("Workers also CAN read files"))
+        #expect(!textOnly.contains("receive only the added host file_read"))
         #expect(textOnly.contains("A direct-chat tool omitted from a worker's schema"))
 
         let readOnly = SystemPromptTemplates.spawnGuidance(
@@ -195,16 +193,11 @@ struct SpawnGuidanceTests {
             models: [],
             toolAccess: .readOnly
         )
-        #expect(
-            readOnly.contains(
-                "Target-agent workers receive only their enabled tools whose implementations are "
-                    + "cancellation-audited for spawned execution"
-            )
-        )
-        #expect(readOnly.contains("Workers also CAN read files"))
-        #expect(readOnly.contains("file_read"))
-        #expect(readOnly.contains("Bare-model workers receive only these added read-only tools"))
-        #expect(!readOnly.contains("bare-model workers have no tools"))
+        #expect(readOnly.contains("Agent targets run as a full chat session of that agent"))
+        #expect(readOnly.contains("Bare-model workers (`spawn_model`) receive only the added host file_read"))
+        #expect(readOnly.contains("file_search"))
+        #expect(readOnly.contains("They cannot write files."))
+        #expect(!readOnly.contains("have no tools"))
         #expect(!readOnly.contains("sandbox reads"))
     }
 
@@ -235,6 +228,9 @@ struct SpawnGuidanceTests {
         // THIS conversation — otherwise it asks workers to paste whole files
         // into their reply and the digest cap truncates the deliverable.
         #expect(text.contains("Workers deliver FILES as artifacts"))
+        // Scoped to files that should land in THIS conversation — an agent
+        // with a working folder writes to disk instead (#2703).
+        #expect(text.contains("land in THIS"))
         #expect(text.contains("`share_artifact`"))
         #expect(text.contains("artifact card"))
         #expect(text.contains("`artifacts_shared`"))

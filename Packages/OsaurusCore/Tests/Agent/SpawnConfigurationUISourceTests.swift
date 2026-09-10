@@ -33,8 +33,12 @@ struct SpawnConfigurationUISourceTests {
         #expect(editor.contains(#"keyPath: \.maxToolCalls"#))
         #expect(editor.contains(#"Text("Agent tools only""#))
         #expect(editor.contains(#"Text("Agent tools + read-only files""#))
-        #expect(editor.contains("cancellation-audited subset of their enabled tools"))
+        // Worker tools grant applies to bare-model workers; delegated agents
+        // use their own tools and Working Folder (#2703).
+        #expect(editor.contains("Applies to bare-model workers (spawn_model)"))
         #expect(editor.contains("host read-only file tools"))
+        #expect(editor.contains("Delegated agents use their own enabled tools and Working Folder"))
+        #expect(editor.contains("An agent with a Working Folder (agent editor → Abilities → Working Folder)"))
         #expect(editor.contains("modelPickerCache.chatModelCandidates"))
     }
 
