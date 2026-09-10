@@ -42,18 +42,10 @@ enum WorkspacesIntroStage: Int, CaseIterable, Identifiable {
 
     var caption: LocalizedStringKey {
         switch self {
-        case .setUp:
-            return
-                "You set the agents up once and wire them into the systems you already run: email, the ticket queue, the repo. You become the architect of your own tailored Sovereign AI."
-        case .handOut:
-            return
-                "Sales opens Osaurus and the account agent is already there. Support and marketing get theirs. Developers get a stronger coding model. Nobody builds anything themselves."
-        case .yourRules:
-            return
-                "Every agent runs on your own hardware, over a private encrypted network, under rules you write: which models, which services, what gets scrubbed before anything touches the cloud. Your data never leaves the building. Local inference stays free."
-        case .oneBill:
-            return
-                "Want cloud models too? Credits pool into one bill, ours or your existing accounts. Shared memory and skills, within your guidelines."
+        case .setUp: return "Set agents up once and wire them into the tools your team already uses."
+        case .handOut: return "Hand them out. Everyone opens Osaurus and their agent is already there."
+        case .yourRules: return "Runs on your own Macs, over a private network, under rules you write."
+        case .oneBill: return "Cloud models, if you want them, from one shared credit pool."
         }
     }
 }
@@ -112,7 +104,7 @@ struct WorkspacesIntroModal: View {
                 .foregroundStyle(theme.secondaryText)
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(width: contentWidth, height: 58, alignment: .topLeading)
+                .frame(width: contentWidth, height: 20, alignment: .topLeading)
                 .id(stage)
                 .transition(
                     .asymmetric(
@@ -120,12 +112,6 @@ struct WorkspacesIntroModal: View {
                         removal: .opacity
                     )
                 )
-
-            Rectangle()
-                .fill(theme.primaryBorder.opacity(0.3))
-                .frame(height: 1)
-
-            offer
 
             footer
         }
@@ -136,38 +122,11 @@ struct WorkspacesIntroModal: View {
     // MARK: - Copy
 
     private var subheadline: some View {
-        Text(
-            localized:
-                "Workspaces is here: your Osaurus, for the whole team, on the fleet you already own. Buy cloud AI for a team and everyone gets a login, then connects their own services. A Workspace works the other way round."
-        )
-        .font(.system(size: 13))
-        .foregroundStyle(theme.secondaryText)
-        .lineSpacing(2)
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var offer: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(
-                localized:
-                    "Before Workspaces launches publicly, we're opening a small number of Founding Workspaces and offering them to you first. You've been doing this solo. Now it's multiplayer. Osaurus is evolving, and we'd love to build the team side with you."
-            )
+        Text(localized: "Workspaces is here: your Osaurus, for the whole team, on the Macs you already own.")
             .font(.system(size: 13))
-            .foregroundStyle(theme.primaryText)
-            .lineSpacing(2)
-            .fixedSize(horizontal: false, vertical: true)
-
-            Text(
-                localized:
-                    "A Founding Workspace locks in at $20 a month forever, per workspace, not per person. It comes with 2 months free, $20 of cloud credits every month on us, and a seat at the table as we build what comes next, including tools still in active development."
-            )
-            .font(.system(size: 12))
             .foregroundStyle(theme.secondaryText)
-            .lineSpacing(2)
             .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Footer
@@ -205,22 +164,12 @@ struct WorkspacesIntroModal: View {
                 .buttonStyle(.plain)
 
                 Spacer(minLength: 0)
-
-                Text(localized: "2 months free for the first 100 existing users.")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(theme.accentColor)
-                    .multilineTextAlignment(.trailing)
-                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            Text(
-                localized:
-                    "Then $20 a month per workspace, locked for as long as you keep it. First 100 users. Osaurus for individuals stays free and MIT-licensed, and nothing about your setup changes today. Workspaces lives in Settings whenever you want to look."
-            )
-            .font(.system(size: 11))
-            .foregroundStyle(theme.tertiaryText)
-            .lineSpacing(1)
-            .fixedSize(horizontal: false, vertical: true)
+            Text(localized: "Limited founding pricing, offered to early users first. Osaurus for individuals stays free and MIT-licensed.")
+                .font(.system(size: 11))
+                .foregroundStyle(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
