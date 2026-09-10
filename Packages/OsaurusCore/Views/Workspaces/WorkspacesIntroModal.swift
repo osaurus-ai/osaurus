@@ -319,27 +319,27 @@ private struct WorkspacesIntroCanvas: View {
     private static let lanes: [Lane] = [
         Lane(
             id: 0,
-            agent: ("Account agent", "person.crop.rectangle"),
+            agent: ("Sales agent", "chart.line.uptrend.xyaxis"),
             service: ("Email", "envelope"),
-            member: ("Sales", "chart.line.uptrend.xyaxis")
+            member: ("Sales team", "person.2")
         ),
         Lane(
             id: 1,
-            agent: ("Support agent", "lifepreserver"),
+            agent: ("Support agent", "headphones"),
             service: ("Tickets", "ticket"),
-            member: ("Support", "headphones")
+            member: ("Support team", "person.2")
         ),
         Lane(
             id: 2,
-            agent: ("Content agent", "doc.text"),
+            agent: ("Marketing agent", "megaphone"),
             service: ("Docs", "folder"),
-            member: ("Marketing", "megaphone")
+            member: ("Marketing team", "person.2")
         ),
         Lane(
             id: 3,
-            agent: ("Coding agent", "chevron.left.forwardslash.chevron.right"),
+            agent: ("Engineering agent", "chevron.left.forwardslash.chevron.right"),
             service: ("Repo", "arrow.triangle.branch"),
-            member: ("Developers", "hammer")
+            member: ("Engineering team", "person.2")
         ),
     ]
 
