@@ -25,6 +25,14 @@ public final class WorkspacesIntroCampaign {
     private let defaults: UserDefaults
     private let isFreshInstall: @MainActor () -> Bool
 
+    /// DESIGN-TIME ONLY: while the dialog is still being iterated on, show
+    /// it on every launch and activation instead of once. The seen flag is
+    /// neither read nor written in this mode. Flip to `false` (or delete)
+    /// before release so the one-shot contract below takes over.
+    nonisolated static let showsEveryTimeWhileDesigning = true
+
+    private let showsEveryTime: Bool
+
     /// True while the dialog is on screen. In-memory only: repeated
     /// activation notifications during a presentation must not stack a
     /// second copy, but a check that never presented must not consume
@@ -35,10 +43,12 @@ public final class WorkspacesIntroCampaign {
     /// tests inject an isolated suite and a fixed answer.
     init(
         defaults: UserDefaults = .standard,
-        isFreshInstall: @escaping @MainActor () -> Bool = { OnboardingService.shared.isFreshInstall }
+        isFreshInstall: @escaping @MainActor () -> Bool = { OnboardingService.shared.isFreshInstall },
+        showsEveryTime: Bool = WorkspacesIntroCampaign.showsEveryTimeWhileDesigning
     ) {
         self.defaults = defaults
         self.isFreshInstall = isFreshInstall
+        self.showsEveryTime = showsEveryTime
     }
 
     /// Whether the user has already been shown the dialog (any dismissal
@@ -58,7 +68,11 @@ public final class WorkspacesIntroCampaign {
     /// presenting, exactly like `WhatsNewGate` does for a first launch. A
     /// blocked check on an existing install consumes nothing.
     var isEligible: Bool {
-        guard !isPresenting, !hasSeen else { return false }
+        guard !isPresenting else { return false }
+        // Design-time: ignore seen and fresh-install state entirely, but
+        // still refuse to stack a second copy while one is on screen.
+        if showsEveryTime { return true }
+        guard !hasSeen else { return false }
         if isFreshInstall() {
             markSeen()
             return false
@@ -83,6 +97,9 @@ public final class WorkspacesIntroCampaign {
 
     /// Idempotent; safe to call from every dismissal path.
     func markSeen() {
+        // Design-time: leave defaults untouched so flipping the switch off
+        // later yields a clean one-shot for everyone, reviewers included.
+        guard !showsEveryTime else { return }
         defaults.set(true, forKey: Self.seenDefaultsKey)
     }
 

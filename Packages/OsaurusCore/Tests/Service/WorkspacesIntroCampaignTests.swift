@@ -30,7 +30,13 @@ struct WorkspacesIntroCampaignTests {
 
         init() {
             defaults = UserDefaults(suiteName: suiteName)!
-            sut = WorkspacesIntroCampaign(defaults: defaults) { [unowned self] in self.isFreshInstall }
+            // The one-shot contract is tested with the design-time
+            // "show every time" switch off, whatever its current default.
+            sut = WorkspacesIntroCampaign(
+                defaults: defaults,
+                isFreshInstall: { [unowned self] in self.isFreshInstall },
+                showsEveryTime: false
+            )
         }
 
         deinit {
@@ -74,7 +80,8 @@ struct WorkspacesIntroCampaignTests {
         let fixture = Fixture()
         fixture.sut.willPresent()
         fixture.sut.didDismiss()
-        let relaunched = WorkspacesIntroCampaign(defaults: fixture.defaults, isFreshInstall: { false })
+        let relaunched = WorkspacesIntroCampaign(
+            defaults: fixture.defaults, isFreshInstall: { false }, showsEveryTime: false)
         #expect(relaunched.hasSeen)
         #expect(!relaunched.isEligible)
     }
@@ -113,6 +120,24 @@ struct WorkspacesIntroCampaignTests {
             #expect(fixture.sut.isEligible)
         }
     #endif
+
+    // MARK: - Design-time mode
+
+    /// While the dialog is being designed it shows on every check, ignores
+    /// seen and fresh-install state, never writes the seen flag, and still
+    /// refuses to stack a copy while one is on screen.
+    @Test func showsEveryTime_ignoresSeenAndFreshInstall_andNeverPersists() {
+        let fixture = Fixture()
+        let designTime = WorkspacesIntroCampaign(
+            defaults: fixture.defaults, isFreshInstall: { true }, showsEveryTime: true)
+        #expect(designTime.isEligible)
+        designTime.willPresent()
+        #expect(!designTime.isEligible)
+        #expect(!designTime.hasSeen)
+        designTime.didDismiss()
+        #expect(designTime.isEligible)
+        #expect(!fixture.sut.hasSeen)
+    }
 
     // MARK: - Key hygiene
 
