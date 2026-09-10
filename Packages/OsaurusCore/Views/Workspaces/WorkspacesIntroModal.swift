@@ -134,20 +134,7 @@ struct WorkspacesIntroModal: View {
     private var footer: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 12) {
-                Button(action: onClaim) {
-                    HStack(spacing: 6) {
-                        Text(localized: "Claim a Founding Workspace")
-                        Image(systemName: "arrow.right")
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.white)
-                    .padding(.horizontal, 16)
-                    .frame(height: 34)
-                    .background(Capsule().fill(theme.accentColor))
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.defaultAction)
+                Spacer(minLength: 0)
 
                 Button(action: onLater) {
                     Text(localized: "Maybe later")
@@ -163,7 +150,20 @@ struct WorkspacesIntroModal: View {
                 }
                 .buttonStyle(.plain)
 
-                Spacer(minLength: 0)
+                Button(action: onClaim) {
+                    HStack(spacing: 6) {
+                        Text(localized: "Claim a Founding Workspace")
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 16)
+                    .frame(height: 34)
+                    .background(Capsule().fill(theme.accentColor))
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.defaultAction)
             }
 
             Text(localized: "Limited founding pricing, offered to early users first. Osaurus for individuals stays free and MIT-licensed.")
@@ -200,7 +200,23 @@ struct WorkspacesIntroModal: View {
                     .padding(.trailing, 10)
                     .frame(height: 26)
                     .background(
-                        Capsule().fill(selected ? theme.accentColor.opacity(0.14) : theme.secondaryBackground)
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(selected ? theme.accentColor.opacity(0.10) : theme.secondaryBackground)
+                            if selected {
+                                // Story-style fill that sweeps across the
+                                // active chip over the auto-advance interval.
+                                // Remounted per stage so it always starts
+                                // from zero; sits at full once the user has
+                                // taken control or motion is reduced.
+                                StageChipProgress(
+                                    running: !userTookControl && !reduceMotion,
+                                    duration: Self.autoAdvanceInterval,
+                                    color: theme.accentColor.opacity(0.22)
+                                )
+                                .id(stage)
+                            }
+                        }
+                        .clipShape(Capsule())
                     )
                     .overlay(
                         Capsule().stroke(
@@ -244,6 +260,35 @@ struct WorkspacesIntroModal: View {
             try? await Task.sleep(for: Self.autoAdvanceInterval)
             guard !Task.isCancelled, !userTookControl else { return }
             advance(to: stage.next)
+        }
+    }
+}
+
+// MARK: - Chip progress
+
+/// Leading-edge fill inside the active stage chip. Starts at zero when it
+/// appears and sweeps to the chip's full width over `duration`, in step
+/// with the auto-advance loop. When not running it sits at full width.
+private struct StageChipProgress: View {
+    let running: Bool
+    let duration: Duration
+    let color: Color
+
+    @State private var fraction: CGFloat = 0
+
+    var body: some View {
+        GeometryReader { proxy in
+            Rectangle()
+                .fill(color)
+                .frame(width: proxy.size.width * (running ? fraction : 1))
+        }
+        .onAppear {
+            guard running else { return }
+            let seconds = Double(duration.components.seconds)
+                + Double(duration.components.attoseconds) / 1e18
+            withAnimation(.linear(duration: seconds)) {
+                fraction = 1
+            }
         }
     }
 }

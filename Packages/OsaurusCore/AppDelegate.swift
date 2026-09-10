@@ -2893,7 +2893,7 @@ extension AppDelegate {
         ThemedAlertCenter.shared.present(
             ThemedAlertRequest(
                 id: requestId,
-                title: L("You got here early. That's about to pay off."),
+                title: L("Introducing Workspaces"),
                 message: nil,
                 showsHeaderIcon: false,
                 // "Maybe later" carries the cancel role so the corner X,
