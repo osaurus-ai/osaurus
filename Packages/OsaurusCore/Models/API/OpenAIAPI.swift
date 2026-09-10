@@ -1216,6 +1216,11 @@ struct ToolFunction: Codable, Sendable {
     let name: String
     let description: String?
     let parameters: JSONValue?
+    /// Caller-declared strict-schema flag. Preserved so a Responses client's
+    /// explicit `strict: false` (Codex) is not overridden by schema inference
+    /// when the request is re-encoded for a Responses upstream. Encoded only
+    /// when set, so existing chat-completions wire bytes are unchanged.
+    var strict: Bool? = nil
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -1223,10 +1228,11 @@ struct ToolFunction: Codable, Sendable {
         try container.encodeIfPresent(description, forKey: .description)
         let params = parameters ?? .object(["type": .string("object"), "properties": .object([:])])
         try container.encode(params, forKey: .parameters)
+        try container.encodeIfPresent(strict, forKey: .strict)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, description, parameters
+        case name, description, parameters, strict
     }
 }
 

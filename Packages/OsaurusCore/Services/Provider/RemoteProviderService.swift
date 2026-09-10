@@ -5554,9 +5554,10 @@ struct RemoteChatRequest: Encodable {
                     name: tool.function.name,
                     description: tool.function.description,
                     parameters: tool.function.parameters,
-                    strict: Self.isStrictResponsesToolSchema(
-                        tool.function.parameters
-                    )
+                    strict: tool.function.strict
+                        ?? Self.isStrictResponsesToolSchema(
+                            tool.function.parameters
+                        )
                 )
             }
         }

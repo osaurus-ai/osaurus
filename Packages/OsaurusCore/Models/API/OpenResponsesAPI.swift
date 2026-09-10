@@ -421,15 +421,25 @@ public struct OpenResponsesFunctionCallOutputItem: Codable, Sendable {
 
 // MARK: - Tool Definitions
 
-/// Tool definition
+/// Tool definition.
+///
+/// Function tools are decoded into typed fields. Every other tool type
+/// (`custom`, `web_search`, `mcp`, namespace tools, ...) is preserved verbatim
+/// in `raw` so a request carrying them is never rejected outright: Codex and
+/// similar Responses clients send hosted tools alongside their function tools
+/// even for trivial prompts.
 public struct OpenResponsesTool: Codable, Sendable {
     public let type: String
-    public let name: String
+    public let name: String?
     public let description: String?
     public let parameters: JSONValue?
     /// Explicitly choose strict or best-effort behavior instead of relying on
     /// provider-side schema normalization.
     public let strict: Bool?
+    /// Original JSON object for non-function tools. `nil` for function tools.
+    public let raw: JSONValue?
+
+    public var isFunction: Bool { type == "function" }
 
     public init(name: String, description: String?, parameters: JSONValue?, strict: Bool? = nil) {
         self.type = "function"
@@ -437,6 +447,81 @@ public struct OpenResponsesTool: Codable, Sendable {
         self.description = description
         self.parameters = parameters
         self.strict = strict
+        self.raw = nil
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type, name, description, parameters, strict
+    }
+
+    public init(from decoder: Decoder) throws {
+        let value = try JSONValue(from: decoder)
+        guard case .object(let fields) = value else {
+            throw DecodingError.typeMismatch(
+                OpenResponsesTool.self,
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Expected a tool object"
+                )
+            )
+        }
+
+        let type: String
+        if case .string(let declared) = fields["type"] {
+            type = declared
+        } else {
+            type = "function"
+        }
+        self.type = type
+
+        if case .string(let name) = fields["name"] {
+            self.name = name
+        } else {
+            self.name = nil
+        }
+        if case .string(let description) = fields["description"] {
+            self.description = description
+        } else {
+            self.description = nil
+        }
+        if let parameters = fields["parameters"], parameters != .null {
+            self.parameters = parameters
+        } else {
+            self.parameters = nil
+        }
+        if case .bool(let strict) = fields["strict"] {
+            self.strict = strict
+        } else {
+            self.strict = nil
+        }
+
+        if type == "function" {
+            guard let name = self.name, !name.isEmpty else {
+                throw DecodingError.keyNotFound(
+                    CodingKeys.name,
+                    DecodingError.Context(
+                        codingPath: decoder.codingPath,
+                        debugDescription: "Function tools require a non-empty `name`"
+                    )
+                )
+            }
+            self.raw = nil
+        } else {
+            self.raw = value
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        if let raw {
+            try raw.encode(to: encoder)
+            return
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(type, forKey: .type)
+        try container.encodeIfPresent(name, forKey: .name)
+        try container.encodeIfPresent(description, forKey: .description)
+        try container.encodeIfPresent(parameters, forKey: .parameters)
+        try container.encodeIfPresent(strict, forKey: .strict)
     }
 }
 
@@ -1072,18 +1157,32 @@ extension OpenResponsesRequest {
         }
 
         // Convert tools
+        // Only function tools have a chat-completions equivalent. Hosted and
+        // custom tool types (web_search, custom, mcp, ...) are dropped here
+        // rather than failing the whole request: Osaurus executes tools
+        // locally and forwards function declarations only.
         var openAITools: [Tool]? = nil
         if let tools = tools {
-            openAITools = tools.map { tool in
-                Tool(
+            let functionTools = tools.compactMap { tool -> Tool? in
+                guard tool.isFunction, let name = tool.name else { return nil }
+                return Tool(
                     type: "function",
                     function: ToolFunction(
-                        name: tool.name,
+                        name: name,
                         description: tool.description,
-                        parameters: tool.parameters
+                        parameters: tool.parameters,
+                        strict: tool.strict
                     )
                 )
             }
+            let droppedTypes = tools.filter { !$0.isFunction }.map(\.type)
+            if !droppedTypes.isEmpty {
+                debugLog(
+                    "[OpenResponses] dropped \(droppedTypes.count) non-function tool(s) "
+                        + "(\(droppedTypes.joined(separator: ", "))); only function tools are forwarded"
+                )
+            }
+            openAITools = functionTools.isEmpty ? nil : functionTools
         }
 
         // Convert tool choice

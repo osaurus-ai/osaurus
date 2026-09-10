@@ -9321,6 +9321,34 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// CLI/script retries of the same logical request dedupe Osaurus Router
     /// billing on a re-POST; otherwise synthesizes a per-request key so the
     /// provider service's idempotent connect-phase retries still dedupe.
+    /// Human-readable summary of a request-body decoding failure, including
+    /// the JSON path of the offending field (e.g. `tools.[0].name`).
+    nonisolated static func describeDecodingFailure(_ error: Error) -> String {
+        guard let decodingError = error as? DecodingError else {
+            return error.localizedDescription
+        }
+        func pathString(_ context: DecodingError.Context) -> String {
+            let path = context.codingPath.map { key -> String in
+                if let index = key.intValue { return "[\(index)]" }
+                return key.stringValue
+            }
+            return path.isEmpty ? "top level" : path.joined(separator: ".")
+        }
+        switch decodingError {
+        case .typeMismatch(let type, let context):
+            return "wrong type at \(pathString(context)), expected \(type)"
+        case .valueNotFound(let type, let context):
+            return "missing value at \(pathString(context)), expected \(type)"
+        case .keyNotFound(let key, let context):
+            let detail = context.debugDescription.isEmpty ? "" : " (\(context.debugDescription))"
+            return "missing required key `\(key.stringValue)` at \(pathString(context))\(detail)"
+        case .dataCorrupted(let context):
+            return "invalid value at \(pathString(context)): \(context.debugDescription)"
+        @unknown default:
+            return String(describing: decodingError)
+        }
+    }
+
     /// The key rides only the Router wire (in the signed body — see
     /// `RemoteProviderService.buildChatRequest`); no other upstream sees it.
     nonisolated static func httpIdempotencyKey(head: HTTPRequestHead) -> String {
@@ -12975,10 +13003,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         // Parse Open Responses request
-        guard let openResponsesReq = try? JSONDecoder().decode(OpenResponsesRequest.self, from: data) else {
-            let error = OpenResponsesErrorResponse(code: "invalid_request_error", message: "Invalid request format")
+        let openResponsesReq: OpenResponsesRequest
+        do {
+            openResponsesReq = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
+        } catch {
+            // Surface the decoding failure so clients can see which field was
+            // rejected instead of a bare "Invalid request format".
+            let message = "Invalid request format: \(Self.describeDecodingFailure(error))"
+            let errorResponse = OpenResponsesErrorResponse(code: "invalid_request_error", message: message)
             let errorJson =
-                (try? JSONEncoder.osaurusCanonical().encode(error)).map { String(decoding: $0, as: UTF8.self) }
+                (try? JSONEncoder.osaurusCanonical().encode(errorResponse)).map { String(decoding: $0, as: UTF8.self) }
                 ?? #"{"error":{"type":"error","code":"invalid_request_error","message":"Invalid request format"}}"#
             var headers = [("Content-Type", "application/json; charset=utf-8")]
             headers.append(contentsOf: stateRef.value.corsHeaders)
@@ -12996,7 +13030,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 requestBody: requestBodyString,
                 responseStatus: 400,
                 startTime: startTime,
-                errorMessage: "Invalid request format"
+                errorMessage: message
             )
             return
         }
