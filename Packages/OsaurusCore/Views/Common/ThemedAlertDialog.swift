@@ -180,6 +180,11 @@ public struct ThemedAlertRequest: Identifiable {
     /// corner instead of inline. Useful for chooser-style alerts where the
     /// inline row would just be padding.
     public let showsCloseButton: Bool
+    /// Optional title point size. Defaults to the standard 16pt, which is
+    /// tuned for compact confirmations; wide announcement dialogs (e.g. the
+    /// Workspaces intro) pass a larger value so the title holds its own
+    /// over a big custom-content area.
+    public let titleFontSize: CGFloat?
     /// When set, replaces the standard message + accessory + divider +
     /// button-row section with this view. The header (icon / title) and
     /// the close X (if `showsCloseButton`) still render. Use for multi-
@@ -211,6 +216,7 @@ public struct ThemedAlertRequest: Identifiable {
         accessory: AnyView? = nil,
         buttons: [AlertButtonConfig],
         showsCloseButton: Bool = false,
+        titleFontSize: CGFloat? = nil,
         customContent: AnyView? = nil,
         width: CGFloat? = nil,
         hostsNestedAlerts: Bool = false,
@@ -225,6 +231,7 @@ public struct ThemedAlertRequest: Identifiable {
         self.accessory = accessory
         self.buttons = buttons
         self.showsCloseButton = showsCloseButton
+        self.titleFontSize = titleFontSize
         self.customContent = customContent
         self.width = width
         self.hostsNestedAlerts = hostsNestedAlerts
@@ -287,6 +294,7 @@ private struct ThemedAlertDialogContent: View {
     let accessory: AnyView?
     let buttons: [AlertButtonConfig]
     let showsCloseButton: Bool
+    var titleFontSize: CGFloat? = nil
     let customContent: AnyView?
     let width: CGFloat?
     let presentationStyle: ThemedAlertPresentationStyle
@@ -316,7 +324,7 @@ private struct ThemedAlertDialogContent: View {
                             // With no artwork above the title, the X
                             // shares the title row: centre it on the
                             // 16pt title (24pt top inset, ~19pt line).
-                            .padding(.top, titleLeadsHeader ? 22 : 10)
+                            .padding(.top, titleLeadsHeader ? 22 + ((titleFontSize ?? 16) - 16) / 2 : 10)
                     }
                 }
                 .scaleEffect(isAppearing ? 1 : 0.9)
@@ -419,7 +427,7 @@ private struct ThemedAlertDialogContent: View {
 
             // Title
             Text(LocalizedStringKey(title), bundle: .module)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: titleFontSize ?? 16, weight: .semibold))
                 .foregroundColor(theme.primaryText)
                 .multilineTextAlignment(.center)
         }
@@ -752,6 +760,7 @@ public struct ThemedAlertHost: View {
                     accessory: request.accessory,
                     buttons: request.buttons,
                     showsCloseButton: request.showsCloseButton,
+                    titleFontSize: request.titleFontSize,
                     customContent: request.customContent,
                     width: request.width,
                     presentationStyle: .window,

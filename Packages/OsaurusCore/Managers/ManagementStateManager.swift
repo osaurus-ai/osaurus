@@ -100,6 +100,13 @@ public final class ManagementStateManager: ObservableObject {
     /// to false after presenting.
     @Published public var pendingCreateAgent: Bool = false
 
+    /// One-shot request to open the New Workspace sheet, which is the
+    /// "Start free trial" flow (name, billing interval, then Stripe Checkout
+    /// in the browser) — e.g. from the Workspaces intro dialog's CTA.
+    /// `WorkspacesView` observes this and resets it to false once the
+    /// router and identity gates let it present.
+    @Published public var pendingCreateWorkspace: Bool = false
+
     /// One-shot request to reveal a project's shared memory — the namespace
     /// key (`project-<uuid>`). `MemoryView` observes this, switches to its
     /// Agents subtab, opens the project's context preview, and resets it to

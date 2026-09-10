@@ -32,6 +32,7 @@ struct WorkspacesView: View {
     /// a code from a chat message).
     @State private var showManualJoinSheet = false
     @State private var showCreateSheet = false
+    @ObservedObject private var managementState = ManagementStateManager.shared
     /// Non-nil shows the detail pane for that workspace in place of the list.
     @State private var openWorkspace: OsaurusRouterWorkspaceSummary?
     /// Detail tab to land on when `openWorkspace` is set from a card menu.
@@ -52,6 +53,16 @@ struct WorkspacesView: View {
     /// explicitly discards it.
     @State private var showDeeplinkActivateSheet = false
     @State private var showDeeplinkJoinSheet = false
+
+    /// One-shot request from elsewhere in the app (the Workspaces intro
+    /// dialog's CTA) to land straight in the New Workspace sheet. Waits for
+    /// the same gates as a deep link so the sheet never opens on a tab that
+    /// cannot make a wallet-signed call yet.
+    private func presentPendingCreateIfReady() {
+        guard managementState.pendingCreateWorkspace, canUseWorkspaces else { return }
+        managementState.pendingCreateWorkspace = false
+        showCreateSheet = true
+    }
 
     private func presentDeeplinkSheetsIfReady() {
         guard canUseWorkspaces else { return }
@@ -115,6 +126,13 @@ struct WorkspacesView: View {
                 hasAppeared = true
             }
             presentDeeplinkSheetsIfReady()
+            presentPendingCreateIfReady()
+        }
+        .onReceive(managementState.$pendingCreateWorkspace) { pending in
+            // Fires before the property stores the new value, so act on the
+            // delivered one and consume it on the next turn of the loop.
+            guard pending else { return }
+            Task { @MainActor in presentPendingCreateIfReady() }
         }
         .onChange(of: service.pendingActivation) { _, pending in
             if pending == nil {
@@ -133,7 +151,10 @@ struct WorkspacesView: View {
         .onChange(of: canUseWorkspaces) { _, ready in
             // Gates cleared (identity restored / router on) while a deep link
             // was waiting: pick up where it left off.
-            if ready { presentDeeplinkSheetsIfReady() }
+            if ready {
+                presentDeeplinkSheetsIfReady()
+                presentPendingCreateIfReady()
+            }
         }
         .onReceive(service.$selectedWorkspaceId) { selected in
             // A `@Published` publisher fires before the property stores the

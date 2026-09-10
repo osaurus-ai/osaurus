@@ -2457,9 +2457,9 @@ extension AppDelegate {
                         // now that the chat window is up to host it. Its guard
                         // defers again while the import prompt is on screen.
                         self?.presentProductHuntLaunchDialogIfEligible()
-                        // Existing users re-running onboarding after a version
-                        // bump land here too; fresh installs are consumed
-                        // silently by the campaign's own gate.
+                        // Fresh installs see the Workspaces intro here, right after
+                        // onboarding (the launch check deferred it behind the flow);
+                        // its guard defers again while the import prompt is up.
                         self?.presentWorkspacesIntroDialogIfEligible()
                     }
                 }
@@ -2826,12 +2826,12 @@ extension AppDelegate {
 
 // MARK: - Workspaces Intro Dialog
 extension AppDelegate {
-    /// Present the one-time Founding Workspaces introduction to existing
-    /// users when the campaign's own gates pass (existing install, never
-    /// seen) AND nothing critical is in progress. A blocked attempt does
-    /// NOT consume eligibility: the next launch or foreground activation
-    /// simply rechecks. Same deferral set as the Product Hunt dialog so the
-    /// two announcement paths behave identically.
+    /// Present the one-time Founding Workspaces introduction when the
+    /// campaign's own gate passes (never seen; fresh installs included, they
+    /// get it right after onboarding) AND nothing critical is in progress. A
+    /// blocked attempt does NOT consume eligibility: the next launch or
+    /// foreground activation simply rechecks. Same deferral set as the
+    /// Product Hunt dialog so the two announcement paths behave identically.
     @MainActor
     func presentWorkspacesIntroDialogIfEligible() {
         guard !keychainDisabledTestMode else { return }
@@ -2872,16 +2872,28 @@ extension AppDelegate {
         FeatureTelemetry.workspacesIntroDialogShown()
 
         let requestId = UUID()
+        // The dialog is designed for 960pt but hosts as an overlay inside
+        // the landing window, so measure that window (the key window is the
+        // one `scope` resolves to) and shrink the whole dialog to fit; the
+        // screen is the fallback when no window is up (toast overlay).
+        let available: CGSize =
+            (NSApp.keyWindow ?? NSApp.mainWindow)?.contentView?.bounds.size
+            ?? (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame.size
+            ?? CGSize(width: 1440, height: 900)
+        let scale = WorkspacesIntroModal.scale(fitting: available)
         let content = WorkspacesIntroModal(
+            scale: scale,
             onClaim: {
-                FeatureTelemetry.workspacesIntroDialogClicked(action: "claim")
+                FeatureTelemetry.workspacesIntroDialogClicked(action: "start_trial")
                 // `dismiss` drops the request without running `onDismiss`,
                 // so the inline buttons release the presenting flag here.
                 campaign.didDismiss()
                 ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
-                // The Workspaces tab owns the whole purchase flow (plan,
-                // trial, Checkout in the browser), so it is the single
-                // landing spot rather than a web page.
+                // Same path as the Workspaces tab's own "Start free trial"
+                // button: land on the tab with the New Workspace sheet up
+                // (name, interval), which opens Stripe Checkout in the
+                // browser and lets the app's activation polling finish it.
+                ManagementStateManager.shared.pendingCreateWorkspace = true
                 AppDelegate.shared?.showManagementWindow(initialTab: .workspaces)
             },
             onLater: {
@@ -2906,8 +2918,9 @@ extension AppDelegate {
                     }
                 ],
                 showsCloseButton: true,
+                titleFontSize: 22,
                 customContent: AnyView(content),
-                width: WorkspacesIntroModal.dialogWidth,
+                width: WorkspacesIntroModal.dialogWidth(scale: scale),
                 onDismiss: {
                     campaign.didDismiss()
                     ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)

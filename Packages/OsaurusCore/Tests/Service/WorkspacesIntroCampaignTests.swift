@@ -3,12 +3,10 @@
 //  osaurusTests
 //
 //  Locks the one-time Founding Workspaces introduction's eligibility
-//  contract: existing installs only (a fresh install is consumed silently
-//  and never sees it, even after onboarding completes), the persisted
-//  once-per-user seen flag, the in-memory duplicate-presentation guard,
-//  and that a blocked/deferred check on an existing install never
-//  consumes eligibility. Uses an isolated UserDefaults suite and an
-//  injected fresh-install answer so every case is deterministic.
+//  contract: the persisted once-per-user seen flag (fresh installs
+//  included), the in-memory duplicate-presentation guard, and that a
+//  blocked/deferred check never consumes eligibility. Uses an isolated
+//  UserDefaults suite so every case is deterministic.
 //
 
 import Foundation
@@ -19,22 +17,19 @@ import Testing
 @MainActor
 struct WorkspacesIntroCampaignTests {
 
-    /// A campaign with an isolated defaults suite and a mutable
-    /// fresh-install answer the test can flip mid-scenario.
+    /// A campaign with an isolated defaults suite.
     @MainActor
     private final class Fixture {
         let suiteName = "workspaces-intro-\(UUID().uuidString)"
         let defaults: UserDefaults
-        var isFreshInstall = false
         private(set) var sut: WorkspacesIntroCampaign!
 
         init() {
             defaults = UserDefaults(suiteName: suiteName)!
-            // The one-shot contract is tested with the design-time
-            // "show every time" switch off, whatever its current default.
+            // The one-shot contract is tested with the test hook
+            // ("show every time") off, whatever its current default.
             sut = WorkspacesIntroCampaign(
                 defaults: defaults,
-                isFreshInstall: { [unowned self] in self.isFreshInstall },
                 showsEveryTime: false
             )
         }
@@ -44,9 +39,9 @@ struct WorkspacesIntroCampaignTests {
         }
     }
 
-    // MARK: - Existing install
+    // MARK: - Eligibility
 
-    @Test func existingInstall_isEligible_untilSeen() {
+    @Test func isEligible_untilSeen() {
         let fixture = Fixture()
         #expect(fixture.sut.isEligible)
         #expect(!fixture.sut.hasSeen)
@@ -81,7 +76,7 @@ struct WorkspacesIntroCampaignTests {
         fixture.sut.willPresent()
         fixture.sut.didDismiss()
         let relaunched = WorkspacesIntroCampaign(
-            defaults: fixture.defaults, isFreshInstall: { false }, showsEveryTime: false)
+            defaults: fixture.defaults, showsEveryTime: false)
         #expect(relaunched.hasSeen)
         #expect(!relaunched.isEligible)
     }
@@ -91,22 +86,6 @@ struct WorkspacesIntroCampaignTests {
         fixture.sut.markSeen()
         fixture.sut.markSeen()
         #expect(fixture.sut.hasSeen)
-        #expect(!fixture.sut.isEligible)
-    }
-
-    // MARK: - Fresh install exclusion
-
-    /// The offer is for people who were here before Workspaces shipped. A
-    /// fresh install is recorded as seen on its first check and stays
-    /// excluded even once onboarding completes and the install is no
-    /// longer "fresh".
-    @Test func freshInstall_isConsumedSilently_andStaysExcluded() {
-        let fixture = Fixture()
-        fixture.isFreshInstall = true
-        #expect(!fixture.sut.isEligible)
-        #expect(fixture.sut.hasSeen)
-
-        fixture.isFreshInstall = false
         #expect(!fixture.sut.isEligible)
     }
 
@@ -121,15 +100,15 @@ struct WorkspacesIntroCampaignTests {
         }
     #endif
 
-    // MARK: - Design-time mode
+    // MARK: - Test hook
 
-    /// While the dialog is being designed it shows on every check, ignores
-    /// seen and fresh-install state, never writes the seen flag, and still
+    /// With the test hook on it shows on every check, ignores
+    /// the seen flag, never writes it, and still
     /// refuses to stack a copy while one is on screen.
-    @Test func showsEveryTime_ignoresSeenAndFreshInstall_andNeverPersists() {
+    @Test func showsEveryTime_ignoresSeen_andNeverPersists() {
         let fixture = Fixture()
         let designTime = WorkspacesIntroCampaign(
-            defaults: fixture.defaults, isFreshInstall: { true }, showsEveryTime: true)
+            defaults: fixture.defaults, showsEveryTime: true)
         #expect(designTime.isEligible)
         designTime.willPresent()
         #expect(!designTime.isEligible)
@@ -137,6 +116,29 @@ struct WorkspacesIntroCampaignTests {
         designTime.didDismiss()
         #expect(designTime.isEligible)
         #expect(!fixture.sut.hasSeen)
+    }
+
+    // MARK: - Dialog sizing
+
+    /// A normal display keeps the designed size; a window too small for it
+    /// shrinks the dialog uniformly, and the floor keeps it legible.
+    @Test func dialogScale_fitsSmallWindows_andCapsAtDesignSize() {
+        // Roomy: full size.
+        #expect(WorkspacesIntroModal.scale(fitting: CGSize(width: 1440, height: 900)) == 1)
+        #expect(WorkspacesIntroModal.dialogWidth(scale: 1) == 960)
+
+        // Width-bound: an 800pt-wide window leaves 704pt for the canvas.
+        let narrow = WorkspacesIntroModal.scale(fitting: CGSize(width: 800, height: 900))
+        #expect(abs(narrow - 704.0 / 912.0) < 0.001)
+        #expect(WorkspacesIntroModal.dialogWidth(scale: narrow) <= 800 - 48)
+
+        // Height-bound: a short window is limited by the canvas height.
+        let short = WorkspacesIntroModal.scale(fitting: CGSize(width: 1440, height: 500))
+        #expect(short < 1)
+        #expect(abs(short - (500.0 - 48 - 250) / 312.0) < 0.001)
+
+        // Tiny: floored, never zero or negative.
+        #expect(WorkspacesIntroModal.scale(fitting: CGSize(width: 300, height: 200)) == WorkspacesIntroModal.minimumScale)
     }
 
     // MARK: - Key hygiene

@@ -3,12 +3,12 @@
 //  osaurus
 //
 //  One-time "Founding Workspaces" introduction (September 2026). Decides
-//  whether the announcement dialog may be shown: existing users only,
-//  never twice. Mirrors ImportHistoryPromptGate: this type owns only the
-//  persisted seen flag, the fresh-install exclusion, and the in-memory
-//  duplicate-presentation guard so it is trivially unit-testable with an
-//  injected defaults suite. Presentation and deferral (onboarding, other
-//  modals, active agent work) live in
+//  whether the announcement dialog may be shown: once per user, existing
+//  installs and fresh ones alike (a fresh install sees it right after
+//  onboarding). Mirrors ImportHistoryPromptGate: this type owns only the
+//  persisted seen flag and the in-memory duplicate-presentation guard so it
+//  is trivially unit-testable with an injected defaults suite. Presentation
+//  and deferral (onboarding, other modals, active agent work) live in
 //  `AppDelegate.presentWorkspacesIntroDialogIfEligible()`.
 //
 
@@ -23,13 +23,11 @@ public final class WorkspacesIntroCampaign {
     nonisolated static let seenDefaultsKey = "ai.osaurus.campaign.workspaces-intro-2026-09.seen"
 
     private let defaults: UserDefaults
-    private let isFreshInstall: @MainActor () -> Bool
 
-    /// DESIGN-TIME ONLY: while the dialog is still being iterated on, show
-    /// it on every launch and activation instead of once. The seen flag is
-    /// neither read nor written in this mode. Flip to `false` (or delete)
-    /// before release so the one-shot contract below takes over.
-    nonisolated static let showsEveryTimeWhileDesigning = true
+    /// Testing hook: show the dialog on every check and never write the seen
+    /// flag. Off in the app; the Dock menu's "Reset & Test Workspaces Intro"
+    /// is the way to see the dialog again in a debug build.
+    nonisolated static let showsEveryTimeWhileDesigning = false
 
     private let showsEveryTime: Bool
 
@@ -39,45 +37,30 @@ public final class WorkspacesIntroCampaign {
     /// eligibility either.
     private(set) var isPresenting = false
 
-    /// `shared` uses the standard defaults and the real onboarding state;
-    /// tests inject an isolated suite and a fixed answer.
+    /// `shared` uses the standard defaults; tests inject an isolated suite.
     init(
         defaults: UserDefaults = .standard,
-        isFreshInstall: @escaping @MainActor () -> Bool = { OnboardingService.shared.isFreshInstall },
         showsEveryTime: Bool = WorkspacesIntroCampaign.showsEveryTimeWhileDesigning
     ) {
         self.defaults = defaults
-        self.isFreshInstall = isFreshInstall
         self.showsEveryTime = showsEveryTime
     }
 
     /// Whether the user has already been shown the dialog (any dismissal
-    /// path) or was silently excluded as a fresh install. Persisted, so it
-    /// survives restarts and app updates.
+    /// path). Persisted, so it survives restarts and app updates.
     var hasSeen: Bool {
         defaults.bool(forKey: Self.seenDefaultsKey)
     }
 
     /// Whether the dialog may be presented right now. Purely the campaign's
-    /// own gates: the caller layers UI-coordination deferrals on top.
-    ///
-    /// The offer is addressed to people who were already using Osaurus
-    /// before Workspaces shipped ("you got here early"). A fresh install
-    /// that has not completed onboarding yet is not one of them, so the
-    /// first check on such an install records the campaign as seen without
-    /// presenting, exactly like `WhatsNewGate` does for a first launch. A
-    /// blocked check on an existing install consumes nothing.
+    /// own gates: the caller layers UI-coordination deferrals on top, and a
+    /// blocked check consumes nothing.
     var isEligible: Bool {
         guard !isPresenting else { return false }
-        // Design-time: ignore seen and fresh-install state entirely, but
-        // still refuse to stack a second copy while one is on screen.
+        // Test hook: ignore the seen flag, but still refuse to stack a
+        // second copy while one is on screen.
         if showsEveryTime { return true }
-        guard !hasSeen else { return false }
-        if isFreshInstall() {
-            markSeen()
-            return false
-        }
-        return true
+        return !hasSeen
     }
 
     /// Call at the moment of presentation. Marks the campaign seen
@@ -97,8 +80,7 @@ public final class WorkspacesIntroCampaign {
 
     /// Idempotent; safe to call from every dismissal path.
     func markSeen() {
-        // Design-time: leave defaults untouched so flipping the switch off
-        // later yields a clean one-shot for everyone, reviewers included.
+        // Test hook: leave defaults untouched so the one-shot stays clean.
         guard !showsEveryTime else { return }
         defaults.set(true, forKey: Self.seenDefaultsKey)
     }

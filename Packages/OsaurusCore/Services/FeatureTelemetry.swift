@@ -450,7 +450,7 @@ enum FeatureTelemetry {
     }
 
     /// The user dismissed the Workspaces introduction. `action` is a closed
-    /// two-value enum token: `claim` (opened the Workspaces tab) or `later`
+    /// two-value enum token: `start_trial` (opened the New Workspace sheet) or `later`
     /// (Maybe later, corner X, Escape, or outside click).
     static func workspacesIntroDialogClicked(
         action: String,
