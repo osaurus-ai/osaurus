@@ -903,6 +903,44 @@ struct RemoteChatRequestEncodingTests {
         #expect(chat.tools?.map(\.function.name) == ["shell"])
     }
 
+    /// A forced tool_choice naming a tool that was dropped in conversion
+    /// must not survive, or upstreams 400 on an unknown function name.
+    @Test func openResponsesRequest_downgradesToolChoiceForDroppedTool() throws {
+        let data = Data(
+            #"""
+            {
+              "model": "gpt-5.2",
+              "input": "hi",
+              "tools": [
+                { "type": "custom", "name": "apply_patch" },
+                { "type": "function", "name": "shell", "parameters": { "type": "object" } }
+              ],
+              "tool_choice": { "type": "function", "name": "apply_patch" }
+            }
+            """#.utf8
+        )
+
+        let chat = try JSONDecoder().decode(OpenResponsesRequest.self, from: data).toChatCompletionRequest()
+        #expect(chat.tools?.map(\.function.name) == ["shell"])
+        #expect(chat.tool_choice == .auto)
+
+        let kept = Data(
+            #"""
+            {
+              "model": "gpt-5.2",
+              "input": "hi",
+              "tools": [{ "type": "function", "name": "shell", "parameters": { "type": "object" } }],
+              "tool_choice": { "type": "function", "name": "shell" }
+            }
+            """#.utf8
+        )
+        let keptChat = try JSONDecoder().decode(OpenResponsesRequest.self, from: kept).toChatCompletionRequest()
+        #expect(
+            keptChat.tool_choice
+                == .function(ToolChoiceOption.FunctionName(type: "function", function: ToolChoiceOption.Name(name: "shell")))
+        )
+    }
+
     @Test func openResponsesRequest_onlyNonFunctionTools_yieldsNoChatTools() throws {
         let data = Data(
             #"""
@@ -934,53 +972,89 @@ struct RemoteChatRequestEncodingTests {
         }
     }
 
-    /// A caller-declared `strict` wins over schema inference when the chat
-    /// request is re-encoded for a Responses upstream; inference still
-    /// applies when the caller said nothing.
-    @Test func openResponsesRequest_preservesCallerStrictFlag() throws {
+    /// A caller's explicit `strict: false` wins over schema inference when
+    /// the chat request is re-encoded for a Responses upstream. An explicit
+    /// `strict: true` is still gated on the schema, and inference applies
+    /// when the caller said nothing.
+    @Test func openResponsesRequest_preservesCallerStrictOptOut() throws {
         let strictSchema: JSONValue = .object([
             "type": .string("object"),
             "additionalProperties": .bool(false),
             "properties": .object(["value": .object(["type": .string("string")])]),
             "required": .array([.string("value")]),
         ])
-        var explicit = ToolFunction(name: "echo", description: nil, parameters: strictSchema)
-        explicit.strict = false
-        let inferred = ToolFunction(name: "echo2", description: nil, parameters: strictSchema)
+        let looseSchema: JSONValue = .object([
+            "type": .string("object"),
+            "properties": .object(["value": .object(["type": .string("string")])]),
+        ])
+        let optOut = ToolFunction(name: "a", description: nil, parameters: strictSchema, strict: false)
+        let inferred = ToolFunction(name: "b", description: nil, parameters: strictSchema)
+        let optInLoose = ToolFunction(name: "c", description: nil, parameters: looseSchema, strict: true)
+        let optInStrict = ToolFunction(name: "d", description: nil, parameters: strictSchema, strict: true)
 
         let request = Self.makeRequest(
             model: "gpt-5.2",
             maxTokens: 1024,
-            tools: [
-                Tool(type: "function", function: explicit),
-                Tool(type: "function", function: inferred),
-            ]
+            tools: [optOut, inferred, optInLoose, optInStrict].map { Tool(type: "function", function: $0) }
         )
         let responsesRequest = try request.toOpenResponsesRequest()
 
-        #expect(responsesRequest.tools?[0].strict == false)
-        #expect(responsesRequest.tools?[1].strict == true)
+        #expect(responsesRequest.tools?.map(\.strict) == [false, true, false, true])
     }
 
-    /// `strict` is only written to the chat-completions wire when the caller
-    /// set it, so existing upstream bytes are unchanged.
-    @Test func chatToolFunction_encodesStrictOnlyWhenSet() throws {
-        let unset = Self.makeRequest(model: "gpt-5.2", maxTokens: 1024, tools: [Self.weatherTool])
+    /// `strict` rides along when a strict wire target has its top-level
+    /// schema keys stripped, otherwise the opt-out is lost on exactly the
+    /// providers where it matters.
+    @Test func strippingRestrictedTopLevelSchemaKeys_keepsStrict() throws {
+        let schema: JSONValue = .object([
+            "type": .string("object"),
+            "anyOf": .array([]),
+            "properties": .object([:]),
+        ])
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(name: "a", description: nil, parameters: schema, strict: false)
+        )
+        let stripped = RemoteProviderService.strippingRestrictedTopLevelSchemaKeys(tool)
+
+        #expect(stripped.function.strict == false)
+        if case .object(let object)? = stripped.function.parameters {
+            #expect(object["anyOf"] == nil)
+        } else {
+            Issue.record("parameters were not preserved as an object")
+        }
+    }
+
+    /// `strict` is internal only: never written to the chat-completions wire
+    /// (so third-party schemas never see the key), and a non-boolean value
+    /// from a chat client is ignored instead of failing the request.
+    @Test func chatToolFunction_strictIsNotEncodedAndDecodesLeniently() throws {
         var flagged = Self.weatherTool.function
         flagged.strict = true
-        let set = Self.makeRequest(
+        let request = Self.makeRequest(
             model: "gpt-5.2",
             maxTokens: 1024,
             tools: [Tool(type: "function", function: flagged)]
         )
+        let wireTools = try #require(try Self.encodeAsDictionary(request)["tools"] as? [[String: Any]])
+        let wireFunction = try #require(wireTools.first?["function"] as? [String: Any])
+        #expect(wireFunction["strict"] == nil)
 
-        let unsetTools = try #require(try Self.encodeAsDictionary(unset)["tools"] as? [[String: Any]])
-        let setTools = try #require(try Self.encodeAsDictionary(set)["tools"] as? [[String: Any]])
-        let unsetFunction = try #require(unsetTools.first?["function"] as? [String: Any])
-        let setFunction = try #require(setTools.first?["function"] as? [String: Any])
+        let lenient = Data(
+            #"""
+            {"type": "function", "function": {"name": "echo", "strict": "true", "parameters": {"type": "object"}}}
+            """#.utf8
+        )
+        let decoded = try JSONDecoder().decode(Tool.self, from: lenient)
+        #expect(decoded.function.name == "echo")
+        #expect(decoded.function.strict == nil)
 
-        #expect(unsetFunction["strict"] == nil)
-        #expect(setFunction["strict"] as? Bool == true)
+        let boolean = Data(
+            #"""
+            {"type": "function", "function": {"name": "echo", "strict": false, "parameters": {"type": "object"}}}
+            """#.utf8
+        )
+        #expect(try JSONDecoder().decode(Tool.self, from: boolean).function.strict == false)
     }
 
     @Test func codexRequest_removesMaxOutputTokens() throws {

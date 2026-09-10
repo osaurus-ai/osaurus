@@ -424,10 +424,12 @@ public struct OpenResponsesFunctionCallOutputItem: Codable, Sendable {
 /// Tool definition.
 ///
 /// Function tools are decoded into typed fields. Every other tool type
-/// (`custom`, `web_search`, `mcp`, namespace tools, ...) is preserved verbatim
-/// in `raw` so a request carrying them is never rejected outright: Codex and
-/// similar Responses clients send hosted tools alongside their function tools
-/// even for trivial prompts.
+/// (`custom`, `web_search`, `mcp`, namespace tools, ...) is tolerated on
+/// decode and kept verbatim in `raw` so a request carrying them is never
+/// rejected outright: Codex and similar Responses clients send hosted tools
+/// alongside their function tools even for trivial prompts. Conversion to the
+/// internal chat request (`toChatCompletionRequest`) currently drops them;
+/// `raw` exists so a Responses-native upstream can forward them later.
 public struct OpenResponsesTool: Codable, Sendable {
     public let type: String
     public let name: String?
@@ -1184,6 +1186,7 @@ extension OpenResponsesRequest {
             }
             openAITools = functionTools.isEmpty ? nil : functionTools
         }
+        let forwardedToolNames = Set(openAITools?.map(\.function.name) ?? [])
 
         // Convert tool choice
         var openAIToolChoice: ToolChoiceOption? = nil
@@ -1196,12 +1199,22 @@ extension OpenResponsesRequest {
             case .required:
                 openAIToolChoice = .required
             case .function(let name):
-                openAIToolChoice = .function(
-                    ToolChoiceOption.FunctionName(
-                        type: "function",
-                        function: ToolChoiceOption.Name(name: name)
+                // A forced choice naming a dropped (non-function) tool would
+                // make upstreams 400 and local runtimes force a call with no
+                // schema, so fall back to auto when the name is not forwarded.
+                if forwardedToolNames.contains(name) {
+                    openAIToolChoice = .function(
+                        ToolChoiceOption.FunctionName(
+                            type: "function",
+                            function: ToolChoiceOption.Name(name: name)
+                        )
                     )
-                )
+                } else {
+                    debugLog(
+                        "[OpenResponses] tool_choice names `\(name)`, which is not a forwarded function tool; using auto"
+                    )
+                    openAIToolChoice = openAITools == nil ? nil : .auto
+                }
             }
         }
 
