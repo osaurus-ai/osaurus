@@ -325,9 +325,9 @@ private struct WorkspacesIntroCanvas: View {
         ),
         Lane(
             id: 1,
-            agent: ("Support agent", "headphones"),
-            service: ("Tickets", "ticket"),
-            member: ("Support team", "person.2")
+            agent: ("HR agent", "person.badge.shield.checkmark"),
+            service: ("Directory", "person.text.rectangle"),
+            member: ("HR team", "person.2")
         ),
         Lane(
             id: 2,
