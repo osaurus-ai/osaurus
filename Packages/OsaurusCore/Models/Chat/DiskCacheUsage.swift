@@ -78,12 +78,14 @@ public struct DiskCacheUsage: Equatable, Sendable {
     /// reading a chat window; the sentence has to say what they will notice
     /// (long chats get slower to start) and what they can do about it.
     public var warningText: String {
-        let pct = Int((usedFraction * 100).rounded())
+        let pct = String(format: "%.0f", usedFraction * 100)
         return
-            "Cache is \(pct)% full — older conversation data is being removed, "
-            + "so long chats may need to re-read from the beginning and will be "
-            + "slower to start. Increase Disk Cache Size in Settings."
+            "SSD cache is using \(pct)% of its configured limit. "
+            + (evictions > 0 ? "Older cached data has been removed; some replies may be slower to start. " : "When space is needed, older cached data may be removed and replies may be slower to start. ")
+            + "Increase Disk Cache Size in Settings, or clear cached data. Clearing can make the next reply slower while the cache rebuilds."
     }
+
+    public var shouldWarn: Bool { !isDisabled && maxBytes > 0 && usedFraction >= 0.75 }
 
     /// GB with one decimal above 1 GB, MB below it. Keeps the footer readable
     /// at a glance without a units column that shifts as the cache grows.

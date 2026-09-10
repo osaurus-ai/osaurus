@@ -21,6 +21,10 @@
 import XCTest
 
 final class CacheSectionWiringTests: XCTestCase {
+    func testMTPBannerPreservesIndividualButtonAccessibility() throws {
+        let src = try source("Views/Chat/FloatingInputCard.swift")
+        XCTAssertTrue(src.contains(".accessibilityElement(children: .contain)\n        .accessibilityLabel(Text(verbatim: advisory.shortLabel))"))
+    }
 
     private func source(_ relativePath: String) throws -> String {
         // Tests/Chat/... -> package root
@@ -63,7 +67,8 @@ final class CacheSectionWiringTests: XCTestCase {
     /// directory directly while a restore is mid-read is the race this avoids.
     func testPurgeRoutesThroughTheCoordinatorWhenResident() throws {
         let src = try source("Services/ModelRuntime.swift")
-        XCTAssertTrue(src.contains("coordinator.clear()"), "does not use the locked path")
+        XCTAssertTrue(src.contains("MLXCacheIOLock.withSerializedMLXCacheIO"), "does not use the locked path")
+        XCTAssertTrue(src.contains("SafeDiskCachePurge.clear(directory: dir)"), "does not use indexed ownership")
         XCTAssertTrue(
             src.contains("clearedWithoutResidentModel"),
             "the no-resident-model case is not reported back to the caller")
