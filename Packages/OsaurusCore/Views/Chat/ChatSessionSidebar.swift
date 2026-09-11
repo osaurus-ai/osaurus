@@ -3431,6 +3431,9 @@ struct ChatHistoryList: View {
     var projectFilter: UUID? = nil
     /// Workspace lens chosen in the dialog's Filter popover (nil = any).
     var workspaceFilter: String? = nil
+    /// Plugin lens chosen in the dialog's Filter popover (nil = any; "" =
+    /// plugin chats with no recorded plugin id).
+    var pluginFilter: String? = nil
     /// Resets the dialog's source / archived lenses from the empty state.
     var onClearFilters: (() -> Void)? = nil
 
@@ -3452,6 +3455,7 @@ struct ChatHistoryList: View {
 
     private var hasActiveFilter: Bool {
         showArchived || sourceFilter != .all || projectFilter != nil || workspaceFilter != nil
+            || pluginFilter != nil
     }
 
     private var filteredSessions: [ChatSessionData] {
@@ -3459,6 +3463,8 @@ struct ChatHistoryList: View {
             session.archived == showArchived && sourceFilter.matches(session)
                 && (projectFilter == nil || session.projectId == projectFilter)
                 && (workspaceFilter == nil || session.workspace?.workspaceId == workspaceFilter)
+                && (pluginFilter == nil
+                    || (session.source == .plugin && (session.sourcePluginId ?? "") == pluginFilter))
         }
         let trimmed = searchQuery.trimmingCharacters(in: .whitespaces)
         let matched: [ChatSessionData]

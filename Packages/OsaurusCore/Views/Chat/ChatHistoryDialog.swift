@@ -78,6 +78,8 @@ private struct ChatHistoryDialogContent: View {
     @State private var projectFilter: UUID?
     /// Workspace lens (a router workspace id), likewise.
     @State private var workspaceFilter: String?
+    /// Plugin lens (a plugin id; "" for plugin chats with no id), likewise.
+    @State private var pluginFilter: String?
     @State private var showSourcePicker = false
     @State private var isFilterButtonHovered = false
     /// Archived lens: on lists only archived chats, off hides them.
@@ -191,10 +193,12 @@ private struct ChatHistoryDialogContent: View {
                 showArchived: showArchived,
                 projectFilter: projectFilter,
                 workspaceFilter: workspaceFilter,
+                pluginFilter: pluginFilter,
                 onClearFilters: {
                     sourceFilter = .all
                     projectFilter = nil
                     workspaceFilter = nil
+                    pluginFilter = nil
                     showArchived = false
                 }
             )
@@ -249,11 +253,11 @@ private struct ChatHistoryDialogContent: View {
 
     // MARK: - Filter button
 
-    /// Number of lenses the popover currently applies (source, project,
-    /// workspace, archived). Shown on the button so a narrowed list is
-    /// never a surprise.
+    /// Number of lenses the popover currently applies (source, plugin,
+    /// project, workspace, archived). Shown on the button so a narrowed
+    /// list is never a surprise.
     private var activeFilterCount: Int {
-        (sourceFilter != .all ? 1 : 0) + (projectFilter != nil ? 1 : 0)
+        (sourceFilter != .all ? 1 : 0) + (pluginFilter != nil ? 1 : 0) + (projectFilter != nil ? 1 : 0)
             + (workspaceFilter != nil ? 1 : 0) + (showArchived ? 1 : 0)
     }
 
@@ -292,6 +296,7 @@ private struct ChatHistoryDialogContent: View {
                 projects: projectManager.projects,
                 workspaces: workspacesService.workspaces,
                 sourceFilter: $sourceFilter,
+                pluginFilter: $pluginFilter,
                 projectFilter: $projectFilter,
                 workspaceFilter: $workspaceFilter,
                 showArchived: $showArchived
@@ -727,9 +732,10 @@ private struct ChatHistoryAgentPicker: View {
 // MARK: - Filter popover
 
 /// Filter panel for the History dialog: one flat list of toggles. Origin
-/// rows (Plugin, API, Schedule, ...) each select or clear the source lens.
-/// "Chat" is the default and has no row; "Workspace" has none either since
-/// the Workspaces submenu already covers every workspace-tagged chat. Projects and Workspaces are single
+/// rows (API, Schedule, Watcher, ...) each select or clear the source lens.
+/// "Chat" is the default and has no row; "Plugin" and "Workspace" have none
+/// either, since the Plugins and Workspaces submenus cover every chat
+/// tagged with those origins, per plugin / per workspace. Projects and Workspaces are single
 /// rows that open a nested popover on hover listing the concrete choices.
 /// Archived is a toggle at the bottom. Rows carry chat counts; empty
 /// buckets are hidden so the panel never offers dead choices. The panel
@@ -740,6 +746,7 @@ private struct ChatHistoryFilterPicker: View {
     let projects: [Project]
     let workspaces: [OsaurusRouterWorkspaceSummary]
     @Binding var sourceFilter: ChatHistorySourceFilter
+    @Binding var pluginFilter: String?
     @Binding var projectFilter: UUID?
     @Binding var workspaceFilter: String?
     @Binding var showArchived: Bool
@@ -750,6 +757,10 @@ private struct ChatHistoryFilterPicker: View {
     /// they match what the list will actually show.
     private var lensSessions: [ChatSessionData] {
         sessions.filter { $0.archived == showArchived }
+    }
+
+    private func matchesPlugin(_ session: ChatSessionData) -> Bool {
+        pluginFilter == nil || session.source == .plugin && (session.sourcePluginId ?? "") == pluginFilter
     }
 
     private func matchesProject(_ session: ChatSessionData) -> Bool {
@@ -763,8 +774,22 @@ private struct ChatHistoryFilterPicker: View {
     /// Per-origin counts, respecting every lens except source.
     private var countsBySource: [SessionSource: Int] {
         var counts: [SessionSource: Int] = [:]
-        for session in lensSessions where matchesProject(session) && matchesWorkspace(session) {
+        for session in lensSessions
+        where matchesPlugin(session) && matchesProject(session) && matchesWorkspace(session) {
             counts[session.source, default: 0] += 1
+        }
+        return counts
+    }
+
+    /// Per-plugin counts, respecting every lens except plugin. Plugin chats
+    /// with no recorded id share the "" bucket.
+    private var countsByPlugin: [String: Int] {
+        var counts: [String: Int] = [:]
+        for session in lensSessions
+        where session.source == .plugin && sourceFilter.matches(session)
+            && matchesProject(session) && matchesWorkspace(session)
+        {
+            counts[session.sourcePluginId ?? "", default: 0] += 1
         }
         return counts
     }
@@ -773,7 +798,7 @@ private struct ChatHistoryFilterPicker: View {
     private var countsByProject: [UUID: Int] {
         var counts: [UUID: Int] = [:]
         for session in lensSessions
-        where sourceFilter.matches(session) && matchesWorkspace(session) {
+        where sourceFilter.matches(session) && matchesPlugin(session) && matchesWorkspace(session) {
             if let id = session.projectId { counts[id, default: 0] += 1 }
         }
         return counts
@@ -784,7 +809,7 @@ private struct ChatHistoryFilterPicker: View {
     private var countsByWorkspace: [String: Int] {
         var counts: [String: Int] = [:]
         for session in lensSessions
-        where sourceFilter.matches(session) && matchesProject(session) {
+        where sourceFilter.matches(session) && matchesPlugin(session) && matchesProject(session) {
             if let id = session.workspace?.workspaceId, !id.isEmpty {
                 counts[id, default: 0] += 1
             }
@@ -794,12 +819,13 @@ private struct ChatHistoryFilterPicker: View {
 
     private var archivedCount: Int {
         sessions.filter {
-            $0.archived && sourceFilter.matches($0) && matchesProject($0) && matchesWorkspace($0)
+            $0.archived && sourceFilter.matches($0) && matchesPlugin($0) && matchesProject($0)
+                && matchesWorkspace($0)
         }.count
     }
 
     private var activeCount: Int {
-        (sourceFilter != .all ? 1 : 0) + (projectFilter != nil ? 1 : 0)
+        (sourceFilter != .all ? 1 : 0) + (pluginFilter != nil ? 1 : 0) + (projectFilter != nil ? 1 : 0)
             + (workspaceFilter != nil ? 1 : 0) + (showArchived ? 1 : 0)
     }
 
@@ -808,15 +834,26 @@ private struct ChatHistoryFilterPicker: View {
 
     var body: some View {
         let sourceCounts = countsBySource
+        let pluginCounts = countsByPlugin
         let projectCounts = countsByProject
         let workspaceCounts = countsByWorkspace
         // Declaration order of `SessionSource` keeps the rows stable; a
         // selected bucket stays visible even when its count drops to zero so
         // the user can always deselect it.
         let sources = SessionSource.allCases.filter {
-            $0 != .chat && $0 != .workspace
+            $0 != .chat && $0 != .plugin && $0 != .workspace
                 && ((sourceCounts[$0] ?? 0) > 0 || sourceFilter == .source($0))
         }
+        // Plugins with chats in the lens (plus the selected one so it can be
+        // deselected), named via the manifest when the plugin is loaded.
+        let pluginIds = Set(pluginCounts.keys).union(pluginFilter.map { [$0] } ?? [])
+        let pluginChoices: [ChatHistorySubmenuChoice] = pluginIds.map { id in
+            ChatHistorySubmenuChoice(
+                id: id,
+                title: id.isEmpty ? L("Plugin") : PluginDisplayNameResolver.displayName(for: id),
+                count: pluginCounts[id] ?? 0
+            )
+        }.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
         // Every project is listed (zero counts included) so the row is
         // always discoverable while the user has projects at all.
         let projectChoices: [ChatHistorySubmenuChoice] = projects.map { project in
@@ -834,9 +871,11 @@ private struct ChatHistoryFilterPicker: View {
                 count: workspaceCounts[id] ?? 0
             )
         }
+        let showPlugins = !pluginChoices.isEmpty
         let showProjects = !projectChoices.isEmpty
         let showWorkspaces = !workspaceChoices.isEmpty
-        let rowCount = sources.count + (showProjects ? 1 : 0) + (showWorkspaces ? 1 : 0) + 1
+        let rowCount =
+            sources.count + (showPlugins ? 1 : 0) + (showProjects ? 1 : 0) + (showWorkspaces ? 1 : 0) + 1
         VStack(spacing: 0) {
             header
             Divider().background(theme.primaryBorder.opacity(0.3))
@@ -851,6 +890,20 @@ private struct ChatHistoryFilterPicker: View {
                             action: {
                                 withAnimation(theme.animationQuick()) {
                                     sourceFilter = sourceFilter == .source(source) ? .all : .source(source)
+                                }
+                            }
+                        )
+                    }
+
+                    if showPlugins {
+                        FilterSubmenuRow(
+                            icon: SessionSource.plugin.iconName,
+                            title: Text("Plugins", bundle: .module),
+                            choices: pluginChoices,
+                            selectedId: pluginFilter,
+                            onSelect: { id in
+                                withAnimation(theme.animationQuick()) {
+                                    pluginFilter = pluginFilter == id ? nil : id
                                 }
                             }
                         )
@@ -947,6 +1000,7 @@ private struct ChatHistoryFilterPicker: View {
                 Button {
                     withAnimation(theme.animationQuick()) {
                         sourceFilter = .all
+                        pluginFilter = nil
                         projectFilter = nil
                         workspaceFilter = nil
                         showArchived = false
