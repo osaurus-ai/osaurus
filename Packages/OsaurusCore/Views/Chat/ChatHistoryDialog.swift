@@ -849,40 +849,26 @@ private struct ChatHistoryFilterPicker: View {
             $0 != .chat && $0 != .plugin && $0 != .workspace
                 && ((sourceCounts[$0] ?? 0) > 0 || sourceFilter == .source($0))
         }
-        // Every installed plugin (zero counts included, like projects) plus
-        // any id still stamped on a chat (uninstalled plugins keep their
-        // history) and the selected one so it can always be deselected.
-        let installedPluginIds = PluginManager.shared.plugins.map(\.plugin.id)
-        let pluginIds = Set(installedPluginIds).union(pluginCounts.keys).union(pluginFilter.map { [$0] } ?? [])
-        let pluginChoices: [ChatHistorySubmenuChoice] = pluginIds.map { id in
-            ChatHistorySubmenuChoice(
+        // The three submenus list what is installed / defined / joined, not
+        // what the chats happen to reference: installed plugins, every
+        // project, every workspace Settings knows. Counts may be zero.
+        let pluginChoices: [ChatHistorySubmenuChoice] = PluginManager.shared.plugins.map { loaded in
+            let id = loaded.plugin.id
+            return ChatHistorySubmenuChoice(
                 id: id,
-                title: id.isEmpty ? L("Plugin") : PluginDisplayNameResolver.displayName(for: id),
+                title: PluginDisplayNameResolver.displayName(for: id),
                 count: pluginCounts[id] ?? 0
             )
         }.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
-        // Every project is listed (zero counts included) so the row is
-        // always discoverable while the user has projects at all.
         let projectChoices: [ChatHistorySubmenuChoice] = projects.map { project in
             ChatHistorySubmenuChoice(
                 id: project.id.uuidString, title: project.name, count: projectCounts[project.id] ?? 0)
         }
-        // Workspaces Settings knows, plus any id still stamped on a chat
-        // (left / deleted workspaces fall back to a generic label).
-        let workspaceIds = Set(workspaces.map(\.id)).union(workspaceCounts.keys)
-        let workspaceChoices: [ChatHistorySubmenuChoice] = workspaceIds.sorted().map { id in
-            let name = workspaces.first { $0.id == id }?.name ?? ""
-            return ChatHistorySubmenuChoice(
-                id: id,
-                title: name.isEmpty ? L("Workspace") : name,
-                count: workspaceCounts[id] ?? 0
-            )
+        let workspaceChoices: [ChatHistorySubmenuChoice] = workspaces.map { workspace in
+            ChatHistorySubmenuChoice(
+                id: workspace.id, title: workspace.name, count: workspaceCounts[workspace.id] ?? 0)
         }
-        let showPlugins = !pluginChoices.isEmpty
-        let showProjects = !projectChoices.isEmpty
-        let showWorkspaces = !workspaceChoices.isEmpty
-        let rowCount =
-            sources.count + (showPlugins ? 1 : 0) + (showProjects ? 1 : 0) + (showWorkspaces ? 1 : 0) + 1
+        let rowCount = sources.count + 3 + 1
         VStack(spacing: 0) {
             header
             Divider().background(theme.primaryBorder.opacity(0.3))
@@ -902,54 +888,48 @@ private struct ChatHistoryFilterPicker: View {
                         )
                     }
 
-                    if showPlugins {
-                        FilterSubmenuRow(
-                            id: "plugins",
-                            openId: $openSubmenuId,
-                            icon: SessionSource.plugin.iconName,
-                            title: Text("Plugins", bundle: .module),
-                            choices: pluginChoices,
-                            selectedId: pluginFilter,
-                            onSelect: { id in
-                                withAnimation(theme.animationQuick()) {
-                                    pluginFilter = pluginFilter == id ? nil : id
-                                }
+                    FilterSubmenuRow(
+                        id: "plugins",
+                        openId: $openSubmenuId,
+                        icon: SessionSource.plugin.iconName,
+                        title: Text("Plugins", bundle: .module),
+                        choices: pluginChoices,
+                        selectedId: pluginFilter,
+                        onSelect: { id in
+                            withAnimation(theme.animationQuick()) {
+                                pluginFilter = pluginFilter == id ? nil : id
                             }
-                        )
-                    }
+                        }
+                    )
 
-                    if showProjects {
-                        FilterSubmenuRow(
-                            id: "projects",
-                            openId: $openSubmenuId,
-                            icon: "folder.fill",
-                            title: Text("Projects", bundle: .module),
-                            choices: projectChoices,
-                            selectedId: projectFilter?.uuidString,
-                            onSelect: { id in
-                                withAnimation(theme.animationQuick()) {
-                                    let picked = id.flatMap(UUID.init(uuidString:))
-                                    projectFilter = projectFilter == picked ? nil : picked
-                                }
+                    FilterSubmenuRow(
+                        id: "projects",
+                        openId: $openSubmenuId,
+                        icon: "folder.fill",
+                        title: Text("Projects", bundle: .module),
+                        choices: projectChoices,
+                        selectedId: projectFilter?.uuidString,
+                        onSelect: { id in
+                            withAnimation(theme.animationQuick()) {
+                                let picked = id.flatMap(UUID.init(uuidString:))
+                                projectFilter = projectFilter == picked ? nil : picked
                             }
-                        )
-                    }
+                        }
+                    )
 
-                    if showWorkspaces {
-                        FilterSubmenuRow(
-                            id: "workspaces",
-                            openId: $openSubmenuId,
-                            icon: "rectangle.3.group.fill",
-                            title: Text("Workspaces", bundle: .module),
-                            choices: workspaceChoices,
-                            selectedId: workspaceFilter,
-                            onSelect: { id in
-                                withAnimation(theme.animationQuick()) {
-                                    workspaceFilter = workspaceFilter == id ? nil : id
-                                }
+                    FilterSubmenuRow(
+                        id: "workspaces",
+                        openId: $openSubmenuId,
+                        icon: "rectangle.3.group.fill",
+                        title: Text("Workspaces", bundle: .module),
+                        choices: workspaceChoices,
+                        selectedId: workspaceFilter,
+                        onSelect: { id in
+                            withAnimation(theme.animationQuick()) {
+                                workspaceFilter = workspaceFilter == id ? nil : id
                             }
-                        )
-                    }
+                        }
+                    )
 
                     Divider()
                         .background(theme.primaryBorder.opacity(0.3))
