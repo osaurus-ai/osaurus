@@ -936,7 +936,11 @@ private struct ChatHistoryFilterPicker: View {
                 id: workspace.id, title: workspace.name, count: workspaceCounts[workspace.id] ?? 0)
         }
         let otherChoices = makeOtherChoices(
-            capabilityCounts: capabilityCounts, scheduleCounts: scheduleCounts, watcherCounts: watcherCounts)
+            sourceCounts: sourceCounts,
+            capabilityCounts: capabilityCounts,
+            scheduleCounts: scheduleCounts,
+            watcherCounts: watcherCounts
+        )
         let otherSelected = otherSelectedIds
         let rowCount = sources.count + 4 + 1
         VStack(spacing: 0) {
@@ -1058,24 +1062,48 @@ private struct ChatHistoryFilterPicker: View {
     }
 
     private static let capabilityPrefix = "cap:"
+    private static let sourcePrefix = "source:"
     private static let schedulePrefix = "schedule:"
     private static let watcherPrefix = "watcher:"
 
-    /// "Others": capability badges, then schedules, then watchers, in one
-    /// list. Ids are prefixed so one submenu can drive three lenses.
+    /// "Others", in one list: the capability badges (Web Search, Code,
+    /// Vision, Voice), then the always-present "Scheduled" and "Watchers"
+    /// origin toggles (any schedule / any watcher), then every schedule and
+    /// every watcher by name for narrowing to one. Ids are prefixed so one
+    /// submenu can drive four lenses.
     private func makeOtherChoices(
+        sourceCounts: [SessionSource: Int],
         capabilityCounts: [SessionCapability: Int],
         scheduleCounts: [String: Int],
         watcherCounts: [String: Int]
     ) -> [ChatHistorySubmenuChoice] {
         var choices: [ChatHistorySubmenuChoice] = SessionCapability.allCases.map { cap in
-            ChatHistorySubmenuChoice(
+            // The badge is called "Search" elsewhere (it is set by any search
+            // tool); here it stands for web search, which is what users look for.
+            let isWeb = cap == .search
+            return ChatHistorySubmenuChoice(
                 id: Self.capabilityPrefix + cap.rawValue,
-                title: L(String.LocalizationValue(cap.label)),
+                title: isWeb ? L("Web Search") : L(String.LocalizationValue(cap.label)),
                 count: capabilityCounts[cap] ?? 0,
-                icon: cap.iconName
+                icon: isWeb ? "globe" : cap.iconName
             )
         }
+        choices.append(
+            ChatHistorySubmenuChoice(
+                id: Self.sourcePrefix + SessionSource.schedule.rawValue,
+                title: L("Scheduled"),
+                count: sourceCounts[.schedule] ?? 0,
+                icon: SessionSource.schedule.iconName
+            )
+        )
+        choices.append(
+            ChatHistorySubmenuChoice(
+                id: Self.sourcePrefix + SessionSource.watcher.rawValue,
+                title: L("Watchers"),
+                count: sourceCounts[.watcher] ?? 0,
+                icon: SessionSource.watcher.iconName
+            )
+        )
         choices += ScheduleManager.shared.schedules.map { schedule in
             let key = schedule.id.uuidString
             return ChatHistorySubmenuChoice(
@@ -1100,6 +1128,9 @@ private struct ChatHistoryFilterPicker: View {
     /// The "Others" entries currently applied, in the submenu's id space.
     private var otherSelectedIds: Set<String> {
         var ids = Set(capabilityFilter.map { Self.capabilityPrefix + $0.rawValue })
+        if case .source(let source) = sourceFilter, source == .schedule || source == .watcher {
+            ids.insert(Self.sourcePrefix + source.rawValue)
+        }
         if let scheduleFilter { ids.insert(Self.schedulePrefix + scheduleFilter) }
         if let watcherFilter { ids.insert(Self.watcherPrefix + watcherFilter) }
         return ids
@@ -1112,6 +1143,10 @@ private struct ChatHistoryFilterPicker: View {
             let cap = SessionCapability(rawValue: String(id.dropFirst(Self.capabilityPrefix.count)))
         {
             if capabilityFilter.contains(cap) { capabilityFilter.remove(cap) } else { capabilityFilter.insert(cap) }
+        } else if id.hasPrefix(Self.sourcePrefix),
+            let source = SessionSource(rawValue: String(id.dropFirst(Self.sourcePrefix.count)))
+        {
+            sourceFilter = sourceFilter == .source(source) ? .all : .source(source)
         } else if id.hasPrefix(Self.schedulePrefix) {
             let key = String(id.dropFirst(Self.schedulePrefix.count))
             scheduleFilter = scheduleFilter == key ? nil : key
