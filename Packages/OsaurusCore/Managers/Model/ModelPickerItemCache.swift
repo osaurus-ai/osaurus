@@ -253,8 +253,8 @@ final class ModelPickerItemCache: ObservableObject {
             codexMetadata: OpenAICodexOAuthService.lastModelDiscoverySummary?.modelMetadata ?? [:],
             osaurusRouterProviderId: RemoteProviderManager.osaurusRouterProviderId,
             routerMetadata: { manager.osaurusRouterMetadata(for: $0) },
-            remoteContextLength: {
-                manager.customProviderContextLength(providerId: $0, unprefixedModelId: $1)
+            remoteMetadata: {
+                manager.remoteModelMetadata(providerId: $0, unprefixedModelId: $1)
             }
         )
         options.append(contentsOf: remote.items)
@@ -289,7 +289,8 @@ final class ModelPickerItemCache: ObservableObject {
     /// - The official `api.openai.com` Open Responses (API-key) route
     ///   attaches the documented GPT-5.6 public reasoning profile.
     /// - Custom OpenAI-compatible providers are never assumed to support
-    ///   either contract.
+    ///   either contract; they render only what their catalog published
+    ///   (`remoteMetadata`: display name, context, pricing, capabilities).
     /// Returns the picker items plus the full-id keyed capability map used to
     /// replace `RemoteReasoningCapabilityCatalog`.
     static func remoteModelItems(
@@ -297,7 +298,7 @@ final class ModelPickerItemCache: ObservableObject {
         codexMetadata: [String: CodexModelMetadata],
         osaurusRouterProviderId: UUID,
         routerMetadata: (String) -> OsaurusRouterModel?,
-        remoteContextLength: (UUID, String) -> Int? = { _, _ in nil }
+        remoteMetadata: (UUID, String) -> RemoteModelMetadata? = { _, _ in nil }
     ) -> (items: [ModelPickerItem], reasoningCapabilities: [String: ModelReasoningCapabilities]) {
         var items: [ModelPickerItem] = []
         var capabilities: [String: ModelReasoningCapabilities] = [:]
@@ -340,7 +341,7 @@ final class ModelPickerItemCache: ObservableObject {
                         modelId: modelId,
                         providerName: providerInfo.providerName,
                         providerId: providerInfo.providerId,
-                        contextLength: remoteContextLength(
+                        metadata: remoteMetadata(
                             providerInfo.providerId,
                             unprefixedRouterModelId(modelId)
                         )

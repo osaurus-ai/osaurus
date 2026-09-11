@@ -39,7 +39,7 @@ struct ClaudeCodePickerTests {
             displayName: "Qwen3 8B",
             source: .local
         )
-        let tabs = (claudeCodeItems + [localModel]).groupedByTab()
+        let tabs = (claudeCodeItems + [localModel]).groupedIntoPickerGroups()
 
         let localTab = tabs.first { $0.key == "local" }
         #expect(localTab != nil)

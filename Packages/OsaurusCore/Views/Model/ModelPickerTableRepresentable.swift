@@ -9,13 +9,18 @@
 //  Key design decisions:
 //  - NSDiffableDataSource with row IDs for efficient structural updates.
 //  - Manual row heights via `tableView(_:heightOfRow:)`.
-//  - Pure AppKit cells (no NSHostingView) for 60fps scroll performance.
+//  - Pure AppKit cells for model/header rows (no NSHostingView) for 60fps
+//    scroll performance. The single inline "Model Options" row under the
+//    selected model is the one hosted SwiftUI cell, measured once per
+//    options state and cached.
 //  - Selection/highlight state separated from row data for O(visible) updates.
 //  - Single NSTrackingArea for hover instead of per-row trackers.
-//  - Keyboard: up/down highlight, return selects, left/right switch tabs.
-//  - Every row shares one flipped two-line layout: a leading checkmark
-//    gutter (NSMenu style, reserved on all rows), a name line, and an
-//    optional metadata line — so selection never shifts content.
+//  - Keyboard: up/down highlight (skipping header/options rows), return
+//    selects, left/right switch sidebar groups, ⌘D toggles favorite.
+//  - Every model row shares one flipped two-line layout: a leading
+//    checkmark gutter (NSMenu style, reserved on all rows), a name line
+//    with badges and a trailing star, and an optional metadata line — so
+//    selection never shifts content.
 //
 
 import AppKit
@@ -29,16 +34,37 @@ enum ModelPickerSection: Hashable {
 
 /// Flattened row model. Contains only structural data — visual state
 /// (selection, highlight, hover) lives in the coordinator.
-/// `providerLabel` is non-nil only in unified search mode, where results
+/// `providerLabel` is non-nil in unified search / Favorites, where results
 /// from all providers are mixed together and need per-row attribution.
 struct ModelPickerRow: Equatable, Identifiable {
+    enum Kind: Equatable {
+        /// A section caption (search results grouped by provider).
+        case header(title: String)
+        /// A selectable model.
+        case model
+        /// The inline Model Options expansion under the selected model.
+        case options(forModelId: String)
+    }
+
+    let kind: Kind
     let modelId: String
     let sourceKey: String
     let displayName: String
+    /// Second-line text: the structured metadata line (context · price) or
+    /// the model's free-text description when nothing structured is known.
     let description: String?
+    /// Long-form provider description, shown as the row tooltip.
+    let tooltip: String?
     let parameterCount: String?
     let quantization: String?
     let isVLM: Bool
+    /// Provider-published capability claims. Nil = no claim (no badge).
+    let supportsTools: Bool?
+    let supportsReasoning: Bool?
+    let isDeprecated: Bool
+    /// Non-nil when the row carries the Recommended badge; the value is the
+    /// badge tooltip explaining the source of the recommendation.
+    let recommendedReason: String?
     let mediaKind: MediaGenerationKind?
     let mediaPrivacy: String?
     let mediaPrice: String?
@@ -47,9 +73,9 @@ struct ModelPickerRow: Equatable, Identifiable {
     /// would fail at load. Defaults to true (every selectable model).
     let isMLXFormat: Bool
     let providerLabel: String?
-    /// Whether this model is currently bookmarked. Drives the row's heart fill
-    /// so favourited rows read as favourited everywhere, not only in the
-    /// Favourites tab.
+    /// Whether this model is currently bookmarked. Drives the row's star
+    /// fill so favourited rows read as favourited everywhere, not only in
+    /// the Favorites group.
     let isFavorite: Bool
 
     init(
@@ -60,6 +86,11 @@ struct ModelPickerRow: Equatable, Identifiable {
         parameterCount: String?,
         quantization: String?,
         isVLM: Bool,
+        supportsTools: Bool? = nil,
+        supportsReasoning: Bool? = nil,
+        isDeprecated: Bool = false,
+        recommendedReason: String? = nil,
+        tooltip: String? = nil,
         mediaKind: MediaGenerationKind? = nil,
         mediaPrivacy: String? = nil,
         mediaPrice: String? = nil,
@@ -67,13 +98,19 @@ struct ModelPickerRow: Equatable, Identifiable {
         providerLabel: String? = nil,
         isFavorite: Bool = false
     ) {
+        self.kind = .model
         self.modelId = modelId
         self.sourceKey = sourceKey
         self.displayName = displayName
         self.description = description
+        self.tooltip = tooltip
         self.parameterCount = parameterCount
         self.quantization = quantization
         self.isVLM = isVLM
+        self.supportsTools = supportsTools
+        self.supportsReasoning = supportsReasoning
+        self.isDeprecated = isDeprecated
+        self.recommendedReason = recommendedReason
         self.mediaKind = mediaKind
         self.mediaPrivacy = mediaPrivacy
         self.mediaPrice = mediaPrice
@@ -82,7 +119,58 @@ struct ModelPickerRow: Equatable, Identifiable {
         self.isFavorite = isFavorite
     }
 
-    var id: String { "model-\(sourceKey)-\(modelId)" }
+    private init(kind: Kind, modelId: String, sourceKey: String, displayName: String) {
+        self.kind = kind
+        self.modelId = modelId
+        self.sourceKey = sourceKey
+        self.displayName = displayName
+        self.description = nil
+        self.tooltip = nil
+        self.parameterCount = nil
+        self.quantization = nil
+        self.isVLM = false
+        self.supportsTools = nil
+        self.supportsReasoning = nil
+        self.isDeprecated = false
+        self.recommendedReason = nil
+        self.mediaKind = nil
+        self.mediaPrivacy = nil
+        self.mediaPrice = nil
+        self.isMLXFormat = true
+        self.providerLabel = nil
+        self.isFavorite = false
+    }
+
+    /// A non-selectable section caption.
+    static func header(title: String, key: String) -> ModelPickerRow {
+        ModelPickerRow(kind: .header(title: title), modelId: "", sourceKey: key, displayName: title)
+    }
+
+    /// The inline options expansion for the model row directly above it.
+    static func options(forModelId modelId: String, sourceKey: String) -> ModelPickerRow {
+        ModelPickerRow(kind: .options(forModelId: modelId), modelId: modelId, sourceKey: sourceKey, displayName: "")
+    }
+
+    var id: String {
+        switch kind {
+        case .header: return "header-\(sourceKey)"
+        case .model: return "model-\(sourceKey)-\(modelId)"
+        case .options: return "options-\(sourceKey)-\(modelId)"
+        }
+    }
+
+    var isModel: Bool {
+        if case .model = kind { return true }
+        return false
+    }
+
+    var isOptions: Bool {
+        if case .options = kind { return true }
+        return false
+    }
+
+    /// Whether ↑/↓ and Return may land on this row.
+    var isNavigable: Bool { isModel && isMLXFormat }
 
     /// Cross-provider key this row is stored under in the favourites list —
     /// matches `ModelPickerItem.favoriteKey` for the same model.
@@ -105,6 +193,12 @@ struct ThemeColorCache {
     let secondaryTextAlpha09: NSColor
     let secondaryTextAlpha012: NSColor
     let hoverBg: NSColor
+    /// Continuous tint shared by the selected model row and its inline
+    /// options row so the pair reads as one card.
+    let selectedBg: NSColor
+    let warningText: NSColor
+    let warningBg: NSColor
+    let starFill: NSColor
 
     init(theme: ThemeProtocol) {
         primaryText = NSColor(theme.primaryText)
@@ -118,6 +212,10 @@ struct ThemeColorCache {
         secondaryTextAlpha09 = secondaryText.withAlphaComponent(0.9)
         secondaryTextAlpha012 = secondaryText.withAlphaComponent(0.12)
         hoverBg = NSColor(theme.secondaryBackground).withAlphaComponent(0.7)
+        selectedBg = accentColor.withAlphaComponent(theme.isDark ? 0.14 : 0.10)
+        warningText = NSColor.systemOrange
+        warningBg = NSColor.systemOrange.withAlphaComponent(0.14)
+        starFill = NSColor.systemYellow
     }
 }
 
@@ -128,12 +226,19 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
     let rows: [ModelPickerRow]
     let theme: ThemeProtocol
     var selectedModelId: String?
-    /// True while the Favorites tab is active: the inline heart next to the
-    /// name becomes an always-visible filled heart (remove) instead of a
-    /// hover-only heart (toggle).
-    var isFavoritesTab: Bool = false
+    /// True while the Favorites group is active: the star becomes an
+    /// always-visible filled star (remove) instead of a hover-only star.
+    var isFavoritesGroup: Bool = false
+    /// Hosted SwiftUI content for the `.options` row, when one is present in
+    /// `rows`. The view passes the same content for every options row id.
+    var optionsContent: AnyView? = nil
+    /// Cache key for the options row's measured height; must change whenever
+    /// the rendered rows could change height.
+    var optionsLayoutKey: String = ""
+    /// Fallback height when live measurement is unavailable.
+    var optionsEstimatedHeight: CGFloat = 0
     var onSelectModel: ((String) -> Void)?
-    var onSwitchTab: ((Int) -> Void)?
+    var onSwitchGroup: ((Int) -> Void)?
     var onToggleFavorite: ((ModelPickerRow) -> Void)?
     var onDismiss: (() -> Void)?
 
@@ -148,15 +253,21 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
         coordinator.setupDataSource(for: tableView)
         coordinator.setupHoverTracking(on: tableView)
         coordinator.setupScrollObservation(for: scrollView)
+        coordinator.setupWidthObservation(for: tableView)
         coordinator.installKeyMonitor()
 
         coordinator.onSelectModel = onSelectModel
-        coordinator.onSwitchTab = onSwitchTab
+        coordinator.onSwitchGroup = onSwitchGroup
         coordinator.onToggleFavorite = onToggleFavorite
         coordinator.onDismiss = onDismiss
-        coordinator.isFavoritesTab = isFavoritesTab
+        coordinator.isFavoritesGroup = isFavoritesGroup
         coordinator.updateColorsIfNeeded(from: theme)
         coordinator.updateSelectedModelId(selectedModelId)
+        coordinator.updateOptions(
+            content: optionsContent,
+            layoutKey: optionsLayoutKey,
+            estimatedHeight: optionsEstimatedHeight
+        )
         coordinator.applyRows(rows)
         applyScrollerStyle(to: scrollView)
         return scrollView
@@ -165,12 +276,17 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         let coordinator = context.coordinator
         coordinator.onSelectModel = onSelectModel
-        coordinator.onSwitchTab = onSwitchTab
+        coordinator.onSwitchGroup = onSwitchGroup
         coordinator.onToggleFavorite = onToggleFavorite
         coordinator.onDismiss = onDismiss
-        coordinator.updateFavoritesTab(isFavoritesTab)
+        coordinator.updateFavoritesGroup(isFavoritesGroup)
         coordinator.updateColorsIfNeeded(from: theme)
         coordinator.updateSelectedModelId(selectedModelId)
+        coordinator.updateOptions(
+            content: optionsContent,
+            layoutKey: optionsLayoutKey,
+            estimatedHeight: optionsEstimatedHeight
+        )
         coordinator.applyRows(rows)
         applyScrollerStyle(to: scrollView)
     }
@@ -274,7 +390,9 @@ private final class PickerBadgeView: NSView {
         isCapsule: Bool = false
     ) {
         // check if we need to update
-        let needsUpdate = cachedText != text || cachedFont != font || cachedIsCapsule != isCapsule
+        let needsUpdate =
+            cachedText != text || cachedFont != font || cachedIsCapsule != isCapsule
+            || (iconImage != nil) != !iconView.isHidden
 
         if needsUpdate {
             label.stringValue = text
@@ -314,9 +432,11 @@ private final class PickerBadgeView: NSView {
     func sizeToFitContent() {
         label.sizeToFit()
         var w = label.frame.width + hPad * 2
-        if !iconView.isHidden { w += 13 }
-        frame.size = CGSize(width: ceil(w), height: ceil(label.frame.height + vPad * 2))
+        if !iconView.isHidden { w += text.isEmpty ? 6 : 13 }
+        frame.size = CGSize(width: ceil(w), height: ceil(max(label.frame.height, 12) + vPad * 2))
     }
+
+    private var text: String { label.stringValue }
 
     override func layout() {
         super.layout()
@@ -325,19 +445,43 @@ private final class PickerBadgeView: NSView {
 
         if !iconView.isHidden {
             iconView.frame = CGRect(x: x, y: vPad, width: 10, height: contentH)
-            x += 13
+            x += text.isEmpty ? 6 : 13
         }
         label.frame = CGRect(x: x, y: vPad, width: max(0, bounds.width - x - hPad), height: contentH)
     }
 }
 
-/// The trailing favourite control shown on a row, if any. A hover-only heart
-/// in normal tabs, an always-visible filled heart (remove) in the Favorites tab.
+/// The trailing favourite control shown on a row, if any. A hover-only star
+/// in normal groups, an always-visible filled star (remove) in Favorites.
 private enum RowAccessoryKind: Equatable {
     case none
-    case heart  // not yet favourited — outline, shown on hover
-    case heartFill  // favourited — filled, shown persistently
-    case favoritesRemove  // Favorites tab — filled heart inline after the name, removes, always shown
+    case star  // not yet favourited — outline, shown on hover
+    case starFill  // favourited — filled, shown persistently
+    case favoritesRemove  // Favorites group — filled star, removes, always shown
+}
+
+/// Everything a model row cell needs beyond the row data: theme colors,
+/// cached images and fonts. Built once by the coordinator.
+@MainActor
+private struct RowRenderResources {
+    let colors: ThemeColorCache
+    let checkmarkImage: NSImage?
+    let eyeImage: NSImage?
+    let toolsImage: NSImage?
+    let reasoningImage: NSImage?
+    let imageMediaImage: NSImage?
+    let textToVideoImage: NSImage?
+    let imageToVideoImage: NSImage?
+    let privacyImage: NSImage?
+    let priceImage: NSImage?
+    let starImage: NSImage?
+    let starFillImage: NSImage?
+    let regularFont: NSFont
+    let semiboldFont: NSFont
+    let descFont: NSFont
+    let badgeFont: NSFont
+    let badgeFontSmall: NSFont
+    let headerFont: NSFont
 }
 
 /// Model row cell with hover/selection background.
@@ -345,7 +489,11 @@ private enum RowAccessoryKind: Equatable {
 private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelegate {
     private let bgLayer = CALayer()
     private let nameLabel = makeLabel()
+    private let recommendedBadge = PickerBadgeView()
+    private let deprecatedBadge = PickerBadgeView()
     private let vlmBadge = PickerBadgeView()
+    private let toolsBadge = PickerBadgeView()
+    private let reasoningBadge = PickerBadgeView()
     private let mediaBadge = PickerBadgeView()
     private let providerBadge = PickerBadgeView()
     private let descLabel = makeLabel()
@@ -371,21 +519,15 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
     // values to skip relayout when nothing structural changed
     private var hasDesc = false
     private var hasBadges = false
-    private var hasVLM = false
     private var hasMedia = false
-    private var hasProvider = false
-    private var cachedDisplayName: String?
-    private var cachedDescription: String?
-    private var cachedProviderLabel: String?
-    private var cachedMediaKind: MediaGenerationKind?
-    private var cachedMediaPrivacy: String?
-    private var cachedMediaPrice: String?
+    private var cachedRow: ModelPickerRow?
 
     // visual state from the last configure, compared to skip redundant
     // background/checkmark updates
     private var cachedIsSelected = false
     private var cachedIsHovered = false
     private var cachedIsHighlighted = false
+    private var cachedJoinsBelow = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -395,14 +537,8 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         bgLayer.cornerCurve = .continuous
         layer?.addSublayer(bgLayer)
 
+        for badge in allBadges { badge.isHidden = true }
         descLabel.isHidden = true
-        vlmBadge.isHidden = true
-        mediaBadge.isHidden = true
-        providerBadge.isHidden = true
-        paramBadge.isHidden = true
-        quantBadge.isHidden = true
-        privacyBadge.isHidden = true
-        priceBadge.isHidden = true
         checkmarkView.imageScaling = .scaleNone
         checkmarkView.isHidden = true
 
@@ -416,14 +552,8 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         accessoryButton.isHidden = true
 
         addSubview(nameLabel)
-        addSubview(vlmBadge)
-        addSubview(mediaBadge)
-        addSubview(providerBadge)
+        for badge in allBadges { addSubview(badge) }
         addSubview(descLabel)
-        addSubview(paramBadge)
-        addSubview(quantBadge)
-        addSubview(privacyBadge)
-        addSubview(priceBadge)
         addSubview(checkmarkView)
         addSubview(accessoryButton)
         let click = NSClickGestureRecognizer(target: self, action: #selector(didClick))
@@ -433,6 +563,13 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    private var allBadges: [PickerBadgeView] {
+        [
+            recommendedBadge, deprecatedBadge, vlmBadge, toolsBadge, reasoningBadge, mediaBadge,
+            providerBadge, paramBadge, quantBadge, privacyBadge, priceBadge,
+        ]
+    }
 
     @objc private func didClick() { onSelect?() }
     @objc private func didClickAccessory() { onAccessory?() }
@@ -465,85 +602,84 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
     }
 
     func configure(
-        id: String,
-        displayName: String,
-        description: String?,
-        parameterCount: String?,
-        quantization: String?,
-        isVLM: Bool,
-        mediaKind: MediaGenerationKind?,
-        mediaPrivacy: String?,
-        mediaPrice: String?,
-        providerLabel: String?,
+        row: ModelPickerRow,
         isSelected: Bool,
         isHighlighted: Bool,
         isHovered: Bool,
-        isFavorite: Bool,
         favoritesMode: Bool,
-        colors: ThemeColorCache,
-        checkmarkImage: NSImage?,
-        eyeImage: NSImage?,
-        imageMediaImage: NSImage?,
-        textToVideoImage: NSImage?,
-        imageToVideoImage: NSImage?,
-        privacyImage: NSImage?,
-        priceImage: NSImage?,
-        heartImage: NSImage?,
-        heartFillImage: NSImage?,
-        regularFont: NSFont,
-        semiboldFont: NSFont,
-        descFont: NSFont,
-        badgeFont: NSFont,
-        badgeFontSmall: NSFont,
+        joinsOptionsBelow: Bool,
+        resources: RowRenderResources,
         onSelect: @escaping () -> Void,
         onAccessory: @escaping () -> Void
     ) {
-        let isNewRow = rowId != id
-        rowId = id
+        let colors = resources.colors
+        let isNewRow = rowId != row.id
+        rowId = row.id
         self.onSelect = onSelect
         self.onAccessory = onAccessory
 
-        let newHasDesc = description?.isEmpty == false
+        let newHasDesc = row.description?.isEmpty == false
         let newHasBadges =
-            parameterCount != nil
-            || quantization != nil
-            || mediaPrivacy?.isEmpty == false
-            || mediaPrice?.isEmpty == false
-        let newHasVLM = isVLM
-        let newHasMedia = mediaKind != nil
-        let newHasProvider = providerLabel?.isEmpty == false
+            row.parameterCount != nil
+            || row.quantization != nil
+            || row.mediaPrivacy?.isEmpty == false
+            || row.mediaPrice?.isEmpty == false
+        let newHasMedia = row.mediaKind != nil
 
         // only trigger full layout if structural content changed
-        let structureChanged =
-            isNewRow || hasDesc != newHasDesc || hasBadges != newHasBadges || hasVLM != newHasVLM
-            || hasMedia != newHasMedia || hasProvider != newHasProvider
-            || cachedProviderLabel != providerLabel || cachedDisplayName != displayName
-            || cachedDescription != description || cachedMediaKind != mediaKind
-            || cachedMediaPrivacy != mediaPrivacy || cachedMediaPrice != mediaPrice
+        let structureChanged = isNewRow || cachedRow != row
         hasDesc = newHasDesc
         hasBadges = newHasBadges
-        hasVLM = newHasVLM
         hasMedia = newHasMedia
-        hasProvider = newHasProvider
-        cachedDisplayName = displayName
-        cachedDescription = description
-        cachedProviderLabel = providerLabel
-        cachedMediaKind = mediaKind
-        cachedMediaPrivacy = mediaPrivacy
-        cachedMediaPrice = mediaPrice
+        cachedRow = row
 
         if structureChanged || cachedIsSelected != isSelected {
-            nameLabel.stringValue = displayName
-            nameLabel.font = isSelected ? semiboldFont : regularFont
+            nameLabel.stringValue = row.displayName
+            nameLabel.font = isSelected ? resources.semiboldFont : resources.regularFont
             nameLabel.textColor = isSelected ? colors.primaryText : colors.secondaryText
         }
 
-        if isVLM {
+        // Line 1, after the name: Recommended / Deprecated.
+        if let reason = row.recommendedReason {
+            if structureChanged {
+                recommendedBadge.configure(
+                    text: L("Recommended"),
+                    font: resources.badgeFontSmall,
+                    textColor: colors.accentColor,
+                    bgColor: colors.accentAlpha012,
+                    borderColor: colors.accentAlpha015,
+                    isCapsule: true
+                )
+                recommendedBadge.toolTip = reason
+            }
+            recommendedBadge.isHidden = false
+        } else {
+            recommendedBadge.isHidden = true
+        }
+
+        if row.isDeprecated {
+            if structureChanged {
+                deprecatedBadge.configure(
+                    text: L("Deprecated"),
+                    font: resources.badgeFontSmall,
+                    textColor: colors.warningText,
+                    bgColor: colors.warningBg,
+                    isCapsule: true
+                )
+                deprecatedBadge.toolTip = L("The provider has marked this model as deprecated")
+            }
+            deprecatedBadge.isHidden = false
+        } else {
+            deprecatedBadge.isHidden = true
+        }
+
+        // Line 1, trailing: capability badges (only positive provider claims).
+        if row.isVLM {
             if structureChanged {
                 vlmBadge.configure(
-                    text: "Vision",
-                    iconImage: eyeImage,
-                    font: badgeFontSmall,
+                    text: L("Vision"),
+                    iconImage: resources.eyeImage,
+                    font: resources.badgeFontSmall,
                     textColor: colors.accentColor,
                     bgColor: colors.accentAlpha012,
                     borderColor: colors.accentAlpha015,
@@ -555,25 +691,59 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
             vlmBadge.isHidden = true
         }
 
-        if let mediaKind {
+        if row.supportsTools == true {
+            if structureChanged {
+                toolsBadge.configure(
+                    text: L("Tools"),
+                    iconImage: resources.toolsImage,
+                    font: resources.badgeFontSmall,
+                    textColor: colors.secondaryTextAlpha09,
+                    bgColor: colors.secondaryTextAlpha012,
+                    isCapsule: true
+                )
+                toolsBadge.toolTip = L("Supports tool calling")
+            }
+            toolsBadge.isHidden = false
+        } else {
+            toolsBadge.isHidden = true
+        }
+
+        if row.supportsReasoning == true {
+            if structureChanged {
+                reasoningBadge.configure(
+                    text: L("Reasoning"),
+                    iconImage: resources.reasoningImage,
+                    font: resources.badgeFontSmall,
+                    textColor: colors.secondaryTextAlpha09,
+                    bgColor: colors.secondaryTextAlpha012,
+                    isCapsule: true
+                )
+                reasoningBadge.toolTip = L("Exposes a reasoning channel")
+            }
+            reasoningBadge.isHidden = false
+        } else {
+            reasoningBadge.isHidden = true
+        }
+
+        if let mediaKind = row.mediaKind {
             let label: String
             let icon: NSImage?
             switch mediaKind {
             case .image:
                 label = L("Image")
-                icon = imageMediaImage
+                icon = resources.imageMediaImage
             case .textToVideo:
                 label = L("Text → Video")
-                icon = textToVideoImage
+                icon = resources.textToVideoImage
             case .imageToVideo:
                 label = L("Image → Video")
-                icon = imageToVideoImage
+                icon = resources.imageToVideoImage
             }
             if structureChanged {
                 mediaBadge.configure(
                     text: label,
                     iconImage: icon,
-                    font: badgeFontSmall,
+                    font: resources.badgeFontSmall,
                     textColor: colors.accentColor,
                     bgColor: colors.accentAlpha012,
                     borderColor: colors.accentAlpha015,
@@ -585,11 +755,11 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
             mediaBadge.isHidden = true
         }
 
-        if let provider = providerLabel, !provider.isEmpty {
+        if let provider = row.providerLabel, !provider.isEmpty {
             if structureChanged {
                 providerBadge.configure(
                     text: provider,
-                    font: badgeFont,
+                    font: resources.badgeFont,
                     textColor: colors.secondaryTextAlpha09,
                     bgColor: colors.secondaryTextAlpha012,
                     isCapsule: true
@@ -600,10 +770,10 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
             providerBadge.isHidden = true
         }
 
-        if let desc = description, !desc.isEmpty {
+        if let desc = row.description, !desc.isEmpty {
             if structureChanged {
                 descLabel.stringValue = desc
-                descLabel.font = descFont
+                descLabel.font = resources.descFont
                 descLabel.textColor = colors.tertiaryText
             }
             descLabel.isHidden = false
@@ -611,7 +781,7 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
             descLabel.isHidden = true
         }
 
-        if let params = parameterCount {
+        if let params = row.parameterCount {
             if structureChanged {
                 paramBadge.configure(
                     text: params,
@@ -624,7 +794,7 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
             paramBadge.isHidden = true
         }
 
-        if let quant = quantization {
+        if let quant = row.quantization {
             if structureChanged {
                 quantBadge.configure(
                     text: quant,
@@ -637,12 +807,12 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
             quantBadge.isHidden = true
         }
 
-        if let privacy = mediaPrivacy, !privacy.isEmpty {
+        if let privacy = row.mediaPrivacy, !privacy.isEmpty {
             if structureChanged {
                 privacyBadge.configure(
                     text: privacy,
-                    iconImage: privacyImage,
-                    font: badgeFont,
+                    iconImage: resources.privacyImage,
+                    font: resources.badgeFont,
                     textColor: colors.secondaryTextAlpha09,
                     bgColor: colors.secondaryTextAlpha012,
                     isCapsule: true
@@ -653,12 +823,12 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
             privacyBadge.isHidden = true
         }
 
-        if let price = mediaPrice, !price.isEmpty {
+        if let price = row.mediaPrice, !price.isEmpty {
             if structureChanged {
                 priceBadge.configure(
                     text: price,
-                    iconImage: priceImage,
-                    font: badgeFont,
+                    iconImage: resources.priceImage,
+                    font: resources.badgeFont,
                     textColor: colors.accentAlpha09,
                     bgColor: colors.accentAlpha012,
                     borderColor: colors.accentAlpha015,
@@ -671,8 +841,8 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         }
 
         if isSelected {
-            if cachedIsSelected != isSelected {
-                checkmarkView.image = checkmarkImage
+            if cachedIsSelected != isSelected || isNewRow {
+                checkmarkView.image = resources.checkmarkImage
                 checkmarkView.contentTintColor = colors.accentColor
             }
             checkmarkView.isHidden = false
@@ -681,22 +851,37 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         }
 
         // only update background if hover/selection state changed
-        if cachedIsHovered != isHovered || cachedIsHighlighted != isHighlighted || cachedIsSelected != isSelected {
+        if cachedIsHovered != isHovered || cachedIsHighlighted != isHighlighted
+            || cachedIsSelected != isSelected || cachedJoinsBelow != joinsOptionsBelow || isNewRow
+        {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            bgLayer.backgroundColor =
-                (isHovered || isHighlighted || isSelected)
-                ? colors.hoverBg.cgColor
-                : nil
+            if isSelected {
+                bgLayer.backgroundColor = colors.selectedBg.cgColor
+            } else if isHovered || isHighlighted {
+                bgLayer.backgroundColor = colors.hoverBg.cgColor
+            } else {
+                bgLayer.backgroundColor = nil
+            }
+            // When the options row follows, only round the top corners so the
+            // two rows read as one continuous card.
+            bgLayer.maskedCorners =
+                joinsOptionsBelow
+                ? [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+                : [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
             CATransaction.commit()
         }
 
         cachedIsSelected = isSelected
         cachedIsHovered = isHovered
         cachedIsHighlighted = isHighlighted
+        if cachedJoinsBelow != joinsOptionsBelow {
+            cachedJoinsBelow = joinsOptionsBelow
+            needsLayout = true
+        }
 
-        // Inline favourite control. In the Favorites tab it's an
-        // always-visible filled heart (remove); elsewhere it's a heart — shown
+        // Trailing favourite control. In the Favorites group it's an
+        // always-visible filled star (remove); elsewhere it's a star — shown
         // filled and persistent once favourited, and as an outline on hover so
         // an un-favourited row can be bookmarked. `RowAccessoryKind` is compared
         // against the last value so an unchanged hover/selection pass skips the
@@ -704,42 +889,31 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         let newAccessoryKind: RowAccessoryKind
         if favoritesMode {
             newAccessoryKind = .favoritesRemove
-        } else if isFavorite {
-            newAccessoryKind = .heartFill
-        } else if isHovered {
-            newAccessoryKind = .heart
+        } else if row.isFavorite {
+            newAccessoryKind = .starFill
+        } else if isHovered || isHighlighted {
+            newAccessoryKind = .star
         } else {
             newAccessoryKind = .none
         }
 
-        if newAccessoryKind != accessoryKind {
+        if newAccessoryKind != accessoryKind || isNewRow {
             switch newAccessoryKind {
             case .none:
                 accessoryButton.isHidden = true
-            case .heart:
-                accessoryButton.image = heartImage
+            case .star:
+                accessoryButton.image = resources.starImage
                 accessoryButton.contentTintColor = colors.tertiaryText
                 accessoryButton.isHidden = false
-            case .heartFill:
-                accessoryButton.image = heartFillImage
-                accessoryButton.contentTintColor = colors.accentColor
-                accessoryButton.isHidden = false
-            case .favoritesRemove:
-                accessoryButton.image = heartFillImage
-                accessoryButton.contentTintColor = colors.accentColor
+            case .starFill, .favoritesRemove:
+                accessoryButton.image = resources.starFillImage
+                accessoryButton.contentTintColor = colors.starFill
                 accessoryButton.isHidden = false
             }
             accessoryButton.toolTip =
-                newAccessoryKind == .favoritesRemove
-                ? L("Remove from favourites")
-                : (newAccessoryKind == .heartFill
-                    ? L("Remove from favourites")
-                    : L("Add to favourites"))
-            // Visibility change shifts the trailing content, so relayout even
-            // when the row's structural content is otherwise unchanged.
-            if (newAccessoryKind == .none) != (accessoryKind == .none) {
-                needsLayout = true
-            }
+                newAccessoryKind == .star
+                ? L("Add to favorites (⌘D)")
+                : L("Remove from favorites (⌘D)")
             accessoryKind = newAccessoryKind
         }
 
@@ -756,17 +930,24 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         let pad: CGFloat = 12
         let nameH: CGFloat = 16
         let metaH: CGFloat = 16
+        let starSlot: CGFloat = 18
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        bgLayer.frame = bounds.insetBy(dx: 2, dy: 1)
+        // The card inset leaves a hairline gap between rows; when joined to
+        // the options row below, extend to the bottom edge so there is no seam.
+        bgLayer.frame =
+            cachedJoinsBelow
+            ? CGRect(x: 2, y: 1, width: w - 4, height: h - 1)
+            : bounds.insetBy(dx: 2, dy: 1)
         CATransaction.commit()
 
         // Every row uses the same two-line structure:
         //   gutter: leading checkmark column reserved on ALL rows (NSMenu
         //           style) so selection never shifts the content
-        //   line 1: name (+ Vision badge) ... provider badge
-        //   line 2 (optional): param/quant badges + description
+        //   line 1: name (+ Recommended/Deprecated) … capability badges,
+        //           provider badge, star slot
+        //   line 2 (optional): param/quant badges + metadata text
         // Name-only rows center the name line vertically.
         let hasMeta = hasDesc || hasBadges
         let hasMediaDetailsLine = hasMedia && hasDesc
@@ -782,7 +963,20 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         }
         let contentX = pad + 14 + 6
 
+        // Star slot is always reserved at the trailing edge so badges never
+        // shift when the star appears on hover.
         var trailingX = w - pad
+        if accessoryKind != .none {
+            let imgSize = accessoryButton.image?.size ?? CGSize(width: 14, height: 14)
+            accessoryButton.frame = CGRect(
+                x: trailingX - starSlot + (starSlot - imgSize.width) / 2,
+                y: nameY + (nameH - imgSize.height) / 2,
+                width: imgSize.width,
+                height: imgSize.height
+            )
+        }
+        trailingX -= starSlot + 6
+
         if !providerBadge.isHidden {
             providerBadge.sizeToFitContent()
             trailingX -= providerBadge.frame.width
@@ -793,96 +987,54 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
             trailingX -= 8
         }
         var badgeX = trailingX
-        if !mediaBadge.isHidden {
-            mediaBadge.sizeToFitContent()
-            badgeX -= mediaBadge.frame.width
-            mediaBadge.frame.origin = CGPoint(
+        for badge in [mediaBadge, reasoningBadge, toolsBadge, vlmBadge] where !badge.isHidden {
+            badge.sizeToFitContent()
+            badgeX -= badge.frame.width
+            badge.frame.origin = CGPoint(
                 x: badgeX,
-                y: nameY + (nameH - mediaBadge.frame.height) / 2
+                y: nameY + (nameH - badge.frame.height) / 2
             )
-            badgeX -= 6
+            badgeX -= 5
         }
-        if !vlmBadge.isHidden {
-            vlmBadge.sizeToFitContent()
-            badgeX -= vlmBadge.frame.width
-            vlmBadge.frame.origin = CGPoint(
-                x: badgeX,
-                y: nameY + (nameH - vlmBadge.frame.height) / 2
-            )
-            badgeX -= 6
-        }
-        nameLabel.frame = CGRect(
-            x: contentX,
-            y: nameY,
-            width: max(0, badgeX - contentX),
-            height: nameH
-        )
 
-        // Heart sits right after the name text, clamped so it never runs into
-        // the right-aligned Vision badge (or the trailing edge). The button is
-        // framed at the symbol's natural size with its baseline (encoded in
-        // the image's alignment insets) placed on the title's baseline, so the
-        // glyph sits exactly on the text line instead of being box-centred.
-        // The Favorites tab's always-visible remove heart shares this inline
-        // placement so both tabs read the same.
-        if accessoryKind != .none {
-            let imgSize = accessoryButton.image?.size ?? .zero
-            let baselineInset = accessoryButton.image?.alignmentRect.origin.y ?? 0
-            let font = nameLabel.font ?? NSFont.systemFont(ofSize: 12, weight: .medium)
-            let lineH = font.ascender - font.descender
-            let baselineFromTop = (nameH - lineH) / 2 + font.ascender
-            let nameTextW = min(nameLabel.intrinsicContentSize.width, nameLabel.frame.width)
-            let firstBadgeX = [mediaBadge, vlmBadge]
-                .filter { !$0.isHidden }
-                .map(\.frame.minX)
-                .min() ?? trailingX
-            let limit = firstBadgeX - imgSize.width - 4
-            let x = min(nameLabel.frame.minX + nameTextW + 6, limit)
-            // Lift the glyph slightly off the baseline so it reads as
-            // vertically centred against the name text.
-            let bottomPadding: CGFloat = 3.2
-            accessoryButton.frame = CGRect(
-                x: max(contentX, x),
-                y: nameY + baselineFromTop - (imgSize.height - baselineInset) - bottomPadding,
-                width: imgSize.width,
-                height: imgSize.height
+        // Name, then Recommended / Deprecated right after the name text,
+        // clamped so they never run into the trailing badges.
+        let nameAvailable = max(0, badgeX - contentX)
+        var inlineBadgesWidth: CGFloat = 0
+        for badge in [recommendedBadge, deprecatedBadge] where !badge.isHidden {
+            badge.sizeToFitContent()
+            inlineBadgesWidth += badge.frame.width + 6
+        }
+        // Measure the name's natural width against unbounded bounds: a
+        // truncating single-line NSTextField reports an `intrinsicContentSize`
+        // clamped to whatever frame it last had, so a reused cell that was
+        // narrow once would keep truncating names that fit.
+        let nameNatural =
+            nameLabel.cell?.cellSize(forBounds: CGRect(x: 0, y: 0, width: 100_000, height: nameH)).width
+            ?? nameLabel.intrinsicContentSize.width
+        let nameW = min(ceil(nameNatural), max(0, nameAvailable - inlineBadgesWidth))
+        nameLabel.frame = CGRect(x: contentX, y: nameY, width: nameW, height: nameH)
+        var inlineX = contentX + nameW + 6
+        for badge in [recommendedBadge, deprecatedBadge] where !badge.isHidden {
+            badge.frame.origin = CGPoint(
+                x: min(inlineX, badgeX - badge.frame.width),
+                y: nameY + (nameH - badge.frame.height) / 2
             )
+            inlineX += badge.frame.width + 6
         }
 
         if hasMeta {
             let metaY = nameY + nameH + 4
             var x = contentX
-            if !privacyBadge.isHidden {
-                privacyBadge.sizeToFitContent()
-                privacyBadge.frame.origin = CGPoint(
-                    x: x,
-                    y: metaY + (metaH - privacyBadge.frame.height) / 2
-                )
-                x += privacyBadge.frame.width + 5
+            for badge in [privacyBadge, priceBadge] where !badge.isHidden {
+                badge.sizeToFitContent()
+                badge.frame.origin = CGPoint(x: x, y: metaY + (metaH - badge.frame.height) / 2)
+                x += badge.frame.width + 5
             }
-            if !priceBadge.isHidden {
-                priceBadge.sizeToFitContent()
-                priceBadge.frame.origin = CGPoint(
-                    x: x,
-                    y: metaY + (metaH - priceBadge.frame.height) / 2
-                )
-                x += priceBadge.frame.width + 5
-            }
-            if !paramBadge.isHidden {
-                paramBadge.sizeToFitContent()
-                paramBadge.frame.origin = CGPoint(
-                    x: x,
-                    y: metaY + (metaH - paramBadge.frame.height) / 2
-                )
-                x += paramBadge.frame.width + 4
-            }
-            if !quantBadge.isHidden {
-                quantBadge.sizeToFitContent()
-                quantBadge.frame.origin = CGPoint(
-                    x: x,
-                    y: metaY + (metaH - quantBadge.frame.height) / 2
-                )
-                x += quantBadge.frame.width + 4
+            for badge in [paramBadge, quantBadge] where !badge.isHidden {
+                badge.sizeToFitContent()
+                badge.frame.origin = CGPoint(x: x, y: metaY + (metaH - badge.frame.height) / 2)
+                x += badge.frame.width + 4
             }
             if !descLabel.isHidden {
                 if hasMediaDetailsLine {
@@ -907,34 +1059,100 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         onSelect = nil
         onAccessory = nil
         descLabel.isHidden = true
-        vlmBadge.isHidden = true
-        mediaBadge.isHidden = true
-        providerBadge.isHidden = true
-        paramBadge.isHidden = true
-        quantBadge.isHidden = true
-        privacyBadge.isHidden = true
-        priceBadge.isHidden = true
+        for badge in allBadges { badge.isHidden = true }
         checkmarkView.isHidden = true
         accessoryButton.isHidden = true
         accessoryKind = .none
         hasDesc = false
         hasBadges = false
-        hasVLM = false
         hasMedia = false
-        hasProvider = false
-        cachedDisplayName = nil
-        cachedDescription = nil
-        cachedProviderLabel = nil
-        cachedMediaKind = nil
-        cachedMediaPrivacy = nil
-        cachedMediaPrice = nil
+        cachedRow = nil
         cachedIsSelected = false
         cachedIsHovered = false
         cachedIsHighlighted = false
+        cachedJoinsBelow = false
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         bgLayer.backgroundColor = nil
         CATransaction.commit()
+    }
+}
+
+/// Non-interactive section caption used to attribute search results to
+/// their provider group.
+@MainActor
+private final class HeaderRowCellView: NSTableCellView {
+    private let titleLabel = makeLabel()
+    override var isFlipped: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        addSubview(titleLabel)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
+    override func accessibilityLabel() -> String? { titleLabel.stringValue }
+
+    func configure(title: String, resources: RowRenderResources) {
+        titleLabel.stringValue = title.uppercased()
+        titleLabel.font = resources.headerFont
+        titleLabel.textColor = resources.colors.tertiaryText
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        titleLabel.frame = CGRect(x: 14, y: bounds.height - 18, width: bounds.width - 28, height: 14)
+    }
+}
+
+/// The single hosted SwiftUI cell: the selected model's option rows,
+/// drawn on the same tint as the model row above so they read as one card.
+@MainActor
+private final class OptionsRowCellView: NSTableCellView {
+    private let bgLayer = CALayer()
+    private var hostingView: NSHostingView<AnyView>?
+    override var isFlipped: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        bgLayer.cornerRadius = 8
+        bgLayer.cornerCurve = .continuous
+        bgLayer.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+        layer?.addSublayer(bgLayer)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func configure(content: AnyView, colors: ThemeColorCache) {
+        if let hostingView {
+            hostingView.rootView = content
+        } else {
+            let host = NSHostingView(rootView: content)
+            host.translatesAutoresizingMaskIntoConstraints = true
+            addSubview(host)
+            hostingView = host
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        bgLayer.backgroundColor = colors.selectedBg.cgColor
+        CATransaction.commit()
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        bgLayer.frame = CGRect(x: 2, y: 0, width: bounds.width - 4, height: bounds.height - 1)
+        CATransaction.commit()
+        hostingView?.frame = CGRect(x: 2, y: 0, width: bounds.width - 4, height: bounds.height - 1)
     }
 }
 
@@ -953,79 +1171,75 @@ extension ModelPickerTableRepresentable {
 
         var selectedModelId: String?
         var onSelectModel: ((String) -> Void)?
-        /// Called with -1 / +1 for left / right arrow tab switching. Set to
-        /// nil while searching (tabs hidden) so arrows fall through to the
-        /// search field.
-        var onSwitchTab: ((Int) -> Void)?
+        /// Called with -1 / +1 for left / right arrow group switching. Set to
+        /// nil while searching so arrows fall through to the search field.
+        var onSwitchGroup: ((Int) -> Void)?
         var onToggleFavorite: ((ModelPickerRow) -> Void)?
         var onDismiss: (() -> Void)?
 
-        /// True while the Favorites tab is active: rows show an always-visible
-        /// filled-heart remove control instead of the hover-only heart.
-        var isFavoritesTab = false
+        /// True while the Favorites group is active: rows show an
+        /// always-visible filled-star remove control instead of the
+        /// hover-only star.
+        var isFavoritesGroup = false
 
         private var hoveredRowId: String?
         private var highlightedIndex: Int?
         private var keyMonitor: Any?
         private var isScrolling = false
+        /// Scroll the selected model into view once, on the first non-empty
+        /// snapshot, so a long list opens on the current selection.
+        private var hasScrolledToSelection = false
+
+        // MARK: Options row
+
+        private var optionsContent: AnyView?
+        private var optionsLayoutKey = ""
+        private var optionsEstimatedHeight: CGFloat = 0
+        private var measuredOptionsHeight: CGFloat?
+        private var measuredOptionsKey: String?
+        private var measuredOptionsWidth: CGFloat = 0
+        private lazy var measuringHost = NSHostingView(rootView: AnyView(EmptyView()))
 
         // MARK: Cached Theme Colors & Images
 
         private var colors = ThemeColorCache(theme: LightTheme())
         private var lastThemeTypeId: ObjectIdentifier?
+        private var resources: RowRenderResources?
 
-        // MARK: Cached Fonts
+        private func symbol(_ name: String, size: CGFloat, weight: NSFont.Weight) -> NSImage? {
+            NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: size, weight: weight))
+        }
 
-        private lazy var regularFont = NSFont.systemFont(ofSize: 12, weight: .medium)
-        private lazy var semiboldFont = NSFont.systemFont(ofSize: 12, weight: .semibold)
-        private lazy var descFont = NSFont.systemFont(ofSize: 10)
-        private lazy var badgeFont = NSFont.systemFont(ofSize: 9, weight: .medium)
-        private lazy var badgeFontSmall = NSFont.systemFont(ofSize: 8, weight: .medium)
+        private func makeResources() -> RowRenderResources {
+            RowRenderResources(
+                colors: colors,
+                checkmarkImage: symbol("checkmark", size: 11, weight: .bold),
+                eyeImage: symbol("eye", size: 8, weight: .medium),
+                toolsImage: symbol("wrench.and.screwdriver", size: 8, weight: .medium),
+                reasoningImage: symbol("brain", size: 8, weight: .medium),
+                imageMediaImage: symbol("photo", size: 8, weight: .medium),
+                textToVideoImage: symbol("film", size: 8, weight: .medium),
+                imageToVideoImage: symbol("photo.on.rectangle", size: 8, weight: .medium),
+                privacyImage: symbol("lock.shield", size: 8, weight: .medium),
+                priceImage: symbol("dollarsign.circle", size: 8, weight: .medium),
+                starImage: symbol("star", size: 11, weight: .medium),
+                starFillImage: symbol("star.fill", size: 11, weight: .medium),
+                regularFont: .systemFont(ofSize: 12, weight: .medium),
+                semiboldFont: .systemFont(ofSize: 12, weight: .semibold),
+                descFont: .systemFont(ofSize: 10),
+                badgeFont: .systemFont(ofSize: 9, weight: .medium),
+                badgeFontSmall: .systemFont(ofSize: 8, weight: .medium),
+                headerFont: .systemFont(ofSize: 10, weight: .semibold)
+            )
+        }
 
-        private lazy var checkmarkImage: NSImage? = NSImage(
-            systemSymbolName: "checkmark",
-            accessibilityDescription: nil
-        )?.withSymbolConfiguration(.init(pointSize: 11, weight: .bold))
-
-        private lazy var eyeImage: NSImage? = NSImage(
-            systemSymbolName: "eye",
-            accessibilityDescription: nil
-        )?.withSymbolConfiguration(.init(pointSize: 8, weight: .medium))
-
-        private lazy var imageMediaImage: NSImage? = NSImage(
-            systemSymbolName: "photo",
-            accessibilityDescription: nil
-        )?.withSymbolConfiguration(.init(pointSize: 8, weight: .medium))
-
-        private lazy var textToVideoImage: NSImage? = NSImage(
-            systemSymbolName: "film",
-            accessibilityDescription: nil
-        )?.withSymbolConfiguration(.init(pointSize: 8, weight: .medium))
-
-        private lazy var imageToVideoImage: NSImage? = NSImage(
-            systemSymbolName: "photo.on.rectangle",
-            accessibilityDescription: nil
-        )?.withSymbolConfiguration(.init(pointSize: 8, weight: .medium))
-
-        private lazy var privacyImage: NSImage? = NSImage(
-            systemSymbolName: "lock.shield",
-            accessibilityDescription: nil
-        )?.withSymbolConfiguration(.init(pointSize: 8, weight: .medium))
-
-        private lazy var priceImage: NSImage? = NSImage(
-            systemSymbolName: "dollarsign.circle",
-            accessibilityDescription: nil
-        )?.withSymbolConfiguration(.init(pointSize: 8, weight: .medium))
-
-        private lazy var heartImage: NSImage? = NSImage(
-            systemSymbolName: "heart",
-            accessibilityDescription: nil
-        )?.withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
-
-        private lazy var heartFillImage: NSImage? = NSImage(
-            systemSymbolName: "heart.fill",
-            accessibilityDescription: nil
-        )?.withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
+        private var renderResources: RowRenderResources {
+            if let resources { return resources }
+            let built = makeResources()
+            resources = built
+            return built
+        }
 
         // MARK: Setup
 
@@ -1062,6 +1276,32 @@ extension ModelPickerTableRepresentable {
         @objc private func onScrollStart() { isScrolling = true; setHoveredRow(nil) }
         @objc private func onScrollEnd() { isScrolling = false }
 
+        /// The options row is measured at the table's width, but the first
+        /// `heightOfRow` pass runs before the popover has laid the table out
+        /// (narrow or zero width), so the hosted content wraps and the row
+        /// keeps that inflated height. Re-ask for the height whenever the
+        /// table's width changes from the width the row was measured at.
+        func setupWidthObservation(for tableView: NSTableView) {
+            tableView.postsFrameChangedNotifications = true
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(onTableFrameChanged),
+                name: NSView.frameDidChangeNotification,
+                object: tableView
+            )
+        }
+
+        @objc private func onTableFrameChanged() {
+            guard let tableView, optionsContent != nil else { return }
+            let width = tableView.bounds.width - 4
+            guard width > 40, width != measuredOptionsWidth else { return }
+            guard let optionsIndex = rowIds.firstIndex(where: { rowLookup[$0]?.isOptions == true }) else { return }
+            NSAnimationContext.beginGrouping()
+            NSAnimationContext.current.duration = 0
+            tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integer: optionsIndex))
+            NSAnimationContext.endGrouping()
+        }
+
         // MARK: Keyboard Navigation
 
         func installKeyMonitor() {
@@ -1078,44 +1318,110 @@ extension ModelPickerTableRepresentable {
         }
 
         private func handleKeyDown(_ event: NSEvent) -> NSEvent? {
+            // A table that is no longer on screen (popover closed, view
+            // swapped for the empty state) must not act on keystrokes.
+            guard let tableView, tableView.window != nil else { return event }
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if modifiers.contains(.command) {
+                // ⌘D toggles the favourite on the highlighted row, or on the
+                // selected model's row when nothing is highlighted.
+                if event.keyCode == 2 {
+                    toggleFavoriteForKeyboardTarget()
+                    return nil
+                }
+                return event
+            }
             switch event.keyCode {
             case 125: moveHighlight(by: 1); return nil
             case 126: moveHighlight(by: -1); return nil
             case 123:
-                if let onSwitchTab { onSwitchTab(-1); return nil }
+                if let onSwitchGroup { onSwitchGroup(-1); return nil }
                 return event
             case 124:
-                if let onSwitchTab { onSwitchTab(1); return nil }
+                if let onSwitchGroup { onSwitchGroup(1); return nil }
                 return event
             case 36:
                 if highlightedIndex != nil { selectHighlighted(); return nil }
                 return event
             case 53: onDismiss?(); return nil
-            default: return event
+            default:
+                refocusSearchFieldForTyping(event, modifiers: modifiers)
+                return event
             }
         }
 
+        /// Type-to-search recovery: clicking a hosted control (the options
+        /// row's switch, a header button) moves first responder off the search
+        /// field, and printable keys would then be dropped. Hand focus back to
+        /// the picker's search field before the event is dispatched so the
+        /// keystroke lands there; the event itself is left alone (the popover
+        /// routes it to the new first responder), so nothing is inserted twice.
+        private func refocusSearchFieldForTyping(_ event: NSEvent, modifiers: NSEvent.ModifierFlags) {
+            guard !modifiers.contains(.control),
+                let window = tableView?.window, window.isVisible,
+                let eventWindow = event.window,
+                eventWindow === window || eventWindow === window.parent,
+                let chars = event.characters, !chars.isEmpty,
+                chars.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }),
+                let root = window.contentView, let field = Self.findSearchField(in: root),
+                window.firstResponder !== field
+            else { return }
+            if !window.isKeyWindow { window.makeKey() }
+            window.makeFirstResponder(field)
+        }
+
+        private static func findSearchField(in view: NSView) -> IMETrackingTextView? {
+            if let field = view as? IMETrackingTextView { return field }
+            for subview in view.subviews {
+                if let found = findSearchField(in: subview) { return found }
+            }
+            return nil
+        }
+
+        private func toggleFavoriteForKeyboardTarget() {
+            if let index = highlightedIndex, index < rowIds.count, let row = rowLookup[rowIds[index]],
+                row.isModel
+            {
+                onToggleFavorite?(row)
+                return
+            }
+            if let selectedModelId,
+                let row = rowIds.lazy.compactMap({ self.rowLookup[$0] })
+                    .first(where: { $0.isModel && $0.modelId == selectedModelId })
+            {
+                onToggleFavorite?(row)
+            }
+        }
+
+        /// Move the keyboard highlight to the next navigable (model) row in
+        /// `offset` direction, skipping headers and the options row.
         private func moveHighlight(by offset: Int) {
             guard !rowIds.isEmpty else { return }
             let oldIndex = highlightedIndex
+            var candidate: Int
             if let current = oldIndex {
-                highlightedIndex = max(0, min(rowIds.count - 1, current + offset))
+                candidate = current + offset
             } else {
-                highlightedIndex = offset > 0 ? 0 : rowIds.count - 1
+                candidate = offset > 0 ? 0 : rowIds.count - 1
             }
+            while candidate >= 0, candidate < rowIds.count,
+                rowLookup[rowIds[candidate]]?.isNavigable != true
+            {
+                candidate += offset
+            }
+            guard candidate >= 0, candidate < rowIds.count else { return }
+            highlightedIndex = candidate
             if let old = oldIndex, old < rowIds.count {
                 reconfigureCell(at: old)
             }
-            if let new = highlightedIndex, new < rowIds.count {
-                reconfigureCell(at: new)
-                tableView?.scrollRowToVisible(new)
-            }
+            reconfigureCell(at: candidate)
+            tableView?.scrollRowToVisible(candidate)
         }
 
         private func selectHighlighted() {
             guard let index = highlightedIndex, index < rowIds.count,
                 let row = rowLookup[rowIds[index]],
-                row.isMLXFormat
+                row.isNavigable
             else { return }
             onSelectModel?(row.modelId)
         }
@@ -1127,6 +1433,7 @@ extension ModelPickerTableRepresentable {
             guard typeId != lastThemeTypeId else { return }
             lastThemeTypeId = typeId
             colors = ThemeColorCache(theme: theme)
+            resources = nil
         }
 
         // MARK: Selection
@@ -1137,13 +1444,58 @@ extension ModelPickerTableRepresentable {
             reconfigureVisibleCells()
         }
 
-        /// Switch the trailing control between hover-heart and always-on remove heart.
+        /// Switch the trailing control between hover-star and always-on remove star.
         /// Only repaints when the mode actually flips; `applyRows` covers the
-        /// row-content refresh that normally accompanies a tab change.
-        func updateFavoritesTab(_ newValue: Bool) {
-            guard isFavoritesTab != newValue else { return }
-            isFavoritesTab = newValue
+        /// row-content refresh that normally accompanies a group change.
+        func updateFavoritesGroup(_ newValue: Bool) {
+            guard isFavoritesGroup != newValue else { return }
+            isFavoritesGroup = newValue
             reconfigureVisibleCells()
+        }
+
+        // MARK: Options
+
+        func updateOptions(content: AnyView?, layoutKey: String, estimatedHeight: CGFloat) {
+            optionsContent = content
+            optionsEstimatedHeight = estimatedHeight
+            let keyChanged = optionsLayoutKey != layoutKey
+            optionsLayoutKey = layoutKey
+            guard let tableView else { return }
+            // Re-render the hosted content in place (option edits keep the
+            // popover open, so the cell must pick up new values), and re-measure
+            // when anything height-relevant changed.
+            if let optionsIndex = rowIds.firstIndex(where: { rowLookup[$0]?.isOptions == true }) {
+                if keyChanged {
+                    measuredOptionsKey = nil
+                    tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integer: optionsIndex))
+                }
+                if let cell = tableView.view(atColumn: 0, row: optionsIndex, makeIfNecessary: false)
+                    as? OptionsRowCellView, let content
+                {
+                    cell.configure(content: content, colors: colors)
+                }
+            }
+        }
+
+        /// Height for the options row: live-measured hosted content at the
+        /// table's current width, cached per layout key; the view's estimate
+        /// when the table has no width yet.
+        private func optionsRowHeight() -> CGFloat {
+            guard let content = optionsContent else { return optionsEstimatedHeight }
+            let width = (tableView?.bounds.width ?? 0) - 4
+            guard width > 40 else { return optionsEstimatedHeight }
+            if let measured = measuredOptionsHeight, measuredOptionsKey == optionsLayoutKey,
+                measuredOptionsWidth == width
+            {
+                return measured
+            }
+            measuringHost.rootView = AnyView(content.frame(width: width, alignment: .leading))
+            let fitted = measuringHost.fittingSize.height
+            let height = fitted.isFinite && fitted > 8 ? ceil(fitted) + 1 : optionsEstimatedHeight
+            measuredOptionsHeight = height
+            measuredOptionsKey = optionsLayoutKey
+            measuredOptionsWidth = width
+            return height
         }
 
         // MARK: Apply Rows
@@ -1181,6 +1533,18 @@ extension ModelPickerTableRepresentable {
             snapshot.appendSections([.main])
             snapshot.appendItems(rowIds, toSection: .main)
             dataSource?.apply(snapshot, animatingDifferences: false)
+
+            if !hasScrolledToSelection, let selectedModelId,
+                let index = rowIds.firstIndex(where: {
+                    guard let row = rowLookup[$0] else { return false }
+                    return row.isModel && row.modelId == selectedModelId
+                })
+            {
+                hasScrolledToSelection = true
+                // Show the selected row with a little context above it.
+                tableView?.scrollRowToVisible(max(0, index - 1))
+                tableView?.scrollRowToVisible(index)
+            }
         }
 
         private func rebuildIndexMaps() {
@@ -1204,25 +1568,61 @@ extension ModelPickerTableRepresentable {
                 let rowData = rowLookup[rowIds[row]]
             else { return }
 
-            if let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? ModelRowCellView {
-                configureModelRow(cell, with: rowData)
+            let view = tableView.view(atColumn: 0, row: row, makeIfNecessary: false)
+            switch rowData.kind {
+            case .model:
+                if let cell = view as? ModelRowCellView {
+                    configureModelRow(cell, with: rowData, at: row)
+                }
+            case .header(let title):
+                if let cell = view as? HeaderRowCellView {
+                    cell.configure(title: title, resources: renderResources)
+                }
+            case .options:
+                if let cell = view as? OptionsRowCellView, let optionsContent {
+                    cell.configure(content: optionsContent, colors: colors)
+                }
             }
         }
 
         // MARK: Cell Factory
 
         private static let modelReuseId = NSUserInterfaceItemIdentifier("ModelRowCell")
+        private static let headerReuseId = NSUserInterfaceItemIdentifier("HeaderRowCell")
+        private static let optionsReuseId = NSUserInterfaceItemIdentifier("OptionsRowCell")
 
         private func dequeueAndConfigure(tableView: NSTableView, rowId: String) -> NSView {
             guard let rowData = rowLookup[rowId] else { return NSView() }
+            let index = rowIdToIndex[rowId] ?? 0
 
-            let cell =
-                tableView.makeView(withIdentifier: Self.modelReuseId, owner: nil) as? ModelRowCellView
-                ?? {
-                    let c = ModelRowCellView(frame: .zero); c.identifier = Self.modelReuseId; return c
-                }()
-            configureModelRow(cell, with: rowData)
-            return cell
+            switch rowData.kind {
+            case .model:
+                let cell =
+                    tableView.makeView(withIdentifier: Self.modelReuseId, owner: nil) as? ModelRowCellView
+                    ?? {
+                        let c = ModelRowCellView(frame: .zero); c.identifier = Self.modelReuseId; return c
+                    }()
+                configureModelRow(cell, with: rowData, at: index)
+                return cell
+            case .header(let title):
+                let cell =
+                    tableView.makeView(withIdentifier: Self.headerReuseId, owner: nil) as? HeaderRowCellView
+                    ?? {
+                        let c = HeaderRowCellView(frame: .zero); c.identifier = Self.headerReuseId; return c
+                    }()
+                cell.configure(title: title, resources: renderResources)
+                return cell
+            case .options:
+                let cell =
+                    tableView.makeView(withIdentifier: Self.optionsReuseId, owner: nil) as? OptionsRowCellView
+                    ?? {
+                        let c = OptionsRowCellView(frame: .zero); c.identifier = Self.optionsReuseId; return c
+                    }()
+                if let optionsContent {
+                    cell.configure(content: optionsContent, colors: colors)
+                }
+                return cell
+            }
         }
 
         private var highlightedRowId: String? {
@@ -1230,7 +1630,7 @@ extension ModelPickerTableRepresentable {
             return rowIds[idx]
         }
 
-        private func configureModelRow(_ cell: ModelRowCellView, with row: ModelPickerRow) {
+        private func configureModelRow(_ cell: ModelRowCellView, with row: ModelPickerRow, at index: Int) {
             let id = row.modelId
             // Non-MLX bundles are shown but dimmed and non-selectable: picking
             // one would just fail at load. Alpha + tooltip are always assigned
@@ -1239,38 +1639,19 @@ extension ModelPickerTableRepresentable {
             cell.toolTip =
                 !row.isMLXFormat
                 ? L("Not an MLX model — the local engine can't load this bundle")
-                : (row.mediaKind == nil ? nil : row.description)
+                : (row.mediaKind == nil ? row.tooltip : row.description)
+            let isSelected = selectedModelId == id
+            let nextIsOptions =
+                isSelected && index + 1 < rowIds.count
+                && (rowLookup[rowIds[index + 1]]?.isOptions ?? false)
             cell.configure(
-                id: row.id,
-                displayName: row.displayName,
-                description: row.description,
-                parameterCount: row.parameterCount,
-                quantization: row.quantization,
-                isVLM: row.isVLM,
-                mediaKind: row.mediaKind,
-                mediaPrivacy: row.mediaPrivacy,
-                mediaPrice: row.mediaPrice,
-                providerLabel: row.providerLabel,
-                isSelected: selectedModelId == id,
+                row: row,
+                isSelected: isSelected,
                 isHighlighted: highlightedRowId == row.id,
                 isHovered: hoveredRowId == row.id,
-                isFavorite: row.isFavorite,
-                favoritesMode: isFavoritesTab,
-                colors: colors,
-                checkmarkImage: checkmarkImage,
-                eyeImage: eyeImage,
-                imageMediaImage: imageMediaImage,
-                textToVideoImage: textToVideoImage,
-                imageToVideoImage: imageToVideoImage,
-                privacyImage: privacyImage,
-                priceImage: priceImage,
-                heartImage: heartImage,
-                heartFillImage: heartFillImage,
-                regularFont: regularFont,
-                semiboldFont: semiboldFont,
-                descFont: descFont,
-                badgeFont: badgeFont,
-                badgeFontSmall: badgeFontSmall,
+                favoritesMode: isFavoritesGroup,
+                joinsOptionsBelow: nextIsOptions,
+                resources: renderResources,
                 onSelect: { [weak self] in
                     guard row.isMLXFormat else { return }
                     self?.onSelectModel?(id)
@@ -1287,7 +1668,9 @@ extension ModelPickerTableRepresentable {
             guard !isScrolling, let tableView else { return }
             let point = tableView.convert(event.locationInWindow, from: nil)
             let row = tableView.row(at: point)
-            guard row >= 0, row < rowIds.count else { return setHoveredRow(nil) }
+            guard row >= 0, row < rowIds.count, rowLookup[rowIds[row]]?.isModel == true else {
+                return setHoveredRow(nil)
+            }
             setHoveredRow(rowIds[row])
         }
 
@@ -1308,12 +1691,18 @@ extension ModelPickerTableRepresentable {
 
         func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
             guard row < rowIds.count, let rowData = rowLookup[rowIds[row]] else { return 36 }
-            return Self.rowHeight(for: rowData)
+            switch rowData.kind {
+            case .header: return Self.headerRowHeight
+            case .options: return optionsRowHeight()
+            case .model: return Self.rowHeight(for: rowData)
+            }
         }
+
+        static let headerRowHeight: CGFloat = 26
 
         /// Two consistent heights: a name-only row, or name + one metadata
         /// line (param/quant badges and description share that line).
-        private static func rowHeight(for row: ModelPickerRow) -> CGFloat {
+        static func rowHeight(for row: ModelPickerRow) -> CGFloat {
             let hasMeta =
                 row.description?.isEmpty == false
                 || row.parameterCount != nil

@@ -226,15 +226,77 @@ struct ModelPickerItemCacheTests {
             codexMetadata: [:],
             osaurusRouterProviderId: RemoteProviderManager.osaurusRouterProviderId,
             routerMetadata: { _ in nil },
-            remoteContextLength: { providerId, unprefixedId in
+            remoteMetadata: { providerId, unprefixedId in
                 #expect(providerId == provider.providerId)
-                return unprefixedId == "DeepSeek4-Flash" ? 524288 : nil
+                return unprefixedId == "DeepSeek4-Flash" ? RemoteModelMetadata(contextLength: 524288) : nil
             }
         )
         let byId = Dictionary(uniqueKeysWithValues: result.items.map { ($0.id, $0) })
 
         #expect(byId["vllm/DeepSeek4-Flash"]?.contextLength == 524288)
         #expect(byId["vllm/no-window-model"]?.contextLength == nil)
+    }
+
+    /// Everything a provider catalog published flows onto the picker item:
+    /// display name, description, pricing, capabilities, deprecation, and
+    /// the provider's own recommendation. A model with no metadata keeps
+    /// the plain id-derived row, with every capability left unknown.
+    @Test func remoteModelItems_attachesFullProviderMetadata() throws {
+        let provider = Self.providerEntry(
+            name: "OpenRouter",
+            type: .openaiLegacy,
+            host: "openrouter.ai",
+            models: ["openrouter/vendor/rich-model", "openrouter/vendor/bare-model"]
+        )
+        let rich = RemoteModelMetadata(
+            displayName: "Vendor: Rich Model",
+            description: "A capable model.",
+            contextLength: 262_144,
+            maxOutputTokens: 32_768,
+            supportsVision: true,
+            supportsToolCalling: true,
+            supportsReasoning: true,
+            inputPriceMicroPerMTok: 300_000,
+            outputPriceMicroPerMTok: 2_500_000,
+            isDeprecated: true,
+            deprecationReplacement: "vendor/newer-model",
+            recommendedReason: "Vendor default"
+        )
+
+        let result = ModelPickerItemCache.remoteModelItems(
+            providers: [provider],
+            codexMetadata: [:],
+            osaurusRouterProviderId: RemoteProviderManager.osaurusRouterProviderId,
+            routerMetadata: { _ in nil },
+            remoteMetadata: { _, unprefixedId in
+                unprefixedId == "vendor/rich-model" ? rich : nil
+            }
+        )
+        let byId = Dictionary(uniqueKeysWithValues: result.items.map { ($0.id, $0) })
+
+        let richItem = try #require(byId["openrouter/vendor/rich-model"])
+        #expect(richItem.displayName == "Vendor: Rich Model")
+        #expect(richItem.description == "A capable model.")
+        #expect(richItem.contextLength == 262_144)
+        #expect(richItem.maxOutputTokens == 32_768)
+        #expect(richItem.isVLM == true)
+        #expect(richItem.supportsToolCalling == true)
+        #expect(richItem.supportsReasoning == true)
+        #expect(richItem.inputPriceMicroPerMTok == 300_000)
+        #expect(richItem.outputPriceMicroPerMTok == 2_500_000)
+        #expect(richItem.isDeprecated == true)
+        #expect(richItem.recommendedReason == "Vendor default")
+        #expect(richItem.metadataLine == "262K ctx · $0.3 / $2.5 per M")
+
+        let bareItem = try #require(byId["openrouter/vendor/bare-model"])
+        #expect(bareItem.displayName == "bare-model")
+        #expect(bareItem.isVLM == false)
+        #expect(bareItem.supportsToolCalling == nil)
+        #expect(bareItem.supportsReasoning == nil)
+        #expect(bareItem.inputPriceMicroPerMTok == nil)
+        #expect(bareItem.isDeprecated == false)
+        #expect(bareItem.recommendedReason == nil)
+        #expect(bareItem.metadataLine == nil)
     }
 
     /// Codex items take the live catalog's display name + capability set;

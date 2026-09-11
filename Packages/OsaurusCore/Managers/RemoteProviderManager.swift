@@ -46,7 +46,9 @@ public enum RemoteProviderError: LocalizedError {
 @MainActor
 public final class RemoteProviderManager: ObservableObject {
     public static let shared = RemoteProviderManager()
-    public static let osaurusRouterProviderId = UUID(uuidString: "2CFBD528-62FD-4EF0-A143-3FE532F03840")!
+    nonisolated public static let osaurusRouterProviderId = UUID(
+        uuidString: "2CFBD528-62FD-4EF0-A143-3FE532F03840"
+    )!
     /// Product-selected temporary model for the first-run local-download
     /// experience. Match by final path component because Router ids are
     /// provider-prefixed (for example `osaurus/deepseek-ai/...`).
@@ -90,12 +92,14 @@ public final class RemoteProviderManager: ObservableObject {
     /// `RemoteProviderState.discoveredModels`, which is chat/spawn-only.
     private var mediaModelCatalogs: [UUID: [MediaModelInfo]] = [:]
 
-    /// Per-provider context windows advertised by custom OpenAI-compatible
-    /// `/models` endpoints (vLLM's `max_model_len` and friends), keyed by
+    /// Per-provider model metadata published by each provider's catalog
+    /// (context window, display name, pricing, capabilities), keyed by
     /// provider id then unprefixed model id. Captured on connect/refetch so
-    /// the picker and chat budget honor the server's window instead of the
-    /// 128k unknown-metadata fallback (issue #2301's workaround).
-    private var customProviderContextLengths: [UUID: [String: Int]] = [:]
+    /// the picker shows what the provider actually said and the chat budget
+    /// honors the server's window instead of the 128k unknown-metadata
+    /// fallback (issue #2301's workaround). Router models keep their own
+    /// richer catalog in `osaurusRouterModelCatalog`.
+    private var remoteModelMetadata: [UUID: [String: RemoteModelMetadata]] = [:]
 
     private init() {
         self.configuration = RemoteProviderConfigurationStore.load()
@@ -415,12 +419,13 @@ public final class RemoteProviderManager: ObservableObject {
                     }
                     discoveredModels = discovery.chatModelIDs
                     mediaModelCatalogs[provider.id] = discovery.mediaModels
+                    remoteModelMetadata[provider.id] = discovery.chatMetadata
                 } else {
                     let discovery = try await withRateLimitRetry {
                         try await RemoteProviderService.fetchModelsDiscovery(from: provider)
                     }
                     discoveredModels = discovery.models
-                    customProviderContextLengths[provider.id] = discovery.contextLengths
+                    remoteModelMetadata[provider.id] = discovery.metadata
                 }
             } catch {
                 if provider.providerType == .azureOpenAI && !provider.manualModelIds.isEmpty {
@@ -521,7 +526,7 @@ public final class RemoteProviderManager: ObservableObject {
             providerStates[providerId] = state
         }
         mediaModelCatalogs.removeValue(forKey: providerId)
-        customProviderContextLengths.removeValue(forKey: providerId)
+        remoteModelMetadata.removeValue(forKey: providerId)
 
         if let provider = configuration.provider(id: providerId) {
             if provider.providerType == .osaurusRouter {
@@ -1033,7 +1038,7 @@ public final class RemoteProviderManager: ObservableObject {
 
         let discovered: [String]
         var mediaCatalogChanged = false
-        var contextLengthsChanged = false
+        var metadataChanged = false
         do {
             if let override = testFetchModelsOverride {
                 discovered = try await override(provider)
@@ -1057,12 +1062,13 @@ public final class RemoteProviderManager: ObservableObject {
                 discovered = discovery.chatModelIDs
                 mediaCatalogChanged = mediaModelCatalogs[providerId] != discovery.mediaModels
                 mediaModelCatalogs[providerId] = discovery.mediaModels
+                metadataChanged = remoteModelMetadata[provider.id] != discovery.chatMetadata
+                remoteModelMetadata[provider.id] = discovery.chatMetadata
             } else {
                 let discovery = try await RemoteProviderService.fetchModelsDiscovery(from: provider)
                 discovered = discovery.models
-                contextLengthsChanged =
-                    customProviderContextLengths[provider.id] != discovery.contextLengths
-                customProviderContextLengths[provider.id] = discovery.contextLengths
+                metadataChanged = remoteModelMetadata[provider.id] != discovery.metadata
+                remoteModelMetadata[provider.id] = discovery.metadata
             }
         } catch {
             return
@@ -1070,7 +1076,7 @@ public final class RemoteProviderManager: ObservableObject {
 
         let merged = provider.mergedModelIds(discovered: discovered)
         lastModelRefetchAt[providerId] = Date()
-        guard mediaCatalogChanged || contextLengthsChanged || merged != state.discoveredModels
+        guard mediaCatalogChanged || metadataChanged || merged != state.discoveredModels
         else { return }
 
         state.discoveredModels = merged
@@ -1275,6 +1281,43 @@ public final class RemoteProviderManager: ObservableObject {
         return result
     }
 
+    /// Sidebar descriptors for the model picker: every enabled provider that
+    /// belongs on inference surfaces, in configured order, with its live
+    /// connection status — including providers that currently have no
+    /// models so the picker can show them as disconnected and offer a
+    /// reconnect instead of silently dropping them. Disabled providers are
+    /// omitted (the user switched them off on purpose). While offline every
+    /// provider reads as disconnected, matching `cachedAvailableModels()`.
+    ///
+    /// Pure read: this runs inside the picker's `body`, so it must not touch
+    /// `configuration`/`providerStates` (both `@Published`) — a write there
+    /// re-invalidates the view and spins the main thread. The managed router
+    /// provider is reconciled by the connect/refresh paths, not here.
+    func pickerProviderDescriptors() -> [ModelPickerProviderDescriptor] {
+        configuration.providers.compactMap { provider in
+            guard provider.enabled, exposesModelsForInference(provider) else { return nil }
+            let state = providerStates[provider.id]
+            let status: ModelPickerGroup.Status
+            if isOffline {
+                status = .disconnected(message: L("Offline"))
+            } else if state?.requiresAuth == true {
+                status = .needsSignIn
+            } else if state?.isConnecting == true {
+                status = .connecting
+            } else if state?.isConnected == true {
+                status = .connected
+            } else {
+                status = .disconnected(message: state?.lastError)
+            }
+            return ModelPickerProviderDescriptor(
+                id: provider.id,
+                name: provider.name,
+                status: status,
+                icon: ProviderPreset.matching(provider: provider)?.icon
+            )
+        }
+    }
+
     // MARK: - Paired-peer inference exposure
 
     /// Whether a provider belongs on the *inference* surfaces — Cloud Models,
@@ -1455,11 +1498,19 @@ public final class RemoteProviderManager: ObservableObject {
         osaurusRouterModelCatalog[unprefixedModelId]
     }
 
-    /// Context window advertised by a custom OpenAI-compatible provider's
-    /// `/models` endpoint for an unprefixed model id, or nil when the server
-    /// didn't report one (or the provider hasn't connected yet).
+    /// Context window advertised by a provider's catalog for an unprefixed
+    /// model id, or nil when the server didn't report one (or the provider
+    /// hasn't connected yet). Derived from `remoteModelMetadata` so the chat
+    /// budget and picker read the same value.
     func customProviderContextLength(providerId: UUID, unprefixedModelId: String) -> Int? {
-        customProviderContextLengths[providerId]?[unprefixedModelId]
+        remoteModelMetadata[providerId]?[unprefixedModelId]?.contextLength
+    }
+
+    /// Everything the provider's catalog published about an unprefixed model
+    /// id (display name, pricing, capabilities, context), or nil when the
+    /// provider made no claims / isn't connected.
+    func remoteModelMetadata(providerId: UUID, unprefixedModelId: String) -> RemoteModelMetadata? {
+        remoteModelMetadata[providerId]?[unprefixedModelId]
     }
 
     /// Unprefixed model ids in `catalog` that advertise image/vision input.
@@ -1864,7 +1915,7 @@ public final class RemoteProviderManager: ObservableObject {
         isOsaurusRouterEnabled = true
         UserDefaults.standard.removeObject(forKey: OsaurusRouter.enabledDefaultsKey)
         osaurusRouterModelCatalog = [:]
-        customProviderContextLengths = [:]
+        remoteModelMetadata = [:]
         testFetchModelsOverride = nil
         testConnectionTransportOverride = nil
         testIdentityExistsOverride = nil

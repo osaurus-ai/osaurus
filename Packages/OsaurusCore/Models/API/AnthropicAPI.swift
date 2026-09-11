@@ -1038,4 +1038,10 @@ struct AnthropicModelInfo: Codable, Sendable {
     let display_name: String
     let created_at: String
     let type: String
+
+    /// Picker metadata: Anthropic's own display name. The list route does
+    /// not publish context, pricing, or capabilities, so those stay unknown.
+    var pickerMetadata: RemoteModelMetadata {
+        RemoteModelMetadata(displayName: display_name)
+    }
 }

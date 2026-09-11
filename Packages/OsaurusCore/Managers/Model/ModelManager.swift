@@ -1321,6 +1321,14 @@ extension ModelManager {
         curatedSuggestedModels.map { $0.id.lowercased() }
     )
 
+    /// Lowercased IDs of the curated entries flagged `isTopSuggestion`. The
+    /// model picker marks an installed local model as Recommended only when
+    /// its id is in this set — the same curation the Models catalog pins at
+    /// the top, never a heuristic.
+    nonisolated static let topSuggestionModelIds: Set<String> = Set(
+        curatedSuggestedModels.filter(\.isTopSuggestion).map { $0.id.lowercased() }
+    )
+
     /// OsaurusAI org repos intentionally retired from the catalog (superseded
     /// / lower-precision dupes). The org auto-fetch would otherwise re-surface
     /// them as plain non-curated rows, defeating the removal — so the merge in

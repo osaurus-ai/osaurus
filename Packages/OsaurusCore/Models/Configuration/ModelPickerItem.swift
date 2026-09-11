@@ -153,6 +153,32 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// effort surface (they keep the static profile fallback).
     let reasoningCapabilities: ModelReasoningCapabilities?
 
+    /// Whether the provider's catalog advertises a reasoning/thinking
+    /// channel. Nil when the provider made no claim. Display-only: the
+    /// runtime's reasoning contract is still auto-detected per model.
+    let supportsReasoning: Bool?
+
+    /// Maximum output tokens the provider publishes, when known.
+    let maxOutputTokens: Int?
+
+    /// Whether the provider flagged this model as deprecated/retiring.
+    let isDeprecated: Bool
+
+    /// Why the row carries a Recommended badge, when it does. Only ever set
+    /// from a real signal: the provider's own ranking (Venice traits), the
+    /// curated local `isTopSuggestion` list, or a catalog default. Nil means
+    /// no badge.
+    let recommendedReason: String?
+
+    /// Ready-to-show price string when the provider publishes prices in a
+    /// unit other than USD (the Osaurus Router's credits display). The row
+    /// prefers this over formatting the micro-USD fields.
+    let priceDisplay: String?
+
+    /// The upstream vendor for gateway models (Osaurus Router's `provider`),
+    /// shown as the leading part of the metadata line.
+    let upstreamProvider: String?
+
     /// Image-generation metadata. Nil for text/remote chat models.
     let imageKind: String?
     let imageCapabilities: ImageModelCapabilities?
@@ -181,6 +207,12 @@ struct ModelPickerItem: Identifiable, Hashable {
         contextLength: Int? = nil,
         supportsToolCalling: Bool? = nil,
         reasoningCapabilities: ModelReasoningCapabilities? = nil,
+        supportsReasoning: Bool? = nil,
+        maxOutputTokens: Int? = nil,
+        isDeprecated: Bool = false,
+        recommendedReason: String? = nil,
+        priceDisplay: String? = nil,
+        upstreamProvider: String? = nil,
         imageKind: String? = nil,
         imageCapabilities: ImageModelCapabilities? = nil,
         imageDefaultSteps: Int? = nil,
@@ -205,12 +237,45 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.contextLength = contextLength
         self.supportsToolCalling = supportsToolCalling
         self.reasoningCapabilities = reasoningCapabilities
+        self.supportsReasoning = supportsReasoning
+        self.maxOutputTokens = maxOutputTokens
+        self.isDeprecated = isDeprecated
+        self.recommendedReason = recommendedReason
+        self.priceDisplay = priceDisplay
+        self.upstreamProvider = upstreamProvider
         self.imageKind = imageKind
         self.imageCapabilities = imageCapabilities
         self.imageDefaultSteps = imageDefaultSteps
         self.imageDefaultGuidance = imageDefaultGuidance
         self.imageReady = imageReady
         self.mediaModel = mediaModel
+    }
+
+    /// Structured one-line summary for the picker row's second line, built
+    /// only from what is actually known: upstream vendor (gateways), context
+    /// window, and price. Falls back to the free-text `description` when no
+    /// structured metadata exists. Media rows are summarized separately by
+    /// the picker (`mediaDetails`), so they return nil here.
+    var metadataLine: String? {
+        if mediaModel != nil { return nil }
+        var parts: [String] = []
+        if let upstreamProvider, !upstreamProvider.isEmpty {
+            parts.append(upstreamProvider)
+        }
+        if let contextLength, let formatted = OsaurusRouterModel.formatContextLength(contextLength) {
+            parts.append("\(formatted) ctx")
+        }
+        if let price = ModelPriceFormatter.line(for: self) {
+            parts.append(price)
+        }
+        if parts.isEmpty { return description }
+        return parts.joined(separator: " · ")
+    }
+
+    /// Whether any structured pricing is known (used to decide if the
+    /// price sort is meaningful for a group).
+    var hasPricing: Bool {
+        priceDisplay != nil || inputPriceMicroPerMTok != nil || outputPriceMicroPerMTok != nil
     }
 
     /// Check if model matches search query using fuzzy matching.
@@ -251,8 +316,12 @@ extension ModelPickerItem {
         )
     }
 
-    /// Create a local MLX model picker item from an MLXModel.
+    /// Create a local MLX model picker item from an MLXModel. Installed
+    /// models on the curated top-suggestion list carry the Recommended badge
+    /// — the same curation the Models catalog pins first, never a heuristic.
     static func fromMLXModel(_ model: MLXModel) -> ModelPickerItem {
+        let isTopSuggestion =
+            model.isTopSuggestion || ModelManager.topSuggestionModelIds.contains(model.id.lowercased())
         return ModelPickerItem(
             id: model.id,
             displayName: model.name,
@@ -264,7 +333,8 @@ extension ModelPickerItem {
             isMLXFormat: model.isMLXFormat,
             isEmbedding: model.isEmbedding,
             description: model.description,
-            externalSource: model.externalSource
+            externalSource: model.externalSource,
+            recommendedReason: isTopSuggestion ? L("Recommended by Osaurus") : nil
         )
     }
 
@@ -294,11 +364,41 @@ extension ModelPickerItem {
         providerId: UUID,
         contextLength: Int? = nil
     ) -> ModelPickerItem {
-        ModelPickerItem(
+        fromRemoteModel(
+            modelId: modelId,
+            providerName: providerName,
+            providerId: providerId,
+            metadata: contextLength.map { RemoteModelMetadata(contextLength: $0) }
+        )
+    }
+
+    /// Create a remote provider model picker item enriched with whatever the
+    /// provider's catalog published (`RemoteModelMetadata`). Every field is
+    /// optional and only rendered when present, so a bare `/models` id still
+    /// produces the plain row it always did.
+    static func fromRemoteModel(
+        modelId: String,
+        providerName: String,
+        providerId: UUID,
+        metadata: RemoteModelMetadata?
+    ) -> ModelPickerItem {
+        let fallbackName = displayName(fromModelId: modelId)
+        return ModelPickerItem(
             id: modelId,
-            displayName: displayName(fromModelId: modelId),
+            displayName: metadata?.displayName ?? fallbackName,
             source: .remote(providerName: providerName, providerId: providerId),
-            contextLength: contextLength
+            parameterCount: metadata?.parameterCount,
+            quantization: metadata?.quantization,
+            isVLM: metadata?.supportsVision ?? false,
+            description: metadata?.description,
+            inputPriceMicroPerMTok: metadata?.inputPriceMicroPerMTok,
+            outputPriceMicroPerMTok: metadata?.outputPriceMicroPerMTok,
+            contextLength: metadata?.contextLength,
+            supportsToolCalling: metadata?.supportsToolCalling,
+            supportsReasoning: metadata?.supportsReasoning,
+            maxOutputTokens: metadata?.maxOutputTokens,
+            isDeprecated: metadata?.isDeprecated ?? false,
+            recommendedReason: metadata?.recommendedReason
         )
     }
 
@@ -412,7 +512,8 @@ extension ModelPickerItem {
         providerId: UUID,
         metadata: OsaurusRouterModel
     ) -> ModelPickerItem {
-        ModelPickerItem(
+        let upstream = metadata.provider.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ModelPickerItem(
             id: prefixedId,
             displayName: displayName(fromModelId: prefixedId),
             source: .remote(providerName: providerName, providerId: providerId),
@@ -425,7 +526,9 @@ extension ModelPickerItem {
                 metadata.outputMicroPerMTok.trimmingCharacters(in: .whitespacesAndNewlines)
             ),
             contextLength: metadata.contextLength > 0 ? metadata.contextLength : nil,
-            supportsToolCalling: metadata.supportsToolCalling
+            supportsToolCalling: metadata.supportsToolCalling,
+            priceDisplay: metadata.pickerPriceDisplay,
+            upstreamProvider: upstream.isEmpty ? nil : upstream
         )
     }
 
@@ -473,6 +576,24 @@ extension OsaurusRouterModel {
             parts.append("\(context) ctx")
         }
 
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// Just the price portion of `pickerDescription` ("28.8 credits/M in ·
+    /// 100 credits/M out"), for rows that render context and upstream
+    /// separately. Nil when the router shipped no price strings.
+    var pickerPriceDisplay: String? {
+        var parts: [String] = []
+        let inputCredits = inputCreditsDisplay?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let input = inputCredits.isEmpty
+            ? inputDisplay.trimmingCharacters(in: .whitespacesAndNewlines)
+            : inputCredits
+        if !input.isEmpty { parts.append("\(input) in") }
+        let outputCredits = outputCreditsDisplay?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let output = outputCredits.isEmpty
+            ? outputDisplay.trimmingCharacters(in: .whitespacesAndNewlines)
+            : outputCredits
+        if !output.isEmpty { parts.append("\(output) out") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
@@ -656,16 +777,16 @@ extension ModelPickerItem {
 
 // MARK: - Sorting
 
-/// User-chosen ordering for the Osaurus tab. The default keeps the existing
-/// alphabetical order; the price options sort by per-million-token cost.
+/// User-chosen ordering for a picker group. The default keeps the group's
+/// display order; the price options sort by per-million-token cost.
 enum ModelPickerSortOrder: Hashable {
     case `default`
     case priceLowToHigh
     case priceHighToLow
 }
 
-/// Minimum-context filter for the Osaurus tab. Each case keeps models whose
-/// context window is at least `minTokens`; `.any` disables the filter.
+/// Minimum-context filter, offered on every group. Each case keeps models
+/// whose context window is at least `minTokens`; `.any` disables the filter.
 enum ModelPickerContextFilter: CaseIterable, Identifiable, Hashable {
     case any
     case min32K
@@ -724,7 +845,7 @@ enum ModelPickerLocalSourceFilter: Identifiable, Hashable {
     }
 }
 
-/// Vision-capability filter for the Osaurus tab.
+/// Vision-capability filter, offered on every group.
 enum ModelPickerVisionFilter: CaseIterable, Identifiable, Hashable {
     case any
     case visionOnly
@@ -742,7 +863,33 @@ enum ModelPickerVisionFilter: CaseIterable, Identifiable, Hashable {
     }
 }
 
+/// Tool-calling filter. `toolsOnly` keeps models whose provider catalog
+/// positively advertises tool support; models with no claim are dropped
+/// (unknown is not "yes").
+enum ModelPickerToolsFilter: CaseIterable, Identifiable, Hashable {
+    case any
+    case toolsOnly
+
+    var id: Self { self }
+
+    var label: String {
+        switch self {
+        case .any: return "Any"
+        case .toolsOnly: return "Tools"
+        }
+    }
+}
+
 extension Array where Element == ModelPickerItem {
+    /// Keep only models matching the tools filter; `.any` returns the
+    /// receiver unchanged.
+    func filteredByTools(_ tools: ModelPickerToolsFilter) -> [ModelPickerItem] {
+        switch tools {
+        case .any: return self
+        case .toolsOnly: return filter { $0.supportsToolCalling == true }
+        }
+    }
+
     /// Keep only models whose context window meets the filter's minimum. Items
     /// with unknown context are dropped when a minimum is set; `.any` is a
     /// no-op that returns the receiver unchanged.
@@ -779,7 +926,7 @@ extension Array where Element == ModelPickerItem {
         }
     }
 
-    /// Sort by Osaurus router price (input rate primary, output as tiebreak).
+    /// Sort by published price (input rate primary, output as tiebreak).
     /// Items without pricing sort last in either direction so a missing rate
     /// never jumps to the top of a "cheapest first" list. Falls back to the
     /// receiver unchanged for `.default`.
@@ -805,32 +952,95 @@ extension Array where Element == ModelPickerItem {
     }
 }
 
-// MARK: - Tabs
+// MARK: - Groups
 
-/// A horizontal tab in the model picker: "Local" (Foundation + on-device MLX
-/// models) followed by one tab per connected remote provider.
-struct ModelPickerTab: Identifiable, Equatable {
-    /// Stable key: "local" or "remote-<providerId>".
+/// One entry in the model picker's sidebar: Favorites, "On this Mac",
+/// Osaurus Cloud, one group per configured remote provider (connected or
+/// not), and Claude Code. The right pane shows the active group's models.
+struct ModelPickerGroup: Identifiable, Equatable {
+    enum Kind: Equatable, Hashable {
+        case favorites
+        case local
+        case osaurusCloud
+        case remote(providerId: UUID)
+        case claudeCode
+    }
+
+    /// Connection status for provider-backed groups, driving the sidebar
+    /// status dot and the empty-state copy. `.none` for groups that have no
+    /// connection concept (Favorites, On this Mac, Claude Code).
+    enum Status: Equatable {
+        case none
+        case connected
+        case connecting
+        /// Configured but not connected; the message is the provider's last
+        /// error when one exists.
+        case disconnected(message: String?)
+        /// Providers whose OAuth session expired and need a fresh sign-in.
+        case needsSignIn
+
+        var isConnected: Bool { self == .connected }
+    }
+
+    /// Stable key: "favorites", "local", "remote-<providerId>", "claude-code".
     let key: String
-
-    /// Display title: "Local" or the provider name.
+    /// Sidebar / header title.
     let title: String
-
-    /// Models shown when this tab is active. For the Local tab, Foundation
-    /// items come first, then on-device models sorted by name.
+    let kind: Kind
+    /// Models shown when this group is active, already ordered for display.
     let models: [ModelPickerItem]
+    var status: Status = .none
+    /// SF Symbol for the sidebar icon rail.
+    var icon: String = "cloud"
 
     var id: String { key }
 
-    /// The Osaurus Router tab, identified by provider title (matching how
-    /// `groupedByTab()` pins it). This is the only tab whose models carry
-    /// pricing, so it's the only one offering the price-sort control.
-    var isOsaurus: Bool { title == "Osaurus" }
+    var isFavorites: Bool { kind == .favorites }
+    var isLocal: Bool { kind == .local }
+    var isOsaurusCloud: Bool { kind == .osaurusCloud }
+    var isClaudeCode: Bool { kind == .claudeCode }
 
-    /// The Local tab (Foundation + on-device models), identified by its
-    /// stable key. The only tab whose models carry an external provenance,
-    /// so the only one offering the source filter.
-    var isLocal: Bool { key == "local" }
+    var providerId: UUID? {
+        switch kind {
+        case .remote(let providerId): return providerId
+        case .osaurusCloud: return RemoteProviderManager.osaurusRouterProviderId
+        case .favorites, .local, .claudeCode: return nil
+        }
+    }
+
+    /// Provider-backed groups (Osaurus Cloud + remote) can be reconnected /
+    /// managed from the header; the others cannot.
+    var isProviderBacked: Bool {
+        switch kind {
+        case .remote, .osaurusCloud: return true
+        case .favorites, .local, .claudeCode: return false
+        }
+    }
+
+    /// Whether at least one model in the group publishes a price, so the
+    /// price sort is offered only where it changes anything.
+    var hasPricing: Bool { models.contains(where: \.hasPricing) }
+
+    static let favoritesKey = "favorites"
+    static let localKey = "local"
+    static let claudeCodeKey = "claude-code"
+
+    static func key(forProviderId providerId: UUID) -> String {
+        "remote-\(providerId.uuidString)"
+    }
+}
+
+/// What the picker needs to know about a configured provider to emit its
+/// sidebar group — including providers that currently have no models
+/// (disconnected, connecting, failed) so the user can see and fix them
+/// without leaving the picker. Built by the view from
+/// `RemoteProviderManager`; kept as a plain value so grouping stays testable.
+struct ModelPickerProviderDescriptor: Equatable {
+    let id: UUID
+    let name: String
+    let status: ModelPickerGroup.Status
+    /// SF Symbol (from `ProviderPreset.icon`) when a preset matches.
+    var icon: String? = nil
 }
 
 // MARK: - Grouping
@@ -924,74 +1134,162 @@ extension Array where Element == ModelPickerItem {
             .map { (source: $0.key, models: $0.value.sorted { $0.displayName < $1.displayName }) }
     }
 
-    /// Group models into picker tabs: a single "Local" tab (Foundation first,
-    /// then on-device models sorted by name) followed by one tab per remote
-    /// provider in source order. Tabs with no models are omitted.
-    func groupedByTab() -> [ModelPickerTab] {
+    /// Group models into picker sidebar groups, in display order:
+    ///
+    /// 1. Favorites — every model whose favorite key is in `favoriteKeys`,
+    ///    in the order the models appear across the other groups. Emitted
+    ///    whenever any other group exists (possibly empty, so the sidebar
+    ///    can explain how to star a model).
+    /// 2. On this Mac — Foundation first, then on-device models by name.
+    ///    Omitted when there are none.
+    /// 3. Osaurus Cloud — the managed router provider, pinned ahead of
+    ///    user-configured providers.
+    /// 4. One group per entry in `providers`, in that order, *including*
+    ///    providers with no models (disconnected / connecting / failed) so
+    ///    the user can see and reconnect them without leaving the picker.
+    ///    Remote models whose provider is not in `providers` (e.g. a
+    ///    descriptor list that hasn't caught up yet, or tests) follow in
+    ///    first-appearance order.
+    /// 5. Claude Code — its own group rather than On this Mac: the CLI is
+    ///    local but inference is not.
+    func groupedIntoPickerGroups(
+        providers: [ModelPickerProviderDescriptor] = [],
+        favoriteKeys: Set<String> = [],
+        osaurusRouterProviderId: UUID = RemoteProviderManager.osaurusRouterProviderId
+    ) -> [ModelPickerGroup] {
         var foundationModels: [ModelPickerItem] = []
         var localModels: [ModelPickerItem] = []
-        // Keyed by uniqueKey; insertion order preserved separately so provider
-        // tabs keep a stable order matching the incoming options array.
-        var remoteModels: [String: [ModelPickerItem]] = [:]
-        var remoteOrder: [(key: String, title: String)] = []
+        var claudeCodeModels: [ModelPickerItem] = []
+        // Keyed by provider id; insertion order preserved separately so
+        // provider groups without a descriptor keep a stable order matching
+        // the incoming options array.
+        var remoteModels: [UUID: [ModelPickerItem]] = [:]
+        var remoteOrder: [(id: UUID, title: String)] = []
 
         for model in self {
             // AppleScript bundles surface only in the dedicated AppleScript
-            // model picker, never the chat model picker's Local tab.
+            // model picker, never the chat model picker.
             if model.isAppleScriptCatalogModel { continue }
             switch model.source {
             case .foundation:
                 foundationModels.append(model)
             case .local, .imageGeneration:
-                // On-device image models live in the Local tab alongside LLMs.
+                // On-device image models live alongside on-device LLMs.
                 localModels.append(model)
             case .claudeCode:
-                // Its own tab rather than the Local one: these models are not
-                // on-device, and grouping them under "Local" would misrepresent
-                // where the prompt actually goes.
-                let key = model.source.uniqueKey
-                if remoteModels[key] == nil {
-                    remoteOrder.append((key: key, title: model.source.displayName))
+                claudeCodeModels.append(model)
+            case .remote(let providerName, let providerId):
+                if remoteModels[providerId] == nil {
+                    remoteOrder.append((id: providerId, title: providerName))
                 }
-                remoteModels[key, default: []].append(model)
-            case .remote(let providerName, _):
-                let key = model.source.uniqueKey
-                if remoteModels[key] == nil {
-                    remoteOrder.append((key: key, title: providerName))
-                }
-                remoteModels[key, default: []].append(model)
+                remoteModels[providerId, default: []].append(model)
             }
         }
 
-        var tabs: [ModelPickerTab] = []
-        tabs.reserveCapacity(remoteOrder.count + 1)
+        let byName: (ModelPickerItem, ModelPickerItem) -> Bool = {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+
+        var groups: [ModelPickerGroup] = []
+        groups.reserveCapacity(remoteOrder.count + providers.count + 3)
 
         if !foundationModels.isEmpty || !localModels.isEmpty {
-            tabs.append(
-                ModelPickerTab(
-                    key: "local",
-                    title: "Local",
-                    models: foundationModels + localModels.sorted { $0.displayName < $1.displayName }
+            groups.append(
+                ModelPickerGroup(
+                    key: ModelPickerGroup.localKey,
+                    title: L("On this Mac"),
+                    kind: .local,
+                    models: foundationModels + localModels.sorted(by: byName),
+                    icon: "desktopcomputer"
                 )
             )
         }
 
-        let osaurusTabs = remoteOrder.filter { $0.title == "Osaurus" }
-        let otherRemoteTabs = remoteOrder.filter { $0.title != "Osaurus" }
-        let orderedRemoteTabs = osaurusTabs + otherRemoteTabs
+        // Osaurus Cloud: pinned right after On this Mac whether or not the
+        // descriptor list mentions it (it's a managed provider).
+        let routerDescriptor = providers.first { $0.id == osaurusRouterProviderId }
+        let routerModels = remoteModels[osaurusRouterProviderId] ?? []
+        if routerDescriptor != nil || !routerModels.isEmpty {
+            groups.append(
+                ModelPickerGroup(
+                    key: ModelPickerGroup.key(forProviderId: osaurusRouterProviderId),
+                    title: L("Osaurus Cloud"),
+                    kind: .osaurusCloud,
+                    models: routerModels.sorted(by: byName),
+                    status: routerDescriptor?.status ?? (routerModels.isEmpty ? .none : .connected),
+                    icon: "cloud.fill"
+                )
+            )
+        }
 
-        for entry in orderedRemoteTabs {
-            guard let models = remoteModels[entry.key], !models.isEmpty else { continue }
-            tabs.append(
-                ModelPickerTab(
-                    key: entry.key,
+        var emitted: Set<UUID> = [osaurusRouterProviderId]
+        for descriptor in providers where !emitted.contains(descriptor.id) {
+            emitted.insert(descriptor.id)
+            let models = (remoteModels[descriptor.id] ?? []).sorted(by: byName)
+            groups.append(
+                ModelPickerGroup(
+                    key: ModelPickerGroup.key(forProviderId: descriptor.id),
+                    title: descriptor.name,
+                    kind: .remote(providerId: descriptor.id),
+                    models: models,
+                    status: descriptor.status,
+                    icon: descriptor.icon ?? "cloud"
+                )
+            )
+        }
+        for entry in remoteOrder where !emitted.contains(entry.id) {
+            emitted.insert(entry.id)
+            guard let models = remoteModels[entry.id], !models.isEmpty else { continue }
+            groups.append(
+                ModelPickerGroup(
+                    key: ModelPickerGroup.key(forProviderId: entry.id),
                     title: entry.title,
-                    models: models.sorted { $0.displayName < $1.displayName }
+                    kind: .remote(providerId: entry.id),
+                    models: models.sorted(by: byName),
+                    status: .connected,
+                    icon: "cloud"
                 )
             )
         }
 
-        return tabs
+        if !claudeCodeModels.isEmpty {
+            groups.append(
+                ModelPickerGroup(
+                    key: ModelPickerGroup.claudeCodeKey,
+                    title: ModelPickerItem.Source.claudeCode.displayName,
+                    kind: .claudeCode,
+                    models: claudeCodeModels,
+                    icon: "terminal.fill"
+                )
+            )
+        }
+
+        guard !groups.isEmpty else { return [] }
+
+        // Favorites: walk the groups in display order so the Favorites list
+        // mirrors where each model lives; dedupe by favorite key.
+        var favorites: [ModelPickerItem] = []
+        var seenFavoriteKeys: Set<String> = []
+        for group in groups {
+            for model in group.models {
+                let key = FavoriteModelsStore.key(sourceKey: model.source.uniqueKey, modelId: model.id)
+                guard favoriteKeys.contains(key), !seenFavoriteKeys.contains(key) else { continue }
+                seenFavoriteKeys.insert(key)
+                favorites.append(model)
+            }
+        }
+        groups.insert(
+            ModelPickerGroup(
+                key: ModelPickerGroup.favoritesKey,
+                title: L("Favorites"),
+                kind: .favorites,
+                models: favorites,
+                icon: "star.fill"
+            ),
+            at: 0
+        )
+
+        return groups
     }
 }
 

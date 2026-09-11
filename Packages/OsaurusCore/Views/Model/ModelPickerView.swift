@@ -2,146 +2,50 @@
 //  ModelPickerView.swift
 //  osaurus
 //
-//  A rich model picker with provider tabs, unified cross-provider search,
-//  and metadata display.
+//  Two-pane model picker: a sidebar of groups (Favorites, On this Mac,
+//  Osaurus Cloud, each configured provider, Claude Code, + Add provider)
+//  and a list pane with a group header, search, and metadata-rich rows.
+//  The selected model expands inline to reveal its options.
 //
 
 import AppKit
 import SwiftUI
-
-/// Semantic Thinking row state for the picker's options section. Carries
-/// only display state plus a semantic setter — the profile-specific stored
-/// boolean (including inverted options like `disableThinking`) is resolved
-/// by the owner through `ModelProfileRegistry.thinkingStoredOption`, never
-/// in the view.
-struct ModelPickerThinkingControl {
-    /// Effective on/off state the row shows: the explicit persisted choice
-    /// when present, otherwise the model's chat-template default.
-    let isEnabled: Bool
-    /// Whether an explicit persisted override exists. Drives the Default
-    /// pill vs. the reset affordance.
-    let isExplicit: Bool
-    /// Persist a semantic enabled state; nil removes the override so the
-    /// model's template default applies naturally again.
-    let onSetEnabled: (Bool?) -> Void
-    var supportsUnspecifiedDefault: Bool = false
-}
-
-/// Inline model-options control state for the picker's currently selected
-/// model: the semantic Thinking row (when the model has a thinking toggle)
-/// plus every other option the model's profile (or live provider catalog)
-/// exposes, rendered as a "Model Options" section at the bottom of the
-/// picker.
-struct ModelPickerOptionsControl {
-    /// Catalog-driven reasoning capabilities (ChatGPT/Codex live catalog or
-    /// the documented official OpenAI GPT-5.6 contract), when present. Used
-    /// to surface per-level catalog descriptions on the effort row.
-    let capabilities: ModelReasoningCapabilities?
-    /// Semantic Thinking row for models with a boolean thinking toggle.
-    /// Rendered first in the section, ahead of the generic rows.
-    var thinking: ModelPickerThinkingControl? = nil
-    /// Non-thinking option definitions for the selected model, in profile
-    /// order. When `capabilities` is present this is just the dynamic
-    /// `reasoningEffort` definition.
-    let options: [ModelOptionDefinition]
-    /// Explicit persisted values. Missing keys mean "use the default" —
-    /// nothing is sent on the wire for them.
-    let values: [String: ModelOptionValue]
-    /// Display-only defaults (profile defaults, or the catalog default for
-    /// capability-enriched effort). Never synthesized into requests.
-    let defaults: [String: ModelOptionValue]
-    /// Persist one option; a nil value removes the explicit override so the
-    /// default applies naturally again.
-    let onChange: (String, ModelOptionValue?) -> Void
-
-    var isEmpty: Bool { options.isEmpty && thinking == nil }
-
-    /// The segment id the UI marks as selected for a segmented option:
-    /// explicit choice first, then the display default, then the first
-    /// segment.
-    func effectiveSegmentId(for option: ModelOptionDefinition) -> String? {
-        if let explicit = values[option.id]?.stringValue { return explicit }
-        if let fallback = defaults[option.id]?.stringValue { return fallback }
-        if case .segmented(let segments) = option.kind { return segments.first?.id }
-        return nil
-    }
-
-    /// The on/off state the UI shows for a toggle option: explicit choice
-    /// first, then the display default, then the definition's default.
-    func effectiveToggleValue(for option: ModelOptionDefinition) -> Bool {
-        if let explicit = values[option.id]?.boolValue { return explicit }
-        if let fallback = defaults[option.id]?.boolValue { return fallback }
-        if case .toggle(let defaultValue) = option.kind { return defaultValue }
-        return false
-    }
-
-    /// Height of the "Model Options" section header the view renders above
-    /// the rows, included in `estimatedHeight` for the popover frame.
-    static let headerHeight: CGFloat = 28
-
-    /// Estimated rendered height of the options section (header + rows),
-    /// used for the popover frame.
-    var estimatedHeight: CGFloat {
-        Self.headerHeight + rowsEstimatedHeight
-    }
-
-    /// Estimated rendered height of the option rows alone (the scrollable
-    /// region once the section exceeds its cap). Segmented rows account for
-    /// chip wrapping in the picker's fixed content width.
-    var rowsEstimatedHeight: CGFloat {
-        let availableWidth: CGFloat = 352
-        // Thinking row: icon container + title/description stack + padding.
-        let thinkingHeight: CGFloat = thinking != nil ? 50 : 0
-        return thinkingHeight + options.reduce(CGFloat(0)) { total, option in
-            switch option.kind {
-            case .segmented(let segments):
-                var lines: CGFloat = 1
-                var lineWidth: CGFloat = 0
-                for segment in segments {
-                    // chip ≈ label width (~6.5pt/char) + horizontal padding + spacing
-                    let chipWidth = CGFloat(segment.label.count) * 6.5 + 26
-                    if lineWidth + chipWidth > availableWidth {
-                        lines += 1
-                        lineWidth = chipWidth
-                    } else {
-                        lineWidth += chipWidth
-                    }
-                }
-                // header + chip lines + row padding (+ description line when
-                // the catalog publishes level copy)
-                let descriptionHeight: CGFloat =
-                    (option.id == "reasoningEffort" && capabilities != nil) ? 16 : 0
-                return total + 28 + lines * 31 + 20 + descriptionHeight
-            case .toggle:
-                return total + 44
-            }
-        }
-    }
-}
 
 struct ModelPickerView: View {
     let options: [ModelPickerItem]
     @Binding var selectedModel: String?
     let agentId: UUID?
     var optionsControl: ModelPickerOptionsControl? = nil
+    /// Group to open on instead of the one holding the selected model —
+    /// used to land on a provider the user just added from the picker.
+    var initialGroupKey: String? = nil
+    /// Host hook for the inline add-provider catalog. When nil the picker
+    /// falls back to opening the Cloud Providers management tab.
+    var onAddProvider: ((ModelPickerAddProviderChoice) -> Void)? = nil
     let onDismiss: () -> Void
 
     @State private var searchText = ""
     /// Tracks IME composition so the placeholder hides while composing.
     @State private var isSearchComposing = false
-    @State private var selectedTabKey: String?
+    @State private var selectedGroupKey: String?
     @State private var sortOrder: ModelPickerSortOrder = .default
     @State private var contextFilter: ModelPickerContextFilter = .any
     @State private var visionFilter: ModelPickerVisionFilter = .any
+    @State private var toolsFilter: ModelPickerToolsFilter = .any
     @State private var localSourceFilter: ModelPickerLocalSourceFilter = .any
     @State private var showSortPopover = false
+    @State private var isAddingProvider = false
+    @State private var reconnectingProviderIds: Set<UUID> = []
+    @State private var isCompactSidebar = false
     @ObservedObject private var favoritesStore = FavoriteModelsStore.shared
+    @ObservedObject private var providerManager = RemoteProviderManager.shared
     @Environment(\.theme) private var theme
 
-    /// Stable key/title for the synthetic Favorites tab. It only exists while
-    /// the user has at least one favourite among the currently visible models.
-    private static let favoritesTabKey = "favorites"
-    private static let favoritesTabTitle = "Favorites"
+    /// List pane width; the sidebar adds its expanded or compact width.
+    private static let listPaneWidth: CGFloat = 452
+    private static let pickerHeight: CGFloat = 500
+    /// Below this host-window width the sidebar collapses to an icon rail.
+    private static let compactSidebarThreshold: CGFloat = 660
 
     // MARK: - Test Mode
 
@@ -169,108 +73,128 @@ struct ModelPickerView: View {
     /// only to select a usable model — a non-selectable row is just clutter, so
     /// drop them here. Non-local sources (foundation, remote) are always
     /// `isMLXFormat`, so only co-mingled local non-MLX bundles are filtered.
-    /// Filtering before grouping keeps the header count, tab badges, and rows
-    /// all consistent.
+    /// Filtering before grouping keeps the header count, sidebar counts, and
+    /// rows all consistent.
     private var visibleOptions: [ModelPickerItem] {
         displayOptions.filter { $0.isMLXFormat }
     }
 
-    /// Visible models the user has favourited, in the order they were added.
-    /// Favourites whose model isn't currently available (provider offline,
-    /// deleted on disk) simply don't appear until the model returns.
-    private var favoriteItems: [ModelPickerItem] {
-        guard !favoritesStore.favoriteKeys.isEmpty else { return [] }
-        let byKey = Dictionary(
-            visibleOptions.map { ($0.favoriteKey, $0) },
-            uniquingKeysWith: { first, _ in first }
+    private var currentGroups: [ModelPickerGroup] {
+        visibleOptions.groupedIntoPickerGroups(
+            providers: providerManager.pickerProviderDescriptors(),
+            favoriteKeys: Set(favoritesStore.favoriteKeys)
         )
-        return favoritesStore.favoriteKeys.compactMap { byKey[$0] }
     }
 
-    private var currentTabs: [ModelPickerTab] {
-        let base = visibleOptions.groupedByTab()
-        let favorites = favoriteItems
-        guard !favorites.isEmpty else { return base }
-        // Pin the Favourites tab first so a few preferred models are always the
-        // shortest path, ahead of the provider tabs.
-        let favoritesTab = ModelPickerTab(
-            key: Self.favoritesTabKey,
-            title: Self.favoritesTabTitle,
-            models: favorites
-        )
-        return [favoritesTab] + base
-    }
-
-    /// Provider attribution shown on Favourites-tab rows, since favourites mix
-    /// models from every source into one list.
+    /// Provider attribution shown on Favorites / search rows, since those
+    /// mix models from every source into one list.
     private func providerTitle(for item: ModelPickerItem) -> String {
         switch item.source {
         case .foundation, .local, .imageGeneration:
-            return "Local"
+            return L("On this Mac")
         case .claudeCode:
             return item.source.displayName
-        case .remote(let providerName, _):
-            return providerName
+        case .remote(_, let providerId):
+            if providerId == RemoteProviderManager.osaurusRouterProviderId { return L("Osaurus Cloud") }
+            if case .remote(let providerName, _) = item.source { return providerName }
+            return ""
         }
     }
 
-    /// The tab to fall back to when there is no valid explicit selection: the
-    /// one holding `selectedModel`, otherwise the first tab.
-    private static func defaultTabKey(in tabs: [ModelPickerTab], selectedModel: String?) -> String? {
-        let modelTab = tabs.first { tab in tab.models.contains { $0.id == selectedModel } }
-        return modelTab?.key ?? tabs.first?.key
+    /// The group holding `selectedModel`, preferring a source group over
+    /// Favorites (which mirrors models from elsewhere).
+    private static func groupKey(holding selectedModel: String?, in groups: [ModelPickerGroup]) -> String? {
+        guard let selectedModel else { return nil }
+        let sourceGroup = groups.first { group in
+            !group.isFavorites && group.models.contains { $0.id == selectedModel }
+        }
+        return sourceGroup?.key
     }
 
-    /// The tab to render as active: the explicit selection while its tab still
-    /// exists, otherwise the derived default. A selection whose tab is
-    /// transiently absent mid-refresh falls back here for rendering only.
-    private func effectiveSelectedTabKey(in tabs: [ModelPickerTab]) -> String? {
-        if let key = selectedTabKey, tabs.contains(where: { $0.key == key }) {
+    /// The group worth committing to when there is no explicit selection:
+    /// the one holding `selectedModel`, otherwise the first source group that
+    /// actually has models. Returns nil when no group has any model yet — the
+    /// host snapshots the options list asynchronously, so on first open the
+    /// sidebar can briefly consist of empty provider descriptors only, and
+    /// committing "Favorites" (or an empty provider) at that moment would
+    /// stick once the models arrive.
+    static func defaultGroupKey(in groups: [ModelPickerGroup], selectedModel: String?) -> String? {
+        if let key = groupKey(holding: selectedModel, in: groups) { return key }
+        return groups.first(where: { !$0.models.isEmpty && !$0.isFavorites })?.key
+    }
+
+    /// The group to render as active: the explicit selection while its group
+    /// still exists, otherwise the derived default, otherwise the first
+    /// source group (so a picker with only disconnected providers still
+    /// lands on one of them rather than an empty Favorites). A selection
+    /// whose group is transiently absent mid-refresh falls back here for
+    /// rendering only.
+    private func effectiveSelectedGroupKey(in groups: [ModelPickerGroup]) -> String? {
+        if let key = selectedGroupKey, groups.contains(where: { $0.key == key }) {
             return key
         }
-        return Self.defaultTabKey(in: tabs, selectedModel: selectedModel)
+        if let key = Self.defaultGroupKey(in: groups, selectedModel: selectedModel) { return key }
+        return groups.first(where: { !$0.isFavorites })?.key ?? groups.first?.key
     }
 
-    /// Resolve which tab key should be *committed to `selectedTabKey`*, given the
-    /// currently committed key and the available tabs.
+    /// Resolve which group key should be *committed to `selectedGroupKey`*,
+    /// given the currently committed key and the available groups.
     ///
-    /// Once a key is committed it is returned untouched — even if that tab is
-    /// momentarily absent. The picker refreshes its model lists asynchronously
-    /// while open (`refreshConnectedProviders` / `buildModelPickerItems`), so a
-    /// tab can briefly disappear mid-refresh; clobbering the user's explicit
-    /// choice on that transient absence is what made the picker snap from
-    /// "Local" back to the first tab ("Osaurus"). Rendering still falls back
-    /// gracefully via `effectiveSelectedTabKey` while a tab is missing, and the
+    /// Once a key is committed it is returned untouched — even if that group
+    /// is momentarily absent. The picker refreshes its model lists
+    /// asynchronously while open (`refreshConnectedProviders` /
+    /// `buildModelPickerItems`), so a group can briefly disappear
+    /// mid-refresh; clobbering the user's explicit choice on that transient
+    /// absence is what made the picker snap from "Local" back to the first
+    /// tab. Rendering still falls back gracefully via
+    /// `effectiveSelectedGroupKey` while a group is missing, and the
     /// committed key re-resolves the moment it returns.
     ///
-    /// With no committed key it derives the initial default via `defaultTabKey`.
-    static func resolveCommittedTabKey(
+    /// With no committed key it uses `initialGroupKey` when that group
+    /// exists, otherwise derives the default via `defaultGroupKey`.
+    static func resolveCommittedGroupKey(
         current: String?,
-        tabs: [ModelPickerTab],
-        selectedModel: String?
+        groups: [ModelPickerGroup],
+        selectedModel: String?,
+        initialGroupKey: String? = nil
     ) -> String? {
-        current ?? defaultTabKey(in: tabs, selectedModel: selectedModel)
+        if let current { return current }
+        if let initialGroupKey, groups.contains(where: { $0.key == initialGroupKey }) {
+            return initialGroupKey
+        }
+        return defaultGroupKey(in: groups, selectedModel: selectedModel)
     }
 
-    private func ensureSelectedTabValid() {
-        let resolved = Self.resolveCommittedTabKey(
-            current: selectedTabKey,
-            tabs: currentTabs,
-            selectedModel: selectedModel
+    private func ensureSelectedGroupValid() {
+        let resolved = Self.resolveCommittedGroupKey(
+            current: selectedGroupKey,
+            groups: currentGroups,
+            selectedModel: selectedModel,
+            initialGroupKey: initialGroupKey
         )
-        if selectedTabKey != resolved { selectedTabKey = resolved }
+        if selectedGroupKey != resolved { selectedGroupKey = resolved }
     }
+
+    // MARK: - Rows
 
     private func row(for model: ModelPickerItem, providerLabel: String? = nil) -> ModelPickerRow {
         let media = model.mediaModel
+        let structured = model.metadataLine
         return ModelPickerRow(
             modelId: model.id,
             sourceKey: model.source.uniqueKey,
             displayName: model.displayName,
-            description: media.map(Self.mediaDetails) ?? model.description,
+            description: media.map(Self.mediaDetails) ?? structured,
             parameterCount: model.parameterCount,
             quantization: model.quantization,
             isVLM: model.isVLM,
+            supportsTools: model.supportsToolCalling,
+            supportsReasoning: model.supportsReasoning,
+            isDeprecated: model.isDeprecated,
+            recommendedReason: model.recommendedReason,
+            // The long-form provider description goes to the tooltip when the
+            // second line is taken by structured metadata.
+            tooltip: (structured != model.description) ? model.description : nil,
             mediaKind: media?.kind,
             mediaPrivacy: media?.privacy.map(Self.mediaPrivacyLabel),
             mediaPrice: media?.pricing?.minimumUSD.map {
@@ -323,80 +247,87 @@ struct ModelPickerView: View {
         return details.isEmpty ? nil : details.joined(separator: " · ")
     }
 
-    private func makeRows(for tab: ModelPickerTab, providerLabel: String? = nil) -> [ModelPickerRow] {
-        var rows: [ModelPickerRow] = []
-        rows.reserveCapacity(tab.models.count)
-        for model in tab.models {
-            rows.append(row(for: model, providerLabel: providerLabel))
+    /// Apply the active filters/sort to a group's models. Every filter is a
+    /// no-op at its default, so the pipeline is safe to run for any group.
+    private func processedModels(for group: ModelPickerGroup) -> [ModelPickerItem] {
+        var models = group.models
+        if group.isLocal {
+            models = models.filteredByLocalSource(localSourceFilter)
         }
-        return rows
+        return
+            models
+            .filteredByContext(contextFilter)
+            .filteredByVision(visionFilter)
+            .filteredByTools(toolsFilter)
+            .sortedByPrice(sortOrder)
     }
 
-    private func visibleRows(in tabs: [ModelPickerTab]) -> [ModelPickerRow] {
-        guard isSearching else {
-            guard let key = effectiveSelectedTabKey(in: tabs),
-                let tab = tabs.first(where: { $0.key == key })
+    /// Insert the inline options row directly after the first row for the
+    /// selected model, when the selected model has options to show.
+    private func insertingOptionsRow(into rows: [ModelPickerRow]) -> [ModelPickerRow] {
+        guard let optionsControl, !optionsControl.isEmpty, let selectedModel,
+            let index = rows.firstIndex(where: { $0.isModel && $0.modelId == selectedModel })
+        else { return rows }
+        var result = rows
+        result.insert(
+            .options(forModelId: selectedModel, sourceKey: rows[index].sourceKey),
+            at: index + 1
+        )
+        return result
+    }
+
+    private func visibleRows(in groups: [ModelPickerGroup]) -> [ModelPickerRow] {
+        let rows: [ModelPickerRow]
+        if isSearching {
+            rows = searchRows(in: groups)
+        } else {
+            guard let key = effectiveSelectedGroupKey(in: groups),
+                let group = groups.first(where: { $0.key == key })
             else { return [] }
-            // The Favourites tab mixes models from every source, so each row
-            // carries its provider label to stay distinguishable.
-            if tab.key == Self.favoritesTabKey {
-                return tab.models.map { row(for: $0, providerLabel: providerTitle(for: $0)) }
+            if group.isFavorites {
+                // Favorites mixes models from every source, so each row
+                // carries its provider label to stay distinguishable.
+                rows = processedModels(for: group).map { row(for: $0, providerLabel: providerTitle(for: $0)) }
+            } else {
+                rows = processedModels(for: group).map { row(for: $0) }
             }
-            // The Local tab is the only one whose models carry an external
-            // provenance (HF cache, LM Studio), so it gets the source filter
-            // — users with other apps' models on disk can narrow to
-            // Osaurus-managed ones. The vision filter applies here too since
-            // local VLMs carry the flag. Both are no-ops at `.any`.
-            if tab.isLocal {
-                let processed = tab.models
-                    .filteredByLocalSource(localSourceFilter)
-                    .filteredByVision(visionFilter)
-                return makeRows(for: ModelPickerTab(key: tab.key, title: tab.title, models: processed))
-            }
-            // Context filtering and price sorting only apply to the Osaurus
-            // tab, whose models carry context/pricing metadata; other tabs keep
-            // their existing alphabetical order. Both steps are no-ops at their
-            // default (`.any` / `.default`), so the pipeline is safe to always
-            // run for Osaurus.
-            guard tab.isOsaurus else { return makeRows(for: tab) }
-            let processed = tab.models
-                .filteredByContext(contextFilter)
-                .filteredByVision(visionFilter)
-                .sortedByPrice(sortOrder)
-            return makeRows(for: ModelPickerTab(key: tab.key, title: tab.title, models: processed))
         }
-
-        return searchRows(in: tabs)
+        return insertingOptionsRow(into: rows)
     }
 
-    private func searchRows(in tabs: [ModelPickerTab]) -> [ModelPickerRow] {
-        // Unified search: one pass across every tab's models with the query
-        // prepared once. Each row carries its provider title so identical
-        // model IDs offered by different providers stay distinguishable.
+    private func searchRows(in groups: [ModelPickerGroup]) -> [ModelPickerRow] {
+        // Unified search: one pass across every source group's models with
+        // the query prepared once, grouped under a header per source so
+        // identical model IDs offered by different providers stay
+        // distinguishable. Favorites is skipped (its models live elsewhere).
         let prepared = SearchService.PreparedQuery(searchText)
         var rows: [ModelPickerRow] = []
         rows.reserveCapacity(64)
 
-        for tab in tabs {
-            for model in tab.models {
+        for group in groups where !group.isFavorites {
+            var matched: [ModelPickerRow] = []
+            for model in group.models {
                 guard
                     SearchService.matches(prepared, in: model.displayName)
                         || SearchService.matches(prepared, in: model.id)
                 else { continue }
-                rows.append(row(for: model, providerLabel: tab.title))
+                matched.append(row(for: model))
             }
+            guard !matched.isEmpty else { continue }
+            rows.append(.header(title: group.title, key: group.key))
+            rows.append(contentsOf: matched)
         }
         return rows
     }
 
-    private func switchTab(by offset: Int) {
-        let tabs = currentTabs
-        guard !tabs.isEmpty else { return }
-        let activeKey = effectiveSelectedTabKey(in: tabs)
-        let currentIndex = tabs.firstIndex(where: { $0.key == activeKey }) ?? 0
-        let newIndex = max(0, min(tabs.count - 1, currentIndex + offset))
-        guard tabs[newIndex].key != activeKey else { return }
-        selectedTabKey = tabs[newIndex].key
+    private func switchGroup(by offset: Int) {
+        let groups = currentGroups
+        guard !groups.isEmpty else { return }
+        let activeKey = effectiveSelectedGroupKey(in: groups)
+        let currentIndex = groups.firstIndex(where: { $0.key == activeKey }) ?? 0
+        let newIndex = max(0, min(groups.count - 1, currentIndex + offset))
+        guard groups[newIndex].key != activeKey else { return }
+        selectedGroupKey = groups[newIndex].key
     }
 
     // MARK: - Body
@@ -406,83 +337,58 @@ struct ModelPickerView: View {
         return ModelManager.replacementForDeprecatedModel(id)
     }
 
-    /// Height budget the options section adds to the popover frame; the
-    /// rows scroll once they exceed their cap so many-option models (e.g.
-    /// Gemini image profiles) can't crowd out the model list. The section
-    /// header stays pinned above the scroll region, so it is budgeted
-    /// separately.
-    private var optionsSectionHeight: CGFloat {
-        guard let optionsControl, !optionsControl.isEmpty else { return 0 }
-        return ModelPickerOptionsControl.headerHeight
-            + min(optionsControl.rowsEstimatedHeight, Self.optionsSectionMaxHeight)
+    private var sidebarWidth: CGFloat {
+        isCompactSidebar ? ModelPickerSidebar.compactWidth : ModelPickerSidebar.expandedWidth
     }
 
-    private static let optionsSectionMaxHeight: CGFloat = 240
-
     var body: some View {
-        let tabs = currentTabs
-        let rows = visibleRows(in: tabs)
-        // The sort/filter control is offered on the Osaurus tab (the only tab
-        // with pricing) and on the Local tab when external models (LM Studio,
-        // HF cache) are co-mingled with Osaurus-managed ones — with nothing
-        // external there is nothing to filter by, so the control stays hidden.
-        // Never shown while the cross-provider search is active.
-        let activeTab = tabs.first { $0.key == effectiveSelectedTabKey(in: tabs) }
-        let showSort =
-            !isSearching
-            && ((activeTab?.isOsaurus ?? false)
-                || (activeTab?.isLocal == true
-                    && !(activeTab?.models.distinctExternalSources.isEmpty ?? true)))
-        VStack(spacing: 0) {
-            header(showSort: showSort)
-            Divider().background(theme.primaryBorder.opacity(0.3))
-            searchField
-            Divider().background(theme.primaryBorder.opacity(0.3))
+        let groups = currentGroups
+        let activeKey = effectiveSelectedGroupKey(in: groups)
+        let activeGroup = groups.first { $0.key == activeKey }
+        let rows = visibleRows(in: groups)
 
-            if !isSearching, tabs.count > 1 {
-                tabBar(tabs: tabs)
-                Divider().background(theme.primaryBorder.opacity(0.3))
-            }
-
-            if let replacement = selectedModelReplacement {
-                deprecationBanner(replacement: replacement)
-            }
-
-            if rows.isEmpty {
-                emptyState
-            } else {
-                // Favourites-mode (trash control) only while the Favourites tab
-                // is the active, non-search view.
-                modelList(
-                    rows: rows,
-                    isFavoritesTab: !isSearching && activeTab?.key == Self.favoritesTabKey
-                )
-            }
-
-            if let optionsControl, !optionsControl.isEmpty {
-                Divider().background(theme.primaryBorder.opacity(0.3))
-                optionsSection(optionsControl)
-            }
-        }
-        .frame(
-            width: 380,
-            height: min(
-                CGFloat(visibleOptions.count * 48 + 160) + optionsSectionHeight,
-                optionsSectionHeight > 0 ? 480 + min(optionsSectionHeight, 200) : 480
+        HStack(spacing: 0) {
+            ModelPickerSidebar(
+                groups: groups,
+                activeKey: activeKey,
+                selectedModelGroupKey: Self.groupKey(holding: selectedModel, in: groups),
+                isCompact: isCompactSidebar,
+                isAddingProvider: isAddingProvider,
+                onSelect: { key in
+                    isAddingProvider = false
+                    selectedGroupKey = key
+                    if isSearching { searchText = "" }
+                },
+                onAddProvider: { beginAddProvider() }
             )
-        )
+
+            Divider().background(theme.primaryBorder.opacity(0.3))
+
+            listPane(groups: groups, activeGroup: activeGroup, rows: rows)
+                .frame(width: Self.listPaneWidth)
+        }
+        .frame(width: sidebarWidth + Self.listPaneWidth + 1, height: Self.pickerHeight)
         .background(popoverBackground)
         .overlay(popoverBorder)
         .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 6)
+        .background(
+            // Reads the *host* window's width (the popover's parent), not
+            // NSApp.mainWindow/keyWindow: the chat window is a panel that is
+            // neither once the popover is up, so those report other windows.
+            ModelPickerHostWindowWidthReader { width in
+                let compact = width < Self.compactSidebarThreshold
+                if compact != isCompactSidebar { isCompactSidebar = compact }
+            }
+        )
         .onAppear {
-            ensureSelectedTabValid()
+            ensureSelectedGroupValid()
         }
         .task {
             // refresh remote model lists on open so newly-added/removed
             // models surface
             await RemoteProviderManager.shared.refreshConnectedProviders()
             await ModelPickerItemCache.shared.buildModelPickerItems()
-            ensureSelectedTabValid()
+            ensureSelectedGroupValid()
 
             // Drop external models (HF cache, LM Studio) the user deleted on
             // disk while the app stayed running — the picker cache is built
@@ -494,8 +400,56 @@ struct ModelPickerView: View {
             }.value
         }
         .onChange(of: options) { _, _ in
-            ensureSelectedTabValid()
+            ensureSelectedGroupValid()
         }
+    }
+
+    @ViewBuilder
+    private func listPane(groups: [ModelPickerGroup], activeGroup: ModelPickerGroup?, rows: [ModelPickerRow])
+        -> some View
+    {
+        if isAddingProvider {
+            ModelPickerAddProviderPane(
+                configuredPresets: configuredPresets,
+                isClaudeCodeConfigured: groups.contains(where: \.isClaudeCode),
+                onChoose: { choice in chooseProvider(choice) },
+                onCancel: { isAddingProvider = false }
+            )
+        } else {
+            VStack(spacing: 0) {
+                // While searching the capsule counts matches (model rows only,
+                // not the per-group header rows), not the whole catalog.
+                groupHeader(activeGroup, totalCount: rows.filter { $0.isModel }.count)
+                Divider().background(theme.primaryBorder.opacity(0.3))
+                searchField
+                Divider().background(theme.primaryBorder.opacity(0.3))
+
+                if let replacement = selectedModelReplacement {
+                    deprecationBanner(replacement: replacement)
+                }
+
+                // The table stays mounted even with no rows so its key monitor
+                // (Esc, ←/→ group switching, type-to-search) keeps working on
+                // an empty search or a disconnected provider; the empty state
+                // overlays it.
+                // Favorites-mode (always-visible remove star) only while the
+                // Favorites group is the active, non-search view.
+                modelList(
+                    rows: rows,
+                    isFavoritesGroup: !isSearching && activeGroup?.isFavorites == true
+                )
+                .overlay {
+                    if rows.isEmpty {
+                        emptyState(for: activeGroup)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Presets already configured, for the inline catalog's "Added" tags.
+    private var configuredPresets: Set<ProviderPreset> {
+        Set(providerManager.configuration.providers.compactMap { ProviderPreset.matching(provider: $0) })
     }
 
     // MARK: - Background & Border
@@ -517,77 +471,232 @@ struct ModelPickerView: View {
             )
     }
 
-    // MARK: - Header
+    // MARK: - Group Header
 
     @ViewBuilder
-    private func header(showSort: Bool) -> some View {
+    private func groupHeader(_ group: ModelPickerGroup?, totalCount: Int) -> some View {
         HStack(spacing: 8) {
-            Text("Available Models", bundle: .module)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-            Text("\(visibleOptions.count)", bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(theme.secondaryBackground))
-
-            Spacer()
-
-            if showSort {
-                sortButton
+            if isSearching {
+                Text("Search results", bundle: .module)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                countCapsule(totalCount)
+            } else if let group {
+                Text(group.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                if group.status.isConnected || group.status == .none {
+                    countCapsule(group.models.count)
+                }
+                statusLabel(for: group)
+            } else {
+                Text("Models", bundle: .module)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
             }
 
-            Button(action: {
-                onDismiss()
-                Task { @MainActor in
-                    try? await Task.sleepForPopoverDismiss()
-                    AppDelegate.shared?.showManagementWindow(initialTab: .models)
-                }
-            }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 10, weight: .bold))
-                    Text("Add Model", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundColor(theme.accentColor)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule()
-                        .strokeBorder(theme.accentColor.opacity(0.3), lineWidth: 1)
-                        .background(Capsule().fill(theme.accentColor.opacity(0.08)))
-                )
+            Spacer(minLength: 4)
+
+            if let group, !isSearching {
+                headerActions(for: group)
             }
-            .buttonStyle(.plain)
+
+            if !isSearching, let group, group.isProviderBacked || group.isLocal || group.isFavorites {
+                sortButton(for: group)
+            }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .frame(height: 44)
+    }
+
+    private func countCapsule(_ count: Int) -> some View {
+        Text("\(count)")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(theme.secondaryText)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(theme.secondaryBackground))
+    }
+
+    @ViewBuilder
+    private func statusLabel(for group: ModelPickerGroup) -> some View {
+        switch group.status {
+        case .none, .connected:
+            EmptyView()
+        case .connecting:
+            HStack(spacing: 5) {
+                ProgressView().controlSize(.mini)
+                Text("Connecting…", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
+        case .disconnected:
+            HStack(spacing: 5) {
+                Circle().fill(Color.red.opacity(0.85)).frame(width: 6, height: 6)
+                Text("Not connected", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
+        case .needsSignIn:
+            HStack(spacing: 5) {
+                Circle().fill(Color.orange).frame(width: 6, height: 6)
+                Text("Sign in required", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func headerActions(for group: ModelPickerGroup) -> some View {
+        if let providerId = group.providerId, group.isProviderBacked {
+            switch group.status {
+            case .disconnected:
+                headerPillButton(
+                    icon: reconnectingProviderIds.contains(providerId) ? nil : "arrow.clockwise",
+                    title: Text("Reconnect", bundle: .module),
+                    isBusy: reconnectingProviderIds.contains(providerId)
+                ) {
+                    reconnect(providerId: providerId)
+                }
+            case .needsSignIn:
+                headerPillButton(icon: "person.crop.circle.badge.checkmark", title: Text("Sign in", bundle: .module)) {
+                    openManagement(tab: .providers)
+                }
+            case .none, .connected, .connecting:
+                EmptyView()
+            }
+            headerIconButton(icon: "slider.horizontal.3", help: Text("Manage providers", bundle: .module)) {
+                openManagement(tab: .providers)
+            }
+        } else if group.isLocal {
+            headerPillButton(icon: "plus", title: Text("Add Model", bundle: .module)) {
+                openManagement(tab: .models)
+            }
+        } else if group.isFavorites, !group.models.isEmpty {
+            Text("⌘D toggles a favorite", bundle: .module)
+                .font(.system(size: 10.5))
+                .foregroundColor(theme.tertiaryText)
+        }
+    }
+
+    private func headerPillButton(
+        icon: String?,
+        title: Text,
+        isBusy: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                if isBusy {
+                    ProgressView().controlSize(.mini)
+                } else if let icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 10, weight: .bold))
+                }
+                title
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(theme.accentColor)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .strokeBorder(theme.accentColor.opacity(0.3), lineWidth: 1)
+                    .background(Capsule().fill(theme.accentColor.opacity(0.08)))
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isBusy)
+        .pointingHandCursor()
+    }
+
+    private func headerIconButton(icon: String, help: Text, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+                .frame(width: 22, height: 22)
+                .background(
+                    Circle()
+                        .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 1)
+                        .background(Circle().fill(theme.secondaryBackground.opacity(0.6)))
+                )
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .pointingHandCursor()
+    }
+
+    private func openManagement(tab: ManagementTab) {
+        onDismiss()
+        Task { @MainActor in
+            try? await Task.sleepForPopoverDismiss()
+            AppDelegate.shared?.showManagementWindow(initialTab: tab)
+        }
+    }
+
+    private func reconnect(providerId: UUID) {
+        guard !reconnectingProviderIds.contains(providerId) else { return }
+        reconnectingProviderIds.insert(providerId)
+        Task { @MainActor in
+            defer { reconnectingProviderIds.remove(providerId) }
+            try? await RemoteProviderManager.shared.reconnect(providerId: providerId)
+            await ModelPickerItemCache.shared.buildModelPickerItems()
+        }
+    }
+
+    // MARK: - Add Provider
+
+    private func beginAddProvider() {
+        if onAddProvider != nil {
+            isAddingProvider = true
+            if isSearching { searchText = "" }
+        } else {
+            openManagement(tab: .providers)
+        }
+    }
+
+    private func chooseProvider(_ choice: ModelPickerAddProviderChoice) {
+        guard let onAddProvider else {
+            openManagement(tab: .providers)
+            return
+        }
+        isAddingProvider = false
+        onAddProvider(choice)
     }
 
     // MARK: - Sort Menu
 
-    private var sortButton: some View {
+    private func sortButton(for group: ModelPickerGroup) -> some View {
         Button(action: { showSortPopover.toggle() }) {
-            Image(systemName: "arrow.up.arrow.down")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.accentColor)
+            Image(systemName: "line.3.horizontal.decrease.circle")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(isSortOrFilterActive ? theme.accentColor : theme.secondaryText)
                 .frame(width: 22, height: 22)
                 .background(
                     Circle()
-                        .strokeBorder(theme.accentColor.opacity(0.3), lineWidth: 1)
+                        .strokeBorder(
+                            isSortOrFilterActive ? theme.accentColor.opacity(0.3) : theme.primaryBorder.opacity(0.3),
+                            lineWidth: 1
+                        )
                         .background(
-                            Circle().fill(theme.accentColor.opacity(isSortOrFilterActive ? 0.18 : 0.08))
+                            Circle().fill(
+                                isSortOrFilterActive
+                                    ? theme.accentColor.opacity(0.14)
+                                    : theme.secondaryBackground.opacity(0.6)
+                            )
                         )
                 )
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .help(Text("Sort and filter", bundle: .module))
+        .pointingHandCursor()
         .popover(isPresented: $showSortPopover, arrowEdge: .bottom) {
-            sortPopoverView
+            sortPopoverView(for: group)
         }
     }
 
@@ -595,55 +704,55 @@ struct ModelPickerView: View {
     /// circular control so the user can tell at a glance the list is modified.
     private var isSortOrFilterActive: Bool {
         sortOrder != .default || contextFilter != .any || visionFilter != .any
-            || localSourceFilter != .any
+            || toolsFilter != .any || localSourceFilter != .any
     }
 
-    /// Chip choices for the Local tab's source filter: the two fixed cases
+    /// Chip choices for the On this Mac source filter: the two fixed cases
     /// plus one chip per external provenance actually present, so the row
     /// never offers a filter that would match nothing.
-    private var localSourceOptions: [ModelPickerLocalSourceFilter] {
-        let locals = currentTabs.first(where: \.isLocal)?.models ?? []
-        return [.any, .osaurus] + locals.distinctExternalSources.map { .external($0) }
+    private func localSourceOptions(for group: ModelPickerGroup) -> [ModelPickerLocalSourceFilter] {
+        [.any, .osaurus] + group.models.distinctExternalSources.map { .external($0) }
     }
 
-    private var sortPopoverView: some View {
-        // The popover's sections track the active tab: the Local tab filters
-        // by model source (Osaurus-managed vs. externally-discovered) and
-        // vision; the Osaurus tab keeps its price sort + context + vision.
-        let isLocalTab =
-            currentTabs.first { $0.key == effectiveSelectedTabKey(in: currentTabs) }?.isLocal == true
-        return VStack(alignment: .leading, spacing: 4) {
-            if isLocalTab {
+    private func sortPopoverView(for group: ModelPickerGroup) -> some View {
+        // Sections adapt to what the group's models actually publish: the
+        // price sort only where any model carries a price, the source filter
+        // only where external local models are co-mingled. Context, vision,
+        // and tools filters are offered everywhere (they drop unknowns).
+        VStack(alignment: .leading, spacing: 4) {
+            if group.isLocal, !group.models.distinctExternalSources.isEmpty {
                 sortSectionHeader(Text("Source", bundle: .module))
 
                 FlowLayout(spacing: 8) {
-                    ForEach(localSourceOptions) { option in
+                    ForEach(localSourceOptions(for: group)) { option in
                         FilterChip(label: option.label, isSelected: localSourceFilter == option) {
                             localSourceFilter = option
                         }
                     }
                 }
                 .padding(.horizontal, 12)
-            } else {
+            }
+
+            if group.hasPricing {
                 sortSectionHeader(Text("Sort by price", bundle: .module))
 
                 sortRow(.default, Text("Default", bundle: .module), icon: "list.bullet")
                 sortRow(.priceLowToHigh, Text("Cheapest first", bundle: .module), icon: "arrow.up")
                 sortRow(.priceHighToLow, Text("Highest first", bundle: .module), icon: "arrow.down")
-
-                sortSectionHeader(Text("Context limit", bundle: .module))
-
-                FlowLayout(spacing: 8) {
-                    ForEach(ModelPickerContextFilter.allCases) { option in
-                        FilterChip(label: option.label, isSelected: contextFilter == option) {
-                            contextFilter = option
-                        }
-                    }
-                }
-                .padding(.horizontal, 12)
             }
 
-            sortSectionHeader(Text("Vision", bundle: .module))
+            sortSectionHeader(Text("Context limit", bundle: .module))
+
+            FlowLayout(spacing: 8) {
+                ForEach(ModelPickerContextFilter.allCases) { option in
+                    FilterChip(label: option.label, isSelected: contextFilter == option) {
+                        contextFilter = option
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+
+            sortSectionHeader(Text("Capabilities", bundle: .module))
 
             FlowLayout(spacing: 8) {
                 ForEach(ModelPickerVisionFilter.allCases) { option in
@@ -651,13 +760,40 @@ struct ModelPickerView: View {
                         visionFilter = option
                     }
                 }
+                FilterChip(label: ModelPickerToolsFilter.toolsOnly.label, isSelected: toolsFilter == .toolsOnly) {
+                    toolsFilter = toolsFilter == .toolsOnly ? .any : .toolsOnly
+                }
             }
             .padding(.horizontal, 12)
-            .padding(.bottom, 12)
+
+            if isSortOrFilterActive {
+                Button(action: resetSortAndFilters) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 9))
+                        Text("Reset filters", bundle: .module)
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(theme.secondaryText)
+                }
+                .buttonStyle(.plain)
+                .pointingHandCursor()
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+            }
         }
-        .frame(width: 240)
+        .padding(.bottom, 12)
+        .frame(width: 250)
         .background(theme.primaryBackground)
         .environment(\.theme, theme)
+    }
+
+    private func resetSortAndFilters() {
+        sortOrder = .default
+        contextFilter = .any
+        visionFilter = .any
+        toolsFilter = .any
+        localSourceFilter = .any
     }
 
     private func sortSectionHeader(_ text: Text) -> some View {
@@ -786,7 +922,7 @@ struct ModelPickerView: View {
 
             ZStack(alignment: .leading) {
                 if searchText.isEmpty && !isSearchComposing {
-                    Text("Search models...", bundle: .module)
+                    Text("Search all models…", bundle: .module)
                         .font(.system(size: 13))
                         .foregroundColor(theme.secondaryText)
                         .allowsHitTesting(false)
@@ -808,110 +944,49 @@ struct ModelPickerView: View {
                 }
                 .buttonStyle(.plain)
                 .transition(.opacity.combined(with: .scale(scale: 0.8)))
+            } else {
+                keyboardHints
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.vertical, 9)
         .background(theme.secondaryBackground.opacity(theme.isDark ? 0.4 : 0.5))
         .animation(.easeOut(duration: 0.15), value: searchText.isEmpty)
     }
 
-    // MARK: - Tab Bar
-
-    @ViewBuilder
-    private func tabBar(tabs: [ModelPickerTab]) -> some View {
-        let activeKey = effectiveSelectedTabKey(in: tabs)
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(tabs) { tab in
-                        tabChip(for: tab, activeKey: activeKey)
-                            .id(tab.key)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-            }
-            .onAppear {
-                if let key = activeKey {
-                    proxy.scrollTo(key, anchor: .center)
-                }
-            }
-            .onChange(of: selectedTabKey) { _, newKey in
-                guard let newKey else { return }
-                withAnimation(.easeOut(duration: 0.15)) {
-                    proxy.scrollTo(newKey, anchor: .center)
-                }
-            }
+    /// Discoverability for the keyboard model: arrows move, Return selects,
+    /// ⌘D stars the highlighted model.
+    private var keyboardHints: some View {
+        HStack(spacing: 8) {
+            keyHint("↑↓", Text("move", bundle: .module))
+            keyHint("↵", Text("select", bundle: .module))
+            keyHint("⌘D", Text("★", bundle: .module))
         }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 
-    private func tabChip(for tab: ModelPickerTab, activeKey: String?) -> some View {
-        let isActive = tab.key == activeKey
-        let isFavorites = tab.key == Self.favoritesTabKey
-        return Button(action: { selectedTabKey = tab.key }) {
-            HStack(spacing: 5) {
-                if isFavorites {
-                    Image(systemName: "heart.fill")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
-                }
-
-                Group {
-                    // The Favorites tab has a fixed, translatable title; every
-                    // other tab shows a provider name rendered verbatim.
-                    if isFavorites {
-                        Text("Favorites", bundle: .module)
-                    } else {
-                        Text(tab.title)
-                    }
-                }
-                .font(.system(size: 11, weight: isActive ? .semibold : .medium))
-                .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
-
-                Text("\(tab.models.count)")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(isActive ? theme.accentColor.opacity(0.9) : theme.tertiaryText)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(
-                        Capsule().fill(
-                            isActive
-                                ? theme.accentColor.opacity(0.12)
-                                : theme.secondaryBackground
-                        )
-                    )
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                Capsule()
-                    .strokeBorder(
-                        isActive ? theme.accentColor.opacity(0.35) : theme.primaryBorder.opacity(0.25),
-                        lineWidth: 1
-                    )
-                    .background(
-                        Capsule().fill(
-                            isActive
-                                ? theme.accentColor.opacity(0.08)
-                                : theme.secondaryBackground.opacity(theme.isDark ? 0.4 : 0.5)
-                        )
-                    )
-            )
+    private func keyHint(_ key: String, _ label: Text) -> some View {
+        HStack(spacing: 3) {
+            Text(key)
+                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                .foregroundColor(theme.tertiaryText)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1.5)
+                .background(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .strokeBorder(theme.primaryBorder.opacity(0.35), lineWidth: 1)
+                )
+            label
+                .font(.system(size: 9.5))
+                .foregroundColor(theme.tertiaryText)
         }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Deprecation Banner
 
     private func deprecationBanner(replacement: String) -> some View {
-        Button(action: {
-            onDismiss()
-            Task { @MainActor in
-                try? await Task.sleepForPopoverDismiss()
-                AppDelegate.shared?.showManagementWindow(initialTab: .models)
-            }
-        }) {
+        Button(action: { openManagement(tab: .models) }) {
             HStack(spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 11))
@@ -938,393 +1013,192 @@ struct ModelPickerView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Options Section
-
-    /// Inline "Model Options" section: the semantic Thinking row first (when
-    /// the model has a thinking toggle), then every other option the selected
-    /// model exposes, in profile/catalog order. The rows scroll once their
-    /// estimated content exceeds the section cap so many-option models can't
-    /// crowd out the model list; the section header stays pinned.
-    @ViewBuilder
-    private func optionsSection(_ control: ModelPickerOptionsControl) -> some View {
-        let rows = VStack(alignment: .leading, spacing: 0) {
-            if let thinking = control.thinking {
-                thinkingOptionRow(thinking)
-                if !control.options.isEmpty {
-                    Divider()
-                        .background(theme.primaryBorder.opacity(0.15))
-                        .padding(.horizontal, 16)
-                }
-            }
-            ForEach(Array(control.options.enumerated()), id: \.element.id) { index, option in
-                if index > 0 {
-                    Divider()
-                        .background(theme.primaryBorder.opacity(0.15))
-                        .padding(.horizontal, 16)
-                }
-                switch option.kind {
-                case .segmented:
-                    segmentedOptionRow(option, control: control)
-                case .toggle:
-                    toggleOptionRow(option, control: control)
-                }
-            }
-        }
-        VStack(alignment: .leading, spacing: 0) {
-            optionsSectionHeader
-            if control.rowsEstimatedHeight > Self.optionsSectionMaxHeight {
-                ScrollView(.vertical, showsIndicators: true) {
-                    rows
-                }
-                .frame(height: Self.optionsSectionMaxHeight)
-            } else {
-                rows
-            }
-        }
-    }
-
-    /// Section title separating the model list above from the per-model
-    /// option rows below, so the section reads as one coherent group.
-    private var optionsSectionHeader: some View {
-        Text("Model Options", bundle: .module)
-            .font(.system(size: 10, weight: .semibold))
-            .kerning(0.8)
-            .textCase(.uppercase)
-            .foregroundColor(theme.tertiaryText)
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 4)
-            .accessibilityAddTraits(.isHeader)
-    }
-
-    /// Dedicated Thinking row, in the settings-row idiom: a tinted icon
-    /// container that carries the on/off state at a glance, the title +
-    /// one-line explanation stacked beside it, and the switch on the
-    /// trailing edge. The model's template default is surfaced via the
-    /// Default pill; an explicit override swaps it for a compact reset
-    /// affordance.
-    @ViewBuilder
-    private func thinkingOptionRow(_ thinking: ModelPickerThinkingControl) -> some View {
-        HStack(alignment: .center, spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(
-                        thinking.isEnabled
-                            ? theme.accentColor.opacity(theme.isDark ? 0.18 : 0.12)
-                            : theme.secondaryBackground
-                    )
-                Image(systemName: "brain")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(thinking.isEnabled ? theme.accentColor : theme.tertiaryText)
-            }
-            .frame(width: 26, height: 26)
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text("Thinking", bundle: .module)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                    if !thinking.isExplicit {
-                        defaultPill
-                    }
-                }
-
-                Text("Let the model reason before it answers", bundle: .module)
-                    .font(.system(size: 10.5))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 8)
-
-            if thinking.isExplicit {
-                compactResetButton { thinking.onSetEnabled(nil) }
-            }
-
-            if thinking.supportsUnspecifiedDefault {
-                Picker(
-                    "Thinking",
-                    selection: Binding(
-                        get: { thinking.isExplicit ? (thinking.isEnabled ? "on" : "off") : "default" },
-                        set: { thinking.onSetEnabled($0 == "default" ? nil : $0 == "on") }
-                    )
-                ) {
-                    Text("Default", bundle: .module).tag("default")
-                    Text("On", bundle: .module).tag("on")
-                    Text("Off", bundle: .module).tag("off")
-                }
-                .labelsHidden()
-                .controlSize(.small)
-                .accessibilityIdentifier("model-thinking-mode")
-            } else {
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { thinking.isEnabled },
-                        set: { thinking.onSetEnabled($0) }
-                    )
-                )
-                .toggleStyle(.switch)
-                .controlSize(.mini)
-                .labelsHidden()
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: thinking.isEnabled)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text("Thinking", bundle: .module))
-        .accessibilityValue(
-            thinking.supportsUnspecifiedDefault && !thinking.isExplicit
-                ? Text("Default", bundle: .module)
-                : thinking.isEnabled
-                    ? Text("On", bundle: .module)
-                    : Text("Off", bundle: .module)
-        )
-    }
-
-    /// Icon-only reset affordance for compact rows where the labeled
-    /// `resetButton` would crowd the switch; the label moves to the tooltip.
-    private func compactResetButton(action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: "arrow.uturn.backward")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-                .frame(width: 20, height: 20)
-                .background(Circle().fill(theme.secondaryBackground))
-        }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
-        .help(String(localized: "Reset to default", bundle: .module))
-        .accessibilityLabel(Text("Reset to default", bundle: .module))
-    }
-
-    /// Segmented option row: the option's segments in declared order, the
-    /// effective selection marked, a "Default" pill while no explicit
-    /// override exists, and a reset affordance while one does. For the
-    /// catalog-enriched effort row, catalog level descriptions render as
-    /// secondary text/help.
-    @ViewBuilder
-    private func segmentedOptionRow(
-        _ option: ModelOptionDefinition,
-        control: ModelPickerOptionsControl
-    ) -> some View {
-        let segments: [ModelOptionSegment] = {
-            if case .segmented(let segments) = option.kind { return segments }
-            return []
-        }()
-        let isExplicit = control.values[option.id] != nil
-        let effectiveId = control.effectiveSegmentId(for: option)
-        // Catalog levels (with descriptions) back the effort row when the
-        // provider published capabilities; other rows have segments only.
-        let capabilityLevels: [ModelReasoningCapabilities.Level]? =
-            (option.id == "reasoningEffort") ? control.capabilities?.levels : nil
-
-        VStack(alignment: .leading, spacing: 8) {
-            optionRowHeader(option: option, isExplicit: isExplicit, control: control)
-
-            FlowLayout(spacing: 6) {
-                ForEach(segments) { segment in
-                    segmentChip(
-                        label: segment.label,
-                        help: capabilityLevels?.first(where: { $0.id == segment.id })?.description,
-                        isSelected: segment.id == effectiveId,
-                        action: { control.onChange(option.id, .string(segment.id)) }
-                    )
-                }
-            }
-
-            // The effective level's catalog description, when the provider
-            // published one (Codex catalog levels carry ChatGPT's own copy).
-            if let description = capabilityLevels?
-                .first(where: { $0.id == effectiveId })?.description,
-                !description.isEmpty
-            {
-                Text(description)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if let help = option.help, !help.isEmpty {
-                Text(help)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-    }
-
-    /// Toggle option row in the same visual family as the segmented rows.
-    @ViewBuilder
-    private func toggleOptionRow(
-        _ option: ModelOptionDefinition,
-        control: ModelPickerOptionsControl
-    ) -> some View {
-        let isExplicit = control.values[option.id] != nil
-        let isOn = control.effectiveToggleValue(for: option)
-
-        HStack(spacing: 6) {
-            if let icon = option.icon {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(isExplicit ? theme.accentColor : theme.tertiaryText)
-            }
-            Text(option.label)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-            if !isExplicit {
-                defaultPill
-            }
-
-            Spacer(minLength: 8)
-
-            if isExplicit {
-                // Compact next to the switch: the labeled reset would crowd it.
-                compactResetButton { control.onChange(option.id, nil) }
-            }
-
-            Toggle(
-                "",
-                isOn: Binding(
-                    get: { isOn },
-                    set: { control.onChange(option.id, .bool($0)) }
-                )
-            )
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .labelsHidden()
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-    }
-
-    /// Shared header line for option rows: icon, label, "Default" pill while
-    /// no explicit override exists, reset affordance while one does.
-    private func optionRowHeader(
-        option: ModelOptionDefinition,
-        isExplicit: Bool,
-        control: ModelPickerOptionsControl
-    ) -> some View {
-        HStack(spacing: 6) {
-            if let icon = option.icon {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(isExplicit ? theme.accentColor : theme.tertiaryText)
-            }
-
-            Text(option.label)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-            if !isExplicit {
-                defaultPill
-            }
-
-            Spacer()
-
-            if isExplicit {
-                resetButton { control.onChange(option.id, nil) }
-            }
-        }
-    }
-
-    private var defaultPill: some View {
-        Text("Default", bundle: .module)
-            .font(.system(size: 9, weight: .medium))
-            .foregroundColor(theme.tertiaryText)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1.5)
-            .background(Capsule().fill(theme.secondaryBackground))
-            .overlay(Capsule().strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1))
-    }
-
-    private func resetButton(action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 3) {
-                Image(systemName: "arrow.uturn.backward")
-                    .font(.system(size: 9))
-                Text("Reset to default", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .foregroundColor(theme.secondaryText)
-        }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
-    }
-
-    private func segmentChip(
-        label: String,
-        help: String?,
-        isSelected: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
-                .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(
-                            isSelected
-                                ? theme.accentColor.opacity(theme.isDark ? 0.15 : 0.1)
-                                : theme.secondaryBackground.opacity(0.6)
-                        )
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(
-                            isSelected
-                                ? theme.accentColor.opacity(0.3)
-                                : theme.primaryBorder.opacity(0.12),
-                            lineWidth: 1
-                        )
-                )
-        }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
-        .help(help ?? label)
-    }
-
     // MARK: - Empty State
 
-    private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 24))
-                .foregroundColor(theme.tertiaryText)
-            Text("No models found", bundle: .module)
-                .font(.system(size: 13))
-                .foregroundColor(theme.secondaryText)
+    @ViewBuilder
+    private func emptyState(for group: ModelPickerGroup?) -> some View {
+        VStack(spacing: 10) {
+            if isSearching {
+                emptyIcon("magnifyingglass")
+                Text("No models found", bundle: .module)
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.secondaryText)
+            } else if let group, group.isFavorites {
+                emptyIcon("star")
+                Text("No favorites yet", bundle: .module)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                Text("Hover a model and click ☆, or press ⌘D, to pin it here.", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .multilineTextAlignment(.center)
+            } else if let group, let providerId = group.providerId, group.isProviderBacked {
+                switch group.status {
+                case .disconnected(let message):
+                    emptyIcon("bolt.slash")
+                    Text("Not connected", bundle: .module)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                    if let message, !message.isEmpty {
+                        Text(message)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(3)
+                            .padding(.horizontal, 24)
+                    }
+                    headerPillButton(
+                        icon: reconnectingProviderIds.contains(providerId) ? nil : "arrow.clockwise",
+                        title: Text("Reconnect", bundle: .module),
+                        isBusy: reconnectingProviderIds.contains(providerId)
+                    ) {
+                        reconnect(providerId: providerId)
+                    }
+                    .padding(.top, 4)
+                case .needsSignIn:
+                    emptyIcon("person.crop.circle.badge.exclamationmark")
+                    Text("Sign in required", bundle: .module)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                    headerPillButton(icon: "person.crop.circle.badge.checkmark", title: Text("Sign in", bundle: .module)) {
+                        openManagement(tab: .providers)
+                    }
+                    .padding(.top, 4)
+                case .connecting:
+                    ProgressView().controlSize(.small)
+                    Text("Connecting…", bundle: .module)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.tertiaryText)
+                case .none, .connected:
+                    emptyIcon("tray")
+                    Text(isSortOrFilterActive ? "No models match the filters" : "No models available", bundle: .module)
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.secondaryText)
+                    if isSortOrFilterActive {
+                        Button(action: resetSortAndFilters) {
+                            Text("Reset filters", bundle: .module)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(theme.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                        .pointingHandCursor()
+                    }
+                }
+            } else {
+                emptyIcon("tray")
+                Text(isSortOrFilterActive ? "No models match the filters" : "No models available", bundle: .module)
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.secondaryText)
+                if isSortOrFilterActive {
+                    Button(action: resetSortAndFilters) {
+                        Text("Reset filters", bundle: .module)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(theme.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                    .pointingHandCursor()
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
     }
 
+    private func emptyIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 24))
+            .foregroundColor(theme.tertiaryText)
+    }
+
     // MARK: - Model List
 
-    private func modelList(rows: [ModelPickerRow], isFavoritesTab: Bool) -> some View {
-        ModelPickerTableRepresentable(
+    private func modelList(rows: [ModelPickerRow], isFavoritesGroup: Bool) -> some View {
+        let optionsContent: AnyView? = optionsControl.flatMap { control in
+            control.isEmpty
+                ? nil
+                : AnyView(ModelPickerOptionsRows(control: control).environment(\.theme, theme))
+        }
+        return ModelPickerTableRepresentable(
             rows: rows,
             theme: theme,
             selectedModelId: selectedModel,
-            isFavoritesTab: isFavoritesTab,
+            isFavoritesGroup: isFavoritesGroup,
+            optionsContent: optionsContent,
+            optionsLayoutKey: optionsControl?.layoutKey ?? "",
+            optionsEstimatedHeight: optionsControl?.estimatedHeight(availableWidth: Self.listPaneWidth - 36) ?? 0,
             onSelectModel: { modelId in
                 selectedModel = modelId
                 onDismiss()
             },
             // nil while searching so left/right arrows stay with the
-            // search field's text cursor instead of switching hidden tabs
-            onSwitchTab: isSearching ? nil : { offset in switchTab(by: offset) },
+            // search field's text cursor instead of switching groups
+            onSwitchGroup: isSearching ? nil : { offset in switchGroup(by: offset) },
             onToggleFavorite: { row in
                 favoritesStore.toggle(row.favoriteKey)
             },
             onDismiss: onDismiss
         )
+    }
+}
+
+// MARK: - Host Window Width
+
+/// Zero-size helper that reports the width of the window hosting the picker
+/// popover — the popover window's parent — whenever the view lands in a
+/// window or that window is resized, so the sidebar can collapse to its icon
+/// rail on narrow chat windows.
+private struct ModelPickerHostWindowWidthReader: NSViewRepresentable {
+    let onWidth: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> ReaderView {
+        let view = ReaderView()
+        view.onWidth = onWidth
+        return view
+    }
+
+    func updateNSView(_ nsView: ReaderView, context: Context) {
+        nsView.onWidth = onWidth
+    }
+
+    final class ReaderView: NSView {
+        var onWidth: ((CGFloat) -> Void)?
+        private var observedWindow: NSWindow?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            // The popover window is parented to the host only after its
+            // content is installed, so resolve on the next turn of the run
+            // loop (which also keeps the state write out of the view update).
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let window = self.window else { return }
+                self.observe(window.parent ?? window)
+                self.report()
+            }
+        }
+
+        private func observe(_ host: NSWindow?) {
+            guard host !== observedWindow else { return }
+            if let observedWindow {
+                NotificationCenter.default.removeObserver(
+                    self, name: NSWindow.didResizeNotification, object: observedWindow)
+            }
+            observedWindow = host
+            if let host {
+                NotificationCenter.default.addObserver(
+                    self, selector: #selector(hostDidResize), name: NSWindow.didResizeNotification, object: host)
+            }
+        }
+
+        @objc private func hostDidResize() { report() }
+
+        private func report() {
+            guard let host = observedWindow else { return }
+            onWidth?(host.frame.width)
+        }
+
+        deinit {
+            NotificationCenter.default.removeObserver(self)
+        }
     }
 }
 
@@ -1360,7 +1234,7 @@ struct ModelPickerView: View {
                     )
                     .padding()
                 }
-                .frame(width: 450, height: 550)
+                .frame(width: 700, height: 600)
                 .background(Color.gray.opacity(0.2))
             }
 
@@ -1369,8 +1243,8 @@ struct ModelPickerView: View {
                 ModelPickerItem.generateMockModels(count: 500)
             }
 
-            // small sample for quick testing — multiple providers so the tab
-            // bar and unified search attribution are exercised
+            // small sample for quick testing — multiple providers so the
+            // sidebar and unified search attribution are exercised
             private var smallSampleModels: [ModelPickerItem] {
                 let openAIId = UUID()
                 let anthropicId = UUID()
@@ -1395,26 +1269,36 @@ struct ModelPickerView: View {
                     ModelPickerItem(
                         id: "openai/gpt-4o",
                         displayName: "gpt-4o",
-                        source: .remote(providerName: "OpenAI", providerId: openAIId)
+                        source: .remote(providerName: "OpenAI", providerId: openAIId),
+                        contextLength: 128_000,
+                        supportsToolCalling: true
                     ),
                     ModelPickerItem(
                         id: "openai/gpt-3.5-turbo",
                         displayName: "gpt-3.5-turbo",
-                        source: .remote(providerName: "OpenAI", providerId: openAIId)
+                        source: .remote(providerName: "OpenAI", providerId: openAIId),
+                        isDeprecated: true
                     ),
                     ModelPickerItem(
                         id: "anthropic/claude-opus-4",
-                        displayName: "claude-opus-4",
-                        source: .remote(providerName: "Anthropic", providerId: anthropicId)
+                        displayName: "Claude Opus 4",
+                        source: .remote(providerName: "Anthropic", providerId: anthropicId),
+                        inputPriceMicroPerMTok: 15_000_000,
+                        outputPriceMicroPerMTok: 75_000_000,
+                        contextLength: 200_000,
+                        supportsToolCalling: true,
+                        supportsReasoning: true,
+                        recommendedReason: "Vendor default"
                     ),
                 ]
             }
         }
 
         /// Standalone picker with a Thinking-capable options section, for
-        /// visually validating the Model Options header, Thinking row, and
-        /// segmented effort row together. An explicit override toggles the
-        /// Default pill and reset affordance like the live picker.
+        /// visually validating the inline Model Options expansion (Thinking
+        /// row and segmented effort row) under the selected model. An
+        /// explicit override toggles the Default pill and reset affordance
+        /// like the live picker.
         struct ThinkingPreviewWrapper: View {
             @State private var selected: String? = "qwen3.5-35b-a3b-4bit"
             @State private var thinkingOverride: Bool? = nil
@@ -1466,7 +1350,7 @@ struct ModelPickerView: View {
                     onDismiss: {}
                 )
                 .padding()
-                .frame(width: 450, height: 620)
+                .frame(width: 700, height: 620)
                 .background(Color.gray.opacity(0.2))
             }
         }

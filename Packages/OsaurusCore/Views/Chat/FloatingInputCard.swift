@@ -417,6 +417,12 @@ struct FloatingInputCard: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var isDragOver = false
     @State private var showModelPicker = false
+    /// Provider chosen from the model picker's inline "+ Add provider"
+    /// catalog; non-nil presents the credential sheet.
+    @State private var pickerAddProviderChoice: ModelPickerAddProviderChoice?
+    /// Group the picker should reopen on after a provider is added from it,
+    /// so the user lands directly on the new provider's model list.
+    @State private var pickerReopenGroupKey: String?
     @State private var showImageSizePicker = false
     /// Width available to the toggle-chip region (the space between the model
     /// chip and the meta cluster). Measured cheaply via `onGeometryChange` and
@@ -3231,8 +3237,24 @@ extension FloatingInputCard {
                 selectedModel: $selectedModel,
                 agentId: agentId,
                 optionsControl: modelPickerOptionsControl,
+                initialGroupKey: pickerReopenGroupKey,
+                onAddProvider: beginAddProviderFromPicker,
                 onDismiss: dismissModelPicker
             )
+        }
+        .sheet(item: $pickerAddProviderChoice, onDismiss: reopenModelPickerAfterAddProvider) { choice in
+            RemoteProviderEditSheet(
+                provider: nil,
+                initialPreset: choice.preset,
+                startAtClaudeCode: choice.isClaudeCode,
+                initialAuthMethod: choice.authMethod
+            ) { provider, apiKey, oauthTokens in
+                // `addProvider` persists, stores credentials, and kicks the
+                // connect itself; the picker shows the group as Connecting…
+                // until the model list lands.
+                RemoteProviderManager.shared.addProvider(provider, apiKey: apiKey, oauthTokens: oauthTokens)
+                pickerReopenGroupKey = ModelPickerGroup.key(forProviderId: provider.id)
+            }
         }
         .onChange(of: showModelPicker) { _, isShowing in
             if isShowing {
@@ -3242,6 +3264,10 @@ extension FloatingInputCard {
                 // view; a stale set would hide the depth row on a capable
                 // model, which reads as "this model has no MTP".
                 refreshNativeMTPState()
+            } else {
+                // The reopen target is a one-shot hint for the post-add
+                // reopen; the next manual open resolves normally.
+                pickerReopenGroupKey = nil
             }
         }
         .onChange(of: pickerItems) { _, newItems in
@@ -5047,6 +5073,36 @@ extension FloatingInputCard {
 
     private func dismissModelPicker() {
         showModelPicker = false
+    }
+
+    /// The picker's inline catalog picked a provider: close the popover, then
+    /// present the credential sheet pre-selected on that provider. The hop
+    /// through `sleepForPopoverDismiss` lets the popover finish tearing down
+    /// before the sheet attaches to the same window.
+    private func beginAddProviderFromPicker(_ choice: ModelPickerAddProviderChoice) {
+        showModelPicker = false
+        Task { @MainActor in
+            try? await Task.sleepForPopoverDismiss()
+            pickerAddProviderChoice = choice
+        }
+    }
+
+    /// After the add-provider sheet closes, bring the picker back on the new
+    /// provider's group. Claude Code has no `onSave` (its setup step only
+    /// confirms the CLI), so it is detected by availability instead. A
+    /// cancelled sheet leaves the user where they were.
+    private func reopenModelPickerAfterAddProvider() {
+        if pickerReopenGroupKey == nil, ClaudeCodeConfiguration.isAvailable(),
+            !cachedPickerItems.contains(where: { if case .claudeCode = $0.source { return true } else { return false } })
+        {
+            pickerReopenGroupKey = ModelPickerGroup.claudeCodeKey
+        }
+        guard pickerReopenGroupKey != nil else { return }
+        Task { @MainActor in
+            await ModelPickerItemCache.shared.buildModelPickerItems()
+            try? await Task.sleepForPopoverDismiss()
+            showModelPicker = true
+        }
     }
 
     // MARK: - Input Card

@@ -5965,18 +5965,34 @@ extension RemoteProviderService {
     /// fallback.
     struct OpenAICompatibleModelDiscovery: Sendable {
         let models: [String]
+        /// Model id -> everything the provider published about it. Only ids
+        /// whose entry carried at least one non-`id` claim appear here.
+        let metadata: [String: RemoteModelMetadata]
+
+        init(models: [String], metadata: [String: RemoteModelMetadata] = [:]) {
+            self.models = models
+            self.metadata = metadata
+        }
+
         /// Model id -> advertised context window in tokens. Only ids whose
-        /// entry carried a positive window appear here.
-        let contextLengths: [String: Int]
+        /// entry carried a positive window appear here. Derived from
+        /// `metadata` so existing window consumers are unchanged.
+        var contextLengths: [String: Int] {
+            var result: [String: Int] = [:]
+            for (id, entry) in metadata {
+                if let window = entry.contextLength { result[id] = window }
+            }
+            return result
+        }
     }
 
-    /// Like `fetchModels(from:)` but also surfaces per-model context windows
-    /// when the provider's `/models` route is the OpenAI-compatible one.
-    /// Every other provider family keeps its existing discovery path and
-    /// returns an empty context map.
+    /// Like `fetchModels(from:)` but also surfaces per-model metadata
+    /// (context window, display name, pricing, capabilities) wherever the
+    /// provider's catalog publishes it. Provider families without a richer
+    /// catalog return an empty metadata map; nothing is ever synthesized.
     public static func fetchModelsDiscovery(
         from provider: RemoteProvider
-    ) async throws -> (models: [String], contextLengths: [String: Int]) {
+    ) async throws -> (models: [String], metadata: [String: RemoteModelMetadata]) {
         // Mirror `fetchModels`' routing: only requests that would fall through
         // to the OpenAI-compatible endpoint take the discovery variant.
         if isOpenAICompatibleModelDiscoveryProvider(provider.providerType),
@@ -5985,7 +6001,20 @@ extension RemoteProviderService {
             !isVeniceProvider(provider)
         {
             let discovery = try await fetchOpenAICompatibleModelsDiscovery(from: provider)
-            return (discovery.models, discovery.contextLengths)
+            var metadata = discovery.metadata
+            // Provider-specific catalogs that the OpenAI-compatible `/models`
+            // route doesn't carry. Both are best-effort: any failure leaves
+            // the generic discovery result untouched.
+            if isXAIAPIKeyProvider(provider) {
+                if let enriched = try? await fetchXAILanguageModelsMetadata(from: provider) {
+                    metadata = merge(metadata, overlay: enriched)
+                }
+            } else if isOllamaProvider(provider) {
+                if let enriched = try? await fetchOllamaTagsMetadata(from: provider) {
+                    metadata = merge(metadata, overlay: enriched)
+                }
+            }
+            return (discovery.models, metadata)
         }
         // ChatGPT/Codex sign-in models expose their real per-model window via
         // the same catalog `fetchModels` already queries. `fetchModels` populates
@@ -5993,7 +6022,7 @@ extension RemoteProviderService {
         // there rather than fetching the catalog twice.
         if provider.providerType == .openAICodex {
             let models = try await fetchModels(from: provider)
-            return (models, OpenAICodexOAuthService.lastContextWindows)
+            return (models, metadata(fromContextWindows: OpenAICodexOAuthService.lastContextWindows))
         }
         // Grok/SuperGrok sign-in models have no live catalog to read windows
         // from (the OAuth token 403s on `/models`), so surface the
@@ -6004,9 +6033,215 @@ extension RemoteProviderService {
         if provider.authType == .xaiOAuth {
             let models = try await fetchModels(from: provider)
             let contextLengths = await xaiContextWindows(preferringLiveOver: provider)
-            return (models, contextLengths)
+            return (models, metadata(fromContextWindows: contextLengths))
+        }
+        if provider.providerType == .anthropic {
+            guard let baseURL = provider.url(for: "/models") else {
+                throw RemoteProviderServiceError.invalidURL
+            }
+            let infos = try await fetchAnthropicModelInfos(
+                baseURL: baseURL,
+                headers: await provider.resolvedHeadersOffMainActor(),
+                timeout: min(provider.timeout, 30)
+            )
+            var metadata: [String: RemoteModelMetadata] = [:]
+            for info in infos where !info.pickerMetadata.isEmpty {
+                metadata[info.id] = info.pickerMetadata
+            }
+            return (infos.map(\.id), metadata)
+        }
+        if provider.providerType == .gemini {
+            let infos = try await fetchGeminiModelInfos(from: provider)
+            var metadata: [String: RemoteModelMetadata] = [:]
+            for info in infos where !info.pickerMetadata.isEmpty {
+                metadata[info.modelId] = info.pickerMetadata
+            }
+            return (infos.map(\.modelId), metadata)
         }
         return (try await fetchModels(from: provider), [:])
+    }
+
+    private static func metadata(fromContextWindows windows: [String: Int]) -> [String: RemoteModelMetadata] {
+        var result: [String: RemoteModelMetadata] = [:]
+        for (id, window) in windows where window > 0 {
+            result[id] = RemoteModelMetadata(contextLength: window)
+        }
+        return result
+    }
+
+    private static func merge(
+        _ base: [String: RemoteModelMetadata],
+        overlay: [String: RemoteModelMetadata]
+    ) -> [String: RemoteModelMetadata] {
+        var merged = base
+        for (id, entry) in overlay {
+            merged[id] = (merged[id] ?? RemoteModelMetadata()).merging(entry)
+        }
+        return merged
+    }
+
+    // MARK: xAI `/language-models`
+
+    /// xAI's API-key route. The OAuth route is excluded because its token
+    /// 403s on every models endpoint (see `fetchModels`).
+    static func isXAIAPIKeyProvider(_ provider: RemoteProvider) -> Bool {
+        provider.authType != .xaiOAuth
+            && provider.host.lowercased().trimmingCharacters(in: .whitespaces) == "api.x.ai"
+    }
+
+    /// `GET /v1/language-models` — xAI's richer catalog (modalities, pricing,
+    /// aliases) that the plain `/models` listing lacks. Prices are USD cents
+    /// per 100 million tokens.
+    struct XAILanguageModelsResponse: Decodable {
+        let models: [XAILanguageModel]
+    }
+
+    struct XAILanguageModel: Decodable {
+        let id: String
+        let aliases: [String]?
+        let inputModalities: [String]?
+        let outputModalities: [String]?
+        let promptTextTokenPrice: Int?
+        let completionTextTokenPrice: Int?
+        let created: Int?
+
+        private enum CodingKeys: String, CodingKey {
+            case id, aliases, created
+            case inputModalities = "input_modalities"
+            case outputModalities = "output_modalities"
+            case promptTextTokenPrice = "prompt_text_token_price"
+            case completionTextTokenPrice = "completion_text_token_price"
+        }
+
+        var metadata: RemoteModelMetadata {
+            let lower = inputModalities?.map { $0.lowercased() }
+            return RemoteModelMetadata(
+                supportsVision: lower.map { $0.contains("image") },
+                supportsAudioInput: lower.map { $0.contains("audio") },
+                inputPriceMicroPerMTok: RemoteModelMetadata.microPerMTok(
+                    fromCentsPer100MTok: promptTextTokenPrice
+                ),
+                outputPriceMicroPerMTok: RemoteModelMetadata.microPerMTok(
+                    fromCentsPer100MTok: completionTextTokenPrice
+                ),
+                created: created
+            )
+        }
+    }
+
+    static func fetchXAILanguageModelsMetadata(
+        from provider: RemoteProvider
+    ) async throws -> [String: RemoteModelMetadata] {
+        guard let url = provider.url(for: "/language-models") else {
+            throw RemoteProviderServiceError.invalidURL
+        }
+        let request = modelDiscoveryRequest(
+            url: url,
+            headers: await provider.resolvedHeadersOffMainActor(),
+            timeout: min(provider.timeout, 15)
+        )
+        let (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode < 400 else {
+            throw RemoteProviderServiceError.invalidResponse
+        }
+        return decodeXAILanguageModelsMetadata(data)
+    }
+
+    static func decodeXAILanguageModelsMetadata(_ data: Data) -> [String: RemoteModelMetadata] {
+        guard let decoded = try? JSONDecoder().decode(XAILanguageModelsResponse.self, from: data) else {
+            return [:]
+        }
+        var result: [String: RemoteModelMetadata] = [:]
+        for model in decoded.models {
+            let metadata = model.metadata
+            guard !metadata.isEmpty else { continue }
+            result[model.id] = metadata
+            // Aliases are selectable ids on the `/models` route too; give
+            // them the same card so `grok-3-latest` isn't a bare id.
+            for alias in model.aliases ?? [] where result[alias] == nil {
+                result[alias] = metadata
+            }
+        }
+        return result
+    }
+
+    // MARK: Ollama `/api/tags`
+
+    /// Ollama's OpenAI-compatible shim on port 11434. Detected by port rather
+    /// than host so a LAN Ollama box (`192.168.x.x:11434`) enriches too.
+    static func isOllamaProvider(_ provider: RemoteProvider) -> Bool {
+        provider.providerType == .openaiLegacy && provider.port == 11434
+    }
+
+    struct OllamaTagsResponse: Decodable {
+        let models: [OllamaTagModel]?
+    }
+
+    struct OllamaTagModel: Decodable {
+        let name: String
+        let model: String?
+        let size: Int64?
+        let details: OllamaTagDetails?
+
+        var metadata: RemoteModelMetadata {
+            RemoteModelMetadata(
+                parameterCount: details?.parameterSize,
+                quantization: details?.quantizationLevel
+            )
+        }
+    }
+
+    struct OllamaTagDetails: Decodable {
+        let family: String?
+        let parameterSize: String?
+        let quantizationLevel: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case family
+            case parameterSize = "parameter_size"
+            case quantizationLevel = "quantization_level"
+        }
+    }
+
+    /// `GET /api/tags` lives at the server root, not under the `/v1` base
+    /// path, so the URL is built from the provider's scheme/host/port only.
+    static func fetchOllamaTagsMetadata(
+        from provider: RemoteProvider
+    ) async throws -> [String: RemoteModelMetadata] {
+        var components = URLComponents()
+        components.scheme = provider.providerProtocol.rawValue
+        components.host = provider.host
+        components.port = provider.port
+        components.path = "/api/tags"
+        guard let url = components.url else { throw RemoteProviderServiceError.invalidURL }
+        let request = modelDiscoveryRequest(
+            url: url,
+            headers: await provider.resolvedHeadersOffMainActor(),
+            timeout: min(provider.timeout, 10)
+        )
+        let (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode < 400 else {
+            throw RemoteProviderServiceError.invalidResponse
+        }
+        return decodeOllamaTagsMetadata(data)
+    }
+
+    static func decodeOllamaTagsMetadata(_ data: Data) -> [String: RemoteModelMetadata] {
+        guard let decoded = try? JSONDecoder().decode(OllamaTagsResponse.self, from: data) else {
+            return [:]
+        }
+        var result: [String: RemoteModelMetadata] = [:]
+        for model in decoded.models ?? [] {
+            let metadata = model.metadata
+            guard !metadata.isEmpty else { continue }
+            result[model.name] = metadata
+            // `/v1/models` lists the tagged name (e.g. "llama3:8b"); the
+            // untagged alias is also accepted, so cover both.
+            if let bare = model.name.split(separator: ":").first.map(String.init), result[bare] == nil {
+                result[bare] = metadata
+            }
+        }
+        return result
     }
 
     /// Merges `XAIOAuthService.contextWindows` with live-discovered windows
@@ -6129,13 +6364,38 @@ extension RemoteProviderService {
 
     /// One entry of an OpenAI-compatible `/models` list, keeping the vendor
     /// context-window keys the shared serving struct (`OpenAIModel`) has no
-    /// business encoding back out.
-    private struct OpenAICompatibleModelEntry: Decodable {
+    /// business encoding back out, plus the optional catalog metadata that
+    /// richer gateways publish on the same route (OpenRouter's `name` /
+    /// `pricing` / `architecture` / `supported_parameters`, Mistral's
+    /// `capabilities` / `deprecation`, vLLM/LM Studio's window keys). Every
+    /// non-`id` key is decoded leniently: an off-spec value degrades to nil
+    /// instead of failing the provider's whole `/models` decode.
+    struct OpenAICompatibleModelEntry: Decodable {
         let id: String
         let maxModelLen: Int?
         let contextLength: Int?
         let maxContextLength: Int?
         let contextWindow: Int?
+        let name: String?
+        let description: String?
+        let created: Int?
+        /// OpenRouter `architecture.input_modalities` (e.g. ["text","image"]).
+        let inputModalities: [String]?
+        /// OpenRouter `pricing.prompt` / `pricing.completion`: USD per token.
+        let pricingPromptUSDPerToken: String?
+        let pricingCompletionUSDPerToken: String?
+        /// OpenRouter `supported_parameters` (contains "tools", "reasoning").
+        let supportedParameters: [String]?
+        /// OpenRouter `top_provider.max_completion_tokens`.
+        let maxCompletionTokens: Int?
+        /// OpenRouter `reasoning` block presence (`mandatory`/`default_enabled`).
+        let hasReasoningBlock: Bool
+        /// Mistral `capabilities.{completion_chat,function_calling,vision}`.
+        let mistralFunctionCalling: Bool?
+        let mistralVision: Bool?
+        /// Mistral `deprecation` (ISO date) / `deprecation_replacement_model`.
+        let deprecation: String?
+        let deprecationReplacementModel: String?
 
         private enum CodingKeys: String, CodingKey {
             case id
@@ -6143,6 +6403,35 @@ extension RemoteProviderService {
             case contextLength = "context_length"
             case maxContextLength = "max_context_length"
             case contextWindow = "context_window"
+            case name
+            case description
+            case created
+            case architecture
+            case pricing
+            case supportedParameters = "supported_parameters"
+            case topProvider = "top_provider"
+            case reasoning
+            case capabilities
+            case deprecation
+            case deprecationReplacementModel = "deprecation_replacement_model"
+        }
+
+        private enum ArchitectureKeys: String, CodingKey {
+            case inputModalities = "input_modalities"
+        }
+
+        private enum PricingKeys: String, CodingKey {
+            case prompt
+            case completion
+        }
+
+        private enum TopProviderKeys: String, CodingKey {
+            case maxCompletionTokens = "max_completion_tokens"
+        }
+
+        private enum MistralCapabilityKeys: String, CodingKey {
+            case functionCalling = "function_calling"
+            case vision
         }
 
         init(from decoder: Decoder) throws {
@@ -6155,10 +6444,63 @@ extension RemoteProviderService {
             contextLength = Self.lenientInt(container, .contextLength)
             maxContextLength = Self.lenientInt(container, .maxContextLength)
             contextWindow = Self.lenientInt(container, .contextWindow)
+            name = try? container.decodeIfPresent(String.self, forKey: .name)
+            description = try? container.decodeIfPresent(String.self, forKey: .description)
+            created = Self.lenientInt(container, .created)
+
+            if let architecture = try? container.nestedContainer(
+                keyedBy: ArchitectureKeys.self, forKey: .architecture
+            ) {
+                inputModalities = try? architecture.decodeIfPresent([String].self, forKey: .inputModalities)
+            } else {
+                inputModalities = nil
+            }
+
+            if let pricing = try? container.nestedContainer(keyedBy: PricingKeys.self, forKey: .pricing) {
+                pricingPromptUSDPerToken = Self.lenientString(pricing, .prompt)
+                pricingCompletionUSDPerToken = Self.lenientString(pricing, .completion)
+            } else {
+                pricingPromptUSDPerToken = nil
+                pricingCompletionUSDPerToken = nil
+            }
+
+            supportedParameters = try? container.decodeIfPresent([String].self, forKey: .supportedParameters)
+
+            if let topProvider = try? container.nestedContainer(
+                keyedBy: TopProviderKeys.self, forKey: .topProvider
+            ) {
+                maxCompletionTokens = Self.lenientInt(topProvider, .maxCompletionTokens)
+            } else {
+                maxCompletionTokens = nil
+            }
+
+            // OpenRouter ships `"reasoning": {...}` only for reasoning-capable
+            // models; its mere presence (non-null object) is the signal.
+            if container.contains(.reasoning),
+                (try? container.decodeNil(forKey: .reasoning)) == false
+            {
+                hasReasoningBlock = true
+            } else {
+                hasReasoningBlock = false
+            }
+
+            if let capabilities = try? container.nestedContainer(
+                keyedBy: MistralCapabilityKeys.self, forKey: .capabilities
+            ) {
+                mistralFunctionCalling = try? capabilities.decodeIfPresent(Bool.self, forKey: .functionCalling)
+                mistralVision = try? capabilities.decodeIfPresent(Bool.self, forKey: .vision)
+            } else {
+                mistralFunctionCalling = nil
+                mistralVision = nil
+            }
+
+            deprecation = try? container.decodeIfPresent(String.self, forKey: .deprecation)
+            deprecationReplacementModel =
+                try? container.decodeIfPresent(String.self, forKey: .deprecationReplacementModel)
         }
 
-        private static func lenientInt(
-            _ container: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys
+        private static func lenientInt<K: CodingKey>(
+            _ container: KeyedDecodingContainer<K>, _ key: K
         ) -> Int? {
             if let int = try? container.decode(Int.self, forKey: key) { return int }
             if let double = try? container.decode(Double.self, forKey: key), double.isFinite {
@@ -6170,6 +6512,17 @@ extension RemoteProviderService {
             return nil
         }
 
+        private static func lenientString<K: CodingKey>(
+            _ container: KeyedDecodingContainer<K>, _ key: K
+        ) -> String? {
+            if let string = try? container.decode(String.self, forKey: key) { return string }
+            if let double = try? container.decode(Double.self, forKey: key), double.isFinite {
+                return String(double)
+            }
+            if let int = try? container.decode(Int.self, forKey: key) { return String(int) }
+            return nil
+        }
+
         /// First positive vendor-reported window, in the order the keys are
         /// most specific: vLLM, then OpenRouter/LM Studio, then llama.cpp,
         /// then gateway-style `context_window`.
@@ -6177,6 +6530,49 @@ extension RemoteProviderService {
             [maxModelLen, contextLength, maxContextLength, contextWindow]
                 .compactMap { $0 }
                 .first { $0 > 0 }
+        }
+
+        /// Provider-neutral metadata for this entry. Only claims the entry
+        /// actually made: a plain `{ "id": ... }` yields an empty record.
+        var metadata: RemoteModelMetadata {
+            let lowerModalities = inputModalities?.map { $0.lowercased() }
+            let vision: Bool? = {
+                if let mistralVision { return mistralVision }
+                guard let lowerModalities else { return nil }
+                return lowerModalities.contains { $0 == "image" || $0 == "images" || $0 == "vision" }
+            }()
+            let audio: Bool? = lowerModalities.map { $0.contains("audio") }
+            let lowerParams = supportedParameters?.map { $0.lowercased() }
+            let tools: Bool? = {
+                if let mistralFunctionCalling { return mistralFunctionCalling }
+                guard let lowerParams else { return nil }
+                return lowerParams.contains("tools") || lowerParams.contains("tool_choice")
+            }()
+            let reasoning: Bool? = {
+                if hasReasoningBlock { return true }
+                guard let lowerParams else { return nil }
+                return lowerParams.contains("reasoning") || lowerParams.contains("include_reasoning")
+            }()
+            let isDeprecated = (deprecation?.trimmingCharacters(in: .whitespaces).isEmpty == false)
+            return RemoteModelMetadata(
+                displayName: name,
+                description: description,
+                contextLength: advertisedContextLength,
+                maxOutputTokens: maxCompletionTokens,
+                supportsVision: vision,
+                supportsToolCalling: tools,
+                supportsReasoning: reasoning,
+                supportsAudioInput: audio,
+                inputPriceMicroPerMTok: RemoteModelMetadata.microPerMTok(
+                    fromUSDPerToken: pricingPromptUSDPerToken
+                ),
+                outputPriceMicroPerMTok: RemoteModelMetadata.microPerMTok(
+                    fromUSDPerToken: pricingCompletionUSDPerToken
+                ),
+                isDeprecated: isDeprecated,
+                deprecationReplacement: deprecationReplacementModel,
+                created: created
+            )
         }
     }
 
@@ -6220,7 +6616,7 @@ extension RemoteProviderService {
             if canUseManualModelDiscoveryFallback(for: provider, statusCode: statusCode),
                 let fallbackModels = manualModelDiscoveryFallback(for: provider)
             {
-                return OpenAICompatibleModelDiscovery(models: fallbackModels, contextLengths: [:])
+                return OpenAICompatibleModelDiscovery(models: fallbackModels)
             }
             throw RemoteProviderServiceError.requestFailed(errorMessage)
         }
@@ -6228,19 +6624,20 @@ extension RemoteProviderService {
         do {
             let modelsResponse = try JSONDecoder().decode(OpenAICompatibleModelList.self, from: data)
             let entries = modelsResponse.data
-            var contextLengths: [String: Int] = [:]
+            var metadata: [String: RemoteModelMetadata] = [:]
             for entry in entries {
-                if let contextLength = entry.advertisedContextLength {
-                    contextLengths[entry.id] = contextLength
+                let entryMetadata = entry.metadata
+                if !entryMetadata.isEmpty {
+                    metadata[entry.id] = entryMetadata
                 }
             }
             return OpenAICompatibleModelDiscovery(
                 models: entries.map { $0.id },
-                contextLengths: contextLengths
+                metadata: metadata
             )
         } catch {
             if let fallbackModels = manualModelDiscoveryFallback(for: provider) {
-                return OpenAICompatibleModelDiscovery(models: fallbackModels, contextLengths: [:])
+                return OpenAICompatibleModelDiscovery(models: fallbackModels)
             }
             throw error
         }
@@ -6684,6 +7081,12 @@ extension RemoteProviderService {
 
     /// Fetch models from Gemini API (different response format from OpenAI)
     private static func fetchGeminiModels(from provider: RemoteProvider) async throws -> [String] {
+        try await fetchGeminiModelInfos(from: provider).map(\.modelId)
+    }
+
+    /// Gemini list entries that support `generateContent`, with the display
+    /// name / description / token limits Google publishes alongside each id.
+    static func fetchGeminiModelInfos(from provider: RemoteProvider) async throws -> [GeminiModelInfo] {
         guard let url = provider.url(for: "/models") else {
             throw RemoteProviderServiceError.invalidURL
         }
@@ -6718,13 +7121,13 @@ extension RemoteProviderService {
         // Parse Gemini models response
         let modelsResponse = try JSONDecoder().decode(GeminiModelsResponse.self, from: data)
 
-        // Filter to models that support generateContent and strip "models/" prefix
+        // Filter to models that support generateContent (ids strip the
+        // "models/" prefix via `modelId`).
         let models = (modelsResponse.models ?? [])
             .filter { model in
                 guard let methods = model.supportedGenerationMethods else { return false }
                 return methods.contains("generateContent")
             }
-            .map { $0.modelId }
 
         guard !models.isEmpty else {
             throw RemoteProviderServiceError.noModelsAvailable
@@ -6741,7 +7144,16 @@ extension RemoteProviderService {
         headers: [String: String],
         timeout: TimeInterval = 30
     ) async throws -> [String] {
-        var allModels: [String] = []
+        try await fetchAnthropicModelInfos(baseURL: baseURL, headers: headers, timeout: timeout).map(\.id)
+    }
+
+    /// Full Anthropic list entries (id + `display_name`), paginated.
+    static func fetchAnthropicModelInfos(
+        baseURL: URL,
+        headers: [String: String],
+        timeout: TimeInterval = 30
+    ) async throws -> [AnthropicModelInfo] {
+        var allModels: [AnthropicModelInfo] = []
         var afterId: String?
 
         while true {
@@ -6772,7 +7184,7 @@ extension RemoteProviderService {
             }
 
             let modelsResponse = try JSONDecoder().decode(AnthropicModelsResponse.self, from: data)
-            allModels.append(contentsOf: modelsResponse.data.map { $0.id })
+            allModels.append(contentsOf: modelsResponse.data)
 
             if modelsResponse.has_more, let lastId = modelsResponse.last_id {
                 afterId = lastId

@@ -125,6 +125,11 @@ struct RemoteProviderEditSheet: View {
     /// on the Claude Code setup step. Used by the empty-state shortcut, which
     /// surfaces Claude Code as a first-class row.
     var startAtClaudeCode: Bool = false
+    /// Pins the connection method for `initialPreset` instead of the entry's
+    /// primary one — the model picker's inline catalog offers dual-mode
+    /// providers (OpenAI, xAI, OpenRouter) both as sign-in rows and inside
+    /// its API-key list, and the API-key row must open the key form.
+    var initialAuthMethod: ProviderPickerAuthMethod? = nil
     let onSave: (RemoteProvider, String?, RemoteProviderOAuthTokens?) -> Void
 
     var body: some View {
@@ -136,6 +141,7 @@ struct RemoteProviderEditSheet: View {
                     initialPreset: initialPreset,
                     startAtAPIKeyPicker: startAtAPIKeyPicker,
                     startAtClaudeCode: startAtClaudeCode,
+                    initialAuthMethod: initialAuthMethod,
                     onSave: onSave
                 )
             }
@@ -155,6 +161,7 @@ private struct AddProviderFlow: View {
     let initialPreset: ProviderPreset?
     var startAtAPIKeyPicker: Bool = false
     var startAtClaudeCode: Bool = false
+    var initialAuthMethod: ProviderPickerAuthMethod? = nil
     let onSave: (RemoteProvider, String?, RemoteProviderOAuthTokens?) -> Void
 
     @State private var selectedPreset: ProviderPreset?
@@ -275,9 +282,14 @@ private struct AddProviderFlow: View {
                 initializeKnownConnection(for: initialPreset)
                 // Pin the entry's primary method (OAuth for the top-level rows
                 // that open the sheet pre-selected) so dual-mode providers open
-                // their sign-in flow, not the API-key form.
-                selectedAuthMethod =
-                    ProviderCatalog.entry(for: initialPreset)?.authMethods.first ?? .apiKey
+                // their sign-in flow, not the API-key form — unless the caller
+                // pinned a method explicitly (model picker API-key rows).
+                let entryMethods = ProviderCatalog.entry(for: initialPreset)?.authMethods ?? []
+                if let initialAuthMethod, entryMethods.contains(initialAuthMethod) {
+                    selectedAuthMethod = initialAuthMethod
+                } else {
+                    selectedAuthMethod = entryMethods.first ?? .apiKey
+                }
                 selectedPreset = initialPreset
             } else if startAtClaudeCode {
                 showingClaudeCodeSetup = true

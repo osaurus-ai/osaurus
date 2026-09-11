@@ -11,6 +11,9 @@ import Foundation
 struct VeniceModelDiscovery: Sendable, Equatable {
     var chatModelIDs: [String]
     var mediaModels: [MediaModelInfo]
+    /// Per-chat-model metadata from `model_spec` (name, description,
+    /// capabilities, token pricing, context). Keyed by unprefixed id.
+    var chatMetadata: [String: RemoteModelMetadata] = [:]
 }
 
 struct VeniceModelsResponse: Decodable, Sendable {
@@ -21,11 +24,71 @@ struct VeniceModelRecord: Decodable, Sendable {
     var id: String
     var type: String?
     var modelSpec: VeniceModelSpec?
+    /// Top-level `context_length` Venice mirrors from `model_spec`.
+    var contextLength: Int?
+    var created: Int?
 
     private enum CodingKeys: String, CodingKey {
         case id
         case type
         case modelSpec = "model_spec"
+        case contextLength = "context_length"
+        case created
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        type = try? c.decodeIfPresent(String.self, forKey: .type)
+        modelSpec = try? c.decodeIfPresent(VeniceModelSpec.self, forKey: .modelSpec)
+        contextLength = try? c.decodeIfPresent(Int.self, forKey: .contextLength)
+        created = try? c.decodeIfPresent(Int.self, forKey: .created)
+    }
+
+    /// Picker metadata for a `type == "text"` record. Everything comes from
+    /// what Venice published; absent keys stay unknown.
+    var chatMetadata: RemoteModelMetadata {
+        let spec = modelSpec
+        let caps = spec?.capabilities
+        let traits = spec?.traits ?? []
+        return RemoteModelMetadata(
+            displayName: spec?.name,
+            description: spec?.description,
+            contextLength: spec?.availableContextTokens ?? contextLength,
+            maxOutputTokens: spec?.maxCompletionTokens,
+            supportsVision: caps?.supportsVision,
+            supportsToolCalling: caps?.supportsFunctionCalling,
+            supportsReasoning: caps?.supportsReasoning,
+            supportsAudioInput: caps?.supportsAudioInput,
+            inputPriceMicroPerMTok: RemoteModelMetadata.microPerMTok(fromUSDPerMTok: spec?.pricing?.input?.usd),
+            outputPriceMicroPerMTok: RemoteModelMetadata.microPerMTok(fromUSDPerMTok: spec?.pricing?.output?.usd),
+            isDeprecated: false,
+            recommendedReason: Self.recommendedReason(fromTraits: traits),
+            quantization: Self.displayQuantization(caps?.quantization),
+            created: created
+        )
+    }
+
+    /// Venice marks a handful of models with traits like `default`,
+    /// `fastest`, `most_intelligent`, `default_code`. Surface the strongest
+    /// one as the Recommended reason; anything else is not a recommendation.
+    static func recommendedReason(fromTraits traits: [String]) -> String? {
+        let lower = Set(traits.map { $0.lowercased() })
+        if lower.contains("default") { return "Venice default" }
+        if lower.contains("most_intelligent") { return "Venice: most intelligent" }
+        if lower.contains("fastest") { return "Venice: fastest" }
+        if lower.contains("default_code") { return "Venice default for code" }
+        if lower.contains("default_vision") { return "Venice default for vision" }
+        return nil
+    }
+
+    /// Venice uses `"not-available"` for hosted-precision models; only a
+    /// real quantization label is worth showing.
+    static func displayQuantization(_ raw: String?) -> String? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            !raw.isEmpty, raw != "not-available", raw != "none", raw != "unknown"
+        else { return nil }
+        return raw
     }
 }
 
@@ -37,6 +100,11 @@ struct VeniceModelSpec: Decodable, Sendable {
     var pricing: VeniceModelPricing?
     var offline: Bool?
     var privacy: String?
+    var description: String?
+    var availableContextTokens: Int?
+    var maxCompletionTokens: Int?
+    var capabilities: VeniceTextCapabilities?
+    var traits: [String]?
 
     private enum CodingKeys: String, CodingKey {
         case name
@@ -46,7 +114,43 @@ struct VeniceModelSpec: Decodable, Sendable {
         case pricing
         case offline
         case privacy
+        case description
+        case availableContextTokens
+        case maxCompletionTokens
+        case capabilities
+        case traits
     }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try? c.decodeIfPresent(String.self, forKey: .name)
+        type = try? c.decodeIfPresent(String.self, forKey: .type)
+        modelType = try? c.decodeIfPresent(String.self, forKey: .modelType)
+        constraints = try? c.decodeIfPresent(VeniceModelConstraints.self, forKey: .constraints)
+        pricing = try? c.decodeIfPresent(VeniceModelPricing.self, forKey: .pricing)
+        offline = try? c.decodeIfPresent(Bool.self, forKey: .offline)
+        privacy = try? c.decodeIfPresent(String.self, forKey: .privacy)
+        description = try? c.decodeIfPresent(String.self, forKey: .description)
+        availableContextTokens = try? c.decodeIfPresent(Int.self, forKey: .availableContextTokens)
+        maxCompletionTokens = try? c.decodeIfPresent(Int.self, forKey: .maxCompletionTokens)
+        capabilities = try? c.decodeIfPresent(VeniceTextCapabilities.self, forKey: .capabilities)
+        traits = try? c.decodeIfPresent([String].self, forKey: .traits)
+    }
+}
+
+/// Venice text-model `model_spec.capabilities`. Every key optional so a
+/// partial object still decodes.
+struct VeniceTextCapabilities: Decodable, Sendable {
+    var supportsVision: Bool?
+    var supportsFunctionCalling: Bool?
+    var supportsReasoning: Bool?
+    var supportsAudioInput: Bool?
+    var quantization: String?
+}
+
+/// Venice per-million-token price in USD (and DIEM); only `usd` is used.
+struct VeniceTokenPrice: Decodable, Sendable {
+    var usd: Double?
 }
 
 struct VeniceModelConstraints: Decodable, Sendable {
@@ -171,11 +275,16 @@ struct VeniceModelPricing: Decodable, Sendable {
     var generation: MediaPrice?
     var resolutions: [String: MediaPrice]
     var quality: [String: [String: MediaPrice]]
+    /// Text-model token pricing (USD per million tokens).
+    var input: VeniceTokenPrice?
+    var output: VeniceTokenPrice?
 
     private enum CodingKeys: String, CodingKey {
         case generation
         case resolutions
         case quality
+        case input
+        case output
     }
 
     init(from decoder: Decoder) throws {
@@ -183,6 +292,8 @@ struct VeniceModelPricing: Decodable, Sendable {
         generation = try? c.decode(MediaPrice.self, forKey: .generation)
         resolutions = (try? c.decode([String: MediaPrice].self, forKey: .resolutions)) ?? [:]
         quality = (try? c.decode([String: [String: MediaPrice]].self, forKey: .quality)) ?? [:]
+        input = try? c.decode(VeniceTokenPrice.self, forKey: .input)
+        output = try? c.decode(VeniceTokenPrice.self, forKey: .output)
     }
 }
 
@@ -194,6 +305,7 @@ extension VeniceModelDiscovery {
     ) throws -> VeniceModelDiscovery {
         let response = try JSONDecoder().decode(VeniceModelsResponse.self, from: data)
         var chatIDs: [String] = []
+        var chatMetadata: [String: RemoteModelMetadata] = [:]
         var media: [MediaModelInfo] = []
 
         for record in response.data {
@@ -201,6 +313,10 @@ extension VeniceModelDiscovery {
             switch modelType {
             case "text":
                 chatIDs.append(record.id)
+                let metadata = record.chatMetadata
+                if !metadata.isEmpty {
+                    chatMetadata[record.id] = metadata
+                }
             case "image":
                 media.append(
                     makeMediaModel(
@@ -235,7 +351,8 @@ extension VeniceModelDiscovery {
             mediaModels: media.sorted {
                 if $0.kind != $1.kind { return $0.kind.rawValue < $1.kind.rawValue }
                 return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
-            }
+            },
+            chatMetadata: chatMetadata
         )
     }
 

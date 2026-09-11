@@ -294,6 +294,25 @@ struct GeminiModelInfo: Codable, Sendable {
     let displayName: String?
     let description: String?
     let supportedGenerationMethods: [String]?
+    /// Context window and output cap, as published by the list endpoint.
+    let inputTokenLimit: Int?
+    let outputTokenLimit: Int?
+
+    init(
+        name: String,
+        displayName: String? = nil,
+        description: String? = nil,
+        supportedGenerationMethods: [String]? = nil,
+        inputTokenLimit: Int? = nil,
+        outputTokenLimit: Int? = nil
+    ) {
+        self.name = name
+        self.displayName = displayName
+        self.description = description
+        self.supportedGenerationMethods = supportedGenerationMethods
+        self.inputTokenLimit = inputTokenLimit
+        self.outputTokenLimit = outputTokenLimit
+    }
 
     /// Extract the short model ID (strips "models/" prefix)
     var modelId: String {
@@ -301,5 +320,17 @@ struct GeminiModelInfo: Codable, Sendable {
             return String(name.dropFirst("models/".count))
         }
         return name
+    }
+
+    /// Picker metadata: Google's own display name, description, and the
+    /// input/output token limits. Nothing about vision/tools is published on
+    /// this route, so those stay unknown rather than assumed.
+    var pickerMetadata: RemoteModelMetadata {
+        RemoteModelMetadata(
+            displayName: displayName,
+            description: description,
+            contextLength: inputTokenLimit,
+            maxOutputTokens: outputTokenLimit
+        )
     }
 }
