@@ -9651,7 +9651,7 @@ struct ChatView: View {
                 .animation(theme.animationQuick(), value: windowState.openProjectId)
             }
         }
-        // Allow the window to narrow down to 680pt so it tiles beside other
+        // Allow the window to narrow down to 800pt so it tiles beside other
         // windows. With the sidebar open by default (260pt) plus the tab strip,
         // anything narrower squished the chat column; the content is responsive
         // (chips collapse to icons, tabs fold into an overflow menu), so a narrow
@@ -9662,10 +9662,10 @@ struct ChatView: View {
         // window when it is attached, overriding the panel's content rect.
         // Keep it tied to the shared default so both agree.
         .frame(
-            minWidth: 680,
+            minWidth: 800,
             idealWidth: WindowConfiguration.chat.defaultSize.width,
             maxWidth: .infinity,
-            minHeight: 575,
+            minHeight: 620,
             idealHeight: WindowConfiguration.chat.defaultSize.height,
             maxHeight: .infinity
         )

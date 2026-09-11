@@ -871,7 +871,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     /// AppKit owns chat window size via the default size and frame autosave.
     /// With the hosting controller's default `sizingOptions`, attaching it
     /// pushes the root view's measured size onto the window, which resolved
-    /// to the view's *minimum* (680pt) and shrank every new window, so
+    /// to the view's *minimum* (800pt) and shrank every new window, so
     /// `.intrinsicContentSize` stays off. `.minSize` must stay ON, though:
     /// a window with a content view controller mirrors that controller's
     /// `preferredMinimumSize` into `contentMinSize` whenever it changes, and
