@@ -68,6 +68,15 @@ private struct ChatHistoryDialogContent: View {
     @State private var showAgentPicker = false
     @State private var isAgentButtonHovered = false
 
+    /// Origin lens (Chat / Plugin / Schedule / ...), picked in the Filter
+    /// popover. Composes with the agent lens and the archived chip.
+    @State private var sourceFilter: ChatHistorySourceFilter = .all
+    @State private var showSourcePicker = false
+    @State private var isFilterButtonHovered = false
+    /// Archived lens: on lists only archived chats, off hides them.
+    @State private var showArchived = false
+    @State private var isArchivedChipHovered = false
+
     /// The Default agent has always listed every conversation here
     /// (`sessions(for:)` returns all of them for Default), so it opens on
     /// "All Chats"; any other agent opens on its own chats.
@@ -89,7 +98,11 @@ private struct ChatHistoryDialogContent: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
                 agentDropdown
+                if visibleSessions.contains(where: \.archived) {
+                    archivedChip
+                }
                 Spacer()
+                filterButton
                 Button {
                     requestImport()
                 } label: {
@@ -166,8 +179,113 @@ private struct ChatHistoryDialogContent: View {
                 },
                 onOpenInNewTab: { data in
                     onOpenInNewTab(data)
+                },
+                sourceFilter: sourceFilter,
+                showArchived: showArchived,
+                onClearFilters: {
+                    sourceFilter = .all
+                    showArchived = false
                 }
             )
+        }
+        // Switching the agent lens is a context change, like the sidebar's
+        // agent switch: drop the origin lens so the new agent starts on
+        // "All" instead of inheriting a bucket it may not even have.
+        .onChange(of: activeFilter) { _, _ in
+            sourceFilter = .all
+        }
+        // Unarchiving the last archived chat removes the chip; make sure the
+        // lens does not stay stuck on an empty, now-uncontrollable state.
+        .onChange(of: visibleSessions.contains(where: \.archived)) { _, hasArchived in
+            if !hasArchived { showArchived = false }
+        }
+    }
+
+    // MARK: - Archived chip
+
+    /// Toggle for the archived lens, in the sidebar's chip idiom: ghost when
+    /// off, accent-tinted when on. Only rendered while the current agent
+    /// lens has at least one archived chat.
+    private var archivedChip: some View {
+        let shape = Capsule(style: .continuous)
+        return Button {
+            withAnimation(theme.animationQuick()) { showArchived.toggle() }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: showArchived ? "archivebox.fill" : "archivebox")
+                    .font(.system(size: 9.5, weight: .semibold))
+                Text("Archived", bundle: .module)
+                    .font(.system(size: 11, weight: showArchived ? .semibold : .medium))
+            }
+            .foregroundColor(showArchived ? theme.accentColor : theme.secondaryText)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                shape.fill(
+                    showArchived
+                        ? theme.accentColor.opacity(theme.isDark ? 0.28 : 0.18)
+                        : (isArchivedChipHovered ? theme.secondaryBackground.opacity(0.5) : Color.clear)
+                )
+            )
+            .contentShape(shape)
+            .pointingHandCursor()
+        }
+        .buttonStyle(.plain)
+        .onHover { isArchivedChipHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isArchivedChipHovered)
+        .localizedHelp("Show archived chats")
+    }
+
+    // MARK: - Filter button
+
+    /// Opens the origin picker. Reads as the Import button's sibling, and
+    /// switches to the accent tint + filled glyph while a lens other than
+    /// "All" is active so the narrowed list is never a surprise.
+    private var filterButton: some View {
+        let isActive = sourceFilter != .all
+        let isRaised = isActive || isFilterButtonHovered || showSourcePicker
+        return Button {
+            showSourcePicker.toggle()
+        } label: {
+            HStack(alignment: .center, spacing: 5) {
+                Image(
+                    systemName: isActive
+                        ? "line.3.horizontal.decrease.circle.fill"
+                        : "line.3.horizontal.decrease.circle"
+                )
+                .font(.system(size: 11, weight: .medium))
+                sourceFilterTitle
+                    .font(.system(size: 11, weight: isActive ? .semibold : .medium))
+                    .lineLimit(1)
+            }
+            .foregroundColor(isActive ? theme.accentColor : (isRaised ? theme.primaryText : theme.secondaryText))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .contentShape(Rectangle())
+            .pointingHandCursor()
+        }
+        .buttonStyle(.plain)
+        .onHover { isFilterButtonHovered = $0 }
+        .animation(.easeOut(duration: 0.15), value: isFilterButtonHovered)
+        .localizedHelp("Filter chats by where they started")
+        .popover(isPresented: $showSourcePicker, arrowEdge: .bottom) {
+            ChatHistorySourcePicker(
+                sessions: visibleSessions.filter { $0.archived == showArchived },
+                selected: sourceFilter,
+                onSelect: { filter in
+                    withAnimation(theme.animationQuick()) { sourceFilter = filter }
+                    showSourcePicker = false
+                }
+            )
+        }
+    }
+
+    private var sourceFilterTitle: Text {
+        switch sourceFilter {
+        case .all:
+            return Text("Filter", bundle: .module)
+        case .source(let source):
+            return Text(LocalizedStringKey(source.shortLabel), bundle: .module)
         }
     }
 
@@ -291,6 +409,24 @@ private struct ChatHistoryDialogContent: View {
             ),
             scope: scope
         )
+    }
+}
+
+// MARK: - Source filter
+
+/// Where the listed conversations started. Applies on top of the agent
+/// lens and the archived chip.
+enum ChatHistorySourceFilter: Equatable {
+    /// Every origin.
+    case all
+    /// Only conversations tagged with this origin.
+    case source(SessionSource)
+
+    func matches(_ session: ChatSessionData) -> Bool {
+        switch self {
+        case .all: return true
+        case .source(let source): return session.source == source
+        }
     }
 }
 
@@ -552,6 +688,183 @@ private struct ChatHistoryAgentPicker: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(
+                            isSelected
+                                ? theme.accentColor.opacity(0.12)
+                                : (isHovering ? theme.tertiaryBackground.opacity(0.7) : Color.clear)
+                        )
+                )
+                .padding(.horizontal, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isHovering = hovering
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Source picker popover
+
+/// Origin chooser for the History dialog, in the agent picker's idiom:
+/// titled header with a count pill, then "All" followed by one row per
+/// origin present in the current lens, each with its chat count. Origins
+/// with no chats are hidden so the list never offers dead buckets.
+private struct ChatHistorySourcePicker: View {
+    /// Sessions already narrowed by the agent and archived lenses.
+    let sessions: [ChatSessionData]
+    let selected: ChatHistorySourceFilter
+    let onSelect: (ChatHistorySourceFilter) -> Void
+
+    @Environment(\.theme) private var theme
+
+    private var countsBySource: [SessionSource: Int] {
+        var counts: [SessionSource: Int] = [:]
+        for session in sessions {
+            counts[session.source, default: 0] += 1
+        }
+        return counts
+    }
+
+    /// Declaration order of `SessionSource` keeps the rows stable.
+    private var visibleSources: [SessionSource] {
+        let counts = countsBySource
+        return SessionSource.allCases.filter { (counts[$0] ?? 0) > 0 }
+    }
+
+    private static let rowHeight: CGFloat = 36
+    private static let chromeHeight: CGFloat = 44
+
+    var body: some View {
+        let sources = visibleSources
+        let counts = countsBySource
+        VStack(spacing: 0) {
+            header(sourceCount: sources.count)
+            Divider().background(theme.primaryBorder.opacity(0.3))
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    row(
+                        filter: .all,
+                        icon: "tray.full",
+                        title: Text("All", bundle: .module),
+                        count: sessions.count
+                    )
+                    ForEach(sources, id: \.self) { source in
+                        row(
+                            filter: .source(source),
+                            icon: source.iconName,
+                            title: Text(LocalizedStringKey(source.shortLabel), bundle: .module),
+                            count: counts[source] ?? 0
+                        )
+                    }
+                }
+                .padding(.vertical, 6)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .frame(
+            width: 240,
+            height: min(CGFloat(sources.count + 1) * Self.rowHeight + Self.chromeHeight + 12, 420)
+        )
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(theme.primaryBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [theme.glassEdgeLight.opacity(0.2), theme.primaryBorder.opacity(0.15)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
+        )
+        .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 6)
+    }
+
+    private func header(sourceCount: Int) -> some View {
+        HStack(spacing: 8) {
+            Text("Source", bundle: .module)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+
+            Text("\(sourceCount)")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(theme.secondaryBackground))
+
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+    }
+
+    private func row(filter: ChatHistorySourceFilter, icon: String, title: Text, count: Int) -> some View {
+        SourcePickerRow(
+            icon: icon,
+            title: title,
+            count: count,
+            isSelected: filter == selected,
+            action: { onSelect(filter) }
+        )
+    }
+
+    /// One origin row; owns its hover state like the agent picker's rows.
+    private struct SourcePickerRow: View {
+        let icon: String
+        let title: Text
+        let count: Int
+        let isSelected: Bool
+        let action: () -> Void
+
+        @Environment(\.theme) private var theme
+        @State private var isHovering = false
+
+        var body: some View {
+            Button(action: action) {
+                HStack(spacing: 10) {
+                    ZStack {
+                        Circle().fill(
+                            isSelected
+                                ? theme.accentColor.opacity(theme.isDark ? 0.18 : 0.12)
+                                : theme.secondaryBackground
+                        )
+                        Image(systemName: icon)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+                    }
+                    .frame(width: 22, height: 22)
+                    title
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                        .foregroundColor(isSelected ? theme.accentColor : theme.primaryText)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text("\(count)")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(isSelected ? theme.accentColor.opacity(0.9) : theme.tertiaryText)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1.5)
+                        .background(
+                            Capsule().fill(
+                                isSelected ? theme.accentColor.opacity(0.12) : theme.secondaryBackground)
+                        )
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(theme.accentColor)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
                         .fill(
