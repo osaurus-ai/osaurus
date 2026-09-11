@@ -1058,6 +1058,12 @@ private struct FilterPickerRow: View {
 /// hover-off; a short grace timer keeps the submenu open unless neither
 /// the row nor the submenu is hovered once it elapses. Clicking the row
 /// toggles the submenu for users who prefer not to hover.
+///
+/// Two guards stop the "presents twice" flicker: opening waits for a short
+/// hover dwell (a cursor passing through never presents), and any
+/// dismissal starts a reopen cooldown, because the row still under the
+/// cursor re-reports hover the instant the popover window goes away and
+/// would otherwise present it again.
 private struct FilterSubmenuRow: View {
     let icon: String
     let title: Text
@@ -1070,7 +1076,10 @@ private struct FilterSubmenuRow: View {
     @State private var isOpen = false
     @State private var isRowHovered = false
     @State private var isSubmenuHovered = false
+    @State private var openTask: Task<Void, Never>?
     @State private var closeTask: Task<Void, Never>?
+    /// Hover-driven opens are ignored until this instant (see above).
+    @State private var reopenBlockedUntil: Date = .distantPast
 
     private var selectedChoice: ChatHistorySubmenuChoice? {
         choices.first { $0.id == selectedId }
@@ -1098,12 +1107,17 @@ private struct FilterSubmenuRow: View {
                 isRowHovered = hovering
                 if hovering {
                     cancelClose()
-                    isOpen = true
+                    if !isOpen { scheduleOpen() }
                 } else {
+                    cancelOpen()
                     scheduleClose()
                 }
             },
-            action: { isOpen.toggle() }
+            action: {
+                cancelOpen()
+                cancelClose()
+                isOpen.toggle()
+            }
         )
         .popover(isPresented: $isOpen, arrowEdge: .trailing) {
             submenu
@@ -1111,6 +1125,16 @@ private struct FilterSubmenuRow: View {
                     isSubmenuHovered = hovering
                     if hovering { cancelClose() } else { scheduleClose() }
                 }
+        }
+        .onChange(of: isOpen) { _, open in
+            guard !open else { return }
+            // Covers every dismissal path (grace timer, click outside,
+            // choice picked): settle hover bookkeeping and block the
+            // immediate hover-driven reopen.
+            cancelOpen()
+            cancelClose()
+            isSubmenuHovered = false
+            reopenBlockedUntil = Date().addingTimeInterval(0.4)
         }
     }
 
@@ -1155,9 +1179,26 @@ private struct FilterSubmenuRow: View {
         .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 6)
     }
 
+    private func cancelOpen() {
+        openTask?.cancel()
+        openTask = nil
+    }
+
     private func cancelClose() {
         closeTask?.cancel()
         closeTask = nil
+    }
+
+    /// Presents after a short dwell, and only if the cursor is still on the
+    /// row and no dismissal happened a moment ago.
+    private func scheduleOpen() {
+        guard openTask == nil, Date() >= reopenBlockedUntil else { return }
+        openTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard !Task.isCancelled else { return }
+            openTask = nil
+            if isRowHovered, !isOpen, Date() >= reopenBlockedUntil { isOpen = true }
+        }
     }
 
     /// Closes the submenu unless the cursor lands on the row or the
