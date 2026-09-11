@@ -27,6 +27,12 @@ struct ChatSessionSidebar: View {
     /// confusing "no results" empty state.
     let agentId: UUID
     let currentSessionId: UUID?
+    /// True while the active chat was entered from its project's detail
+    /// page (or started there via ⌘N). The Projects lens stays put when the
+    /// agent changes for that reason: the user is browsing a project, not
+    /// picking an agent, so flipping to the Agents lens would lose their
+    /// place. Explicit agent picks clear the flag before switching.
+    var keepsProjectsLens: Bool = false
     /// Live width of the rail, driven by the parent's resize handle so the
     /// inner content (titles, chips, rows) reflows to fill the chosen width.
     var width: CGFloat = SidebarStyle.width
@@ -301,7 +307,7 @@ struct ChatSessionSidebar: View {
             sourceFilter = .all
             searchQuery = ""
             hoveredFilter = nil
-            selectedTab = .chats
+            if !keepsProjectsLens { selectedTab = .chats }
             clearSelection()
         }
         // Switching lenses is a context change like an agent switch: the

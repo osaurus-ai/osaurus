@@ -9261,6 +9261,7 @@ struct ChatView: View {
                             sessions: windowState.filteredSessions,
                             agentId: windowState.agentId,
                             currentSessionId: session.sessionId,
+                            keepsProjectsLens: windowState.enteredChatFromProjectPage,
                             width: sidebarWidth,
                             onSelect: { data in
                                 windowState.openProjectId = nil
