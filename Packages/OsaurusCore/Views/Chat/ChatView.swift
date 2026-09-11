@@ -2993,10 +2993,12 @@ final class ChatSession: ObservableObject {
 
     /// The text the composer currently shows, whichever of the two layers
     /// is fresher: the keystroke mirror once the card has typed into it,
-    /// otherwise the published `input`.
+    /// otherwise the published `input`. The mirror is only ever written by
+    /// a keystroke (authoritative) or alongside `input` (equal), so when it
+    /// is not authoritative `input` is the whole truth, including a
+    /// programmatic clear.
     var unsentComposerText: String {
-        if composerDraftIsAuthoritative { return composerDraft }
-        return input.isEmpty ? composerDraft : input
+        composerDraftIsAuthoritative ? composerDraft : input
     }
 
     /// Composer callback: record the card's current text without touching
