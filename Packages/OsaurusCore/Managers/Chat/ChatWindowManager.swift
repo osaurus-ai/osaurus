@@ -865,22 +865,27 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         return vf.size
     }
 
-    /// Install the SwiftUI root without letting it dictate the window size.
+    /// Install the SwiftUI root without letting it dictate the window size,
+    /// while still letting it enforce the minimum.
     ///
     /// AppKit owns chat window size via the default size and frame autosave.
     /// With the hosting controller's default `sizingOptions`, attaching it
     /// pushes the root view's measured size onto the window, which resolved
-    /// to the view's *minimum* (680pt) and shrank every new window. The
-    /// management window disables this for the same reason. The SwiftUI
-    /// minimum is re-applied as the panel's `contentMinSize` so the user
-    /// still can't drag the window below what the layout supports.
+    /// to the view's *minimum* (680pt) and shrank every new window, so
+    /// `.intrinsicContentSize` stays off. `.minSize` must stay ON, though:
+    /// a window with a content view controller mirrors that controller's
+    /// `preferredMinimumSize` into `contentMinSize` whenever it changes, and
+    /// a hosting controller without `.minSize` reports zero. Setting
+    /// `contentMinSize` by hand here was therefore overwritten on the next
+    /// layout pass and the window could be dragged down to nothing. With
+    /// `.minSize` on, the root view's `.frame(minWidth:minHeight:)` is the
+    /// single source of truth for the floor.
     private func attach(_ hostingController: NSHostingController<some View>, to panel: ChatPanel) {
         if #available(macOS 13.0, *) {
-            hostingController.sizingOptions = []
+            hostingController.sizingOptions = [.minSize]
         }
         let contentSize = panel.contentRect(forFrameRect: panel.frame).size
         panel.contentViewController = hostingController
-        panel.contentMinSize = NSSize(width: 680, height: 575)
         panel.setContentSize(contentSize)
     }
 

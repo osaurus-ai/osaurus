@@ -300,13 +300,16 @@ public final class WindowManager: NSObject, ObservableObject {
 
         // AppKit owns these windows' size via `defaultSize` + frame autosave,
         // so the SwiftUI content should fill the window rather than drive it.
-        // Leaving the default sizingOptions on lets the hosting controller push
+        // Leaving `.intrinsicContentSize` on lets the hosting controller push
         // the content's measured size back onto the window every layout pass;
         // with fill-style (`maxWidth/maxHeight: .infinity`) roots that negotiation
         // has no fixed point and can oscillate after a resize or state change,
-        // pinning the main thread in a non-converging layout loop.
+        // pinning the main thread in a non-converging layout loop. `.minSize`
+        // stays on: the window mirrors the controller's `preferredMinimumSize`
+        // into `contentMinSize`, and without it that floor is zero and the
+        // window can be dragged down to nothing (see ChatWindowManager.attach).
         if #available(macOS 13.0, *) {
-            hostingController.sizingOptions = []
+            hostingController.sizingOptions = [.minSize]
         }
 
         // Calculate centered position on active screen
