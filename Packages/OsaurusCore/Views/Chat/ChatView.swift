@@ -325,6 +325,11 @@ final class ChatSession: ObservableObject {
     /// phase ends.
     private var streamingAutoExpandedThinkingBlockIds: Set<String> = []
     @Published var input: String = ""
+    /// Mirror of what the composer currently shows. The card keeps
+    /// keystrokes local and only writes `input` on send, so this is the
+    /// only place the unsent draft is visible to the session. Deliberately
+    /// not `@Published`: a keystroke must not re-render the chat.
+    var composerDraft: String = ""
     @Published var pendingAttachments: [Attachment] = []
     @Published var selectedModel: String? = nil
     @Published var modelSwitchContinuityWarning: ModelSwitchContinuityWarning?
@@ -2976,14 +2981,19 @@ final class ChatSession: ObservableObject {
     /// Remember the current composer text for `draftKey` so it can come
     /// back when the user returns to this chat (#2708).
     func stashDraft() {
-        ChatDraftStore.shared.stash(input, for: draftKey)
+        let draft = input.isEmpty ? composerDraft : input
+        ChatDraftStore.shared.stash(draft, for: draftKey)
+        composerDraft = ""
     }
 
     /// Bring back the composer text remembered for `draftKey`, if any.
     /// Never overwrites text the user has already typed.
     func restoreDraft() {
-        guard input.isEmpty, let draft = ChatDraftStore.shared.take(for: draftKey) else { return }
+        guard input.isEmpty, composerDraft.isEmpty,
+            let draft = ChatDraftStore.shared.take(for: draftKey)
+        else { return }
         input = draft
+        composerDraft = draft
     }
 
     // MARK: - LLM Context Compaction
@@ -9564,6 +9574,7 @@ struct ChatView: View {
                                 isCompact: windowState.showSidebar,
                                 isEmptyChat: !observedSession.hasVisibleThreadMessages,
                                 onClearChat: { observedSession.reset() },
+                                onDraftChange: { observedSession.composerDraft = $0 },
                                 modelSwitchContinuityWarning:
                                     observedSession.modelSwitchContinuityWarning,
                                 onDismissModelSwitchContinuityWarning: {

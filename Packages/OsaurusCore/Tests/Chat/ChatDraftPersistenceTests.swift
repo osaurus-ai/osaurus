@@ -107,3 +107,30 @@ struct ChatDraftPersistenceTests {
         ChatDraftStore.shared.removeAll()
     }
 }
+
+extension ChatDraftPersistenceTests {
+    /// The composer keeps keystrokes local and only writes `input` on
+    /// send, so the session sees the unsent text through `composerDraft`.
+    /// That mirror alone must be enough to bring the draft back.
+    @Test("draft mirrored from the composer survives switching chats")
+    func composerMirrorSurvivesLoadRoundTrip() async throws {
+        try await ChatHistoryTestStorage.run {
+            ChatDraftStore.shared.removeAll()
+            let first = ChatSessionData(id: UUID(), title: "First")
+            let second = ChatSessionData(id: UUID(), title: "Second")
+
+            let session = ChatSession()
+            session.load(from: first)
+            session.composerDraft = "draft one"
+            #expect(session.input == "")
+
+            session.load(from: second)
+            #expect(session.input == "")
+            #expect(session.composerDraft == "")
+
+            session.load(from: first)
+            #expect(session.input == "draft one")
+            #expect(session.composerDraft == "draft one")
+        }
+    }
+}
