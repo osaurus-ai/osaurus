@@ -3434,6 +3434,12 @@ struct ChatHistoryList: View {
     /// Plugin lens chosen in the dialog's Filter popover (nil = any; "" =
     /// plugin chats with no recorded plugin id).
     var pluginFilter: String? = nil
+    /// Schedule / watcher lenses: the schedule or watcher id those runs
+    /// stamp as the session's external key (nil = any).
+    var scheduleFilter: String? = nil
+    var watcherFilter: String? = nil
+    /// Capability lenses; a chat must carry every selected badge.
+    var capabilityFilter: Set<SessionCapability> = []
     /// Resets the dialog's source / archived lenses from the empty state.
     var onClearFilters: (() -> Void)? = nil
 
@@ -3455,7 +3461,8 @@ struct ChatHistoryList: View {
 
     private var hasActiveFilter: Bool {
         showArchived || sourceFilter != .all || projectFilter != nil || workspaceFilter != nil
-            || pluginFilter != nil
+            || pluginFilter != nil || scheduleFilter != nil || watcherFilter != nil
+            || !capabilityFilter.isEmpty
     }
 
     private var filteredSessions: [ChatSessionData] {
@@ -3465,6 +3472,11 @@ struct ChatHistoryList: View {
                 && (workspaceFilter == nil || session.workspace?.workspaceId == workspaceFilter)
                 && (pluginFilter == nil
                     || (session.source == .plugin && (session.sourcePluginId ?? "") == pluginFilter))
+                && (scheduleFilter == nil
+                    || (session.source == .schedule && session.externalSessionKey == scheduleFilter))
+                && (watcherFilter == nil
+                    || (session.source == .watcher && session.externalSessionKey == watcherFilter))
+                && capabilityFilter.isSubset(of: session.capabilities)
         }
         let trimmed = searchQuery.trimmingCharacters(in: .whitespaces)
         let matched: [ChatSessionData]

@@ -80,6 +80,13 @@ private struct ChatHistoryDialogContent: View {
     @State private var workspaceFilter: String?
     /// Plugin lens (a plugin id; "" for plugin chats with no id), likewise.
     @State private var pluginFilter: String?
+    /// Schedule / watcher lenses (the schedule or watcher id, which those
+    /// runs stamp as the session's external key), likewise.
+    @State private var scheduleFilter: String?
+    @State private var watcherFilter: String?
+    /// Capability lenses (Vision / Voice / Code / Search badges); a chat
+    /// must carry every selected one.
+    @State private var capabilityFilter: Set<SessionCapability> = []
     @State private var showSourcePicker = false
     @State private var isFilterButtonHovered = false
     /// Archived lens: on lists only archived chats, off hides them.
@@ -194,13 +201,10 @@ private struct ChatHistoryDialogContent: View {
                 projectFilter: projectFilter,
                 workspaceFilter: workspaceFilter,
                 pluginFilter: pluginFilter,
-                onClearFilters: {
-                    sourceFilter = .all
-                    projectFilter = nil
-                    workspaceFilter = nil
-                    pluginFilter = nil
-                    showArchived = false
-                }
+                scheduleFilter: scheduleFilter,
+                watcherFilter: watcherFilter,
+                capabilityFilter: capabilityFilter,
+                onClearFilters: clearFilters
             )
         }
         // Switching the agent lens is a context change, like the sidebar's
@@ -253,12 +257,23 @@ private struct ChatHistoryDialogContent: View {
 
     // MARK: - Filter button
 
-    /// Number of lenses the popover currently applies (source, plugin,
-    /// project, workspace, archived). Shown on the button so a narrowed
-    /// list is never a surprise.
+    /// Number of lenses the popover currently applies. Shown on the button
+    /// so a narrowed list is never a surprise.
     private var activeFilterCount: Int {
         (sourceFilter != .all ? 1 : 0) + (pluginFilter != nil ? 1 : 0) + (projectFilter != nil ? 1 : 0)
-            + (workspaceFilter != nil ? 1 : 0) + (showArchived ? 1 : 0)
+            + (workspaceFilter != nil ? 1 : 0) + (scheduleFilter != nil ? 1 : 0)
+            + (watcherFilter != nil ? 1 : 0) + capabilityFilter.count + (showArchived ? 1 : 0)
+    }
+
+    private func clearFilters() {
+        sourceFilter = .all
+        pluginFilter = nil
+        projectFilter = nil
+        workspaceFilter = nil
+        scheduleFilter = nil
+        watcherFilter = nil
+        capabilityFilter = []
+        showArchived = false
     }
 
     /// Opens the filter popover. Reads as the Import button's sibling, and
@@ -299,7 +314,11 @@ private struct ChatHistoryDialogContent: View {
                 pluginFilter: $pluginFilter,
                 projectFilter: $projectFilter,
                 workspaceFilter: $workspaceFilter,
-                showArchived: $showArchived
+                scheduleFilter: $scheduleFilter,
+                watcherFilter: $watcherFilter,
+                capabilityFilter: $capabilityFilter,
+                showArchived: $showArchived,
+                onClear: clearFilters
             )
         }
     }
@@ -732,15 +751,17 @@ private struct ChatHistoryAgentPicker: View {
 // MARK: - Filter popover
 
 /// Filter panel for the History dialog: one flat list of toggles. Origin
-/// rows (API, Schedule, Watcher, ...) each select or clear the source lens.
-/// "Chat" is the default and has no row; "Plugin" and "Workspace" have none
-/// either, since the Plugins and Workspaces submenus cover every chat
-/// tagged with those origins, per plugin / per workspace. Projects,
-/// Workspaces and Plugins are always-present rows that open a nested
-/// popover on hover listing the concrete choices (all projects, joined
-/// workspaces, installed plugins). Archived is a toggle at the bottom.
-/// Rows carry chat counts. The panel stays open across picks so lenses can
-/// be combined; click outside to close.
+/// rows (API, Channel, Self-scheduled, ...) each select or clear the source
+/// lens. "Chat" is the default and has no row; Plugin, Workspace, Schedule
+/// and Watcher have none either, since the submenus below cover every chat
+/// tagged with those origins per plugin / workspace / schedule / watcher.
+/// Projects, Workspaces, Plugins and Others are always-present rows that
+/// open a nested popover on hover listing the concrete choices. Others
+/// holds the capability badges each chat already carries (Search is how a
+/// web search chat is found; Vision, Voice, Code likewise; multi-select)
+/// followed by every schedule and every watcher. Archived is a toggle at
+/// the bottom. Rows carry chat counts. The panel stays open across picks
+/// so lenses can be combined; click outside to close.
 private struct ChatHistoryFilterPicker: View {
     /// Sessions already narrowed by the agent lens (both archived states).
     let sessions: [ChatSessionData]
@@ -750,7 +771,11 @@ private struct ChatHistoryFilterPicker: View {
     @Binding var pluginFilter: String?
     @Binding var projectFilter: UUID?
     @Binding var workspaceFilter: String?
+    @Binding var scheduleFilter: String?
+    @Binding var watcherFilter: String?
+    @Binding var capabilityFilter: Set<SessionCapability>
     @Binding var showArchived: Bool
+    let onClear: () -> Void
 
     @Environment(\.theme) private var theme
     /// Which submenu row (by id) has its nested popover open. Owned here,
@@ -759,63 +784,68 @@ private struct ChatHistoryFilterPicker: View {
     /// the projects list show up under the Workspaces arrow.
     @State private var openSubmenuId: String?
 
-    /// Sessions in the archived lens; counts are taken against these so
-    /// they match what the list will actually show.
-    private var lensSessions: [ChatSessionData] {
-        sessions.filter { $0.archived == showArchived }
+    /// One lens each row family controls. Counts for a family are taken
+    /// with that family's own lens ignored, so a row's number is "how many
+    /// chats you would see if you picked this", given every other lens.
+    private enum Lens: Hashable {
+        case source, plugin, project, workspace, schedule, watcher, capability
     }
 
-    private func matchesPlugin(_ session: ChatSessionData) -> Bool {
-        pluginFilter == nil || session.source == .plugin && (session.sourcePluginId ?? "") == pluginFilter
+    private func passes(_ session: ChatSessionData, ignoring lens: Lens? = nil) -> Bool {
+        guard session.archived == showArchived else { return false }
+        if lens != .source, !sourceFilter.matches(session) { return false }
+        if lens != .plugin, let pluginFilter,
+            !(session.source == .plugin && (session.sourcePluginId ?? "") == pluginFilter)
+        {
+            return false
+        }
+        if lens != .project, let projectFilter, session.projectId != projectFilter { return false }
+        if lens != .workspace, let workspaceFilter, session.workspace?.workspaceId != workspaceFilter {
+            return false
+        }
+        if lens != .schedule, let scheduleFilter,
+            !(session.source == .schedule && session.externalSessionKey == scheduleFilter)
+        {
+            return false
+        }
+        if lens != .watcher, let watcherFilter,
+            !(session.source == .watcher && session.externalSessionKey == watcherFilter)
+        {
+            return false
+        }
+        if lens != .capability, !capabilityFilter.isSubset(of: session.capabilities) { return false }
+        return true
     }
 
-    private func matchesProject(_ session: ChatSessionData) -> Bool {
-        projectFilter == nil || session.projectId == projectFilter
-    }
-
-    private func matchesWorkspace(_ session: ChatSessionData) -> Bool {
-        workspaceFilter == nil || session.workspace?.workspaceId == workspaceFilter
-    }
-
-    /// Per-origin counts, respecting every lens except source.
     private var countsBySource: [SessionSource: Int] {
         var counts: [SessionSource: Int] = [:]
-        for session in lensSessions
-        where matchesPlugin(session) && matchesProject(session) && matchesWorkspace(session) {
+        for session in sessions where passes(session, ignoring: .source) {
             counts[session.source, default: 0] += 1
         }
         return counts
     }
 
-    /// Per-plugin counts, respecting every lens except plugin. Plugin chats
-    /// with no recorded id share the "" bucket.
+    /// Plugin chats with no recorded id share the "" bucket.
     private var countsByPlugin: [String: Int] {
         var counts: [String: Int] = [:]
-        for session in lensSessions
-        where session.source == .plugin && sourceFilter.matches(session)
-            && matchesProject(session) && matchesWorkspace(session)
-        {
+        for session in sessions where session.source == .plugin && passes(session, ignoring: .plugin) {
             counts[session.sourcePluginId ?? "", default: 0] += 1
         }
         return counts
     }
 
-    /// Per-project counts, respecting every lens except project.
     private var countsByProject: [UUID: Int] {
         var counts: [UUID: Int] = [:]
-        for session in lensSessions
-        where sourceFilter.matches(session) && matchesPlugin(session) && matchesWorkspace(session) {
+        for session in sessions where passes(session, ignoring: .project) {
             if let id = session.projectId { counts[id, default: 0] += 1 }
         }
         return counts
     }
 
-    /// Per-workspace counts, respecting every lens except workspace.
     /// Invite-link shares stamp an empty workspace id and are skipped.
     private var countsByWorkspace: [String: Int] {
         var counts: [String: Int] = [:]
-        for session in lensSessions
-        where sourceFilter.matches(session) && matchesPlugin(session) && matchesProject(session) {
+        for session in sessions where passes(session, ignoring: .workspace) {
             if let id = session.workspace?.workspaceId, !id.isEmpty {
                 counts[id, default: 0] += 1
             }
@@ -823,16 +853,49 @@ private struct ChatHistoryFilterPicker: View {
         return counts
     }
 
+    private var countsBySchedule: [String: Int] {
+        var counts: [String: Int] = [:]
+        for session in sessions where session.source == .schedule && passes(session, ignoring: .schedule) {
+            if let key = session.externalSessionKey { counts[key, default: 0] += 1 }
+        }
+        return counts
+    }
+
+    private var countsByWatcher: [String: Int] {
+        var counts: [String: Int] = [:]
+        for session in sessions where session.source == .watcher && passes(session, ignoring: .watcher) {
+            if let key = session.externalSessionKey { counts[key, default: 0] += 1 }
+        }
+        return counts
+    }
+
+    /// Per-capability counts; a candidate must also carry the capabilities
+    /// already selected, so the number reflects adding this one.
+    private var countsByCapability: [SessionCapability: Int] {
+        var counts: [SessionCapability: Int] = [:]
+        for session in sessions
+        where passes(session, ignoring: .capability) && capabilityFilter.isSubset(of: session.capabilities) {
+            for cap in session.capabilities { counts[cap, default: 0] += 1 }
+        }
+        return counts
+    }
+
     private var archivedCount: Int {
-        sessions.filter {
-            $0.archived && sourceFilter.matches($0) && matchesPlugin($0) && matchesProject($0)
-                && matchesWorkspace($0)
-        }.count
+        sessions.filter { $0.archived && (showArchived ? passes($0) : passesIgnoringArchive($0)) }.count
+    }
+
+    /// `passes` with the archived lens flipped to "archived", for the
+    /// Archived row's count while the lens is off.
+    private func passesIgnoringArchive(_ session: ChatSessionData) -> Bool {
+        var copy = session
+        copy.archived = showArchived
+        return passes(copy)
     }
 
     private var activeCount: Int {
         (sourceFilter != .all ? 1 : 0) + (pluginFilter != nil ? 1 : 0) + (projectFilter != nil ? 1 : 0)
-            + (workspaceFilter != nil ? 1 : 0) + (showArchived ? 1 : 0)
+            + (workspaceFilter != nil ? 1 : 0) + (scheduleFilter != nil ? 1 : 0)
+            + (watcherFilter != nil ? 1 : 0) + capabilityFilter.count + (showArchived ? 1 : 0)
     }
 
     private static let rowHeight: CGFloat = 36
@@ -843,12 +906,15 @@ private struct ChatHistoryFilterPicker: View {
         let pluginCounts = countsByPlugin
         let projectCounts = countsByProject
         let workspaceCounts = countsByWorkspace
+        let scheduleCounts = countsBySchedule
+        let watcherCounts = countsByWatcher
+        let capabilityCounts = countsByCapability
         // Declaration order of `SessionSource` keeps the rows stable; a
         // selected bucket stays visible even when its count drops to zero so
         // the user can always deselect it.
+        let submenuSources: Set<SessionSource> = [.chat, .plugin, .workspace, .schedule, .watcher]
         let sources = SessionSource.allCases.filter {
-            $0 != .chat && $0 != .plugin && $0 != .workspace
-                && ((sourceCounts[$0] ?? 0) > 0 || sourceFilter == .source($0))
+            !submenuSources.contains($0) && ((sourceCounts[$0] ?? 0) > 0 || sourceFilter == .source($0))
         }
         // The three submenus list what is installed / defined / joined, not
         // what the chats happen to reference: installed plugins, every
@@ -869,7 +935,38 @@ private struct ChatHistoryFilterPicker: View {
             ChatHistorySubmenuChoice(
                 id: workspace.id, title: workspace.name, count: workspaceCounts[workspace.id] ?? 0)
         }
-        let rowCount = sources.count + 3 + 1
+        // "Others": capability badges, then schedules, then watchers, in one
+        // list. Ids are prefixed so one submenu can drive three lenses.
+        var otherChoices: [ChatHistorySubmenuChoice] = SessionCapability.allCases.map { cap in
+            ChatHistorySubmenuChoice(
+                id: Self.capabilityPrefix + cap.rawValue,
+                title: L(String.LocalizationValue(cap.label)),
+                count: capabilityCounts[cap] ?? 0,
+                icon: cap.iconName
+            )
+        }
+        otherChoices += ScheduleManager.shared.schedules.map { schedule in
+            let key = schedule.id.uuidString
+            return ChatHistorySubmenuChoice(
+                id: Self.schedulePrefix + key,
+                title: schedule.name,
+                count: scheduleCounts[key] ?? 0,
+                icon: SessionSource.schedule.iconName
+            )
+        }
+        otherChoices += WatcherManager.shared.watchers.map { watcher in
+            let key = watcher.id.uuidString
+            return ChatHistorySubmenuChoice(
+                id: Self.watcherPrefix + key,
+                title: watcher.name,
+                count: watcherCounts[key] ?? 0,
+                icon: SessionSource.watcher.iconName
+            )
+        }
+        var otherSelected: Set<String> = Set(capabilityFilter.map { Self.capabilityPrefix + $0.rawValue })
+        if let scheduleFilter { otherSelected.insert(Self.schedulePrefix + scheduleFilter) }
+        if let watcherFilter { otherSelected.insert(Self.watcherPrefix + watcherFilter) }
+        let rowCount = sources.count + 4 + 1
         VStack(spacing: 0) {
             header
             Divider().background(theme.primaryBorder.opacity(0.3))
@@ -897,10 +994,10 @@ private struct ChatHistoryFilterPicker: View {
                         title: Text("Projects", bundle: .module),
                         choices: projectChoices,
                         emptyText: Text("No projects yet", bundle: .module),
-                        selectedId: projectFilter?.uuidString,
+                        selectedIds: Set(projectFilter.map { [$0.uuidString] } ?? []),
                         onSelect: { id in
                             withAnimation(theme.animationQuick()) {
-                                let picked = id.flatMap(UUID.init(uuidString:))
+                                let picked = UUID(uuidString: id)
                                 projectFilter = projectFilter == picked ? nil : picked
                             }
                         }
@@ -913,7 +1010,7 @@ private struct ChatHistoryFilterPicker: View {
                         title: Text("Workspaces", bundle: .module),
                         choices: workspaceChoices,
                         emptyText: Text("No workspaces joined", bundle: .module),
-                        selectedId: workspaceFilter,
+                        selectedIds: Set(workspaceFilter.map { [$0] } ?? []),
                         onSelect: { id in
                             withAnimation(theme.animationQuick()) {
                                 workspaceFilter = workspaceFilter == id ? nil : id
@@ -927,13 +1024,26 @@ private struct ChatHistoryFilterPicker: View {
                         title: Text("Plugins", bundle: .module),
                         choices: pluginChoices,
                         emptyText: Text("No plugins installed", bundle: .module),
-                        selectedId: pluginFilter,
+                        selectedIds: Set(pluginFilter.map { [$0] } ?? []),
                         onSelect: { id in
                             withAnimation(theme.animationQuick()) {
                                 pluginFilter = pluginFilter == id ? nil : id
                             }
                         }
                     )
+                    FilterSubmenuRow(
+                        id: "others",
+                        openId: $openSubmenuId,
+                        icon: "ellipsis.circle.fill",
+                        title: Text("Others", bundle: .module),
+                        choices: otherChoices,
+                        emptyText: Text("Nothing else to filter by", bundle: .module),
+                        selectedIds: otherSelected,
+                        onSelect: { id in
+                            withAnimation(theme.animationQuick()) { toggleOther(id) }
+                        }
+                    )
+
 
                     Divider()
                         .background(theme.primaryBorder.opacity(0.3))
@@ -975,6 +1085,26 @@ private struct ChatHistoryFilterPicker: View {
         .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 6)
     }
 
+    private static let capabilityPrefix = "cap:"
+    private static let schedulePrefix = "schedule:"
+    private static let watcherPrefix = "watcher:"
+
+    /// Routes an "Others" pick to its lens: capabilities accumulate, a
+    /// schedule or watcher pick replaces (or clears) the one before.
+    private func toggleOther(_ id: String) {
+        if id.hasPrefix(Self.capabilityPrefix),
+            let cap = SessionCapability(rawValue: String(id.dropFirst(Self.capabilityPrefix.count)))
+        {
+            if capabilityFilter.contains(cap) { capabilityFilter.remove(cap) } else { capabilityFilter.insert(cap) }
+        } else if id.hasPrefix(Self.schedulePrefix) {
+            let key = String(id.dropFirst(Self.schedulePrefix.count))
+            scheduleFilter = scheduleFilter == key ? nil : key
+        } else if id.hasPrefix(Self.watcherPrefix) {
+            let key = String(id.dropFirst(Self.watcherPrefix.count))
+            watcherFilter = watcherFilter == key ? nil : key
+        }
+    }
+
     private var header: some View {
         HStack(spacing: 8) {
             Text("Filters", bundle: .module)
@@ -995,13 +1125,7 @@ private struct ChatHistoryFilterPicker: View {
 
             if activeCount > 0 {
                 Button {
-                    withAnimation(theme.animationQuick()) {
-                        sourceFilter = .all
-                        pluginFilter = nil
-                        projectFilter = nil
-                        workspaceFilter = nil
-                        showArchived = false
-                    }
+                    withAnimation(theme.animationQuick()) { onClear() }
                 } label: {
                     Text("Clear", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
@@ -1021,6 +1145,8 @@ private struct ChatHistorySubmenuChoice: Identifiable, Equatable {
     let id: String
     let title: String
     let count: Int
+    /// Row glyph; nil falls back to the submenu's own icon.
+    var icon: String? = nil
 }
 
 /// Shared row chrome for the filter panel and its submenus: icon disc,
@@ -1127,9 +1253,10 @@ private struct FilterSubmenuRow: View {
     let choices: [ChatHistorySubmenuChoice]
     /// Shown in the submenu when there is nothing to choose from.
     let emptyText: Text
-    let selectedId: String?
-    /// nil clears the lens; otherwise the picked choice id.
-    let onSelect: (String?) -> Void
+    /// Choices currently applied (one for single-lens submenus, any number
+    /// for Others). The caller decides toggle semantics in `onSelect`.
+    let selectedIds: Set<String>
+    let onSelect: (String) -> Void
 
     @Environment(\.theme) private var theme
     @State private var isRowHovered = false
@@ -1156,14 +1283,25 @@ private struct FilterSubmenuRow: View {
         Binding(get: { isOpen }, set: { isOpen = $0 })
     }
 
-    private var selectedChoice: ChatHistorySubmenuChoice? {
-        choices.first { $0.id == selectedId }
+    private var selectedChoices: [ChatHistorySubmenuChoice] {
+        choices.filter { selectedIds.contains($0.id) }
     }
 
-    /// Row pill: how many options the submenu offers (projects, workspaces,
-    /// plugins), or the picked option's chat count once one is selected.
+    /// Row title: the single picked option's name, "Title (n)" for several,
+    /// else the plain title.
+    private var rowTitle: Text {
+        let picked = selectedChoices
+        if picked.count == 1, let only = picked.first { return Text(verbatim: only.title) }
+        if picked.count > 1 { return title + Text(verbatim: " (\(picked.count))") }
+        return title
+    }
+
+    /// Row pill: how many options the submenu offers, or the picked
+    /// option's chat count once exactly one is selected.
     private var rowCount: Int {
-        selectedChoice?.count ?? choices.count
+        let picked = selectedChoices
+        if picked.count == 1, let only = picked.first { return only.count }
+        return picked.isEmpty ? choices.count : picked.count
     }
 
     private static let rowHeight: CGFloat = 36
@@ -1171,13 +1309,13 @@ private struct FilterSubmenuRow: View {
     var body: some View {
         FilterPickerRow(
             icon: icon,
-            title: selectedChoice.map { Text(verbatim: $0.title) } ?? title,
+            title: rowTitle,
             count: rowCount,
-            isSelected: selectedId != nil,
+            isSelected: !selectedIds.isEmpty,
             trailing: AnyView(
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(selectedId != nil ? theme.accentColor : theme.tertiaryText)
+                    .foregroundColor(!selectedIds.isEmpty ? theme.accentColor : theme.tertiaryText)
             ),
             isHighlighted: isOpen,
             onHover: { hovering in
@@ -1233,12 +1371,12 @@ private struct FilterSubmenuRow: View {
                 }
                 ForEach(choices) { choice in
                     FilterPickerRow(
-                        icon: icon,
+                        icon: choice.icon ?? icon,
                         title: Text(verbatim: choice.title),
                         count: choice.count,
-                        isSelected: choice.id == selectedId,
+                        isSelected: selectedIds.contains(choice.id),
                         action: {
-                            onSelect(choice.id == selectedId ? nil : choice.id)
+                            onSelect(choice.id)
                             isOpen = false
                         }
                     )
