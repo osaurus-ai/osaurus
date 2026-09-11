@@ -2873,11 +2873,22 @@ extension AppDelegate {
 
         let requestId = UUID()
         // The dialog is designed for 960pt but hosts as an overlay inside
-        // the landing window, so measure that window (the key window is the
-        // one `scope` resolves to) and shrink the whole dialog to fit; the
-        // screen is the fallback when no window is up (toast overlay).
+        // the landing window, and that window remembers a user-shrunk frame
+        // via autosave. Rather than squeeze the announcement into whatever
+        // is left, grow the host to the chat window's default size (the
+        // screen's full visible area) when it is too small, then measure
+        // it. The scale below is only a last-resort fallback after that.
+        let hostWindow: NSWindow?
+        switch scope {
+        case .chat(let id): hostWindow = ChatWindowManager.shared.getNSWindow(id: id)
+        case .management: hostWindow = WindowManager.shared.window(for: .management)
+        default: hostWindow = nil
+        }
+        if let hostWindow {
+            Self.growWindowForIntroDialogIfNeeded(hostWindow)
+        }
         let available: CGSize =
-            (NSApp.keyWindow ?? NSApp.mainWindow)?.contentView?.bounds.size
+            hostWindow?.contentView?.bounds.size
             ?? (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame.size
             ?? CGSize(width: 1440, height: 900)
         let scale = WorkspacesIntroModal.scale(fitting: available)
@@ -2928,6 +2939,32 @@ extension AppDelegate {
             ),
             scope: scope
         )
+    }
+}
+
+// MARK: - Workspaces Intro Dialog (host sizing)
+extension AppDelegate {
+    /// Grow `window` to the chat window's default size, centred on its
+    /// screen, when its content area cannot show the Workspaces intro at
+    /// full size. Leaves a window that already has room alone. Not
+    /// animated: `setFrame(_:display:animate:)` runs its animation
+    /// synchronously on the main thread. Frame autosave records the new
+    /// size, so a user who had shrunk the window keeps the larger one until
+    /// they resize again, which is the intended trade-off.
+    @MainActor
+    static func growWindowForIntroDialogIfNeeded(_ window: NSWindow) {
+        let current = window.contentView?.bounds.size ?? window.frame.size
+        guard WorkspacesIntroModal.scale(fitting: current) < 1 else { return }
+        guard let screen = window.screen ?? NSScreen.main else { return }
+        let visible = screen.visibleFrame
+        let size = ChatWindowManager.defaultWindowSize(fitting: screen)
+        let frame = NSRect(
+            x: visible.midX - size.width / 2,
+            y: visible.midY - size.height / 2,
+            width: size.width,
+            height: size.height
+        )
+        window.setFrame(frame, display: true)
     }
 }
 

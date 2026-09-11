@@ -127,7 +127,9 @@ struct WorkspacesIntroModal: View {
             WorkspacesIntroCanvas(stage: stage, reduceMotion: reduceMotion)
                 // Drawn at design size, shrunk as one piece when the window is small.
                 .scaleEffect(scale, anchor: .topLeading)
-                .frame(width: contentWidth, height: canvasHeight)
+                // Top-leading so the scaled drawing stays anchored to the same
+                // corner the scale effect uses; centred, it would slide up-left.
+                .frame(width: contentWidth, height: canvasHeight, alignment: .topLeading)
                 .background(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.55 : 0.7))
