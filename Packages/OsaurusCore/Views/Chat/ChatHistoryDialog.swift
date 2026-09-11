@@ -1279,13 +1279,27 @@ private struct FilterSubmenuRow: View {
 
     /// Presents after a short dwell, and only if the cursor is still on the
     /// row and no dismissal happened a moment ago.
+    ///
+    /// Taking the slot over from a sibling is sequenced: release it first,
+    /// wait for that popover to finish dismissing, then present. Flipping
+    /// one popover off and another on in the same SwiftUI transaction is
+    /// unreliable on macOS: the new one is often dropped while the old one
+    /// animates out, leaving the slot marked open with nothing on screen.
     private func scheduleOpen() {
         guard openTask == nil, Date() >= reopenBlockedUntil else { return }
         openTask = Task { @MainActor in
+            // A cancelled task was already detached by cancelOpen (and the
+            // handle may now belong to a newer task), so only a task that
+            // ran to its own exit clears the handle.
+            defer { if !Task.isCancelled { openTask = nil } }
             try? await Task.sleep(nanoseconds: 120_000_000)
-            guard !Task.isCancelled else { return }
-            openTask = nil
-            if isRowHovered, !isOpen, Date() >= reopenBlockedUntil { isOpen = true }
+            guard !Task.isCancelled, isRowHovered, !isOpen else { return }
+            if openId != nil {
+                openId = nil
+                try? await Task.sleep(nanoseconds: 180_000_000)
+                guard !Task.isCancelled, isRowHovered, openId == nil else { return }
+            }
+            if Date() >= reopenBlockedUntil { isOpen = true }
         }
     }
 
