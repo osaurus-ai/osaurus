@@ -15,6 +15,9 @@ import Foundation
 public struct DispatchRequest: Sendable {
     public let id: UUID
     public let prompt: String
+    /// Original task text for tool-choice inference, before framework delivery
+    /// instructions are appended. The model still receives `prompt` unchanged.
+    public let toolIntentText: String
     /// Who runs this: an agent hosted here, or a teammate's shared workspace
     /// agent (run on their Mac over the relay). nil = anonymous, which every
     /// non-Chat surface refuses (`Agent.rejectBuiltInForExternalSurface`).
@@ -132,10 +135,12 @@ public struct DispatchRequest: Sendable {
         delegationResponseTokenCap: Int? = nil,
         delegationContextPositionCap: Int? = nil,
         delegationAssistantTurnCap: Int? = nil,
-        delegationModel: String? = nil
+        delegationModel: String? = nil,
+        toolIntentText: String? = nil
     ) {
         self.id = id
         self.prompt = prompt
+        self.toolIntentText = toolIntentText ?? prompt
         self.target = target ?? agentId.map(AgentDispatchTarget.local)
         self.title = title
         self.parameters = parameters

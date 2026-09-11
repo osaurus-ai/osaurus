@@ -9,6 +9,33 @@ import Testing
 struct ChatToolChoicePolicyTests {
 
     @Test
+    func delegatedDeliveryInstructionsDoNotBecomeTaskToolIntent() {
+        let input = "What are two practical benefits of reusable water bottles? Answer in two short bullet points."
+        let tools = [Self.tool("share_artifact"), Self.tool("search_and_extract")]
+        #expect(Self.isAuto(ChatToolChoicePolicy.resolve(tools: tools, userText: input, attempt: 1)))
+        let dispatched = AgentDelegationDispatcher.delegatedPrompt(input: input)
+        let request = DispatchRequest(prompt: dispatched, source: .delegation, toolIntentText: input)
+        #expect(request.prompt == dispatched)
+        #expect(Self.isAuto(ChatToolChoicePolicy.resolve(tools: tools, userText: request.toolIntentText, attempt: 1)))
+    }
+
+    @Test
+    func delegatedExplicitToolIntentIsPreserved() {
+        let input = "Call share_artifact with the finished report."
+        let request = DispatchRequest(
+            prompt: AgentDelegationDispatcher.delegatedPrompt(input: input),
+            source: .delegation, toolIntentText: input)
+        #expect(Self.isRequired(ChatToolChoicePolicy.resolve(
+            tools: [Self.tool("share_artifact")], userText: request.toolIntentText, attempt: 1)))
+    }
+
+    @Test
+    func ordinaryDispatchKeepsOriginalToolIntent() {
+        let request = DispatchRequest(prompt: "Call file_read for report.md", source: .schedule)
+        #expect(request.toolIntentText == request.prompt)
+    }
+
+    @Test
     func explicitFileToolIntentRequiresToolOnFirstAttempt() {
         let choice = ChatToolChoicePolicy.resolve(
             tools: [Self.tool("file_read")],

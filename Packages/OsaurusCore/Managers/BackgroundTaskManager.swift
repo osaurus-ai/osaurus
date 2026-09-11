@@ -1195,7 +1195,8 @@ public final class BackgroundTaskManager: ObservableObject {
                         await ChatExecutionContext.$currentRunId.withValue(boundRunId) {
                             await ChatExecutionContext.$currentRunActor.withValue(boundActor) {
                                 await ChatExecutionContext.$currentBackgroundId.withValue(context.id) {
-                                    await context.start(prompt: request.prompt)
+                                    await context.start(
+                                        prompt: request.prompt, toolIntentText: request.toolIntentText)
                                 }
                             }
                         }
