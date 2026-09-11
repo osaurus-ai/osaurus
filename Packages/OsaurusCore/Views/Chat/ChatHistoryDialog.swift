@@ -752,6 +752,11 @@ private struct ChatHistoryFilterPicker: View {
     @Binding var showArchived: Bool
 
     @Environment(\.theme) private var theme
+    /// Which submenu row (by id) has its nested popover open. Owned here,
+    /// not per row, so hovering one submenu row closes the other first:
+    /// two popovers presented from the same window at once is what made
+    /// the projects list show up under the Workspaces arrow.
+    @State private var openSubmenuId: String?
 
     /// Sessions in the archived lens; counts are taken against these so
     /// they match what the list will actually show.
@@ -844,9 +849,11 @@ private struct ChatHistoryFilterPicker: View {
             $0 != .chat && $0 != .plugin && $0 != .workspace
                 && ((sourceCounts[$0] ?? 0) > 0 || sourceFilter == .source($0))
         }
-        // Plugins with chats in the lens (plus the selected one so it can be
-        // deselected), named via the manifest when the plugin is loaded.
-        let pluginIds = Set(pluginCounts.keys).union(pluginFilter.map { [$0] } ?? [])
+        // Every installed plugin (zero counts included, like projects) plus
+        // any id still stamped on a chat (uninstalled plugins keep their
+        // history) and the selected one so it can always be deselected.
+        let installedPluginIds = PluginManager.shared.plugins.map(\.plugin.id)
+        let pluginIds = Set(installedPluginIds).union(pluginCounts.keys).union(pluginFilter.map { [$0] } ?? [])
         let pluginChoices: [ChatHistorySubmenuChoice] = pluginIds.map { id in
             ChatHistorySubmenuChoice(
                 id: id,
@@ -897,6 +904,8 @@ private struct ChatHistoryFilterPicker: View {
 
                     if showPlugins {
                         FilterSubmenuRow(
+                            id: "plugins",
+                            openId: $openSubmenuId,
                             icon: SessionSource.plugin.iconName,
                             title: Text("Plugins", bundle: .module),
                             choices: pluginChoices,
@@ -911,6 +920,8 @@ private struct ChatHistoryFilterPicker: View {
 
                     if showProjects {
                         FilterSubmenuRow(
+                            id: "projects",
+                            openId: $openSubmenuId,
                             icon: "folder.fill",
                             title: Text("Projects", bundle: .module),
                             choices: projectChoices,
@@ -926,6 +937,8 @@ private struct ChatHistoryFilterPicker: View {
 
                     if showWorkspaces {
                         FilterSubmenuRow(
+                            id: "workspaces",
+                            openId: $openSubmenuId,
                             icon: "rectangle.3.group.fill",
                             title: Text("Workspaces", bundle: .module),
                             choices: workspaceChoices,
@@ -1119,6 +1132,10 @@ private struct FilterPickerRow: View {
 /// cursor re-reports hover the instant the popover window goes away and
 /// would otherwise present it again.
 private struct FilterSubmenuRow: View {
+    /// This row's key in `openId`.
+    let id: String
+    /// The panel-wide "which submenu is open" slot; at most one row owns it.
+    @Binding var openId: String?
     let icon: String
     let title: Text
     let choices: [ChatHistorySubmenuChoice]
@@ -1127,13 +1144,29 @@ private struct FilterSubmenuRow: View {
     let onSelect: (String?) -> Void
 
     @Environment(\.theme) private var theme
-    @State private var isOpen = false
     @State private var isRowHovered = false
     @State private var isSubmenuHovered = false
     @State private var openTask: Task<Void, Never>?
     @State private var closeTask: Task<Void, Never>?
     /// Hover-driven opens are ignored until this instant (see above).
     @State private var reopenBlockedUntil: Date = .distantPast
+
+    private var isOpen: Bool {
+        get { openId == id }
+        nonmutating set {
+            if newValue {
+                openId = id
+            } else if openId == id {
+                openId = nil
+            }
+        }
+    }
+
+    /// Binding for the popover: closing from the popover side (click
+    /// outside, Esc) must only release the slot if this row still owns it.
+    private var isOpenBinding: Binding<Bool> {
+        Binding(get: { isOpen }, set: { isOpen = $0 })
+    }
 
     private var selectedChoice: ChatHistorySubmenuChoice? {
         choices.first { $0.id == selectedId }
@@ -1173,7 +1206,7 @@ private struct FilterSubmenuRow: View {
                 isOpen.toggle()
             }
         )
-        .popover(isPresented: $isOpen, arrowEdge: .trailing) {
+        .popover(isPresented: isOpenBinding, arrowEdge: .trailing) {
             submenu
                 .onHover { hovering in
                     isSubmenuHovered = hovering
