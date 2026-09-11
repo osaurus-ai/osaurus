@@ -1111,10 +1111,12 @@ private struct FilterPickerRow: View {
 /// toggles the submenu for users who prefer not to hover.
 ///
 /// Two guards stop the "presents twice" flicker: opening waits for a short
-/// hover dwell (a cursor passing through never presents), and any
-/// dismissal starts a reopen cooldown, because the row still under the
-/// cursor re-reports hover the instant the popover window goes away and
-/// would otherwise present it again.
+/// hover dwell (a cursor passing through never presents), and a dismissal
+/// that happens while the cursor is still on the row starts a reopen
+/// cooldown, because the row re-reports hover the instant the popover
+/// window goes away and would otherwise present it again. Dismissals with
+/// the cursor elsewhere carry no cooldown, so moving between the submenu
+/// rows always opens the one under the cursor.
 private struct FilterSubmenuRow: View {
     /// This row's key in `openId`.
     let id: String
@@ -1202,12 +1204,18 @@ private struct FilterSubmenuRow: View {
         .onChange(of: isOpen) { _, open in
             guard !open else { return }
             // Covers every dismissal path (grace timer, click outside,
-            // choice picked): settle hover bookkeeping and block the
-            // immediate hover-driven reopen.
+            // choice picked, another submenu taking the slot): settle the
+            // hover bookkeeping.
             cancelOpen()
             cancelClose()
             isSubmenuHovered = false
-            reopenBlockedUntil = Date().addingTimeInterval(0.4)
+            // The reopen loop only happens when the popover goes away while
+            // the cursor is still on this row (it re-reports hover at once).
+            // A dismissal with the cursor elsewhere, such as sliding onto a
+            // sibling submenu row, must not block coming straight back.
+            if isRowHovered {
+                reopenBlockedUntil = Date().addingTimeInterval(0.3)
+            }
         }
     }
 
