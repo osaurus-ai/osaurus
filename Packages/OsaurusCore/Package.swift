@@ -300,7 +300,7 @@ let package = Package(
         // f16 seed into bf16 streams; dequant math keeps exact f16 metadata).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "2518f0dae96297c1f55306defd961fb83cd48b18"
+            revision: "efd45805a00841a21b5731241d23566714825882"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
