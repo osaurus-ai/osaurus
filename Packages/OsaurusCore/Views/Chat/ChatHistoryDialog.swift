@@ -735,11 +735,12 @@ private struct ChatHistoryAgentPicker: View {
 /// rows (API, Schedule, Watcher, ...) each select or clear the source lens.
 /// "Chat" is the default and has no row; "Plugin" and "Workspace" have none
 /// either, since the Plugins and Workspaces submenus cover every chat
-/// tagged with those origins, per plugin / per workspace. Projects and Workspaces are single
-/// rows that open a nested popover on hover listing the concrete choices.
-/// Archived is a toggle at the bottom. Rows carry chat counts; empty
-/// buckets are hidden so the panel never offers dead choices. The panel
-/// stays open across picks so lenses can be combined; click outside to close.
+/// tagged with those origins, per plugin / per workspace. Projects,
+/// Workspaces and Plugins are always-present rows that open a nested
+/// popover on hover listing the concrete choices (all projects, joined
+/// workspaces, installed plugins). Archived is a toggle at the bottom.
+/// Rows carry chat counts. The panel stays open across picks so lenses can
+/// be combined; click outside to close.
 private struct ChatHistoryFilterPicker: View {
     /// Sessions already narrowed by the agent lens (both archived states).
     let sessions: [ChatSessionData]
@@ -888,19 +889,6 @@ private struct ChatHistoryFilterPicker: View {
                         )
                     }
 
-                    FilterSubmenuRow(
-                        id: "plugins",
-                        openId: $openSubmenuId,
-                        icon: SessionSource.plugin.iconName,
-                        title: Text("Plugins", bundle: .module),
-                        choices: pluginChoices,
-                        selectedId: pluginFilter,
-                        onSelect: { id in
-                            withAnimation(theme.animationQuick()) {
-                                pluginFilter = pluginFilter == id ? nil : id
-                            }
-                        }
-                    )
 
                     FilterSubmenuRow(
                         id: "projects",
@@ -908,6 +896,7 @@ private struct ChatHistoryFilterPicker: View {
                         icon: "folder.fill",
                         title: Text("Projects", bundle: .module),
                         choices: projectChoices,
+                        emptyText: Text("No projects yet", bundle: .module),
                         selectedId: projectFilter?.uuidString,
                         onSelect: { id in
                             withAnimation(theme.animationQuick()) {
@@ -923,10 +912,25 @@ private struct ChatHistoryFilterPicker: View {
                         icon: "rectangle.3.group.fill",
                         title: Text("Workspaces", bundle: .module),
                         choices: workspaceChoices,
+                        emptyText: Text("No workspaces joined", bundle: .module),
                         selectedId: workspaceFilter,
                         onSelect: { id in
                             withAnimation(theme.animationQuick()) {
                                 workspaceFilter = workspaceFilter == id ? nil : id
+                            }
+                        }
+                    )
+                    FilterSubmenuRow(
+                        id: "plugins",
+                        openId: $openSubmenuId,
+                        icon: SessionSource.plugin.iconName,
+                        title: Text("Plugins", bundle: .module),
+                        choices: pluginChoices,
+                        emptyText: Text("No plugins installed", bundle: .module),
+                        selectedId: pluginFilter,
+                        onSelect: { id in
+                            withAnimation(theme.animationQuick()) {
+                                pluginFilter = pluginFilter == id ? nil : id
                             }
                         }
                     )
@@ -1119,6 +1123,8 @@ private struct FilterSubmenuRow: View {
     let icon: String
     let title: Text
     let choices: [ChatHistorySubmenuChoice]
+    /// Shown in the submenu when there is nothing to choose from.
+    let emptyText: Text
     let selectedId: String?
     /// nil clears the lens; otherwise the picked choice id.
     let onSelect: (String?) -> Void
@@ -1208,6 +1214,13 @@ private struct FilterSubmenuRow: View {
     private var submenu: some View {
         ScrollView {
             LazyVStack(spacing: 2) {
+                if choices.isEmpty {
+                    emptyText
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(maxWidth: .infinity, minHeight: Self.rowHeight)
+                        .padding(.horizontal, 12)
+                }
                 ForEach(choices) { choice in
                     FilterPickerRow(
                         icon: icon,
