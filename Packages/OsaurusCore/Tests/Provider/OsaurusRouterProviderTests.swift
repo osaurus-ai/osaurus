@@ -90,6 +90,31 @@ struct OsaurusRouterProviderTests {
             model.pickerDescription
                 == "venice · 10,000 credits/M in · 30,000 credits/M out · 131K ctx"
         )
+        // The picker row's price fragment abbreviates from the numeric
+        // fields in the shared "in / out per M" shape.
+        #expect(model.pickerPriceDisplay == "10K / 30K credits per M")
+    }
+
+    /// Row price fragment: abbreviated credits when the router ships
+    /// credits pricing, "Free" for zero, verbatim `$` strings for
+    /// deployments without the credits siblings.
+    @Test func routerModelPickerPriceDisplay_compactsCreditsAndFallsBack() throws {
+        let data = Data(
+            """
+            {"data":[
+              {"id":"a","provider":"venice","context_length":1000000,"input_micro_per_mtok":"4312500","output_micro_per_mtok":"21562500","input_display":"$4.31/M","output_display":"$21.56/M","input_credits_display":"43125 credits/M","output_credits_display":"215625 credits/M","stale":false},
+              {"id":"b","provider":"venice","context_length":32000,"input_micro_per_mtok":"0","output_micro_per_mtok":"0","input_display":"$0.00/M","output_display":"$0.00/M","input_credits_display":"0 credits/M","output_credits_display":"0 credits/M","stale":false},
+              {"id":"c","provider":"venice","context_length":32000,"input_micro_per_mtok":"1000000","output_micro_per_mtok":"3000000","input_display":"$1.00/M","output_display":"$3.00/M","stale":false},
+              {"id":"d","provider":"venice","context_length":32000,"input_micro_per_mtok":"50","output_micro_per_mtok":"250000000","input_display":"","output_display":"","input_credits_display":"0.5 credits/M","output_credits_display":"2,500,000 credits/M","stale":false}
+            ]}
+            """.utf8
+        )
+        let discovery = try RemoteProviderService.decodeOsaurusRouterModelsDiscovery(data: data)
+        #expect(try #require(discovery.catalog["a"]).pickerPriceDisplay == "43.1K / 215.6K credits per M")
+        #expect(try #require(discovery.catalog["b"]).pickerPriceDisplay == "Free")
+        #expect(try #require(discovery.catalog["c"]).pickerPriceDisplay == "$1.00/M in · $3.00/M out")
+        #expect(try #require(discovery.catalog["d"]).pickerPriceDisplay == "<1 / 2.5M credits per M")
+        #expect(OsaurusRouterModel.compactCredits(microUSD: 123_400) == "1,234")
     }
 
     @Test func routerModelContextLength_formatsCompactly() {

@@ -16,6 +16,11 @@ struct ModelPickerView: View {
     @Binding var selectedModel: String?
     let agentId: UUID?
     var optionsControl: ModelPickerOptionsControl? = nil
+    /// Whether a model exposes inline options (Thinking, Effort, MTP…).
+    /// Picking such a model keeps the popover open with its options row
+    /// expanded so the user can set them right away; models without
+    /// options select-and-close. Nil means "no model has options".
+    var modelHasOptions: ((String) -> Bool)? = nil
     /// Group to open on instead of the one holding the selected model —
     /// used to land on a provider the user just added from the picker.
     var initialGroupKey: String? = nil
@@ -184,7 +189,7 @@ struct ModelPickerView: View {
             modelId: model.id,
             sourceKey: model.source.uniqueKey,
             displayName: model.displayName,
-            description: media.map(Self.mediaDetails) ?? structured,
+            description: media.map(Self.mediaSummary) ?? structured,
             parameterCount: model.parameterCount,
             quantization: model.quantization,
             isVLM: model.isVLM,
@@ -196,10 +201,6 @@ struct ModelPickerView: View {
             // second line is taken by structured metadata.
             tooltip: (structured != model.description) ? model.description : nil,
             mediaKind: media?.kind,
-            mediaPrivacy: media?.privacy.map(Self.mediaPrivacyLabel),
-            mediaPrice: media?.pricing?.minimumUSD.map {
-                "From \(OsaurusRouter.formatUSDAsCredits($0))"
-            },
             isMLXFormat: model.isMLXFormat,
             providerLabel: providerLabel,
             isFavorite: favoritesStore.isFavorite(model.favoriteKey)
@@ -213,11 +214,30 @@ struct ModelPickerView: View {
             .capitalized
     }
 
-    private static func mediaDetails(_ model: MediaModelInfo) -> String? {
+    /// One-line media row summary in the same slot the text models use for
+    /// "ctx · price": starting price, privacy mode, then the generation
+    /// constraints. Aspect ratios and durations are self-describing, so
+    /// they carry no label; the ambiguous ones (resolution, quality, steps)
+    /// keep theirs.
+    private static func mediaSummary(_ model: MediaModelInfo) -> String? {
+        var details: [String] = []
+        if let minimum = model.pricing?.minimumUSD {
+            details.append("From \(OsaurusRouter.formatUSDAsCredits(minimum))")
+        }
+        if let privacy = model.privacy.map(mediaPrivacyLabel), !privacy.isEmpty {
+            details.append(privacy)
+        }
+        if let constraints = mediaConstraintsSummary(model) {
+            details.append(constraints)
+        }
+        return details.isEmpty ? nil : details.joined(separator: " · ")
+    }
+
+    private static func mediaConstraintsSummary(_ model: MediaModelInfo) -> String? {
         let constraints = model.constraints
         var details: [String] = []
         if !constraints.aspectRatios.isEmpty {
-            details.append("AR: \(constraints.aspectRatios.joined(separator: ", "))")
+            details.append(constraints.aspectRatios.joined(separator: ", "))
         }
         if !constraints.resolutions.isEmpty {
             details.append("Res: \(constraints.resolutions.joined(separator: ", "))")
@@ -226,7 +246,7 @@ struct ModelPickerView: View {
             details.append("Quality: \(constraints.qualities.joined(separator: ", "))")
         }
         if !constraints.durations.isEmpty {
-            details.append("Duration: \(constraints.durations.joined(separator: ", "))")
+            details.append(constraints.durations.joined(separator: ", "))
         }
         if let defaultSteps = constraints.defaultSteps, let maxSteps = constraints.maxSteps {
             details.append("Steps: \(defaultSteps)–\(maxSteps)")
@@ -1060,7 +1080,10 @@ struct ModelPickerView: View {
                     Text("Sign in required", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.secondaryText)
-                    headerPillButton(icon: "person.crop.circle.badge.checkmark", title: Text("Sign in", bundle: .module)) {
+                    headerPillButton(
+                        icon: "person.crop.circle.badge.checkmark",
+                        title: Text("Sign in", bundle: .module)
+                    ) {
                         openManagement(tab: .providers)
                     }
                     .padding(.top, 4)
@@ -1125,10 +1148,24 @@ struct ModelPickerView: View {
             isFavoritesGroup: isFavoritesGroup,
             optionsContent: optionsContent,
             optionsLayoutKey: optionsControl?.layoutKey ?? "",
-            optionsEstimatedHeight: optionsControl?.estimatedHeight(availableWidth: Self.listPaneWidth - 36) ?? 0,
+            optionsEstimatedHeight: optionsControl?.estimatedHeight(
+                availableWidth: Self.listPaneWidth - 4 - ModelPickerOptionsControl.leadingInset
+                    - ModelPickerOptionsControl.trailingInset
+            ) ?? 0,
             onSelectModel: { modelId in
+                // Re-picking the current model (click or ↵) confirms and
+                // closes — the way out after adjusting its options.
+                if modelId == selectedModel {
+                    onDismiss()
+                    return
+                }
                 selectedModel = modelId
-                onDismiss()
+                // Models with options stay open: the options row expands
+                // under the new selection so Effort/Thinking can be set in
+                // the same visit. Esc, click-outside, or re-picking closes.
+                if modelHasOptions?(modelId) != true {
+                    onDismiss()
+                }
             },
             // nil while searching so left/right arrows stay with the
             // search field's text cursor instead of switching groups
@@ -1180,12 +1217,19 @@ private struct ModelPickerHostWindowWidthReader: NSViewRepresentable {
             guard host !== observedWindow else { return }
             if let observedWindow {
                 NotificationCenter.default.removeObserver(
-                    self, name: NSWindow.didResizeNotification, object: observedWindow)
+                    self,
+                    name: NSWindow.didResizeNotification,
+                    object: observedWindow
+                )
             }
             observedWindow = host
             if let host {
                 NotificationCenter.default.addObserver(
-                    self, selector: #selector(hostDidResize), name: NSWindow.didResizeNotification, object: host)
+                    self,
+                    selector: #selector(hostDidResize),
+                    name: NSWindow.didResizeNotification,
+                    object: host
+                )
             }
         }
 

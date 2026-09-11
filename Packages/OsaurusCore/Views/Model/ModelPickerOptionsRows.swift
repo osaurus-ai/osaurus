@@ -77,21 +77,24 @@ struct ModelPickerOptionsControl {
         return false
     }
 
-    /// Height of the "Model Options" caption rendered above the rows.
-    static let headerHeight: CGFloat = 24
+    /// Leading inset of the option rows: lines up with the model name column
+    /// of the row above (checkmark gutter), so the expansion reads as that
+    /// model's own settings rather than a separate panel.
+    static let leadingInset: CGFloat = 30
+    static let trailingInset: CGFloat = 12
 
-    /// Estimated rendered height of the inline options row (caption + option
-    /// rows) at `availableWidth`. Used as the fallback when live measurement
-    /// of the hosted SwiftUI content is unavailable.
+    /// Estimated rendered height of the inline options row at
+    /// `availableWidth`. Used as the fallback when live measurement of the
+    /// hosted SwiftUI content is unavailable.
     func estimatedHeight(availableWidth: CGFloat) -> CGFloat {
-        Self.headerHeight + rowsEstimatedHeight(availableWidth: availableWidth) + 8
+        rowsEstimatedHeight(availableWidth: availableWidth) + 6
     }
 
     /// Estimated rendered height of the option rows alone. Segmented rows
     /// account for chip wrapping in the given content width.
     func rowsEstimatedHeight(availableWidth: CGFloat) -> CGFloat {
-        // Thinking row: icon container + title/description stack + padding.
-        let thinkingHeight: CGFloat = thinking != nil ? 50 : 0
+        // Thinking row: single header line with the switch + padding.
+        let thinkingHeight: CGFloat = thinking != nil ? 36 : 0
         return thinkingHeight
             + options.reduce(CGFloat(0)) { total, option in
                 switch option.kind {
@@ -112,9 +115,9 @@ struct ModelPickerOptionsControl {
                     // the catalog publishes level copy)
                     let descriptionHeight: CGFloat =
                         (option.id == "reasoningEffort" && capabilities != nil) ? 16 : 0
-                    return total + 28 + lines * 31 + 20 + descriptionHeight
+                    return total + 24 + lines * 30 + 18 + descriptionHeight
                 case .toggle:
-                    return total + 44
+                    return total + 36
                 }
             }
     }
@@ -136,15 +139,17 @@ struct ModelPickerOptionsControl {
     }
 }
 
-/// The inline "Model Options" content: a small caption, then the Thinking
-/// row (when present) and every other option row, separated by hairlines.
+/// The inline options content under the selected model: a hairline, then
+/// the Thinking row (when present) and every other option row, each in the
+/// same header idiom (icon · label · Default pill … reset · control) and
+/// indented to the model-name column of the row above.
 struct ModelPickerOptionsRows: View {
     let control: ModelPickerOptionsControl
     @Environment(\.theme) private var theme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            header
+            divider
             if let thinking = control.thinking {
                 thinkingOptionRow(thinking)
                 if !control.options.isEmpty {
@@ -164,66 +169,34 @@ struct ModelPickerOptionsRows: View {
             }
         }
         .padding(.bottom, 4)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text("Model Options", bundle: .module))
     }
 
     private var divider: some View {
         Divider()
             .background(theme.primaryBorder.opacity(0.15))
-            .padding(.horizontal, 16)
+            .padding(.leading, ModelPickerOptionsControl.leadingInset)
+            .padding(.trailing, ModelPickerOptionsControl.trailingInset)
     }
 
-    /// Caption separating the selected model row above from its option
-    /// rows, so the expansion reads as one coherent group.
-    private var header: some View {
-        Text("Model Options", bundle: .module)
-            .font(.system(size: 10, weight: .semibold))
-            .kerning(0.8)
-            .textCase(.uppercase)
-            .foregroundColor(theme.tertiaryText)
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 2)
-            .frame(height: ModelPickerOptionsControl.headerHeight, alignment: .bottomLeading)
-            .accessibilityAddTraits(.isHeader)
-    }
-
-    /// Dedicated Thinking row, in the settings-row idiom: a tinted icon
-    /// container that carries the on/off state at a glance, the title +
-    /// one-line explanation stacked beside it, and the switch on the
-    /// trailing edge. The model's template default is surfaced via the
-    /// Default pill; an explicit override swaps it for a compact reset
-    /// affordance.
+    /// Dedicated Thinking row in the shared header idiom: brain glyph
+    /// (accent while on), title, the Default pill while the model's
+    /// template default applies, and the switch on the trailing edge; an
+    /// explicit override swaps the pill for a compact reset affordance.
     @ViewBuilder
     private func thinkingOptionRow(_ thinking: ModelPickerThinkingControl) -> some View {
-        HStack(alignment: .center, spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(
-                        thinking.isEnabled
-                            ? theme.accentColor.opacity(theme.isDark ? 0.18 : 0.12)
-                            : theme.secondaryBackground
-                    )
-                Image(systemName: "brain")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(thinking.isEnabled ? theme.accentColor : theme.tertiaryText)
-            }
-            .frame(width: 26, height: 26)
+        HStack(alignment: .center, spacing: 6) {
+            Image(systemName: "brain")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(thinking.isEnabled ? theme.accentColor : theme.tertiaryText)
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text("Thinking", bundle: .module)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+            Text("Thinking", bundle: .module)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.primaryText)
 
-                    if !thinking.isExplicit {
-                        defaultPill
-                    }
-                }
-
-                Text("Let the model reason before it answers", bundle: .module)
-                    .font(.system(size: 10.5))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(1)
+            if !thinking.isExplicit {
+                defaultPill
             }
 
             Spacer(minLength: 8)
@@ -260,8 +233,9 @@ struct ModelPickerOptionsRows: View {
                 .labelsHidden()
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.leading, ModelPickerOptionsControl.leadingInset)
+        .padding(.trailing, ModelPickerOptionsControl.trailingInset)
+        .padding(.vertical, 9)
         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: thinking.isEnabled)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text("Thinking", bundle: .module))
@@ -339,8 +313,9 @@ struct ModelPickerOptionsRows: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.leading, ModelPickerOptionsControl.leadingInset)
+        .padding(.trailing, ModelPickerOptionsControl.trailingInset)
+        .padding(.vertical, 9)
     }
 
     /// Toggle option row in the same visual family as the segmented rows.
@@ -381,8 +356,9 @@ struct ModelPickerOptionsRows: View {
             .controlSize(.mini)
             .labelsHidden()
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.leading, ModelPickerOptionsControl.leadingInset)
+        .padding(.trailing, ModelPickerOptionsControl.trailingInset)
+        .padding(.vertical, 9)
     }
 
     /// Shared header line for option rows: icon, label, "Default" pill while

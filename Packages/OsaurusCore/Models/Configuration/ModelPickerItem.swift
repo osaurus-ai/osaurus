@@ -489,7 +489,8 @@ extension ModelPickerItem {
 
     static func officialOpenAIContextWindow(forModelId modelId: String) -> Int? {
         let bare = (modelId.split(separator: "/").last.map(String.init) ?? modelId).lowercased()
-        return officialOpenAIContextWindows
+        return
+            officialOpenAIContextWindows
             .filter { bare.hasPrefix($0.prefix) }
             .max { $0.prefix.count < $1.prefix.count }?
             .tokens
@@ -557,7 +558,8 @@ extension OsaurusRouterModel {
         }
 
         let inputCredits = inputCreditsDisplay?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let input = inputCredits.isEmpty
+        let input =
+            inputCredits.isEmpty
             ? inputDisplay.trimmingCharacters(in: .whitespacesAndNewlines)
             : inputCredits
         if !input.isEmpty {
@@ -565,7 +567,8 @@ extension OsaurusRouterModel {
         }
 
         let outputCredits = outputCreditsDisplay?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let output = outputCredits.isEmpty
+        let output =
+            outputCredits.isEmpty
             ? outputDisplay.trimmingCharacters(in: .whitespacesAndNewlines)
             : outputCredits
         if !output.isEmpty {
@@ -579,18 +582,65 @@ extension OsaurusRouterModel {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    /// Just the price portion of `pickerDescription` ("28.8 credits/M in ·
-    /// 100 credits/M out"), for rows that render context and upstream
-    /// separately. Nil when the router shipped no price strings.
+    /// Compact price fragment for the picker row's metadata line, in the
+    /// same "in / out per M" shape as the USD formatter: "43.1K / 216K
+    /// credits per M", "Free". Built from the numeric micro-USD fields so
+    /// the credits figures can be abbreviated; when either field is
+    /// unparseable it falls back to the router's verbatim display strings
+    /// ("28.8 credits/M in · 100 credits/M out"). Nil when the router
+    /// shipped no price at all.
     var pickerPriceDisplay: String? {
+        if let input = Int64(inputMicroPerMTok.trimmingCharacters(in: .whitespacesAndNewlines)),
+            let output = Int64(outputMicroPerMTok.trimmingCharacters(in: .whitespacesAndNewlines)),
+            input >= 0, output >= 0,
+            inputCreditsDisplay?.isEmpty == false || outputCreditsDisplay?.isEmpty == false
+        {
+            if input == 0 && output == 0 { return L("Free") }
+            let inCredits = Self.compactCredits(microUSD: input)
+            let outCredits = Self.compactCredits(microUSD: output)
+            return "\(inCredits) / \(outCredits) credits per M"
+        }
+        return verbatimPriceDisplay
+    }
+
+    /// Abbreviated credits figure for a micro-USD amount: full grouped
+    /// number below 10,000 credits, then "43.1K" / "1.25M". Sub-credit
+    /// amounts read "<1".
+    static func compactCredits(microUSD micro: Int64) -> String {
+        let credits = micro / OsaurusRouter.microPerCredit
+        if credits <= 0 { return micro > 0 ? "<1" : "0" }
+        if credits < 10_000 {
+            // Fixed "1,234" grouping, matching the router's own credits strings.
+            let digits = Array(String(credits))
+            var grouped: [Character] = []
+            for (offset, char) in digits.reversed().enumerated() {
+                if offset != 0, offset % 3 == 0 { grouped.append(",") }
+                grouped.append(char)
+            }
+            return String(grouped.reversed())
+        }
+        let useMillions = credits >= 999_950
+        let scaled = useMillions ? Double(credits) / 1_000_000 : Double(credits) / 1_000
+        var figure = String(format: useMillions ? "%.2f" : "%.1f", scaled)
+        while figure.contains("."), figure.hasSuffix("0") { figure.removeLast() }
+        if figure.hasSuffix(".") { figure.removeLast() }
+        return "\(figure)\(useMillions ? "M" : "K")"
+    }
+
+    /// The router's ready-made display strings joined verbatim ("28.8
+    /// credits/M in · 100 credits/M out"), preferring the credits siblings
+    /// over the legacy `$` strings.
+    private var verbatimPriceDisplay: String? {
         var parts: [String] = []
         let inputCredits = inputCreditsDisplay?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let input = inputCredits.isEmpty
+        let input =
+            inputCredits.isEmpty
             ? inputDisplay.trimmingCharacters(in: .whitespacesAndNewlines)
             : inputCredits
         if !input.isEmpty { parts.append("\(input) in") }
         let outputCredits = outputCreditsDisplay?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let output = outputCredits.isEmpty
+        let output =
+            outputCredits.isEmpty
             ? outputDisplay.trimmingCharacters(in: .whitespacesAndNewlines)
             : outputCredits
         if !output.isEmpty { parts.append("\(output) out") }

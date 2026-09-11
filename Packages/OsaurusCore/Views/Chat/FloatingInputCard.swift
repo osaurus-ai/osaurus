@@ -3237,6 +3237,7 @@ extension FloatingInputCard {
                 selectedModel: $selectedModel,
                 agentId: agentId,
                 optionsControl: modelPickerOptionsControl,
+                modelHasOptions: modelPickerHasOptions,
                 initialGroupKey: pickerReopenGroupKey,
                 onAddProvider: beginAddProviderFromPicker,
                 onDismiss: dismissModelPicker
@@ -3359,6 +3360,25 @@ extension FloatingInputCard {
                 }
             }
         )
+    }
+
+    /// Whether picking `model` would surface an inline options row — the
+    /// same sources `modelPickerOptionsControl` renders from, resolved for
+    /// an arbitrary model rather than the current selection. The picker
+    /// uses it to decide between "select and stay open on the options" and
+    /// "select and close".
+    private func modelPickerHasOptions(_ model: String) -> Bool {
+        let thinkingId = ModelProfileRegistry.profile(for: model)?.thinkingOption?.id
+        if ModelProfileRegistry.options(for: model).contains(where: { $0.id != thinkingId }) {
+            return true
+        }
+        if let capabilities = cachedPickerItems.first(where: { $0.id == model })?.reasoningCapabilities,
+            !capabilities.isEmpty
+        {
+            return true
+        }
+        if nativeMTPOption(for: model) != nil { return true }
+        return modelPickerThinkingControl(for: model) != nil
     }
 
     // MARK: - Thinking Control (model picker)

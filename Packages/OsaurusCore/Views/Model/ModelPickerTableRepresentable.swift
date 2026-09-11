@@ -66,8 +66,6 @@ struct ModelPickerRow: Equatable, Identifiable {
     /// badge tooltip explaining the source of the recommendation.
     let recommendedReason: String?
     let mediaKind: MediaGenerationKind?
-    let mediaPrivacy: String?
-    let mediaPrice: String?
     /// False when the bundle is on disk but not in MLX format — the row is
     /// dimmed and made non-selectable so the user can't pick a model that
     /// would fail at load. Defaults to true (every selectable model).
@@ -92,8 +90,6 @@ struct ModelPickerRow: Equatable, Identifiable {
         recommendedReason: String? = nil,
         tooltip: String? = nil,
         mediaKind: MediaGenerationKind? = nil,
-        mediaPrivacy: String? = nil,
-        mediaPrice: String? = nil,
         isMLXFormat: Bool = true,
         providerLabel: String? = nil,
         isFavorite: Bool = false
@@ -112,8 +108,6 @@ struct ModelPickerRow: Equatable, Identifiable {
         self.isDeprecated = isDeprecated
         self.recommendedReason = recommendedReason
         self.mediaKind = mediaKind
-        self.mediaPrivacy = mediaPrivacy
-        self.mediaPrice = mediaPrice
         self.isMLXFormat = isMLXFormat
         self.providerLabel = providerLabel
         self.isFavorite = isFavorite
@@ -134,8 +128,6 @@ struct ModelPickerRow: Equatable, Identifiable {
         self.isDeprecated = false
         self.recommendedReason = nil
         self.mediaKind = nil
-        self.mediaPrivacy = nil
-        self.mediaPrice = nil
         self.isMLXFormat = true
         self.providerLabel = nil
         self.isFavorite = false
@@ -429,7 +421,34 @@ private final class PickerBadgeView: NSView {
         layer?.borderColor = borderNSColor.cgColor
     }
 
+    /// Icon-only, unfilled variant: a single tinted symbol in a fixed
+    /// 16×16 slot with no background, used for per-row capability marks.
+    func configureGlyph(image: NSImage?, tintColor: NSColor) {
+        let needsUpdate = cachedText != "" || cachedIsCapsule != false
+        if needsUpdate {
+            label.stringValue = ""
+            cachedText = ""
+            cachedFont = nil
+            cachedIsCapsule = false
+        }
+        iconView.image = image
+        iconView.contentTintColor = tintColor
+        iconView.isHidden = image == nil
+        bgNSColor = .clear
+        borderNSColor = .clear
+        isCapsule = false
+        hPad = 2
+        vPad = 2
+        frame.size = CGSize(width: 16, height: 16)
+        layer?.backgroundColor = nil
+        layer?.borderWidth = 0
+    }
+
     func sizeToFitContent() {
+        if text.isEmpty, !iconView.isHidden, bgNSColor == .clear {
+            frame.size = CGSize(width: 16, height: 16)
+            return
+        }
         label.sizeToFit()
         var w = label.frame.width + hPad * 2
         if !iconView.isHidden { w += text.isEmpty ? 6 : 13 }
@@ -440,6 +459,11 @@ private final class PickerBadgeView: NSView {
 
     override func layout() {
         super.layout()
+        if text.isEmpty, !iconView.isHidden, bgNSColor == .clear {
+            iconView.frame = bounds.insetBy(dx: 2, dy: 2)
+            label.frame = .zero
+            return
+        }
         var x = hPad
         let contentH = bounds.height - vPad * 2
 
@@ -472,8 +496,6 @@ private struct RowRenderResources {
     let imageMediaImage: NSImage?
     let textToVideoImage: NSImage?
     let imageToVideoImage: NSImage?
-    let privacyImage: NSImage?
-    let priceImage: NSImage?
     let starImage: NSImage?
     let starFillImage: NSImage?
     let regularFont: NSFont
@@ -499,8 +521,6 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
     private let descLabel = makeLabel()
     private let paramBadge = PickerBadgeView()
     private let quantBadge = PickerBadgeView()
-    private let privacyBadge = PickerBadgeView()
-    private let priceBadge = PickerBadgeView()
     private let checkmarkView = NSImageView()
     private let accessoryButton = NSButton()
 
@@ -519,7 +539,6 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
     // values to skip relayout when nothing structural changed
     private var hasDesc = false
     private var hasBadges = false
-    private var hasMedia = false
     private var cachedRow: ModelPickerRow?
 
     // visual state from the last configure, compared to skip redundant
@@ -567,7 +586,7 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
     private var allBadges: [PickerBadgeView] {
         [
             recommendedBadge, deprecatedBadge, vlmBadge, toolsBadge, reasoningBadge, mediaBadge,
-            providerBadge, paramBadge, quantBadge, privacyBadge, priceBadge,
+            providerBadge, paramBadge, quantBadge,
         ]
     }
 
@@ -619,18 +638,12 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         self.onAccessory = onAccessory
 
         let newHasDesc = row.description?.isEmpty == false
-        let newHasBadges =
-            row.parameterCount != nil
-            || row.quantization != nil
-            || row.mediaPrivacy?.isEmpty == false
-            || row.mediaPrice?.isEmpty == false
-        let newHasMedia = row.mediaKind != nil
+        let newHasBadges = row.parameterCount != nil || row.quantization != nil
 
         // only trigger full layout if structural content changed
         let structureChanged = isNewRow || cachedRow != row
         hasDesc = newHasDesc
         hasBadges = newHasBadges
-        hasMedia = newHasMedia
         cachedRow = row
 
         if structureChanged || cachedIsSelected != isSelected {
@@ -673,18 +686,14 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
             deprecatedBadge.isHidden = true
         }
 
-        // Line 1, trailing: capability badges (only positive provider claims).
+        // Line 1, trailing: capability glyphs (only positive provider
+        // claims). Icon-only and unfilled — a labelled capsule per
+        // capability on every row drowned the names in a 277-model group.
+        // The tooltip carries the word; the header filters spell them out.
         if row.isVLM {
             if structureChanged {
-                vlmBadge.configure(
-                    text: L("Vision"),
-                    iconImage: resources.eyeImage,
-                    font: resources.badgeFontSmall,
-                    textColor: colors.accentColor,
-                    bgColor: colors.accentAlpha012,
-                    borderColor: colors.accentAlpha015,
-                    isCapsule: true
-                )
+                vlmBadge.configureGlyph(image: resources.eyeImage, tintColor: colors.tertiaryText)
+                vlmBadge.toolTip = L("Vision — accepts images")
             }
             vlmBadge.isHidden = false
         } else {
@@ -693,15 +702,8 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
 
         if row.supportsTools == true {
             if structureChanged {
-                toolsBadge.configure(
-                    text: L("Tools"),
-                    iconImage: resources.toolsImage,
-                    font: resources.badgeFontSmall,
-                    textColor: colors.secondaryTextAlpha09,
-                    bgColor: colors.secondaryTextAlpha012,
-                    isCapsule: true
-                )
-                toolsBadge.toolTip = L("Supports tool calling")
+                toolsBadge.configureGlyph(image: resources.toolsImage, tintColor: colors.tertiaryText)
+                toolsBadge.toolTip = L("Tools — supports tool calling")
             }
             toolsBadge.isHidden = false
         } else {
@@ -710,15 +712,8 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
 
         if row.supportsReasoning == true {
             if structureChanged {
-                reasoningBadge.configure(
-                    text: L("Reasoning"),
-                    iconImage: resources.reasoningImage,
-                    font: resources.badgeFontSmall,
-                    textColor: colors.secondaryTextAlpha09,
-                    bgColor: colors.secondaryTextAlpha012,
-                    isCapsule: true
-                )
-                reasoningBadge.toolTip = L("Exposes a reasoning channel")
+                reasoningBadge.configureGlyph(image: resources.reasoningImage, tintColor: colors.tertiaryText)
+                reasoningBadge.toolTip = L("Reasoning — exposes a reasoning channel")
             }
             reasoningBadge.isHidden = false
         } else {
@@ -740,13 +735,14 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
                 icon = resources.imageToVideoImage
             }
             if structureChanged {
+                // Muted capsule: the kind matters for choosing, but an accent
+                // pill on every media row shouted over the names.
                 mediaBadge.configure(
                     text: label,
                     iconImage: icon,
                     font: resources.badgeFontSmall,
-                    textColor: colors.accentColor,
-                    bgColor: colors.accentAlpha012,
-                    borderColor: colors.accentAlpha015,
+                    textColor: colors.secondaryTextAlpha09,
+                    bgColor: colors.secondaryTextAlpha012,
                     isCapsule: true
                 )
             }
@@ -805,39 +801,6 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
             quantBadge.isHidden = false
         } else {
             quantBadge.isHidden = true
-        }
-
-        if let privacy = row.mediaPrivacy, !privacy.isEmpty {
-            if structureChanged {
-                privacyBadge.configure(
-                    text: privacy,
-                    iconImage: resources.privacyImage,
-                    font: resources.badgeFont,
-                    textColor: colors.secondaryTextAlpha09,
-                    bgColor: colors.secondaryTextAlpha012,
-                    isCapsule: true
-                )
-            }
-            privacyBadge.isHidden = false
-        } else {
-            privacyBadge.isHidden = true
-        }
-
-        if let price = row.mediaPrice, !price.isEmpty {
-            if structureChanged {
-                priceBadge.configure(
-                    text: price,
-                    iconImage: resources.priceImage,
-                    font: resources.badgeFont,
-                    textColor: colors.accentAlpha09,
-                    bgColor: colors.accentAlpha012,
-                    borderColor: colors.accentAlpha015,
-                    isCapsule: true
-                )
-            }
-            priceBadge.isHidden = false
-        } else {
-            priceBadge.isHidden = true
         }
 
         if isSelected {
@@ -950,8 +913,7 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         //   line 2 (optional): param/quant badges + metadata text
         // Name-only rows center the name line vertically.
         let hasMeta = hasDesc || hasBadges
-        let hasMediaDetailsLine = hasMedia && hasDesc
-        let nameY: CGFloat = hasMediaDetailsLine ? 7 : (hasMeta ? 10 : (h - nameH) / 2)
+        let nameY: CGFloat = hasMeta ? 10 : (h - nameH) / 2
 
         if !checkmarkView.isHidden {
             checkmarkView.frame = CGRect(
@@ -994,7 +956,7 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
                 x: badgeX,
                 y: nameY + (nameH - badge.frame.height) / 2
             )
-            badgeX -= 5
+            badgeX -= badge === mediaBadge ? 6 : 2
         }
 
         // Name, then Recommended / Deprecated right after the name text,
@@ -1024,31 +986,17 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         }
 
         if hasMeta {
-            let metaY = nameY + nameH + 4
+            let metaY = nameY + nameH + 3
             var x = contentX
-            for badge in [privacyBadge, priceBadge] where !badge.isHidden {
-                badge.sizeToFitContent()
-                badge.frame.origin = CGPoint(x: x, y: metaY + (metaH - badge.frame.height) / 2)
-                x += badge.frame.width + 5
-            }
             for badge in [paramBadge, quantBadge] where !badge.isHidden {
                 badge.sizeToFitContent()
                 badge.frame.origin = CGPoint(x: x, y: metaY + (metaH - badge.frame.height) / 2)
                 x += badge.frame.width + 4
             }
             if !descLabel.isHidden {
-                if hasMediaDetailsLine {
-                    descLabel.frame = CGRect(
-                        x: contentX,
-                        y: metaY + metaH + 2,
-                        width: max(0, w - pad - contentX),
-                        height: 14
-                    )
-                } else {
-                    if x > contentX { x += 4 }
-                    let descW = w - pad - x
-                    descLabel.frame = CGRect(x: x, y: metaY + 1, width: max(0, descW), height: 14)
-                }
+                if x > contentX { x += 4 }
+                let descW = w - pad - x
+                descLabel.frame = CGRect(x: x, y: metaY + 1, width: max(0, descW), height: 14)
             }
         }
     }
@@ -1065,7 +1013,6 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         accessoryKind = .none
         hasDesc = false
         hasBadges = false
-        hasMedia = false
         cachedRow = nil
         cachedIsSelected = false
         cachedIsHovered = false
@@ -1189,6 +1136,10 @@ extension ModelPickerTableRepresentable {
         /// Scroll the selected model into view once, on the first non-empty
         /// snapshot, so a long list opens on the current selection.
         private var hasScrolledToSelection = false
+        /// Model whose options row was last scrolled into view, so a
+        /// same-selection rows refresh (option edit, favorite toggle) does
+        /// not re-scroll under the pointer.
+        private var revealedOptionsForModelId: String?
 
         // MARK: Options row
 
@@ -1215,14 +1166,12 @@ extension ModelPickerTableRepresentable {
             RowRenderResources(
                 colors: colors,
                 checkmarkImage: symbol("checkmark", size: 11, weight: .bold),
-                eyeImage: symbol("eye", size: 8, weight: .medium),
-                toolsImage: symbol("wrench.and.screwdriver", size: 8, weight: .medium),
-                reasoningImage: symbol("brain", size: 8, weight: .medium),
+                eyeImage: symbol("eye", size: 10, weight: .medium),
+                toolsImage: symbol("wrench.and.screwdriver", size: 10, weight: .medium),
+                reasoningImage: symbol("brain", size: 10, weight: .medium),
                 imageMediaImage: symbol("photo", size: 8, weight: .medium),
                 textToVideoImage: symbol("film", size: 8, weight: .medium),
                 imageToVideoImage: symbol("photo.on.rectangle", size: 8, weight: .medium),
-                privacyImage: symbol("lock.shield", size: 8, weight: .medium),
-                priceImage: symbol("dollarsign.circle", size: 8, weight: .medium),
                 starImage: symbol("star", size: 11, weight: .medium),
                 starFillImage: symbol("star.fill", size: 11, weight: .medium),
                 regularFont: .systemFont(ofSize: 12, weight: .medium),
@@ -1524,25 +1473,40 @@ extension ModelPickerTableRepresentable {
 
             lastRowIdsHash = newHash
             rowLookup = newLookup
+            // Keep the keyboard highlight on the same row across a rebuild
+            // (e.g. the options row moving under a newly selected model) so
+            // ↑/↓ continue from where the user was; a group switch drops it.
+            let previousHighlightId = highlightedIndex.flatMap { $0 < rowIds.count ? rowIds[$0] : nil }
             var seen = Set<String>()
             rowIds = newIds.filter { seen.insert($0).inserted }
             rebuildIndexMaps()
-            highlightedIndex = nil
+            highlightedIndex = previousHighlightId.flatMap { rowIdToIndex[$0] }
 
             var snapshot = NSDiffableDataSourceSnapshot<ModelPickerSection, String>()
             snapshot.appendSections([.main])
             snapshot.appendItems(rowIds, toSection: .main)
             dataSource?.apply(snapshot, animatingDifferences: false)
 
-            if !hasScrolledToSelection, let selectedModelId,
-                let index = rowIds.firstIndex(where: {
+            let selectedIndex = selectedModelId.flatMap { selected in
+                rowIds.firstIndex(where: {
                     guard let row = rowLookup[$0] else { return false }
-                    return row.isModel && row.modelId == selectedModelId
+                    return row.isModel && row.modelId == selected
                 })
-            {
+            }
+            if !hasScrolledToSelection, let index = selectedIndex {
                 hasScrolledToSelection = true
+                revealedOptionsForModelId = selectedModelId
                 // Show the selected row with a little context above it.
                 tableView?.scrollRowToVisible(max(0, index - 1))
+                tableView?.scrollRowToVisible(index)
+            } else if let index = selectedIndex, revealedOptionsForModelId != selectedModelId,
+                index + 1 < rowIds.count, rowLookup[rowIds[index + 1]]?.isOptions == true
+            {
+                // A model with options was just picked while the popover
+                // stayed open: bring its freshly expanded options row into
+                // view (the row is below the click, so it may be off-screen).
+                revealedOptionsForModelId = selectedModelId
+                tableView?.scrollRowToVisible(index + 1)
                 tableView?.scrollRowToVisible(index)
             }
         }
@@ -1707,12 +1671,7 @@ extension ModelPickerTableRepresentable {
                 row.description?.isEmpty == false
                 || row.parameterCount != nil
                 || row.quantization != nil
-                || row.mediaPrivacy?.isEmpty == false
-                || row.mediaPrice?.isEmpty == false
-            if row.mediaKind != nil, row.description?.isEmpty == false {
-                return 74
-            }
-            return hasMeta ? 56 : 36
+            return hasMeta ? 54 : 36
         }
     }
 }

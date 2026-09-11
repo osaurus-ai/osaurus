@@ -26,7 +26,9 @@ struct ModelPickerSidebar: View {
 
     @Environment(\.theme) private var theme
 
-    static let expandedWidth: CGFloat = 184
+    /// Wide enough that real provider names ("OpenAI ChatGPT", "Osaurus
+    /// Cloud") sit beside their count without truncating.
+    static let expandedWidth: CGFloat = 204
     static let compactWidth: CGFloat = 44
 
     var body: some View {
@@ -174,16 +176,13 @@ struct ModelPickerSidebar: View {
                         .fill(dot)
                         .frame(width: 7, height: 7)
                 } else {
+                    // Plain tabular count: a capsule per row competes with
+                    // the provider names for the sidebar's width and reads
+                    // as a badge (unread-count) rather than a tally.
                     Text("\(group.models.count)")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                        .monospacedDigit()
                         .foregroundColor(isActive ? theme.accentColor.opacity(0.9) : theme.tertiaryText)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(
-                            Capsule().fill(
-                                isActive ? theme.accentColor.opacity(0.12) : theme.secondaryBackground
-                            )
-                        )
                 }
             }
         }
