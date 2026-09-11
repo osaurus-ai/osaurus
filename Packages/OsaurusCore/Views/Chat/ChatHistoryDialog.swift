@@ -61,6 +61,7 @@ private struct ChatHistoryDialogContent: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var sessionsManager = ChatSessionsManager.shared
+    @ObservedObject private var projectManager = ProjectManager.shared
 
     /// Which agent's chats the list shows. nil until the user picks one,
     /// so the initial lens tracks the window's agent (see `activeFilter`).
@@ -71,6 +72,8 @@ private struct ChatHistoryDialogContent: View {
     /// Origin lens (Chat / Plugin / Schedule / ...), picked in the Filter
     /// popover. Composes with the agent lens and the archived chip.
     @State private var sourceFilter: ChatHistorySourceFilter = .all
+    /// Project lens, also picked in the Filter popover.
+    @State private var projectFilter: ChatHistoryProjectFilter = .all
     @State private var showSourcePicker = false
     @State private var isFilterButtonHovered = false
     /// Archived lens: on lists only archived chats, off hides them.
@@ -182,8 +185,10 @@ private struct ChatHistoryDialogContent: View {
                 },
                 sourceFilter: sourceFilter,
                 showArchived: showArchived,
+                projectFilter: projectFilter,
                 onClearFilters: {
                     sourceFilter = .all
+                    projectFilter = .all
                     showArchived = false
                 }
             )
@@ -238,11 +243,16 @@ private struct ChatHistoryDialogContent: View {
 
     // MARK: - Filter button
 
-    /// Opens the origin picker. Reads as the Import button's sibling, and
-    /// switches to the accent tint + filled glyph while a lens other than
-    /// "All" is active so the narrowed list is never a surprise.
+    /// Number of lenses the popover currently applies (source, project,
+    /// archived). Shown on the button so a narrowed list is never a surprise.
+    private var activeFilterCount: Int {
+        (sourceFilter != .all ? 1 : 0) + (projectFilter != .all ? 1 : 0) + (showArchived ? 1 : 0)
+    }
+
+    /// Opens the filter popover. Reads as the Import button's sibling, and
+    /// switches to the accent tint + filled glyph while any lens is active.
     private var filterButton: some View {
-        let isActive = sourceFilter != .all
+        let isActive = activeFilterCount > 0
         let isRaised = isActive || isFilterButtonHovered || showSourcePicker
         return Button {
             showSourcePicker.toggle()
@@ -267,26 +277,21 @@ private struct ChatHistoryDialogContent: View {
         .buttonStyle(.plain)
         .onHover { isFilterButtonHovered = $0 }
         .animation(.easeOut(duration: 0.15), value: isFilterButtonHovered)
-        .localizedHelp("Filter chats by where they started")
+        .localizedHelp("Filter chats by source, project, or archived state")
         .popover(isPresented: $showSourcePicker, arrowEdge: .bottom) {
-            ChatHistorySourcePicker(
-                sessions: visibleSessions.filter { $0.archived == showArchived },
-                selected: sourceFilter,
-                onSelect: { filter in
-                    withAnimation(theme.animationQuick()) { sourceFilter = filter }
-                    showSourcePicker = false
-                }
+            ChatHistoryFilterPicker(
+                sessions: visibleSessions,
+                projects: projectManager.projects,
+                sourceFilter: $sourceFilter,
+                projectFilter: $projectFilter,
+                showArchived: $showArchived
             )
         }
     }
 
     private var sourceFilterTitle: Text {
-        switch sourceFilter {
-        case .all:
-            return Text("Filter", bundle: .module)
-        case .source(let source):
-            return Text(LocalizedStringKey(source.shortLabel), bundle: .module)
-        }
+        if activeFilterCount == 0 { return Text("Filter", bundle: .module) }
+        return Text("Filter (\(activeFilterCount))", bundle: .module)
     }
 
     // MARK: - Agent dropdown
@@ -426,6 +431,24 @@ enum ChatHistorySourceFilter: Equatable {
         switch self {
         case .all: return true
         case .source(let source): return session.source == source
+        }
+    }
+}
+
+/// Which project the listed conversations belong to.
+enum ChatHistoryProjectFilter: Equatable {
+    /// Every conversation, in a project or not.
+    case all
+    /// Conversations not assigned to any project.
+    case none
+    /// Conversations in this project.
+    case project(UUID)
+
+    func matches(_ session: ChatSessionData) -> Bool {
+        switch self {
+        case .all: return true
+        case .none: return session.projectId == nil
+        case .project(let id): return session.projectId == id
         }
     }
 }
@@ -709,67 +732,147 @@ private struct ChatHistoryAgentPicker: View {
     }
 }
 
-// MARK: - Source picker popover
+// MARK: - Filter popover
 
-/// Origin chooser for the History dialog, in the agent picker's idiom:
-/// titled header with a count pill, then "All" followed by one row per
-/// origin present in the current lens, each with its chat count. Origins
-/// with no chats are hidden so the list never offers dead buckets.
-private struct ChatHistorySourcePicker: View {
-    /// Sessions already narrowed by the agent and archived lenses.
+/// Filter panel for the History dialog, in the agent picker's idiom: a
+/// Source section ("All" + one row per origin present in the lens), a
+/// Project section ("Any" + "No Project" + one row per project with
+/// chats), and an Archived toggle. Rows carry chat counts; empty buckets
+/// are hidden so the panel never offers dead choices. The popover stays
+/// open across picks so lenses can be combined; click outside to close.
+private struct ChatHistoryFilterPicker: View {
+    /// Sessions already narrowed by the agent lens (both archived states).
     let sessions: [ChatSessionData]
-    let selected: ChatHistorySourceFilter
-    let onSelect: (ChatHistorySourceFilter) -> Void
+    let projects: [Project]
+    @Binding var sourceFilter: ChatHistorySourceFilter
+    @Binding var projectFilter: ChatHistoryProjectFilter
+    @Binding var showArchived: Bool
 
     @Environment(\.theme) private var theme
 
+    /// Sessions in the archived lens; counts are taken against these so
+    /// they match what the list will actually show.
+    private var lensSessions: [ChatSessionData] {
+        sessions.filter { $0.archived == showArchived }
+    }
+
     private var countsBySource: [SessionSource: Int] {
         var counts: [SessionSource: Int] = [:]
-        for session in sessions {
+        for session in lensSessions where projectFilter.matches(session) {
             counts[session.source, default: 0] += 1
         }
         return counts
     }
 
-    /// Declaration order of `SessionSource` keeps the rows stable.
-    private var visibleSources: [SessionSource] {
-        let counts = countsBySource
-        return SessionSource.allCases.filter { (counts[$0] ?? 0) > 0 }
+    private var countsByProject: [UUID?: Int] {
+        var counts: [UUID?: Int] = [:]
+        for session in lensSessions where sourceFilter.matches(session) {
+            counts[session.projectId, default: 0] += 1
+        }
+        return counts
+    }
+
+    private var archivedCount: Int {
+        sessions.filter { $0.archived && sourceFilter.matches($0) && projectFilter.matches($0) }.count
+    }
+
+    private var activeCount: Int {
+        (sourceFilter != .all ? 1 : 0) + (projectFilter != .all ? 1 : 0) + (showArchived ? 1 : 0)
     }
 
     private static let rowHeight: CGFloat = 36
+    private static let sectionHeaderHeight: CGFloat = 26
     private static let chromeHeight: CGFloat = 44
 
     var body: some View {
-        let sources = visibleSources
-        let counts = countsBySource
+        let sourceCounts = countsBySource
+        let projectCounts = countsByProject
+        // Declaration order of `SessionSource` keeps the rows stable; a
+        // selected bucket stays visible even when its count drops to zero so
+        // the user can always deselect it.
+        let sources = SessionSource.allCases.filter {
+            (sourceCounts[$0] ?? 0) > 0 || sourceFilter == .source($0)
+        }
+        let visibleProjects = projects.filter {
+            (projectCounts[$0.id] ?? 0) > 0 || projectFilter == .project($0.id)
+        }
+        let showNoProject = (projectCounts[nil] ?? 0) > 0 || projectFilter == .none
+        let rowCount = 1 + sources.count + 1 + (showNoProject ? 1 : 0) + visibleProjects.count + 1
         VStack(spacing: 0) {
-            header(sourceCount: sources.count)
+            header
             Divider().background(theme.primaryBorder.opacity(0.3))
             ScrollView {
                 LazyVStack(spacing: 2) {
-                    row(
-                        filter: .all,
+                    sectionHeader(Text("Source", bundle: .module))
+                    FilterPickerRow(
                         icon: "tray.full",
                         title: Text("All", bundle: .module),
-                        count: sessions.count
+                        count: lensSessions.filter { projectFilter.matches($0) }.count,
+                        isSelected: sourceFilter == .all,
+                        action: { pickSource(.all) }
                     )
                     ForEach(sources, id: \.self) { source in
-                        row(
-                            filter: .source(source),
+                        FilterPickerRow(
                             icon: source.iconName,
                             title: Text(LocalizedStringKey(source.shortLabel), bundle: .module),
-                            count: counts[source] ?? 0
+                            count: sourceCounts[source] ?? 0,
+                            isSelected: sourceFilter == .source(source),
+                            action: { pickSource(.source(source)) }
                         )
                     }
+
+                    sectionHeader(Text("Project", bundle: .module))
+                        .padding(.top, 6)
+                    FilterPickerRow(
+                        icon: "folder",
+                        title: Text("Any", bundle: .module),
+                        count: lensSessions.filter { sourceFilter.matches($0) }.count,
+                        isSelected: projectFilter == .all,
+                        action: { pickProject(.all) }
+                    )
+                    if showNoProject {
+                        FilterPickerRow(
+                            icon: "folder.badge.minus",
+                            title: Text("No Project", bundle: .module),
+                            count: projectCounts[nil] ?? 0,
+                            isSelected: projectFilter == .none,
+                            action: { pickProject(.none) }
+                        )
+                    }
+                    ForEach(visibleProjects) { project in
+                        FilterPickerRow(
+                            icon: "folder.fill",
+                            title: Text(verbatim: project.name),
+                            count: projectCounts[project.id] ?? 0,
+                            isSelected: projectFilter == .project(project.id),
+                            action: { pickProject(.project(project.id)) }
+                        )
+                    }
+
+                    Divider()
+                        .background(theme.primaryBorder.opacity(0.3))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
+                    FilterPickerRow(
+                        icon: showArchived ? "archivebox.fill" : "archivebox",
+                        title: Text("Archived", bundle: .module),
+                        count: archivedCount,
+                        isSelected: showArchived,
+                        action: {
+                            withAnimation(theme.animationQuick()) { showArchived.toggle() }
+                        }
+                    )
                 }
                 .padding(.vertical, 6)
             }
             .scrollIndicators(.hidden)
         }
         .frame(
-            width: 240,
-            height: min(CGFloat(sources.count + 1) * Self.rowHeight + Self.chromeHeight + 12, 420)
+            width: 260,
+            height: min(
+                CGFloat(rowCount) * Self.rowHeight + 2 * Self.sectionHeaderHeight + Self.chromeHeight + 28,
+                460
+            )
         )
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -789,37 +892,65 @@ private struct ChatHistorySourcePicker: View {
         .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 6)
     }
 
-    private func header(sourceCount: Int) -> some View {
+    private func pickSource(_ filter: ChatHistorySourceFilter) {
+        withAnimation(theme.animationQuick()) { sourceFilter = filter }
+    }
+
+    private func pickProject(_ filter: ChatHistoryProjectFilter) {
+        withAnimation(theme.animationQuick()) { projectFilter = filter }
+    }
+
+    private var header: some View {
         HStack(spacing: 8) {
-            Text("Source", bundle: .module)
+            Text("Filters", bundle: .module)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
-            Text("\(sourceCount)")
+            Text("\(activeCount)")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+                .foregroundColor(activeCount > 0 ? theme.accentColor : theme.secondaryText)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
-                .background(Capsule().fill(theme.secondaryBackground))
+                .background(
+                    Capsule().fill(
+                        activeCount > 0 ? theme.accentColor.opacity(0.12) : theme.secondaryBackground)
+                )
 
             Spacer()
+
+            if activeCount > 0 {
+                Button {
+                    withAnimation(theme.animationQuick()) {
+                        sourceFilter = .all
+                        projectFilter = .all
+                        showArchived = false
+                    }
+                } label: {
+                    Text("Clear", bundle: .module)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                }
+                .buttonStyle(.plain)
+                .pointingHandCursor()
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
     }
 
-    private func row(filter: ChatHistorySourceFilter, icon: String, title: Text, count: Int) -> some View {
-        SourcePickerRow(
-            icon: icon,
-            title: title,
-            count: count,
-            isSelected: filter == selected,
-            action: { onSelect(filter) }
-        )
+    private func sectionHeader(_ title: Text) -> some View {
+        title
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(theme.tertiaryText)
+            .textCase(.uppercase)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 18)
+            .padding(.top, 4)
+            .padding(.bottom, 2)
     }
 
-    /// One origin row; owns its hover state like the agent picker's rows.
-    private struct SourcePickerRow: View {
+    /// One filter row; owns its hover state like the agent picker's rows.
+    private struct FilterPickerRow: View {
         let icon: String
         let title: Text
         let count: Int
