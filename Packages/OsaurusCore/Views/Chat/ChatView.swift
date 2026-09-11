@@ -5168,11 +5168,9 @@ final class ChatSession: ObservableObject {
             // Stamp the steady-state tok/s. Single source of truth across
             // local-MLX, remote-API, with-tools, and thinking-on/off paths.
             //
-            // Order matters, and every rung is a real measurement:
-            //   1. the converged rolling window — best steady-state read, and
-            //      immune to first-token amortisation;
-            //   2. the engine's decode rate — a true tokens-over-decode-wall
-            //      figure for replies too short for the window to converge;
+            // Prefer actual engine token counts over the text-chunk estimate:
+            //   1. the engine's tokens-over-decode-wall measurement;
+            //   2. the rolling estimate when no engine measurement is available;
             //   3. nothing.
             //
             // Rung 3 is the point. There is no fourth rung that guesses. The old
@@ -5182,7 +5180,7 @@ final class ChatSession: ObservableObject {
             // tok/s on a 7-token answer. A blank cell is honest; that number was
             // not.
             currentTurn.generationTokensPerSecond =
-                rollingRate.finalRate() ?? engineTokensPerSecond
+                rollingRate.finalRate(engineRate: engineTokensPerSecond)
             // Token count: prefer vmlx's authoritative count (already
             // assigned in the stats sentinel branch above) — only fall back
             // to our chars/4 estimate if the stats sentinel never fired

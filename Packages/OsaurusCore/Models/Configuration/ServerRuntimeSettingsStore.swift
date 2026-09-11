@@ -80,7 +80,7 @@ public enum ServerRuntimeSettingsStore {
             let raw = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: Data(contentsOf: url))
             let decoded = normalizeLoadedSettings(raw)
             if decoded != raw {
-                save(decoded)
+                persist(decoded, mtpSelectionIsFamilyDefault: false, recordMTPChoice: false)
             }
             writeLegacyConcurrencyMigrationMarker()
             cachedSnapshot = decoded
@@ -113,13 +113,34 @@ public enum ServerRuntimeSettingsStore {
                     userDefaults: userDefaults
                 )
         )
-        save(migrated)
+        persist(migrated, mtpSelectionIsFamilyDefault: false, recordMTPChoice: false)
         return migrated
     }
 
     /// Persists the settings to disk and updates the nonisolated
     /// snapshot consumed by `ModelRuntime`.
     public nonisolated static func save(_ settings: VMLXServerRuntimeSettings) {
+        persist(settings, mtpSelectionIsFamilyDefault: false)
+    }
+
+    /// Internal default selection is not a user override. All ordinary writers
+    /// (Settings, admin API, configuration imports) use save(_:).
+    nonisolated static func saveFamilyMTPDefault(_ settings: VMLXServerRuntimeSettings) {
+        persist(settings, mtpSelectionIsFamilyDefault: true)
+    }
+
+    private nonisolated static func persist(
+        _ settings: VMLXServerRuntimeSettings,
+        mtpSelectionIsFamilyDefault: Bool,
+        recordMTPChoice: Bool = true
+    ) {
+        // Do not call snapshot(): its normalization path can itself save.
+        let previousMTP =
+            cachedSnapshot?.mtp
+            ?? (try? Data(contentsOf: fileURL())).flatMap {
+                try? JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: $0)
+            }?.mtp
+            ?? VMLXServerMTPSettings()
         var settings = canonicalizedContextAndKVPolicy(settings)
         // Anything we write is by definition current-schema, so stamp it.
         //
@@ -135,6 +156,13 @@ public enum ServerRuntimeSettingsStore {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(settings).write(to: url, options: [.atomic])
+            if recordMTPChoice {
+                NativeMTPSelectionDefault.recordSavedChoice(
+                    previous: previousMTP,
+                    next: settings.mtp,
+                    isFamilyDefault: mtpSelectionIsFamilyDefault
+                )
+            }
             writeLegacyConcurrencyMigrationMarker()
             cachedSnapshot = settings
             NotificationCenter.default.post(
@@ -163,7 +191,7 @@ public enum ServerRuntimeSettingsStore {
         {
             let normalized = normalizeLoadedSettings(raw)
             if normalized != raw {
-                save(normalized)
+                persist(normalized, mtpSelectionIsFamilyDefault: false, recordMTPChoice: false)
             }
             cachedSnapshot = normalized
             return normalized

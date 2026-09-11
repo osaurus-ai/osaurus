@@ -31,6 +31,19 @@ import os.log
 private let batchAdapterLog = Logger(subsystem: "ai.osaurus", category: "BatchAdapter")
 
 struct MLXBatchAdapter {
+    /// Explicit depth buttons impose a ceiling. Auto may explore only the
+    /// existing adaptive range, further limited by the configured token cap.
+    /// Invalid limits are left invalid for the runtime validator, not repaired
+    /// into an apparently valid activation here.
+    static func nativeMTPDepthPolicy(
+        _ settings: VMLXServerMTPSettings
+    ) -> NativeMTPDepthPolicy {
+        if settings.mode == .off
+            || (settings.mode == .forceOn && settings.explicitDepth != nil)
+        { return .fixed }
+        return .adaptive(maximumDepth: min(settings.draftTokenLimit ?? 5, 5))
+    }
+
     /// Native MTP is tuned for real chat prefixes, not tiny cold-start
     /// prompts. A 19-token cold user-only prompt reproduced a native-MTP loop
     /// while the same request decoded correctly with AR greedy fallback.
@@ -124,21 +137,13 @@ struct MLXBatchAdapter {
         let draftStrategy: String?
         /// Why native MTP is NOT running when the user asked for it.
         ///
-        /// This string was already computed and written to the submit log, where
-        /// no user will ever see it. A model whose tuning artifact never asserted
-        /// `output_equivalent` cannot run MTP even on Force-On — correctly, since
-        /// that assertion is the output-equivalence proof — but without surfacing
-        /// the reason the setting just appears to do nothing.
+        /// Surface the actual load/request eligibility reason, rather than
+        /// making a requested depth appear active when the engine runs AR.
         let mtpFallbackReason: String?
         let compiledBatchDecode: Bool
-        /// True when native MTP forced this request's sampler to greedy —
-        /// the machine-readable form of the coercion, carried by the same
-        /// single resolution that builds the run parameters, the readout,
-        /// and the API diagnostics.
+        /// Retained API diagnostic fields. Native MTP no longer substitutes
+        /// a sampler, so both remain false for this resolver.
         var mtpGreedyEnforced: Bool = false
-        /// True when that enforcement actually CHANGED the sampler (the
-        /// pre-coercion resolution was not already greedy) — the condition
-        /// for the surfaced log line.
         var samplerWasChanged: Bool = false
     }
 
@@ -149,11 +154,6 @@ struct MLXBatchAdapter {
         maxBatchSize: Int,
         modelDefaults: LocalGenerationDefaults.Defaults,
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
-        /// True when native MTP is active, which forces greedy decoding. The
-        /// readout has to show the COERCED sampler: reporting the request's
-        /// temp 1 / top-p 0.95 while argmax actually runs is the same
-        /// display-lie this readout exists to prevent.
-        forcesGreedyForNativeMTP: Bool = false,
         nativeMTPFallbackReason: String? = nil,
         nativeMTPRequestFallback: Bool = false,
         cacheTopology: ModelCacheTopologySnapshot? = nil,
@@ -167,9 +167,8 @@ struct MLXBatchAdapter {
         }()
         let engineDefaults = MLXLMCommon.GenerateParameters()
 
-        // Merge order (per-request always wins): per-request →
-        // model-shipped defaults → server runtime defaults → vmlx engine
-        // defaults. Osaurus must not invent sampler defaults.
+        // Explicit request and user settings outrank shipped defaults.
+        // Osaurus must not invent a sampler override for speculation.
         let runtimeTopP: Float? = runtimeDefaults.topP.map { Float($0) }
         let runtimeMinP: Float? = runtimeDefaults.minP.map { Float($0) }
         let runtimeTopK: Int? = runtimeDefaults.topK
@@ -223,26 +222,7 @@ struct MLXBatchAdapter {
                     cacheTopology: cacheTopology
                 )
         )
-        // Native MTP forces greedy on the parameters that RUN, so the readout
-        // must say greedy too. Printing the request's temp 1 / top-p 0.95
-        // while argmax executes is the display-lie this readout exists to stop.
-        guard forcesGreedyForNativeMTP else { return resolved }
-        return EffectiveGenerationSettings(
-            stage: resolved.stage,
-            temperature: 0,
-            maxTokens: resolved.maxTokens,
-            topP: 1,
-            topK: 0,
-            minP: 0,
-            repetitionPenalty: resolved.repetitionPenalty,
-            presencePenalty: resolved.presencePenalty,
-            frequencyPenalty: resolved.frequencyPenalty,
-            draftStrategy: resolved.draftStrategy,
-            mtpFallbackReason: resolved.mtpFallbackReason,
-            compiledBatchDecode: resolved.compiledBatchDecode,
-            mtpGreedyEnforced: true,
-            samplerWasChanged: resolved.temperature != 0 || resolved.topP != 1
-                || resolved.topK != 0 || resolved.minP != 0)
+        return resolved
     }
 
     static func recordPendingEffectiveGenerationSettings(
@@ -1628,7 +1608,6 @@ struct MLXBatchAdapter {
             maxBatchSize: maxBatchSize,
             modelDefaults: modelDefaults,
             draftStrategy: effectiveDraftStrategy,
-            forcesGreedyForNativeMTP: effectiveDraftStrategy?.usesNativeMTP == true,
             nativeMTPFallbackReason: nativeMTPFallbackReason,
             nativeMTPRequestFallback: nativeMTPRequestFallback,
             cacheTopology: cacheTopology,
@@ -1671,21 +1650,10 @@ struct MLXBatchAdapter {
                 ?? runtime.concurrency.prefillStepSize,
             modelName: modelName
         )
-        // Native MTP verifies drafts against the target's own argmax, so its
-        // output-equivalence guarantee is only defined under greedy decoding —
-        // turning MTP on is a request for greedy decoding. That coercion is
-        // resolved ONCE, inside `effectiveGenerationSettings` above:
-        // `mlxParams` is built from the already-coerced values, the API's
-        // `last_effective_generation` shows them, and the flags carried on
-        // `effective` drive this log and the `mtp_greedy_enforced` diagnostic.
-        // Every other generation parameter (max tokens, stops, penalties,
-        // seed) follows the request/runtime/bundle resolution untouched, and
-        // non-MTP requests keep their sampler everywhere.
-        if effective.samplerWasChanged {
-            batchAdapterLog.info(
-                "native MTP active: greedy sampler enforced for this request model=\(modelName, privacy: .public) (bundle generation_config governs all non-MTP requests)"
-            )
-        }
+        mlxParams.nativeMTPDepthPolicy = Self.nativeMTPDepthPolicy(runtime.mtp)
+
+        // The engine chooses greedy or exact-p/q speculation from the resolved
+        // sampler. MTP eligibility may fall back to AR, never alter sampling.
 
         // Do not invent a reasoning budget from `max_tokens`. A wire client
         // choosing a finite output cap did not ask Osaurus to mask the model's

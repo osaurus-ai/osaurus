@@ -29,6 +29,22 @@ import Testing
 @Suite("RollingTokenRate — steady-state tok/s estimator")
 struct RollingTokenRateTests {
 
+    @Test func measuredEngineRateOverridesConvergedEstimate() {
+        var rate = RollingTokenRate()
+        let start = Date(timeIntervalSince1970: 0)
+        rate.observe(tokens: 30, at: start)
+        rate.observe(tokens: 30, at: start.addingTimeInterval(1))
+        #expect(rate.finalRate() == 60)
+        #expect(rate.finalRate(engineRate: 36.58) == 36.58)
+        let invalidRates: [Double?] = [nil, 0, -1, .nan, .infinity]
+        for invalid in invalidRates {
+            #expect(rate.finalRate(engineRate: invalid) == 60)
+        }
+        let empty = RollingTokenRate()
+        #expect(empty.finalRate(engineRate: 36.58) == 36.58)
+        #expect(empty.finalRate(engineRate: nil) == nil)
+    }
+
     // MARK: - Warm-up gating
 
     @Test("Warm-up: rate is nil before warmupSeconds elapse")

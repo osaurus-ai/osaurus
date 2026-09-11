@@ -675,7 +675,7 @@ struct MLXBatchAdapterTests {
         #expect(effective.minP == 0)
     }
 
-    @Test func effectiveGenerationSettings_nativeMTPKeepsStrategyAndReportsGreedy() {
+    @Test func effectiveGenerationSettings_nativeMTPKeepsStrategyAndRequestedSampler() {
         let generation = GenerationParameters(
             temperature: 0.7,
             maxTokens: 128,
@@ -706,18 +706,14 @@ struct MLXBatchAdapterTests {
             maxBatchSize: 1,
             modelDefaults: mtpBundleDefaults,
             draftStrategy: effectiveDraftStrategy,
-            forcesGreedyForNativeMTP: effectiveDraftStrategy?.usesNativeMTP == true,
             nativeMTPRequestFallback: effectiveDraftStrategy == nil
         )
 
-        // Sampling no longer drops MTP: the submit path coerces the running
-        // parameters to greedy, so the strategy survives and the readout must
-        // report the greedy values that actually execute — not the request's
-        // temp 0.7 / top-k 32 that argmax ignores.
+        // Sampling neither drops MTP nor changes the request's sampler.
         #expect(effectiveDraftStrategy?.usesNativeMTP == true)
-        #expect(effective.temperature == 0)
-        #expect(effective.topP == 1)
-        #expect(effective.topK == 0)
+        #expect(effective.temperature == 0.7)
+        #expect(effective.topP == 0.95)
+        #expect(effective.topK == 32)
         #expect(effective.minP == 0)
         #expect(effective.repetitionPenalty == nil)
         #expect(effective.draftStrategy == DraftStrategy.nativeMTP(depth: 3).kindName)

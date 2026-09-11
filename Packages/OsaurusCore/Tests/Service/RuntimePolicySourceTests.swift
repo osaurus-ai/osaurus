@@ -808,7 +808,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "9460dcc133b3509899265afd21deffaffc3eb9e9"
+        let expectedRuntimeHardenedRevision = "efd45805a00841a21b5731241d23566714825882"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -2773,7 +2773,7 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("var loadConfiguration = mtpPlan.loadConfiguration"))
         #expect(runtime.contains("loadConfiguration: loadConfiguration"))
         #expect(runtime.contains("draftStrategy: mtpPlan.draftStrategy"))
-        #expect(runtime.contains("let requestStrategy = Self.requestDraftStrategy(holder.draftStrategy)"))
+        #expect(runtime.contains("let requestStrategy = Self.requestDraftStrategy(holder.draftStrategy, mtp: cfg.mtp)"))
         #expect(runtime.contains("draftStrategy: requestStrategy"))
         #expect(runtime.contains("params.draftStrategy = draftStrategy"))
         #expect(adapter.contains("draftStrategy: MLXLMCommon.DraftStrategy?"))
@@ -3383,13 +3383,13 @@ struct RuntimePolicySourceTests {
         #expect(
             chatView.contains("let requestedToolChoice = ChatToolChoicePolicy.resolve(")
                 && chatView.contains("tool_choice: requestedToolChoice"),
-            "Chat UI should route explicit tool-use prompts through the shared policy instead of hard-coding auto for every tool-enabled turn."
+            "Chat UI should use the shared ordinary-chat policy; prose must not synthesize an API tool constraint."
         )
         #expect(
             chatView.contains("tools: iterationToolSpecs,")
                 && chatView.contains("userText: trimmed,")
                 && chatView.contains("attempt: attempt"),
-            "Chat UI tool-choice policy must see the current iteration tools, original user text, and attempt count so first-turn required routing cannot become a repeated tool loop."
+            "Chat UI must use the current iteration tools; the compatibility arguments must not become prose-derived forced routing."
         )
         #expect(
             chatView.contains("finalReq.samplingParametersAreImplicit = true"),
