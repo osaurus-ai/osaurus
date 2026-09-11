@@ -1141,7 +1141,7 @@ final class ChatWindowState: ObservableObject {
         // save()/reset() calls all reflect the conversation's true agent
         // (#1005). Without this, clicking "New Chat" afterwards silently
         // re-tags the conversation to the previously-selected agent.
-        ChatDraftDebugLog.log("loadSession target=\(sessionData.id.uuidString.prefix(8)) current=\(session.sessionId?.uuidString.prefix(8) ?? "nil") session=\(ObjectIdentifier(session)) input=\(ChatDraftDebugLog.short(session.input)) composerDraft=\(ChatDraftDebugLog.short(session.composerDraft)) agentSwitch=\(targetAgentId != agentId)")
+        ChatDraftDebugLog.log("loadSession target=\(sessionData.id.uuidString.prefix(8)) current=\(self.session.sessionId?.uuidString.prefix(8) ?? "nil") session=\(ObjectIdentifier(self.session)) input=\(ChatDraftDebugLog.short(self.session.input)) composerDraft=\(ChatDraftDebugLog.short(self.session.composerDraft)) agentSwitch=\(targetAgentId != self.agentId)")
         if targetAgentId != agentId {
             adoptAgent(targetAgentId)
         }
@@ -1177,7 +1177,7 @@ final class ChatWindowState: ObservableObject {
             ChatDraftDebugLog.log("loadSession branch=loadInPlace")
             session.load(from: resolvedData)
         }
-        ChatDraftDebugLog.log("loadSession done session=\(ObjectIdentifier(session)) input=\(ChatDraftDebugLog.short(session.input)) composerDraft=\(ChatDraftDebugLog.short(session.composerDraft))")
+        ChatDraftDebugLog.log("loadSession done session=\(ObjectIdentifier(self.session)) input=\(ChatDraftDebugLog.short(self.session.input)) composerDraft=\(ChatDraftDebugLog.short(self.session.composerDraft))")
         reconcileRemoteMode()
         refreshSessions()
         refreshSandboxChanges()

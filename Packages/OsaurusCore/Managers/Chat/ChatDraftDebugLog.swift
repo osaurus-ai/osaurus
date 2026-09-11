@@ -27,8 +27,8 @@ enum ChatDraftDebugLog {
         return dir.appendingPathComponent("chat-draft-debug.log")
     }()
 
-    static func log(_ message: @autoclosure @escaping () -> String, function: String = #function) {
-        let line = "[\(formatter.string(from: Date()))] \(function): \(message())\n"
+    static func log(_ message: String, function: String = #function) {
+        let line = "[\(formatter.string(from: Date()))] \(function): \(message)\n"
         print("[DraftDebug] \(line)", terminator: "")
         queue.async {
             guard let data = line.data(using: .utf8) else { return }
