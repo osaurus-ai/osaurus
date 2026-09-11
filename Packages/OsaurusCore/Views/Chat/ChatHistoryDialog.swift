@@ -935,37 +935,9 @@ private struct ChatHistoryFilterPicker: View {
             ChatHistorySubmenuChoice(
                 id: workspace.id, title: workspace.name, count: workspaceCounts[workspace.id] ?? 0)
         }
-        // "Others": capability badges, then schedules, then watchers, in one
-        // list. Ids are prefixed so one submenu can drive three lenses.
-        var otherChoices: [ChatHistorySubmenuChoice] = SessionCapability.allCases.map { cap in
-            ChatHistorySubmenuChoice(
-                id: Self.capabilityPrefix + cap.rawValue,
-                title: L(String.LocalizationValue(cap.label)),
-                count: capabilityCounts[cap] ?? 0,
-                icon: cap.iconName
-            )
-        }
-        otherChoices += ScheduleManager.shared.schedules.map { schedule in
-            let key = schedule.id.uuidString
-            return ChatHistorySubmenuChoice(
-                id: Self.schedulePrefix + key,
-                title: schedule.name,
-                count: scheduleCounts[key] ?? 0,
-                icon: SessionSource.schedule.iconName
-            )
-        }
-        otherChoices += WatcherManager.shared.watchers.map { watcher in
-            let key = watcher.id.uuidString
-            return ChatHistorySubmenuChoice(
-                id: Self.watcherPrefix + key,
-                title: watcher.name,
-                count: watcherCounts[key] ?? 0,
-                icon: SessionSource.watcher.iconName
-            )
-        }
-        var otherSelected: Set<String> = Set(capabilityFilter.map { Self.capabilityPrefix + $0.rawValue })
-        if let scheduleFilter { otherSelected.insert(Self.schedulePrefix + scheduleFilter) }
-        if let watcherFilter { otherSelected.insert(Self.watcherPrefix + watcherFilter) }
+        let otherChoices = makeOtherChoices(
+            capabilityCounts: capabilityCounts, scheduleCounts: scheduleCounts, watcherCounts: watcherCounts)
+        let otherSelected = otherSelectedIds
         let rowCount = sources.count + 4 + 1
         VStack(spacing: 0) {
             header
@@ -1088,6 +1060,50 @@ private struct ChatHistoryFilterPicker: View {
     private static let capabilityPrefix = "cap:"
     private static let schedulePrefix = "schedule:"
     private static let watcherPrefix = "watcher:"
+
+    /// "Others": capability badges, then schedules, then watchers, in one
+    /// list. Ids are prefixed so one submenu can drive three lenses.
+    private func makeOtherChoices(
+        capabilityCounts: [SessionCapability: Int],
+        scheduleCounts: [String: Int],
+        watcherCounts: [String: Int]
+    ) -> [ChatHistorySubmenuChoice] {
+        var choices: [ChatHistorySubmenuChoice] = SessionCapability.allCases.map { cap in
+            ChatHistorySubmenuChoice(
+                id: Self.capabilityPrefix + cap.rawValue,
+                title: L(String.LocalizationValue(cap.label)),
+                count: capabilityCounts[cap] ?? 0,
+                icon: cap.iconName
+            )
+        }
+        choices += ScheduleManager.shared.schedules.map { schedule in
+            let key = schedule.id.uuidString
+            return ChatHistorySubmenuChoice(
+                id: Self.schedulePrefix + key,
+                title: schedule.name,
+                count: scheduleCounts[key] ?? 0,
+                icon: SessionSource.schedule.iconName
+            )
+        }
+        choices += WatcherManager.shared.watchers.map { watcher in
+            let key = watcher.id.uuidString
+            return ChatHistorySubmenuChoice(
+                id: Self.watcherPrefix + key,
+                title: watcher.name,
+                count: watcherCounts[key] ?? 0,
+                icon: SessionSource.watcher.iconName
+            )
+        }
+        return choices
+    }
+
+    /// The "Others" entries currently applied, in the submenu's id space.
+    private var otherSelectedIds: Set<String> {
+        var ids = Set(capabilityFilter.map { Self.capabilityPrefix + $0.rawValue })
+        if let scheduleFilter { ids.insert(Self.schedulePrefix + scheduleFilter) }
+        if let watcherFilter { ids.insert(Self.watcherPrefix + watcherFilter) }
+        return ids
+    }
 
     /// Routes an "Others" pick to its lens: capabilities accumulate, a
     /// schedule or watcher pick replaces (or clears) the one before.
