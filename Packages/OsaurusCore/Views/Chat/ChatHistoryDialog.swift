@@ -727,8 +727,9 @@ private struct ChatHistoryAgentPicker: View {
 // MARK: - Filter popover
 
 /// Filter panel for the History dialog: one flat list of toggles. Origin
-/// rows (Plugin, API, Schedule, ...; "Chat" is the default and has no row)
-/// each select or clear the source lens. Projects and Workspaces are single
+/// rows (Plugin, API, Schedule, ...) each select or clear the source lens.
+/// "Chat" is the default and has no row; "Workspace" has none either since
+/// the Workspaces submenu already covers every workspace-tagged chat. Projects and Workspaces are single
 /// rows that open a nested popover on hover listing the concrete choices.
 /// Archived is a toggle at the bottom. Rows carry chat counts; empty
 /// buckets are hidden so the panel never offers dead choices. The panel
@@ -813,16 +814,19 @@ private struct ChatHistoryFilterPicker: View {
         // selected bucket stays visible even when its count drops to zero so
         // the user can always deselect it.
         let sources = SessionSource.allCases.filter {
-            $0 != .chat && ((sourceCounts[$0] ?? 0) > 0 || sourceFilter == .source($0))
+            $0 != .chat && $0 != .workspace
+                && ((sourceCounts[$0] ?? 0) > 0 || sourceFilter == .source($0))
         }
-        let projectChoices: [ChatHistorySubmenuChoice] = projects.compactMap { project in
-            let count = projectCounts[project.id] ?? 0
-            guard count > 0 || projectFilter == project.id else { return nil }
-            return ChatHistorySubmenuChoice(id: project.id.uuidString, title: project.name, count: count)
+        // Every project is listed (zero counts included) so the row is
+        // always discoverable while the user has projects at all.
+        let projectChoices: [ChatHistorySubmenuChoice] = projects.map { project in
+            ChatHistorySubmenuChoice(
+                id: project.id.uuidString, title: project.name, count: projectCounts[project.id] ?? 0)
         }
-        let workspaceChoices: [ChatHistorySubmenuChoice] = workspaceCounts.keys.sorted().map { id in
-            // Settings may not know the workspace any more (left / deleted):
-            // fall back to a generic label rather than the raw id.
+        // Workspaces Settings knows, plus any id still stamped on a chat
+        // (left / deleted workspaces fall back to a generic label).
+        let workspaceIds = Set(workspaces.map(\.id)).union(workspaceCounts.keys)
+        let workspaceChoices: [ChatHistorySubmenuChoice] = workspaceIds.sorted().map { id in
             let name = workspaces.first { $0.id == id }?.name ?? ""
             return ChatHistorySubmenuChoice(
                 id: id,
