@@ -1435,10 +1435,14 @@ private struct FilterSubmenuRow: View {
             }
             .padding(.vertical, 6)
         }
-        .scrollIndicators(.hidden)
+        // Automatic, not hidden: the bar appears only when the list is
+        // taller than the cap. The frame matches the content exactly (rows
+        // + 2pt spacing between them + 6pt padding top and bottom), so a
+        // list that fits never scrolls and never shows a bar.
+        .scrollIndicators(.automatic)
         .frame(
             width: 240,
-            height: min(CGFloat(max(choices.count, 1)) * Self.rowHeight + 12, 360)
+            height: min(Self.contentHeight(rows: max(choices.count, 1)), 360)
         )
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -1456,6 +1460,11 @@ private struct FilterSubmenuRow: View {
                 )
         )
         .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 6)
+    }
+
+    /// Exact height of `rows` submenu rows as laid out by `submenu`.
+    private static func contentHeight(rows: Int) -> CGFloat {
+        CGFloat(rows) * rowHeight + CGFloat(max(rows - 1, 0)) * 2 + 12
     }
 
     private func cancelOpen() {
