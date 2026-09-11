@@ -569,7 +569,7 @@ struct SpawnBatchToolTests {
             #"{"jobs":[]}"#,
             tool: "spawn_batch"
         )
-        #expect(empty.failureEnvelope?.contains("1-32") == true)
+        #expect(empty.failureEnvelope?.contains("1-64") == true)
     }
 
     @Test("local groups preserve model order and leave remotes in their own lane")
@@ -650,7 +650,8 @@ struct SpawnBatchToolTests {
             base,
             allowedAgentIDs: [researcherID, researcherID, writerID],
             allowedModelIds: ["local/model", "cloud/model", "local/model"],
-            maxParallel: 2
+            maxParallel: 2,
+            maxRemoteParallel: 1
         )
         let params = try #require(constrained.function.parameters)
         guard case .object(let root) = params,
@@ -665,7 +666,12 @@ struct SpawnBatchToolTests {
             Issue.record("constrained spawn_batch schema has the wrong shape")
             return
         }
-        #expect(maxItems == 2)
+        #expect(maxItems == 3, "schema ceiling is local + remote before the split is known")
+        if case .string(let jobsDescription)? = jobs["description"] {
+            #expect(jobsDescription.contains("at most 2 local-model jobs and 1 remote-model jobs"))
+        } else {
+            Issue.record("jobs description missing")
+        }
         let targetNames = values.compactMap { value -> String? in
             guard case .string(let name) = value else { return nil }
             return name
@@ -698,6 +704,38 @@ struct SpawnBatchToolTests {
         #expect(rejected?.contains("at most 2 subagents per batch") == true)
         #expect(rejected?.contains(#""field":"jobs""#) == true)
         #expect(rejected?.contains(#""retryable":true"#) == true)
+        // The combined ceiling can exceed the local bound alone.
+        #expect(
+            SpawnBatchTool.batchLimitFailure(
+                jobCount: 40,
+                maxJobs: 40,
+                tool: "spawn_batch"
+            ) == nil
+        )
+    }
+
+    @Test("resolved batches are checked against independent local and remote limits")
+    func fanOutLimitsAreSplit() {
+        let limits = SpawnFanOutLimits(local: 2, remote: 3)
+        #expect(
+            SpawnBatchTool.fanOutLimitFailure(localCount: 2, remoteCount: 3, limits: limits, tool: "spawn_batch")
+                == nil
+        )
+        let tooManyLocal = SpawnBatchTool.fanOutLimitFailure(
+            localCount: 3, remoteCount: 0, limits: limits, tool: "spawn_batch")
+        #expect(tooManyLocal?.contains("3 local subagents") == true)
+        #expect(tooManyLocal?.contains("at most 2 local") == true)
+        #expect(tooManyLocal?.contains(#""kind":"invalid_args""#) == true)
+        #expect(tooManyLocal?.contains(#""retryable":true"#) == true)
+
+        let tooManyRemote = SpawnBatchTool.fanOutLimitFailure(
+            localCount: 0, remoteCount: 4, limits: limits, tool: "spawn_batch")
+        #expect(tooManyRemote?.contains("4 remote subagents") == true)
+        #expect(tooManyRemote?.contains("at most 3 remote") == true)
+
+        // Remote jobs never eat the local budget: 2 local + 3 remote passes a
+        // local limit of 2 even though the total is 5.
+        #expect(limits.total == 5)
     }
 
     @Test("result rows retain ids and nested tool envelopes")

@@ -203,7 +203,15 @@ struct SubagentBatchMemoryFacts: Sendable, Equatable {
 struct SubagentBatchAdmissionInput: Sendable, Equatable {
     let localJobCount: Int
     let remoteJobCount: Int
+    /// Per-agent LOCAL fan-out (`SubagentBudgets.maxParallelSpawns`, mirrored
+    /// from Server Concurrent Sessions). Remote jobs never consume it: they
+    /// allocate no local model, KV state, or engine slot.
     let agentParallelLimit: Int
+    /// Per-agent REMOTE fan-out (`SubagentBudgets.maxRemoteParallelSpawns`).
+    /// The tool enforces the exact per-agent value before planning (typed
+    /// `invalid_args` the model can correct); the planner re-checks against
+    /// whatever the caller passes, defaulting to the schema-wide hard cap.
+    var remoteParallelLimit: Int = SubagentBudgets.remoteParallelSpawnBounds.upperBound
     /// vMLX `maxConcurrentSequences`. The planner independently applies the
     /// Continuous Batching toggle so a stale or contradictory caller cannot
     /// accidentally admit concurrent local work while batching is disabled.
@@ -288,19 +296,23 @@ enum SubagentBatchAdmissionPlanner {
     ) -> SubagentBatchAdmissionPlan {
         let localJobs = max(0, input.localJobCount)
         let remoteJobs = max(0, input.remoteJobCount)
-        let requestedJobs = saturatingIntAdd(localJobs, remoteJobs)
         let engineSlots =
             input.continuousBatchingEnabled
             ? max(1, input.engineParallelLimit)
             : 1
 
-        guard input.agentParallelLimit > 0 else {
+        guard input.agentParallelLimit > 0, input.remoteParallelLimit > 0 else {
             return rejected(
                 .invalidParallelLimit,
                 engineSlots: engineSlots
             )
         }
-        guard requestedJobs <= input.agentParallelLimit else {
+        // Local and remote fan-out are independent budgets: a wave of eight
+        // cloud workers must not be refused because the local BatchEngine is
+        // configured for three concurrent sequences.
+        guard localJobs <= input.agentParallelLimit,
+            remoteJobs <= input.remoteParallelLimit
+        else {
             return rejected(
                 .batchExceedsAgentLimit,
                 engineSlots: engineSlots,
@@ -494,11 +506,6 @@ enum SubagentBatchAdmissionPlanner {
 
     private static func saturatingMultiply(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
         let (value, overflow) = lhs.multipliedReportingOverflow(by: rhs)
-        return overflow ? .max : value
-    }
-
-    private static func saturatingIntAdd(_ lhs: Int, _ rhs: Int) -> Int {
-        let (value, overflow) = lhs.addingReportingOverflow(rhs)
         return overflow ? .max : value
     }
 

@@ -432,6 +432,13 @@ public enum SubagentSession {
                 tool: tool,
                 retryable: false
             ))
+        case .unavailable(let reason):
+            return .failure(ToolEnvelope.failure(
+                kind: .unavailable,
+                message: reason,
+                tool: tool,
+                retryable: true
+            ))
         }
         if interrupt?.isInterrupted == true || Task.isCancelled {
             return .failure(

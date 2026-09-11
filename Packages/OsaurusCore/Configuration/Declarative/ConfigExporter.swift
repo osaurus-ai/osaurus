@@ -146,6 +146,7 @@ enum ConfigExporter {
         section.budgetMaxToolCalls = budgets.maxToolCalls
         section.budgetMaxSeconds = budgets.maxElapsedSeconds
         section.budgetMaxParallelSpawns = budgets.maxParallelSpawns
+        section.budgetMaxRemoteParallelSpawns = budgets.maxRemoteParallelSpawns
         section.ramSafetyPreflight = config.ramSafetyPreflightEnabled
         section.coexistenceEnabled = config.subagentCoexistenceEnabled
         return section

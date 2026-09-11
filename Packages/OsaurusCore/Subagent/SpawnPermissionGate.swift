@@ -60,14 +60,55 @@ enum SpawnPermissionGate {
     /// `cancellationRequested` is the visible subagent Stop token for direct
     /// spawn and spawn_batch. The prompt operation is owned and drained, so a
     /// cancelled panel/test seam cannot outlive the rejected tool call.
+    ///
+    /// `waveMember` marks a single `spawn_agent` / `spawn_model` call that may
+    /// belong to a sibling wave (several spawn calls in one model message).
+    /// Members rendezvous in `SpawnWaveGate` for one shared card and one
+    /// fan-out limit check; the batch tool and the wave's own card pass nil.
     static func authorize(
         scope: SubagentScope,
         policy: SubagentPermissionPolicy,
         toolName: String,
         description: String,
         argumentsJSON: String,
-        cancellationRequested: @escaping @Sendable () -> Bool = { false }
+        cancellationRequested: @escaping @Sendable () -> Bool = { false },
+        waveMember: SpawnWaveGate.Member? = nil
     ) async -> SubagentDecision {
+        if case .deny = policy {
+            return .denied(
+                "Spawning is denied by this agent's permission settings."
+            )
+        }
+
+        // Sibling wave: one approval and one limit check for the whole set.
+        // Always Allow still joins, so the fan-out limit applies to the wave
+        // rather than letting N unprompted calls each pass on their own.
+        if let waveMember,
+            let wave = ChatExecutionContext.spawnWave,
+            wave.expectedCallIds.contains(waveMember.callId)
+        {
+            let limits = await MainActor.run {
+                SpawnBatchTool.effectiveFanOutLimits(scope: scope)
+            }
+            let rendezvous = OwnedSubagentOperation<SubagentDecision?> {
+                await SpawnWaveGate.shared.join(waveMember, wave: wave, limits: limits)
+            }
+            do {
+                if let decision = try await rendezvous.value(
+                    cancellationRequested: cancellationRequested
+                ) {
+                    return decision
+                }
+            } catch {
+                return .userDenied("Spawn permission was cancelled.")
+            }
+            if cancellationRequested() || Task.isCancelled {
+                return .userDenied("Spawn permission was cancelled.")
+            }
+            // Not a member after all (late arrival): fall through to the
+            // per-call path with the policy as it stands now.
+        }
+
         switch policy {
         case .deny:
             return .denied(
@@ -97,20 +138,27 @@ enum SpawnPermissionGate {
             argumentsJSON: argumentsJSON,
             launchingAgentId: scope.agentId
         )
+        // The prompt may wait in the shared approval queue behind a sibling
+        // spawn prompt. If that sibling's "Always Allow" (or a settings edit)
+        // changed the effective policy meanwhile, settle silently instead of
+        // asking the user the same question twice.
+        let revalidate: @Sendable () async -> ToolPermissionPromptService.PolicyApprovalOutcome? = {
+            Self.silentResolution(for: await effectivePolicy(for: scope))
+        }
         let operation = OwnedSubagentOperation<PromptChoice> {
             if let promptOverride {
+                if let early = await revalidate() {
+                    return Self.promptChoice(for: early)
+                }
                 return try await promptOverride(request)
             }
             let outcome = await ToolPermissionPromptService.requestPolicyApproval(
                 toolName: request.toolName,
                 description: request.description,
-                argumentsJSON: request.argumentsJSON
+                argumentsJSON: request.argumentsJSON,
+                revalidate: revalidate
             )
-            switch outcome {
-            case .denied: return .deny
-            case .allowOnce: return .allowOnce
-            case .alwaysAllow: return .alwaysAllow
-            }
+            return Self.promptChoice(for: outcome)
         }
 
         let choice: PromptChoice
@@ -131,6 +179,13 @@ enum SpawnPermissionGate {
         case .allowOnce:
             return .allow
         case .alwaysAllow:
+            // A sibling prompt in the same wave may already have persisted
+            // Always Allow. Writing it again would advance the launcher's
+            // permission revision a second time and trip the ABA check in
+            // `TextSubagentKind.revalidateAfterPermission` for this sibling.
+            if await effectivePolicy(for: scope) == .alwaysAllow {
+                return .allow
+            }
             let persisted = await persistAlwaysAllow(
                 launchingAgentId: scope.agentId
             )
@@ -143,6 +198,28 @@ enum SpawnPermissionGate {
                 )
             }
             return .allow
+        }
+    }
+
+    /// Policy re-read for a queued prompt: a persisted Always Allow or Deny
+    /// settles the request without a panel; Ask means the card is still owed.
+    static func silentResolution(
+        for policy: SubagentPermissionPolicy
+    ) -> ToolPermissionPromptService.PolicyApprovalOutcome? {
+        switch policy {
+        case .alwaysAllow: return .allowOnce
+        case .deny: return .denied
+        case .ask: return nil
+        }
+    }
+
+    static func promptChoice(
+        for outcome: ToolPermissionPromptService.PolicyApprovalOutcome
+    ) -> PromptChoice {
+        switch outcome {
+        case .denied: return .deny
+        case .allowOnce: return .allowOnce
+        case .alwaysAllow: return .alwaysAllow
         }
     }
 

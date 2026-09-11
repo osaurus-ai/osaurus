@@ -1398,8 +1398,8 @@ public struct SystemPromptComposer: Sendable {
                         config: fallbackConfig,
                         settings: AgentManager.shared.agent(for: snapshot.agentId)?.settings
                     )
-                let maxParallel =
-                    snapshot.spawnConfiguration?.budgets.maxParallelSpawns
+                let spawnBudgets =
+                    snapshot.spawnConfiguration?.budgets.normalized
                     ?? SubagentToolVisibility.effectiveBudgets(
                         isDefault: snapshot.agentId == Agent.defaultId,
                         config: fallbackConfig,
@@ -1407,7 +1407,7 @@ public struct SystemPromptComposer: Sendable {
                         sharedParallelLimit: SpawnBatchConcurrencyContract.configuredLimit(
                             for: ServerRuntimeSettingsStore.snapshot()
                         )
-                    ).normalized.maxParallelSpawns
+                    ).normalized
                 composer.append(
                     .static(
                         id: "spawn",
@@ -1421,7 +1421,8 @@ public struct SystemPromptComposer: Sendable {
                                 ? toolset.spawnTargets.workspaceAgents : [],
                             availableToolNames: resolvedNames,
                             toolAccess: toolAccess,
-                            maxParallel: maxParallel
+                            maxParallel: spawnBudgets.maxParallelSpawns,
+                            maxRemoteParallel: spawnBudgets.maxRemoteParallelSpawns
                         )
                     )
                 )
@@ -3158,8 +3159,8 @@ public struct SystemPromptComposer: Sendable {
             {
                 byName.removeValue(forKey: SubagentCapabilityRegistry.spawnBatchToolName)
             } else {
-                let maxParallel =
-                    snapshot.spawnConfiguration?.budgets.maxParallelSpawns
+                let spawnBudgets =
+                    snapshot.spawnConfiguration?.budgets.normalized
                     ?? SubagentToolVisibility.effectiveBudgets(
                         isDefault: isDefault,
                         config: config,
@@ -3167,7 +3168,7 @@ public struct SystemPromptComposer: Sendable {
                         sharedParallelLimit: SpawnBatchConcurrencyContract.configuredLimit(
                             for: ServerRuntimeSettingsStore.snapshot()
                         )
-                    ).normalized.maxParallelSpawns
+                    ).normalized
                 byName[SubagentCapabilityRegistry.spawnBatchToolName] =
                     SpawnBatchTool.constrainedSpec(
                         spawnBatch,
@@ -3175,7 +3176,8 @@ public struct SystemPromptComposer: Sendable {
                         allowedAgentNames: allowedAgentNames,
                         allowedModelIds: allowedModelIds,
                         allowedWorkspaceAddresses: allowedWorkspaceAddresses,
-                        maxParallel: maxParallel
+                        maxParallel: spawnBudgets.maxParallelSpawns,
+                        maxRemoteParallel: spawnBudgets.maxRemoteParallelSpawns
                     )
             }
         }

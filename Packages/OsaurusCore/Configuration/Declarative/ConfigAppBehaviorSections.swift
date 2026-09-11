@@ -56,8 +56,10 @@ public struct DelegationSection: Codable, Equatable, Sendable {
     public var budgetMaxToolCalls: Int?
     /// 15...1800
     public var budgetMaxSeconds: Int?
-    /// 1...32
+    /// 1...32 — local-model workers per wave (mirrors Server Concurrent Sessions).
     public var budgetMaxParallelSpawns: Int?
+    /// 1...32 — remote-model workers per wave (independent of local capacity).
+    public var budgetMaxRemoteParallelSpawns: Int?
     /// HIGH RISK when disabled: spawn jobs skip the RAM preflight.
     public var ramSafetyPreflight: Bool?
     public var coexistenceEnabled: Bool?
@@ -80,6 +82,7 @@ public struct DelegationSection: Codable, Equatable, Sendable {
         case budgetMaxToolCalls = "budget_max_tool_calls"
         case budgetMaxSeconds = "budget_max_seconds"
         case budgetMaxParallelSpawns = "budget_max_parallel_spawns"
+        case budgetMaxRemoteParallelSpawns = "budget_max_remote_parallel_spawns"
         case ramSafetyPreflight = "ram_safety_preflight"
         case coexistenceEnabled = "coexistence_enabled"
     }

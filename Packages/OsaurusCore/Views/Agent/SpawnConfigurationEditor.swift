@@ -648,9 +648,15 @@ struct SpawnConfigurationEditor: View {
                         step: 15
                     )
                     budgetStepper(
-                        title: "Max subagents per batch",
+                        title: "Max local subagents at once",
                         keyPath: \.maxParallelSpawns,
                         range: SubagentBudgets.parallelSpawnBounds,
+                        step: 1
+                    )
+                    budgetStepper(
+                        title: "Max remote subagents at once",
+                        keyPath: \.maxRemoteParallelSpawns,
+                        range: SubagentBudgets.remoteParallelSpawnBounds,
                         step: 1
                     )
                     currentLocalExecutionContract
@@ -667,7 +673,7 @@ struct SpawnConfigurationEditor: View {
             "\(normalized.maxDelegateTokens.formatted()) tok · "
             + "\(turns) turn\(turns == 1 ? "" : "s") · "
             + "\(normalized.maxElapsedSeconds)s · "
-            + "\(normalized.maxParallelSpawns) per batch"
+            + "\(normalized.maxParallelSpawns) local / \(normalized.maxRemoteParallelSpawns) remote"
     }
 
     private var currentLocalExecutionContract: some View {
@@ -686,10 +692,10 @@ struct SpawnConfigurationEditor: View {
     private var localExecutionContractSubtitle: LocalizedStringKey {
         if excludedAgentID == nil {
             return
-                "Main Chat Spawn and Server Concurrent Sessions persist one configured limit. Existing engine work and RAM-Safety can queue or split it into smaller waves at run time. Different local models run in serial model waves; remote jobs can overlap."
+                "Main Chat Spawn and Server Concurrent Sessions persist one configured local limit. Existing engine work and RAM-Safety can queue or split it into smaller waves at run time. Different local models run in serial model waves. Remote subagents use the separate remote limit and run concurrently."
         }
         return
-            "This agent and Server Concurrent Sessions persist one configured limit. Existing engine work and RAM-Safety can queue or split it into smaller waves at run time. Different local models run in serial model waves; remote jobs can overlap."
+            "This agent and Server Concurrent Sessions persist one configured local limit. Existing engine work and RAM-Safety can queue or split it into smaller waves at run time. Different local models run in serial model waves. Remote subagents use the separate remote limit and run concurrently."
     }
 
     /// Reuse the runtime admission planner for the static settings-level

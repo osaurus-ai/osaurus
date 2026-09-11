@@ -213,6 +213,22 @@ public enum SpawnToolAccess: String, Codable, CaseIterable, Sendable {
     case readOnly = "read_only"
 }
 
+/// The per-launcher fan-out ceilings one wave of workers is checked against.
+/// `local` mirrors Server Concurrent Sessions (GPU/RAM bound); `remote` is the
+/// independent cloud/provider ceiling.
+public struct SpawnFanOutLimits: Sendable, Equatable {
+    public let local: Int
+    public let remote: Int
+
+    public init(local: Int, remote: Int) {
+        self.local = local
+        self.remote = remote
+    }
+
+    /// Most jobs a wave can carry before the local/remote split is known.
+    public var total: Int { local + remote }
+}
+
 public struct SubagentBudgets: Codable, Equatable, Sendable {
     public var maxDelegateTokens: Int
     public var maxDelegateTurns: Int
@@ -229,6 +245,12 @@ public struct SubagentBudgets: Codable, Equatable, Sendable {
     /// settings, RAM safety, and model-residency grouping can lower actual
     /// concurrency; different local models are serialized.
     public var maxParallelSpawns: Int
+    /// Maximum number of REMOTE (cloud / provider) workers one wave may fan
+    /// out to — a `spawn_batch` call or several `spawn_agent` / `spawn_model`
+    /// calls emitted in one message. Remote workers consume no local GPU or
+    /// RAM, so this is independent of `maxParallelSpawns`, which mirrors the
+    /// Server Concurrent Sessions ceiling and now governs LOCAL workers only.
+    public var maxRemoteParallelSpawns: Int
 
     /// Accepted bounds for each budget — the single source of truth shared by
     /// `normalized` (the save-time clamp) and the Subagents UI steppers, so the
@@ -241,19 +263,27 @@ public struct SubagentBudgets: Codable, Equatable, Sendable {
     /// current engine occupancy, Continuous Batching, and model residency can
     /// still split a configured batch into smaller execution waves.
     public static let parallelSpawnBounds: ClosedRange<Int> = 1 ... 32
+    public static let remoteParallelSpawnBounds: ClosedRange<Int> = 1 ... 32
+    public static let defaultMaxRemoteParallelSpawns = 8
+    /// Hard ceiling on jobs in one wave regardless of settings: every job is
+    /// either local or remote, so no wave can exceed both maxima combined.
+    public static let jobCountUpperBound =
+        parallelSpawnBounds.upperBound + remoteParallelSpawnBounds.upperBound
 
     public init(
         maxDelegateTokens: Int = 2048,
         maxDelegateTurns: Int = 2,
         maxToolCalls: Int = 0,
         maxElapsedSeconds: Int = 120,
-        maxParallelSpawns: Int = 3
+        maxParallelSpawns: Int = 3,
+        maxRemoteParallelSpawns: Int = SubagentBudgets.defaultMaxRemoteParallelSpawns
     ) {
         self.maxDelegateTokens = maxDelegateTokens
         self.maxDelegateTurns = maxDelegateTurns
         self.maxToolCalls = maxToolCalls
         self.maxElapsedSeconds = maxElapsedSeconds
         self.maxParallelSpawns = maxParallelSpawns
+        self.maxRemoteParallelSpawns = maxRemoteParallelSpawns
     }
 
     public var normalized: SubagentBudgets {
@@ -262,8 +292,20 @@ public struct SubagentBudgets: Codable, Equatable, Sendable {
             maxDelegateTurns: Self.clamp(maxDelegateTurns, to: Self.turnBounds),
             maxToolCalls: Self.clamp(maxToolCalls, to: Self.toolCallBounds),
             maxElapsedSeconds: Self.clamp(maxElapsedSeconds, to: Self.elapsedBounds),
-            maxParallelSpawns: Self.clamp(maxParallelSpawns, to: Self.parallelSpawnBounds)
+            maxParallelSpawns: Self.clamp(maxParallelSpawns, to: Self.parallelSpawnBounds),
+            maxRemoteParallelSpawns: Self.clamp(
+                maxRemoteParallelSpawns,
+                to: Self.remoteParallelSpawnBounds
+            )
         )
+    }
+
+    /// Upper bound on the total number of jobs one wave can carry before the
+    /// local/remote split of its targets is known (schema `maxItems`, the
+    /// pre-resolution `spawn_batch` preflight).
+    public var maxTotalParallelSpawns: Int {
+        let n = normalized
+        return n.maxParallelSpawns + n.maxRemoteParallelSpawns
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -272,6 +314,7 @@ public struct SubagentBudgets: Codable, Equatable, Sendable {
         case maxToolCalls
         case maxElapsedSeconds
         case maxParallelSpawns
+        case maxRemoteParallelSpawns
     }
 
     /// Backward-compatible decode for configurations written before batched
@@ -299,7 +342,11 @@ public struct SubagentBudgets: Codable, Equatable, Sendable {
             maxParallelSpawns: (try? container.decodeIfPresent(
                 Int.self,
                 forKey: .maxParallelSpawns
-            )) ?? 3
+            )) ?? 3,
+            maxRemoteParallelSpawns: (try? container.decodeIfPresent(
+                Int.self,
+                forKey: .maxRemoteParallelSpawns
+            )) ?? Self.defaultMaxRemoteParallelSpawns
         )
     }
 
@@ -310,6 +357,7 @@ public struct SubagentBudgets: Codable, Equatable, Sendable {
         try container.encode(maxToolCalls, forKey: .maxToolCalls)
         try container.encode(maxElapsedSeconds, forKey: .maxElapsedSeconds)
         try container.encode(maxParallelSpawns, forKey: .maxParallelSpawns)
+        try container.encode(maxRemoteParallelSpawns, forKey: .maxRemoteParallelSpawns)
     }
 
     private static func clamp(_ value: Int, to range: ClosedRange<Int>) -> Int {

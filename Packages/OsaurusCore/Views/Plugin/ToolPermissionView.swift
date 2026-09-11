@@ -8,12 +8,6 @@
 import AppKit
 import SwiftUI
 
-/// One pickable spawn model in the first-use permission prompt.
-struct SpawnModelChoice: Identifiable, Equatable, Hashable {
-    let id: String
-    let label: String
-}
-
 struct ToolPermissionView: View {
     let toolName: String
     let description: String
@@ -22,14 +16,6 @@ struct ToolPermissionView: View {
     let onDeny: () -> Void
     let onAlwaysAllow: () -> Void
     var onAllowForRun: (() -> Void)? = nil
-    /// First-use spawn-model picker. When `spawnModelOptions` is non-empty the
-    /// prompt shows a labelled picker so the user chooses the spawn model the
-    /// same time they grant permission; `onModelSelected` reports each change so
-    /// the presenter can persist the choice on Allow / Always Allow.
-    var spawnModelTitle: String? = nil
-    var spawnModelOptions: [SpawnModelChoice] = []
-    var initialSpawnModel: String? = nil
-    var onModelSelected: ((String) -> Void)? = nil
     /// Knowledge writes replace the generic JSON arguments block with a
     /// per-document manifest and diffs. Approving a document replacement out
     /// of a pretty-printed JSON blob is not informed consent, and knowledge
@@ -41,6 +27,10 @@ struct ToolPermissionView: View {
     /// blanket grant would be the wrong thing to be able to give. See
     /// `PerCallApprovalTool`.
     var perCallApprovalOnly: Bool = false
+    /// Number of approval requests waiting behind this one. The prompt
+    /// service presents one card at a time; telling the user more are coming
+    /// explains why another card appears right after this decision.
+    var queuedBehind: Int = 0
 
     @ObservedObject private var themeManager = ThemeManager.shared
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -48,7 +38,6 @@ struct ToolPermissionView: View {
     @State private var copied = false
     @State private var showAlwaysAllowConfirm = false
     @State private var appeared = false
-    @State private var selectedSpawnModel: String = ""
     @State private var alertScopeId = UUID()
     private var alertScope: ThemedAlertScope { .toolPermission(alertScopeId) }
 
@@ -127,9 +116,9 @@ struct ToolPermissionView: View {
                         .offset(y: appeared ? 0 : 4)
                 }
 
-                if !spawnModelOptions.isEmpty {
-                    spawnModelSection
-                        .padding(.top, 14)
+                if queuedBehind > 0 {
+                    queuedFootnote
+                        .padding(.top, 12)
                         .padding(.horizontal, 24)
                         .opacity(appeared ? 1 : 0)
                         .offset(y: appeared ? 0 : 4)
@@ -170,10 +159,6 @@ struct ToolPermissionView: View {
             y: 12
         )
         .onAppear {
-            if selectedSpawnModel.isEmpty {
-                selectedSpawnModel =
-                    initialSpawnModel ?? spawnModelOptions.first?.id ?? ""
-            }
             withAnimation(theme.springAnimation(responseMultiplier: 1.25).delay(0.05)) {
                 appeared = true
             }
@@ -213,24 +198,21 @@ struct ToolPermissionView: View {
         }
     }
 
-    // MARK: - Spawn Model Picker (first-use)
+    // MARK: - Queue Footnote
 
-    private var spawnModelSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(LocalizedStringKey(spawnModelTitle ?? "Spawn model"), bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-            Picker("", selection: $selectedSpawnModel) {
-                ForEach(spawnModelOptions) { option in
-                    Text(option.label).tag(option.id)
-                }
-            }
-            .labelsHidden()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .onChange(of: selectedSpawnModel) { _, newValue in
-                onModelSelected?(newValue)
-            }
+    private var queuedFootnote: some View {
+        Label {
+            Text(
+                queuedBehind == 1
+                    ? L("1 more approval is waiting behind this one.")
+                    : L("\(queuedBehind) more approvals are waiting behind this one.")
+            )
+        } icon: {
+            Image(systemName: "rectangle.stack")
         }
+        .font(.system(size: 11, weight: .medium))
+        .foregroundColor(theme.secondaryText)
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 
     // MARK: - Arguments Block

@@ -120,6 +120,11 @@ public enum SubagentDecision: Sendable, Equatable {
     /// Refuse because the user explicitly declined an approval prompt. Maps
     /// to a `user_denied` envelope.
     case userDenied(String)
+    /// Approved, but there is no capacity for this member right now (a
+    /// sibling wave exceeded the launcher's local or remote fan-out limit).
+    /// Maps to a retryable `unavailable` envelope: the model may run the
+    /// work after the admitted siblings finish.
+    case unavailable(String)
 }
 
 // MARK: - Result

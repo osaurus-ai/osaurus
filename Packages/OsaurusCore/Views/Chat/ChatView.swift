@@ -7141,10 +7141,14 @@ final class ChatSession: ObservableObject {
                     }
 
                     // Approval-aware parallel batch execution (chat
-                    // semantics): approvals resolve FIRST, serially and in
-                    // model order, so permission prompts never stack or
-                    // race; the approved set then executes concurrently
-                    // (registry dispatch only); results post-process on the
+                    // semantics): REGISTRY approvals (`PermissionedTool`)
+                    // resolve FIRST, serially and in model order; the
+                    // approved set then executes concurrently (registry
+                    // dispatch only). Tools that prompt from their own body
+                    // (spawn, image/video billing) still prompt during the
+                    // parallel phase — `ToolPermissionPromptService` queues
+                    // those cards one at a time and sibling spawn calls share
+                    // one wave card. Results post-process on the
                     // MainActor in model order. On a denial the remaining
                     // unstarted calls are skipped with a paired envelope —
                     // the chat policy (`stopOnToolRejection`) stops the

@@ -21,7 +21,9 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
         + "agent with that agent's own enabled tools; when the agent has a configured working "
         + "folder it can read and write files there. Tools this agent has but the target lacks remain "
         + "parent-owned. The target agent must be in this agent's spawnable list. Use `spawn_model` "
-        + "instead to hand a task to a bare model with no agent attached."
+        + "instead to hand a task to a bare model with no agent attached. One call = one worker; to "
+        + "run several independent workers at once, emit all the spawn calls together in one "
+        + "message — they run as one batch with one approval and shared limits."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -105,6 +107,10 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
     }
 
     public func execute(argumentsJSON: String) async throws -> String {
+        // Sibling spawn calls in one model message rendezvous for a single
+        // approval card. Whatever path this call takes out — validation
+        // failure, denial, completion — it must stop counting as pending.
+        defer { SpawnWaveGate.settleCurrentCall() }
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
         let inputReq = requireString(args, "input", expected: "the task for the subagent", tool: name)

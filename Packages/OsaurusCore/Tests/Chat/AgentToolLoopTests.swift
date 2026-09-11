@@ -1556,6 +1556,40 @@ struct AgentToolLoopTests {
         #expect(minted.count == "call_".count + 24)
     }
 
+    /// Some providers and small local models stamp every call in a message
+    /// with the same id. The id keys the live feed, Stop registration, the
+    /// chat row, and spawn wave membership, so siblings must never share one.
+    @Test func duplicateModelSuppliedCallIdsAreUniquifiedPerBatch() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([
+                inv("a_tool", "{\"n\":1}", callId: "call_dup"),
+                inv("b_tool", "{\"n\":2}", callId: "call_dup"),
+                inv("c_tool", "{\"n\":3}", callId: "  "),
+                inv("d_tool", "{\"n\":4}", callId: "call_unique"),
+            ]),
+            .finalResponse,
+        ])
+        _ = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+        let ids = surface.executedCalls.map(\.callId)
+        #expect(ids.count == 4)
+        #expect(Set(ids).count == 4, "every call in the batch executes under its own id")
+        #expect(ids[0] == "call_dup", "the first occurrence keeps the model's id")
+        #expect(ids[1] != "call_dup")
+        #expect(ids[1].hasPrefix("call_"))
+        #expect(ids[2].hasPrefix("call_"), "blank ids are minted")
+        #expect(ids[3] == "call_unique")
+        // The recorded assistant tool_calls use the same ids as execution.
+        #expect(surface.willProcessCallIds == ids)
+
+        // The pure helper leaves an already-unique batch untouched.
+        let unique = [inv("x", "{}", callId: "call_1"), inv("y", "{}", callId: "call_2")]
+        #expect(AgentToolLoop.uniquelyIdentifiedInvocations(unique).map(\.toolCallId) == ["call_1", "call_2"])
+    }
+
     @Test func iterationCapReachedWhenToolsNeverStop() async throws {
         let max = 5
         let surface = ScriptedLoopSurface(

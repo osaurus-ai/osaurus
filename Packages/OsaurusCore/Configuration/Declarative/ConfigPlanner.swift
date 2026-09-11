@@ -445,6 +445,9 @@ enum ConfigPlanner {
             checkBudget(
                 section.budgetMaxParallelSpawns, SubagentBudgets.parallelSpawnBounds,
                 "budget_max_parallel_spawns")
+            checkBudget(
+                section.budgetMaxRemoteParallelSpawns, SubagentBudgets.remoteParallelSpawnBounds,
+                "budget_max_remote_parallel_spawns")
             // Spawn targets may be custom agents (existing or created by this
             // document) or built-in library agents — never the Default agent.
             var spawnTargets = effectiveAgentNames(document: document, prune: prune)
@@ -1303,6 +1306,9 @@ enum ConfigPlanner {
         diff(
             "budget_max_parallel_spawns", desired: desired.budgetMaxParallelSpawns,
             current: current.budgetMaxParallelSpawns, into: &changes)
+        diff(
+            "budget_max_remote_parallel_spawns", desired: desired.budgetMaxRemoteParallelSpawns,
+            current: current.budgetMaxRemoteParallelSpawns, into: &changes)
         diff(
             "ram_safety_preflight", desired: desired.ramSafetyPreflight,
             current: current.ramSafetyPreflight, into: &changes)

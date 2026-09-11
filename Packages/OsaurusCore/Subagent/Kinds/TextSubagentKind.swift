@@ -799,13 +799,21 @@ final class TextSubagentKind:
         if permissionPreauthorized {
             return .allow
         }
+        let argumentsJSON = approvalArgumentsJSON(resolvedModel: resolved.name)
         return await SpawnPermissionGate.authorize(
             scope: scope,
             policy: resolvedPermissionPolicy,
             toolName: toolName,
             description:
                 "Allow this agent to spawn one bounded \(targetKindLabel) subagent?",
-            argumentsJSON: approvalArgumentsJSON(resolvedModel: resolved.name)
+            argumentsJSON: argumentsJSON,
+            waveMember: SpawnWaveGate.Member(
+                callId: scope.toolCallId,
+                toolName: toolName,
+                scope: scope,
+                argumentsJSON: argumentsJSON,
+                isLocal: resolved.isLocal
+            )
         )
     }
 

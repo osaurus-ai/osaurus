@@ -23,14 +23,16 @@ import Foundation
 public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
     public let name = SubagentCapabilityRegistry.spawnBatchToolName
     public let description =
-        "Run several independent bounded subtasks using the agents and models the user allowed. "
-        + "Each job must name a caller-stable id, one target_type (`agent` or `model`), the exact "
-        + "target name/id, and its input. Osaurus validates every job before changing local model "
-        + "residency, runs remote jobs concurrently, batches jobs for the same local model without "
-        + "reloading it between jobs, serializes different local models, and returns results in the "
-        + "same order as the input jobs. Use this only for independent work that can safely fan out."
+        "Run several independent bounded subtasks using the agents and models the user allowed, as "
+        + "one explicit job list with one combined result. Each job must name a caller-stable id, one "
+        + "target_type (`agent` or `model`), the exact target name/id, and its input. Osaurus validates "
+        + "every job before changing local model residency, runs remote jobs concurrently, batches "
+        + "jobs for the same local model without reloading it between jobs, serializes different "
+        + "local models, and returns results in the same order as the input jobs. Emitting several "
+        + "`spawn_agent` / `spawn_model` calls in one message is the same fan-out with one digest per "
+        + "call; use `spawn_batch` when you want every result in one envelope."
 
-    static let jobCountBounds: ClosedRange<Int> = 1 ... 32
+    static let jobCountBounds: ClosedRange<Int> = 1 ... SubagentBudgets.jobCountUpperBound
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -106,6 +108,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         let maxParallel: Int
         let localParallelism: Int
         let localAdmissionPlan: SubagentBatchAdmissionPlan
+        var maxRemoteParallel: Int = SubagentBudgets.defaultMaxRemoteParallelSpawns
     }
 
     @TaskLocal
@@ -543,15 +546,17 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
 
         let parentScope = SubagentScope.current()
         let evaluationOverrides = Self.evaluationOverrides
-        let preflightMaxParallel: Int
-        if let evaluationOverrides {
-            preflightMaxParallel = evaluationOverrides.maxParallel
-        } else {
-            preflightMaxParallel = await Self.effectiveMaxParallel(scope: parentScope)
-        }
+        let preflightLimits = await Self.effectiveFanOutLimits(
+            scope: parentScope,
+            evaluationOverrides: evaluationOverrides
+        )
+        let preflightMaxParallel = preflightLimits.local
+        // Before targets resolve, the local/remote split is unknown: only the
+        // combined ceiling can be enforced. The exact split is checked after
+        // preparation, before any approval panel.
         if let limitFailure = Self.batchLimitFailure(
             jobCount: jobs.count,
-            maxJobs: preflightMaxParallel,
+            maxJobs: preflightLimits.total,
             tool: name
         ) {
             return limitFailure
@@ -583,7 +588,9 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
 
         feed.emitPhase(
             "validating targets",
-            detail: "\(jobs.count) jobs · fan-out limit \(preflightMaxParallel)"
+            detail:
+                "\(jobs.count) jobs · fan-out limit \(preflightLimits.local) local / "
+                + "\(preflightLimits.remote) remote"
         )
 
         // A persisted deny is cheaper and stronger than target lookup, so
@@ -624,8 +631,18 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             tool: name,
             evaluationOverrides: evaluationOverrides
         ) {
-        case .ready:
-            break
+        case .ready(let preflightPrepared):
+            // Targets are resolved: enforce the exact local/remote split
+            // before any approval panel can be summoned for an oversized wave.
+            if let limitFailure = Self.fanOutLimitFailure(
+                localCount: preflightPrepared.filter { $0.run.admissionModelKey != nil }.count,
+                remoteCount: preflightPrepared.filter { $0.run.admissionModelKey == nil }.count,
+                limits: preflightLimits,
+                tool: name
+            ) {
+                feed.finish(success: false, summary: "Batch exceeds this agent's fan-out limit.")
+                return limitFailure
+            }
         case .failures(let failures):
             let message = Self.preparationFailureMessage(failures)
             feed.finish(success: false, summary: message)
@@ -647,7 +664,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
 
         feed.emitPhase(
             "authorizing batch",
-            detail: "\(jobs.count) validated jobs · max \(preflightMaxParallel) parallel"
+            detail: "\(jobs.count) validated jobs · max \(preflightMaxParallel) local parallel"
         )
 
         // Capture the exact authority on both sides of the policy read. A
@@ -722,6 +739,16 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 tool: name,
                 retryable: false
             )
+        case .unavailable(let reason):
+            // Not produced by the batch gate (it never joins a sibling wave),
+            // but the verdict vocabulary is shared with the single-spawn path.
+            feed.finish(success: false, summary: reason)
+            return ToolEnvelope.failure(
+                kind: .unavailable,
+                message: reason,
+                tool: name,
+                retryable: true
+            )
         }
 
         let approvedAuthority = await Self.authorityFingerprint(
@@ -751,15 +778,14 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         // while it is open. Re-resolve every target from the latest persisted
         // settings after approval and before admission/model loading; prepared
         // values intentionally do not survive this boundary.
-        let maxParallel: Int
-        if let evaluationOverrides {
-            maxParallel = evaluationOverrides.maxParallel
-        } else {
-            maxParallel = await Self.effectiveMaxParallel(scope: parentScope)
-        }
+        let executionLimits = await Self.effectiveFanOutLimits(
+            scope: parentScope,
+            evaluationOverrides: evaluationOverrides
+        )
+        let maxParallel = executionLimits.local
         if let limitFailure = Self.batchLimitFailure(
             jobCount: jobs.count,
-            maxJobs: maxParallel,
+            maxJobs: executionLimits.total,
             tool: name
         ) {
             feed.finish(
@@ -770,7 +796,9 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         }
         feed.emitPhase(
             "revalidating approved batch",
-            detail: "\(jobs.count) jobs · current fan-out limit \(maxParallel)"
+            detail:
+                "\(jobs.count) jobs · current fan-out limit \(executionLimits.local) local / "
+                + "\(executionLimits.remote) remote"
         )
         let prepared: [PreparedJob]
         switch await Self.prepareJobs(
@@ -781,6 +809,18 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             evaluationOverrides: evaluationOverrides
         ) {
         case .ready(let current):
+            if let limitFailure = Self.fanOutLimitFailure(
+                localCount: current.filter { $0.run.admissionModelKey != nil }.count,
+                remoteCount: current.filter { $0.run.admissionModelKey == nil }.count,
+                limits: executionLimits,
+                tool: name
+            ) {
+                feed.finish(
+                    success: false,
+                    summary: "Batch settings changed before execution; revalidation failed."
+                )
+                return limitFailure
+            }
             prepared = current
         case .failures(let failures):
             let message =
@@ -1416,10 +1456,11 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         return .success(jobs)
     }
 
-    /// The visible per-agent limit is both the maximum fan-out and the maximum
-    /// concurrency for one batch. Enforce it before target resolution so an
-    /// oversized call cannot acquire admission, load a model, or unload the
-    /// parent even if a provider ignores the request-local JSON Schema limit.
+    /// The combined per-agent ceiling (local + remote) is the most one wave
+    /// can carry before its targets resolve. Enforce it before target
+    /// resolution so an oversized call cannot acquire admission, load a model,
+    /// or unload the parent even if a provider ignores the request-local JSON
+    /// Schema limit. `fanOutLimitFailure` applies the exact split afterwards.
     static func batchLimitFailure(
         jobCount: Int,
         maxJobs: Int,
@@ -1427,7 +1468,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
     ) -> String? {
         let limit = max(
             SubagentBudgets.parallelSpawnBounds.lowerBound,
-            min(maxJobs, SubagentBudgets.parallelSpawnBounds.upperBound)
+            min(maxJobs, SubagentBudgets.jobCountUpperBound)
         )
         guard jobCount <= limit else {
             return ToolEnvelope.failure(
@@ -1441,6 +1482,77 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             )
         }
         return nil
+    }
+
+    /// Local and remote fan-out are independent budgets. Shared by the
+    /// explicit `spawn_batch` gate and the implicit wave of sibling
+    /// `spawn_agent` / `spawn_model` calls so both shapes reject the same way.
+    static func fanOutLimitFailure(
+        localCount: Int,
+        remoteCount: Int,
+        limits: SpawnFanOutLimits,
+        tool: String
+    ) -> String? {
+        if localCount > limits.local {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: Self.fanOutLimitMessage(
+                    requested: localCount,
+                    limit: limits.local,
+                    kind: "local"
+                ),
+                field: "jobs",
+                expected: "at most \(limits.local) local-model jobs",
+                tool: tool,
+                retryable: true
+            )
+        }
+        if remoteCount > limits.remote {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: Self.fanOutLimitMessage(
+                    requested: remoteCount,
+                    limit: limits.remote,
+                    kind: "remote"
+                ),
+                field: "jobs",
+                expected: "at most \(limits.remote) remote-model jobs",
+                tool: tool,
+                retryable: true
+            )
+        }
+        return nil
+    }
+
+    static func fanOutLimitMessage(requested: Int, limit: Int, kind: String) -> String {
+        "This wave asks for \(requested) \(kind) subagents, but this agent allows at most "
+            + "\(limit) \(kind) subagents at once. Run the extra work after these finish, "
+            + "or ask the user to raise the limit in the Subagents settings."
+    }
+
+    /// Per-launcher fan-out limits: `local` mirrors the Server Concurrent
+    /// Sessions ceiling; `remote` is independent (cloud workers consume no
+    /// local GPU or RAM).
+    static func effectiveFanOutLimits(
+        scope: SubagentScope,
+        evaluationOverrides: EvaluationOverrides?
+    ) async -> SpawnFanOutLimits {
+        if let evaluationOverrides {
+            return SpawnFanOutLimits(
+                local: evaluationOverrides.maxParallel,
+                remote: evaluationOverrides.maxRemoteParallel
+            )
+        }
+        return await MainActor.run { Self.effectiveFanOutLimits(scope: scope) }
+    }
+
+    @MainActor
+    static func effectiveFanOutLimits(scope: SubagentScope) -> SpawnFanOutLimits {
+        let budgets = Self.effectiveBudgets(scope: scope)
+        return SpawnFanOutLimits(
+            local: budgets.maxParallelSpawns,
+            remote: budgets.maxRemoteParallelSpawns
+        )
     }
 
     static func aggregateStatus(
@@ -1496,6 +1608,11 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
 
     @MainActor
     static func effectiveMaxParallel(scope: SubagentScope) -> Int {
+        Self.effectiveBudgets(scope: scope).maxParallelSpawns
+    }
+
+    @MainActor
+    static func effectiveBudgets(scope: SubagentScope) -> SubagentBudgets {
         let config = SubagentConfigurationStore.snapshot()
         let isDefault = scope.agentId == Agent.defaultId
         let settings = AgentManager.shared.agent(for: scope.agentId)?.settings
@@ -1506,7 +1623,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             sharedParallelLimit: SpawnBatchConcurrencyContract.configuredLimit(
                 for: ServerRuntimeSettingsStore.snapshot()
             )
-        ).normalized.maxParallelSpawns
+        ).normalized
     }
 
     /// Group local work by canonical model identity while preserving the first
@@ -3116,7 +3233,8 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         allowedAgentNames: [String] = [],
         allowedModelIds: [String],
         allowedWorkspaceAddresses: [String] = [],
-        maxParallel: Int
+        maxParallel: Int,
+        maxRemoteParallel: Int = SubagentBudgets.defaultMaxRemoteParallelSpawns
     ) -> Tool {
         let agents = SpawnableAgentIdentity.normalizedIDs(allowedAgentIDs)
             .map(\.uuidString)
@@ -3164,14 +3282,19 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         jobProperties["target"] = .object(target)
         items["properties"] = .object(jobProperties)
         jobs["items"] = .object(items)
-        let batchLimit = max(
+        let localLimit = max(
             SubagentBudgets.parallelSpawnBounds.lowerBound,
             min(maxParallel, SubagentBudgets.parallelSpawnBounds.upperBound)
         )
-        jobs["maxItems"] = .number(Double(batchLimit))
+        let remoteLimit = max(
+            SubagentBudgets.remoteParallelSpawnBounds.lowerBound,
+            min(maxRemoteParallel, SubagentBudgets.remoteParallelSpawnBounds.upperBound)
+        )
+        jobs["maxItems"] = .number(Double(localLimit + remoteLimit))
         jobs["description"] = .string(
-            "Independent jobs. This agent allows at most \(batchLimit) jobs in one batch, "
-                + "and at most \(batchLimit) execute concurrently; results preserve input order."
+            "Independent jobs. This agent allows at most \(localLimit) local-model jobs and "
+                + "\(remoteLimit) remote-model jobs in one batch; they run concurrently within "
+                + "those limits and results preserve input order."
         )
         properties["jobs"] = .object(jobs)
         root["properties"] = .object(properties)
