@@ -396,7 +396,6 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             targetId = createWindow()
         }
         guard let state = windowStates[targetId] else { return }
-        state.openProjectId = nil
         state.switchToWorkspaceAgent(address: address, workspaceId: workspaceId)
     }
 
@@ -414,7 +413,6 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             targetId = createWindow()
         }
         guard let state = windowStates[targetId] else { return }
-        state.openProjectId = nil
         state.switchAgent(to: agentId)
     }
 
@@ -423,7 +421,6 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     public func openNewChatWindow(withWorkspaceAgentAddress address: String, workspaceId: String? = nil) {
         let id = createWindow()
         guard let state = windowStates[id] else { return }
-        state.openProjectId = nil
         state.switchToWorkspaceAgent(address: address, workspaceId: workspaceId)
     }
 
@@ -455,7 +452,6 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         guard let relay = state.pairedRelayAgents.first(where: { $0.providerId == providerId })
         else { return }
 
-        state.openProjectId = nil
         state.switchToWorkspaceAgent(address: relay.remoteAgentAddress,
             workspaceId: RemoteAgentManager.shared.remoteAgent(forProviderId: providerId)?.workspaceId ?? ""
         )

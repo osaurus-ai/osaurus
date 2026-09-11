@@ -9384,8 +9384,6 @@ struct ChatView: View {
                             workspaceAgentAddress: windowState.workspaceAgentAddress,
                             workspaceAgentWorkspaceId: observedSession.workspaceContext?.workspaceId,
                             onSelectWorkspaceAgent: { address, workspaceId in
-                                windowState.openProjectId = nil
-                                windowState.enteredChatFromProjectPage = false
                                 windowState.switchToWorkspaceAgent(address: address, workspaceId: workspaceId)
                             }
                         )
