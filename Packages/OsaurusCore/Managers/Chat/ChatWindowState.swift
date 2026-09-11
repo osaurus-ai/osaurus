@@ -1574,6 +1574,9 @@ final class ChatWindowState: ObservableObject {
         var snapshot = live.toSessionData()
         snapshot.turns = []
         let cold = makeFreshSession(agentId: live.agentId ?? Agent.defaultId, loading: snapshot)
+        // `ChatSessionData` carries no composer text; carry the unsent
+        // draft across so hibernating a tab does not eat it (#2708).
+        cold.input = live.input
         live.warmupController.shutdown()
         live.stop()
         live.onSessionChanged = nil

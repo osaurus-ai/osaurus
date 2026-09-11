@@ -2863,6 +2863,7 @@ final class ChatSession: ObservableObject {
     }
 
     func reset() {
+        stashDraft()
         stop()
         turns.removeAll()
         input = ""
@@ -2942,6 +2943,7 @@ final class ChatSession: ObservableObject {
 
         applyEffectiveModel(for: agentId)
         rebuildVisibleBlocks()
+        restoreDraft()
     }
 
     /// Reset for a specific agent
@@ -2950,11 +2952,38 @@ final class ChatSession: ObservableObject {
         // stop() → completeRunCleanup() preserves the current session's
         // identity instead of stamping the new agent on it. See #1005.
         reset()
+        // reset() brought back the OLD agent's new-chat draft; put it back
+        // and pick up the one typed under the incoming agent instead.
+        stashDraft()
+        input = ""
         agentId = newAgentId
+        restoreDraft()
         // reset() picked a model for the OLD agent; re-resolve for the
         // new one now that turns/sessionId are cleared.
         applyEffectiveModel(for: newAgentId)
         Task { [weak self] in await self?.refreshContextEstimates() }
+    }
+
+    // MARK: - Composer Drafts
+
+    /// Key under which this session's unsent composer text is remembered
+    /// while another chat or agent is shown in its place.
+    var draftKey: ChatDraftStore.Key {
+        if let sessionId { return .session(sessionId) }
+        return .newChat(agentId: agentId)
+    }
+
+    /// Remember the current composer text for `draftKey` so it can come
+    /// back when the user returns to this chat (#2708).
+    func stashDraft() {
+        ChatDraftStore.shared.stash(input, for: draftKey)
+    }
+
+    /// Bring back the composer text remembered for `draftKey`, if any.
+    /// Never overwrites text the user has already typed.
+    func restoreDraft() {
+        guard input.isEmpty, let draft = ChatDraftStore.shared.take(for: draftKey) else { return }
+        input = draft
     }
 
     // MARK: - LLM Context Compaction
@@ -3302,6 +3331,7 @@ final class ChatSession: ObservableObject {
 
     /// Load session from persisted data
     func load(from data: ChatSessionData) {
+        stashDraft()
         // Switching sessions discards the current thread's UI, so suppress the
         // outgoing-session block rebuild that `stop()` would trigger. Cleared
         // before the single rebuild for the incoming session below.
@@ -3359,6 +3389,7 @@ final class ChatSession: ObservableObject {
         voiceInputState = .idle
         showVoiceOverlay = false
         input = ""
+        restoreDraft()
         pendingAttachments = []
         pendingOneOffSkillId = nil
         queuedSend = nil
