@@ -24,9 +24,18 @@ struct ChatToolChoicePolicyTests {
         let input = "Call share_artifact with the finished report."
         let request = DispatchRequest(
             prompt: AgentDelegationDispatcher.delegatedPrompt(input: input),
-            source: .delegation, toolIntentText: input)
-        #expect(Self.isRequired(ChatToolChoicePolicy.resolve(
-            tools: [Self.tool("share_artifact")], userText: request.toolIntentText, attempt: 1)))
+            source: .delegation,
+            toolIntentText: input
+        )
+        #expect(
+            Self.isRequired(
+                ChatToolChoicePolicy.resolve(
+                    tools: [Self.tool("share_artifact")],
+                    userText: request.toolIntentText,
+                    attempt: 1
+                )
+            )
+        )
     }
 
     @Test
