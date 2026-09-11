@@ -62,6 +62,8 @@ private struct ChatHistoryDialogContent: View {
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var sessionsManager = ChatSessionsManager.shared
     @ObservedObject private var projectManager = ProjectManager.shared
+    /// Names for the Workspaces submenu (sessions only carry the id).
+    @ObservedObject private var workspacesService = WorkspacesService.shared
 
     /// Which agent's chats the list shows. nil until the user picks one,
     /// so the initial lens tracks the window's agent (see `activeFilter`).
@@ -72,8 +74,10 @@ private struct ChatHistoryDialogContent: View {
     /// Origin lens (Chat / Plugin / Schedule / ...), picked in the Filter
     /// popover. Composes with the agent lens and the archived chip.
     @State private var sourceFilter: ChatHistorySourceFilter = .all
-    /// Project lens, also picked in the Filter popover.
-    @State private var projectFilter: ChatHistoryProjectFilter = .all
+    /// Project lens (a project id), picked in the Filter popover's submenu.
+    @State private var projectFilter: UUID?
+    /// Workspace lens (a router workspace id), likewise.
+    @State private var workspaceFilter: String?
     @State private var showSourcePicker = false
     @State private var isFilterButtonHovered = false
     /// Archived lens: on lists only archived chats, off hides them.
@@ -186,9 +190,11 @@ private struct ChatHistoryDialogContent: View {
                 sourceFilter: sourceFilter,
                 showArchived: showArchived,
                 projectFilter: projectFilter,
+                workspaceFilter: workspaceFilter,
                 onClearFilters: {
                     sourceFilter = .all
-                    projectFilter = .all
+                    projectFilter = nil
+                    workspaceFilter = nil
                     showArchived = false
                 }
             )
@@ -244,9 +250,11 @@ private struct ChatHistoryDialogContent: View {
     // MARK: - Filter button
 
     /// Number of lenses the popover currently applies (source, project,
-    /// archived). Shown on the button so a narrowed list is never a surprise.
+    /// workspace, archived). Shown on the button so a narrowed list is
+    /// never a surprise.
     private var activeFilterCount: Int {
-        (sourceFilter != .all ? 1 : 0) + (projectFilter != .all ? 1 : 0) + (showArchived ? 1 : 0)
+        (sourceFilter != .all ? 1 : 0) + (projectFilter != nil ? 1 : 0)
+            + (workspaceFilter != nil ? 1 : 0) + (showArchived ? 1 : 0)
     }
 
     /// Opens the filter popover. Reads as the Import button's sibling, and
@@ -282,8 +290,10 @@ private struct ChatHistoryDialogContent: View {
             ChatHistoryFilterPicker(
                 sessions: visibleSessions,
                 projects: projectManager.projects,
+                workspaces: workspacesService.workspaces,
                 sourceFilter: $sourceFilter,
                 projectFilter: $projectFilter,
+                workspaceFilter: $workspaceFilter,
                 showArchived: $showArchived
             )
         }
@@ -431,24 +441,6 @@ enum ChatHistorySourceFilter: Equatable {
         switch self {
         case .all: return true
         case .source(let source): return session.source == source
-        }
-    }
-}
-
-/// Which project the listed conversations belong to.
-enum ChatHistoryProjectFilter: Equatable {
-    /// Every conversation, in a project or not.
-    case all
-    /// Conversations not assigned to any project.
-    case none
-    /// Conversations in this project.
-    case project(UUID)
-
-    func matches(_ session: ChatSessionData) -> Bool {
-        switch self {
-        case .all: return true
-        case .none: return session.projectId == nil
-        case .project(let id): return session.projectId == id
         }
     }
 }
@@ -734,18 +726,21 @@ private struct ChatHistoryAgentPicker: View {
 
 // MARK: - Filter popover
 
-/// Filter panel for the History dialog, in the agent picker's idiom: a
-/// Source section ("All" + one row per origin present in the lens), a
-/// Project section ("Any" + "No Project" + one row per project with
-/// chats), and an Archived toggle. Rows carry chat counts; empty buckets
-/// are hidden so the panel never offers dead choices. The popover stays
-/// open across picks so lenses can be combined; click outside to close.
+/// Filter panel for the History dialog: one flat list of toggles. Origin
+/// rows (Plugin, API, Schedule, ...; "Chat" is the default and has no row)
+/// each select or clear the source lens. Projects and Workspaces are single
+/// rows that open a nested popover on hover listing the concrete choices.
+/// Archived is a toggle at the bottom. Rows carry chat counts; empty
+/// buckets are hidden so the panel never offers dead choices. The panel
+/// stays open across picks so lenses can be combined; click outside to close.
 private struct ChatHistoryFilterPicker: View {
     /// Sessions already narrowed by the agent lens (both archived states).
     let sessions: [ChatSessionData]
     let projects: [Project]
+    let workspaces: [OsaurusRouterWorkspaceSummary]
     @Binding var sourceFilter: ChatHistorySourceFilter
-    @Binding var projectFilter: ChatHistoryProjectFilter
+    @Binding var projectFilter: UUID?
+    @Binding var workspaceFilter: String?
     @Binding var showArchived: Bool
 
     @Environment(\.theme) private var theme
@@ -756,96 +751,133 @@ private struct ChatHistoryFilterPicker: View {
         sessions.filter { $0.archived == showArchived }
     }
 
+    private func matchesProject(_ session: ChatSessionData) -> Bool {
+        projectFilter == nil || session.projectId == projectFilter
+    }
+
+    private func matchesWorkspace(_ session: ChatSessionData) -> Bool {
+        workspaceFilter == nil || session.workspace?.workspaceId == workspaceFilter
+    }
+
+    /// Per-origin counts, respecting every lens except source.
     private var countsBySource: [SessionSource: Int] {
         var counts: [SessionSource: Int] = [:]
-        for session in lensSessions where projectFilter.matches(session) {
+        for session in lensSessions where matchesProject(session) && matchesWorkspace(session) {
             counts[session.source, default: 0] += 1
         }
         return counts
     }
 
-    private var countsByProject: [UUID?: Int] {
-        var counts: [UUID?: Int] = [:]
-        for session in lensSessions where sourceFilter.matches(session) {
-            counts[session.projectId, default: 0] += 1
+    /// Per-project counts, respecting every lens except project.
+    private var countsByProject: [UUID: Int] {
+        var counts: [UUID: Int] = [:]
+        for session in lensSessions
+        where sourceFilter.matches(session) && matchesWorkspace(session) {
+            if let id = session.projectId { counts[id, default: 0] += 1 }
+        }
+        return counts
+    }
+
+    /// Per-workspace counts, respecting every lens except workspace.
+    /// Invite-link shares stamp an empty workspace id and are skipped.
+    private var countsByWorkspace: [String: Int] {
+        var counts: [String: Int] = [:]
+        for session in lensSessions
+        where sourceFilter.matches(session) && matchesProject(session) {
+            if let id = session.workspace?.workspaceId, !id.isEmpty {
+                counts[id, default: 0] += 1
+            }
         }
         return counts
     }
 
     private var archivedCount: Int {
-        sessions.filter { $0.archived && sourceFilter.matches($0) && projectFilter.matches($0) }.count
+        sessions.filter {
+            $0.archived && sourceFilter.matches($0) && matchesProject($0) && matchesWorkspace($0)
+        }.count
     }
 
     private var activeCount: Int {
-        (sourceFilter != .all ? 1 : 0) + (projectFilter != .all ? 1 : 0) + (showArchived ? 1 : 0)
+        (sourceFilter != .all ? 1 : 0) + (projectFilter != nil ? 1 : 0)
+            + (workspaceFilter != nil ? 1 : 0) + (showArchived ? 1 : 0)
     }
 
     private static let rowHeight: CGFloat = 36
-    private static let sectionHeaderHeight: CGFloat = 26
     private static let chromeHeight: CGFloat = 44
 
     var body: some View {
         let sourceCounts = countsBySource
         let projectCounts = countsByProject
+        let workspaceCounts = countsByWorkspace
         // Declaration order of `SessionSource` keeps the rows stable; a
         // selected bucket stays visible even when its count drops to zero so
         // the user can always deselect it.
         let sources = SessionSource.allCases.filter {
-            (sourceCounts[$0] ?? 0) > 0 || sourceFilter == .source($0)
+            $0 != .chat && ((sourceCounts[$0] ?? 0) > 0 || sourceFilter == .source($0))
         }
-        let visibleProjects = projects.filter {
-            (projectCounts[$0.id] ?? 0) > 0 || projectFilter == .project($0.id)
+        let projectChoices: [ChatHistorySubmenuChoice] = projects.compactMap { project in
+            let count = projectCounts[project.id] ?? 0
+            guard count > 0 || projectFilter == project.id else { return nil }
+            return ChatHistorySubmenuChoice(id: project.id.uuidString, title: project.name, count: count)
         }
-        let showNoProject = (projectCounts[nil] ?? 0) > 0 || projectFilter == .none
-        let rowCount = 1 + sources.count + 1 + (showNoProject ? 1 : 0) + visibleProjects.count + 1
+        let workspaceChoices: [ChatHistorySubmenuChoice] = workspaceCounts.keys.sorted().map { id in
+            // Settings may not know the workspace any more (left / deleted):
+            // fall back to a generic label rather than the raw id.
+            let name = workspaces.first { $0.id == id }?.name ?? ""
+            return ChatHistorySubmenuChoice(
+                id: id,
+                title: name.isEmpty ? L("Workspace") : name,
+                count: workspaceCounts[id] ?? 0
+            )
+        }
+        let showProjects = !projectChoices.isEmpty
+        let showWorkspaces = !workspaceChoices.isEmpty
+        let rowCount = sources.count + (showProjects ? 1 : 0) + (showWorkspaces ? 1 : 0) + 1
         VStack(spacing: 0) {
             header
             Divider().background(theme.primaryBorder.opacity(0.3))
             ScrollView {
                 LazyVStack(spacing: 2) {
-                    sectionHeader(Text("Source", bundle: .module))
-                    FilterPickerRow(
-                        icon: "tray.full",
-                        title: Text("All", bundle: .module),
-                        count: lensSessions.filter { projectFilter.matches($0) }.count,
-                        isSelected: sourceFilter == .all,
-                        action: { pickSource(.all) }
-                    )
                     ForEach(sources, id: \.self) { source in
                         FilterPickerRow(
                             icon: source.iconName,
                             title: Text(LocalizedStringKey(source.shortLabel), bundle: .module),
                             count: sourceCounts[source] ?? 0,
                             isSelected: sourceFilter == .source(source),
-                            action: { pickSource(.source(source)) }
+                            action: {
+                                withAnimation(theme.animationQuick()) {
+                                    sourceFilter = sourceFilter == .source(source) ? .all : .source(source)
+                                }
+                            }
                         )
                     }
 
-                    sectionHeader(Text("Project", bundle: .module))
-                        .padding(.top, 6)
-                    FilterPickerRow(
-                        icon: "folder",
-                        title: Text("Any", bundle: .module),
-                        count: lensSessions.filter { sourceFilter.matches($0) }.count,
-                        isSelected: projectFilter == .all,
-                        action: { pickProject(.all) }
-                    )
-                    if showNoProject {
-                        FilterPickerRow(
-                            icon: "folder.badge.minus",
-                            title: Text("No Project", bundle: .module),
-                            count: projectCounts[nil] ?? 0,
-                            isSelected: projectFilter == .none,
-                            action: { pickProject(.none) }
+                    if showProjects {
+                        FilterSubmenuRow(
+                            icon: "folder.fill",
+                            title: Text("Projects", bundle: .module),
+                            choices: projectChoices,
+                            selectedId: projectFilter?.uuidString,
+                            onSelect: { id in
+                                withAnimation(theme.animationQuick()) {
+                                    let picked = id.flatMap(UUID.init(uuidString:))
+                                    projectFilter = projectFilter == picked ? nil : picked
+                                }
+                            }
                         )
                     }
-                    ForEach(visibleProjects) { project in
-                        FilterPickerRow(
-                            icon: "folder.fill",
-                            title: Text(verbatim: project.name),
-                            count: projectCounts[project.id] ?? 0,
-                            isSelected: projectFilter == .project(project.id),
-                            action: { pickProject(.project(project.id)) }
+
+                    if showWorkspaces {
+                        FilterSubmenuRow(
+                            icon: "rectangle.3.group.fill",
+                            title: Text("Workspaces", bundle: .module),
+                            choices: workspaceChoices,
+                            selectedId: workspaceFilter,
+                            onSelect: { id in
+                                withAnimation(theme.animationQuick()) {
+                                    workspaceFilter = workspaceFilter == id ? nil : id
+                                }
+                            }
                         )
                     }
 
@@ -869,10 +901,7 @@ private struct ChatHistoryFilterPicker: View {
         }
         .frame(
             width: 260,
-            height: min(
-                CGFloat(rowCount) * Self.rowHeight + 2 * Self.sectionHeaderHeight + Self.chromeHeight + 28,
-                460
-            )
+            height: min(CGFloat(rowCount) * Self.rowHeight + Self.chromeHeight + 28, 460)
         )
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -890,14 +919,6 @@ private struct ChatHistoryFilterPicker: View {
                 )
         )
         .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 6)
-    }
-
-    private func pickSource(_ filter: ChatHistorySourceFilter) {
-        withAnimation(theme.animationQuick()) { sourceFilter = filter }
-    }
-
-    private func pickProject(_ filter: ChatHistoryProjectFilter) {
-        withAnimation(theme.animationQuick()) { projectFilter = filter }
     }
 
     private var header: some View {
@@ -922,7 +943,8 @@ private struct ChatHistoryFilterPicker: View {
                 Button {
                     withAnimation(theme.animationQuick()) {
                         sourceFilter = .all
-                        projectFilter = .all
+                        projectFilter = nil
+                        workspaceFilter = nil
                         showArchived = false
                     }
                 } label: {
@@ -937,82 +959,212 @@ private struct ChatHistoryFilterPicker: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
     }
+}
 
-    private func sectionHeader(_ title: Text) -> some View {
-        title
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(theme.tertiaryText)
-            .textCase(.uppercase)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 18)
-            .padding(.top, 4)
-            .padding(.bottom, 2)
+/// One concrete choice inside a Projects / Workspaces submenu.
+private struct ChatHistorySubmenuChoice: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let count: Int
+}
+
+/// Shared row chrome for the filter panel and its submenus: icon disc,
+/// title, count pill, checkmark when selected. Owns its hover state like
+/// the agent picker's rows. `trailing` lets the submenu rows swap the
+/// checkmark slot for a chevron.
+private struct FilterPickerRow: View {
+    let icon: String
+    let title: Text
+    let count: Int
+    let isSelected: Bool
+    /// Overrides the trailing checkmark slot (used for the submenu chevron).
+    var trailing: AnyView? = nil
+    /// Externally forced hover (a submenu row stays lit while its popover
+    /// is open, even though the cursor has moved into that popover).
+    var isHighlighted: Bool = false
+    var onHover: ((Bool) -> Void)? = nil
+    let action: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle().fill(
+                        isSelected
+                            ? theme.accentColor.opacity(theme.isDark ? 0.18 : 0.12)
+                            : theme.secondaryBackground
+                    )
+                    Image(systemName: icon)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+                }
+                .frame(width: 22, height: 22)
+                title
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                    .foregroundColor(isSelected ? theme.accentColor : theme.primaryText)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(isSelected ? theme.accentColor.opacity(0.9) : theme.tertiaryText)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1.5)
+                    .background(
+                        Capsule().fill(
+                            isSelected ? theme.accentColor.opacity(0.12) : theme.secondaryBackground)
+                    )
+                if let trailing {
+                    trailing
+                } else if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(theme.accentColor)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(
+                        isSelected
+                            ? theme.accentColor.opacity(0.12)
+                            : ((isHovering || isHighlighted)
+                                ? theme.tertiaryBackground.opacity(0.7) : Color.clear)
+                    )
+            )
+            .padding(.horizontal, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                isHovering = hovering
+            }
+            onHover?(hovering)
+        }
+    }
+}
+
+/// A filter row that opens a nested popover of concrete choices (projects
+/// or workspaces) when hovered, like a menu's submenu. The nested popover
+/// is its own window, so leaving the row to enter it fires the row's
+/// hover-off; a short grace timer keeps the submenu open unless neither
+/// the row nor the submenu is hovered once it elapses. Clicking the row
+/// toggles the submenu for users who prefer not to hover.
+private struct FilterSubmenuRow: View {
+    let icon: String
+    let title: Text
+    let choices: [ChatHistorySubmenuChoice]
+    let selectedId: String?
+    /// nil clears the lens; otherwise the picked choice id.
+    let onSelect: (String?) -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isOpen = false
+    @State private var isRowHovered = false
+    @State private var isSubmenuHovered = false
+    @State private var closeTask: Task<Void, Never>?
+
+    private var selectedChoice: ChatHistorySubmenuChoice? {
+        choices.first { $0.id == selectedId }
     }
 
-    /// One filter row; owns its hover state like the agent picker's rows.
-    private struct FilterPickerRow: View {
-        let icon: String
-        let title: Text
-        let count: Int
-        let isSelected: Bool
-        let action: () -> Void
+    private var selectedCount: Int {
+        selectedChoice?.count ?? choices.reduce(0) { $0 + $1.count }
+    }
 
-        @Environment(\.theme) private var theme
-        @State private var isHovering = false
+    private static let rowHeight: CGFloat = 36
 
-        var body: some View {
-            Button(action: action) {
-                HStack(spacing: 10) {
-                    ZStack {
-                        Circle().fill(
-                            isSelected
-                                ? theme.accentColor.opacity(theme.isDark ? 0.18 : 0.12)
-                                : theme.secondaryBackground
-                        )
-                        Image(systemName: icon)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
-                    }
-                    .frame(width: 22, height: 22)
-                    title
-                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-                        .foregroundColor(isSelected ? theme.accentColor : theme.primaryText)
-                        .lineLimit(1)
-                    Spacer(minLength: 8)
-                    Text("\(count)")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(isSelected ? theme.accentColor.opacity(0.9) : theme.tertiaryText)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1.5)
-                        .background(
-                            Capsule().fill(
-                                isSelected ? theme.accentColor.opacity(0.12) : theme.secondaryBackground)
-                        )
-                    if isSelected {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(theme.accentColor)
-                    }
+    var body: some View {
+        FilterPickerRow(
+            icon: icon,
+            title: selectedChoice.map { Text(verbatim: $0.title) } ?? title,
+            count: selectedCount,
+            isSelected: selectedId != nil,
+            trailing: AnyView(
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(selectedId != nil ? theme.accentColor : theme.tertiaryText)
+            ),
+            isHighlighted: isOpen,
+            onHover: { hovering in
+                isRowHovered = hovering
+                if hovering {
+                    cancelClose()
+                    isOpen = true
+                } else {
+                    scheduleClose()
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(
-                            isSelected
-                                ? theme.accentColor.opacity(0.12)
-                                : (isHovering ? theme.tertiaryBackground.opacity(0.7) : Color.clear)
-                        )
+            },
+            action: { isOpen.toggle() }
+        )
+        .popover(isPresented: $isOpen, arrowEdge: .trailing) {
+            submenu
+                .onHover { hovering in
+                    isSubmenuHovered = hovering
+                    if hovering { cancelClose() } else { scheduleClose() }
+                }
+        }
+    }
+
+    private var submenu: some View {
+        ScrollView {
+            LazyVStack(spacing: 2) {
+                ForEach(choices) { choice in
+                    FilterPickerRow(
+                        icon: icon,
+                        title: Text(verbatim: choice.title),
+                        count: choice.count,
+                        isSelected: choice.id == selectedId,
+                        action: {
+                            onSelect(choice.id == selectedId ? nil : choice.id)
+                            isOpen = false
+                        }
+                    )
+                }
+            }
+            .padding(.vertical, 6)
+        }
+        .scrollIndicators(.hidden)
+        .frame(
+            width: 240,
+            height: min(CGFloat(max(choices.count, 1)) * Self.rowHeight + 12, 360)
+        )
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(theme.primaryBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [theme.glassEdgeLight.opacity(0.2), theme.primaryBorder.opacity(0.15)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
                 )
-                .padding(.horizontal, 6)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .onHover { hovering in
-                withAnimation(.easeOut(duration: 0.12)) {
-                    isHovering = hovering
-                }
-            }
+        )
+        .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 6)
+    }
+
+    private func cancelClose() {
+        closeTask?.cancel()
+        closeTask = nil
+    }
+
+    /// Closes the submenu unless the cursor lands on the row or the
+    /// submenu within the grace period (it needs a moment to cross the
+    /// gap between the two windows).
+    private func scheduleClose() {
+        closeTask?.cancel()
+        closeTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 220_000_000)
+            guard !Task.isCancelled else { return }
+            if !isRowHovered && !isSubmenuHovered { isOpen = false }
         }
     }
 }

@@ -3427,8 +3427,10 @@ struct ChatHistoryList: View {
     var sourceFilter: ChatHistorySourceFilter = .all
     /// Archived lens: true lists only archived chats, false hides them.
     var showArchived: Bool = false
-    /// Project lens chosen in the dialog's Filter popover.
-    var projectFilter: ChatHistoryProjectFilter = .all
+    /// Project lens chosen in the dialog's Filter popover (nil = any).
+    var projectFilter: UUID? = nil
+    /// Workspace lens chosen in the dialog's Filter popover (nil = any).
+    var workspaceFilter: String? = nil
     /// Resets the dialog's source / archived lenses from the empty state.
     var onClearFilters: (() -> Void)? = nil
 
@@ -3449,13 +3451,14 @@ struct ChatHistoryList: View {
     @State private var selectionAnchorId: UUID?
 
     private var hasActiveFilter: Bool {
-        showArchived || sourceFilter != .all || projectFilter != .all
+        showArchived || sourceFilter != .all || projectFilter != nil || workspaceFilter != nil
     }
 
     private var filteredSessions: [ChatSessionData] {
         let visible = sessions.filter { session in
             session.archived == showArchived && sourceFilter.matches(session)
-                && projectFilter.matches(session)
+                && (projectFilter == nil || session.projectId == projectFilter)
+                && (workspaceFilter == nil || session.workspace?.workspaceId == workspaceFilter)
         }
         let trimmed = searchQuery.trimmingCharacters(in: .whitespaces)
         let matched: [ChatSessionData]
