@@ -1428,6 +1428,9 @@ final class ChatWindowState: ObservableObject {
         if targetAgentId != agentId {
             adoptAgent(targetAgentId)
         }
+        // The composer remounts for the incoming tab and rehydrates from
+        // `input`; surface the tab's unsent keystrokes there first (#2708).
+        target.promoteComposerDraft()
         session = target
         // Window→task binding follows the visible session: a registry-owned
         // run on screen makes closing this window detach (not stop) it.

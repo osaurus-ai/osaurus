@@ -2991,6 +2991,16 @@ final class ChatSession: ObservableObject {
         composerDraft = ""
     }
 
+    /// Push the keystroke mirror into `input` so a composer that remounts
+    /// (tab switch, window re-layout) rehydrates from the binding with the
+    /// unsent text instead of an empty string. No-op when `input` already
+    /// holds text or nothing was typed.
+    func promoteComposerDraft() {
+        ChatDraftDebugLog.log("input=\(ChatDraftDebugLog.short(input)) composerDraft=\(ChatDraftDebugLog.short(composerDraft)) session=\(ObjectIdentifier(self))")
+        guard input.isEmpty, !composerDraft.isEmpty else { return }
+        input = composerDraft
+    }
+
     /// Bring back the composer text remembered for `draftKey`, if any.
     /// Never overwrites text the user has already typed.
     func restoreDraft() {
@@ -9592,6 +9602,7 @@ struct ChatView: View {
                                     ChatDraftDebugLog.log("onDraftChange \(ChatDraftDebugLog.short($0)) session=\(ObjectIdentifier(observedSession)) sid=\(observedSession.sessionId?.uuidString.prefix(8) ?? "nil")")
                                     observedSession.composerDraft = $0
                                 },
+                                onWillRehydrate: { observedSession.promoteComposerDraft() },
                                 modelSwitchContinuityWarning:
                                     observedSession.modelSwitchContinuityWarning,
                                 onDismissModelSwitchContinuityWarning: {

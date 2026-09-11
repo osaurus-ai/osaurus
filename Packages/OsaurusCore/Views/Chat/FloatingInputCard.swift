@@ -80,6 +80,9 @@ struct FloatingInputCard: View {
     /// re-render per key; this lets the session keep a draft mirror for
     /// stash/restore across chat and agent switches (#2708).
     var onDraftChange: ((String) -> Void)? = nil
+    /// Called when the card (re)appears so the owner can surface any unsent
+    /// draft into `text` before the card rehydrates from it (#2708).
+    var onWillRehydrate: (() -> Void)? = nil
     /// Set after a manual model change in a non-empty conversation. The
     /// warning is advisory: the user may keep the selected model or start a
     /// clean chat whose first prefix is built for it.
@@ -188,6 +191,7 @@ struct FloatingInputCard: View {
         isEmptyChat: Bool = false,
         onClearChat: (() -> Void)? = nil,
         onDraftChange: ((String) -> Void)? = nil,
+        onWillRehydrate: (() -> Void)? = nil,
         modelSwitchContinuityWarning: ModelSwitchContinuityWarning? = nil,
         onDismissModelSwitchContinuityWarning: (() -> Void)? = nil,
         onCaptureScreenshot: (() -> Void)? = nil,
@@ -240,6 +244,7 @@ struct FloatingInputCard: View {
         self.isEmptyChat = isEmptyChat
         self.onClearChat = onClearChat
         self.onDraftChange = onDraftChange
+        self.onWillRehydrate = onWillRehydrate
         self.modelSwitchContinuityWarning = modelSwitchContinuityWarning
         self.onDismissModelSwitchContinuityWarning = onDismissModelSwitchContinuityWarning
         self.onCaptureScreenshot = onCaptureScreenshot
@@ -1004,6 +1009,7 @@ struct FloatingInputCard: View {
                 }
                 refreshLoadFeasibility()
                 let isReappear = !localText.isEmpty || voiceInputState != .idle
+                if text.isEmpty { onWillRehydrate?() }
                 ChatDraftDebugLog.log("card onAppear localText=\(ChatDraftDebugLog.short(localText)) text=\(ChatDraftDebugLog.short(text)) historyKey=\(inputHistoryKey?.uuidString.prefix(8) ?? "nil")")
                 localText = text
                 print("[VoiceDebug] FloatingInputCard onAppear (reappear=\(isReappear))")

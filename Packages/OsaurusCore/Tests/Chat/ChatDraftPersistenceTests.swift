@@ -134,3 +134,21 @@ extension ChatDraftPersistenceTests {
         }
     }
 }
+
+extension ChatDraftPersistenceTests {
+    /// Switching tabs never reloads or resets the outgoing session, so the
+    /// draft only lives in the mirror; promoting it into `input` is what
+    /// the remounted composer rehydrates from.
+    @Test("promoteComposerDraft surfaces the mirror without clobbering typed input")
+    func promoteComposerDraft() {
+        let session = ChatSession()
+        session.composerDraft = "typed in tab"
+        session.promoteComposerDraft()
+        #expect(session.input == "typed in tab")
+
+        session.input = "already here"
+        session.composerDraft = "stale"
+        session.promoteComposerDraft()
+        #expect(session.input == "already here")
+    }
+}
