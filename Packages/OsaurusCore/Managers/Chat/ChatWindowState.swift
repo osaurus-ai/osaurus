@@ -542,6 +542,11 @@ final class ChatWindowState: ObservableObject {
     /// pill only shows for chats that belong to a project.
     func switchAgent(to newAgentId: UUID) {
         TTSService.shared.stop()
+        // Picking an agent means "show me this agent's chats": dismiss the
+        // project page even when the agent is already active, otherwise the
+        // early returns below leave the page covering the chat (#2709).
+        openProjectId = nil
+        enteredChatFromProjectPage = false
         let scope = ChatTabScope.local(newAgentId)
         if scope == activeScope { return }
         if focusExistingTab(in: scope) { return }
@@ -580,6 +585,8 @@ final class ChatWindowState: ObservableObject {
     func switchToWorkspaceAgent(address rawAddress: String, workspaceId requestedWorkspaceId: String? = nil) {
         let address = rawAddress.lowercased()
         TTSService.shared.stop()
+        openProjectId = nil
+        enteredChatFromProjectPage = false
         let matches = WorkspaceRosterStore.shared.workspacesSharing(agentAddress: address)
         let workspaceId = requestedWorkspaceId ?? (matches.count == 1 ? matches.first?.id : nil) ?? ""
         let scope = ChatTabScope.workspace(address, workspaceId: workspaceId)
