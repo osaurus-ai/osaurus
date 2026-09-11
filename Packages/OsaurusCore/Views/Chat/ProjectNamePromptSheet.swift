@@ -17,6 +17,8 @@ struct ProjectNamePromptSheet: View {
     /// When true, prefix the field with a short explainer of what a project
     /// is (shown for the "New Project" flow; the rename flow stays bare).
     var showsIntro: Bool = false
+    /// Field placeholder; the tab strip reuses this sheet to rename a chat.
+    var placeholder: LocalizedStringKey = "Project name"
     let onSubmit: (String) -> Void
 
     @Environment(\.theme) private var theme
@@ -34,8 +36,8 @@ struct ProjectNamePromptSheet: View {
                 Divider().opacity(0.5)
             }
 
-            TextField(text: $name, prompt: Text("Project name", bundle: .module)) {
-                Text("Project name", bundle: .module)
+            TextField(text: $name, prompt: Text(placeholder, bundle: .module)) {
+                Text(placeholder, bundle: .module)
             }
             .textFieldStyle(.plain)
             .font(.system(size: 13))

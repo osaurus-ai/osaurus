@@ -11,6 +11,7 @@
 //  hairline dividers that hide next to the active/hovered tab.
 //
 
+import AppKit
 import SwiftUI
 
 /// Chrome's tab silhouette: vertical sides with rounded top corners and
@@ -253,6 +254,8 @@ struct ChatTabStripView: View {
                     )
                 }
                 ChatTabItemView(
+                    windowState: windowState,
+                    tabId: tab.id,
                     session: tab.session,
                     isActive: tab.id == windowState.activeTabId,
                     isHovered: hoveredTabId == tab.id,
@@ -454,6 +457,9 @@ private struct ChromeHoverCapsuleButtonStyle: ButtonStyle {
 /// A single tab. Observes its own session so the label tracks live title
 /// changes (auto-titling, renames) and the run indicator tracks streaming.
 private struct ChatTabItemView: View {
+    /// Owner of the tab; the right-click menu routes its actions here.
+    let windowState: ChatWindowState
+    let tabId: UUID
     @ObservedObject var session: ChatSession
     let isActive: Bool
     let isHovered: Bool
@@ -714,6 +720,19 @@ private struct ChatTabItemView: View {
         )
         .onHover(perform: onHover)
         .animation(.easeOut(duration: 0.1), value: isHovered)
+        // Same actions the History dialog / sidebar rows offer, plus Close
+        // Tab, so a chat can be managed without leaving the strip.
+        .overlay(
+            TabRightClickCatcher {
+                ChatTabContextMenu(
+                    windowState: windowState,
+                    session: session,
+                    activityStatus: activityStatus,
+                    canClose: canClose,
+                    onClose: onClose
+                ).makeMenu()
+            }
+        )
         // The title is hidden on narrow chips and truncated on medium ones,
         // so the tooltip is how a tab is recognised in a small window. It
         // carries the agent name too, since avatars alone don't identify a
@@ -727,6 +746,232 @@ private struct ChatTabItemView: View {
         if let workspace = sharedAgent?.workspaceName { parts.append(workspace) }
         if let originLabel { parts.append(originLabel) }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// Right-click menu for a tab chip: the sidebar / History row actions
+/// (Stop, Open in New Window, Rename, Pin, Move to Project, Export,
+/// Archive, Delete) applied to the tab's session, plus Close Tab. Items
+/// that need a persisted conversation (open elsewhere, export) are hidden
+/// for a blank tab that has never been saved. Mutations go through
+/// `ChatSessionsManager` and are mirrored onto the live `ChatSession` so
+/// its next auto-save does not clobber them, exactly like the sidebar.
+///
+/// Built as an `NSMenu`, not a SwiftUI `.contextMenu`: the strip lives in
+/// an `NSToolbarItem`, and the toolbar's own right-click handler (Icon and
+/// Text / Icon Only) wins over SwiftUI's context menu there. The catcher
+/// view below takes the right-click first and pops this menu.
+@MainActor
+private struct ChatTabContextMenu {
+    let windowState: ChatWindowState
+    let session: ChatSession
+    let activityStatus: SessionActivityMonitor.Status?
+    let canClose: Bool
+    let onClose: () -> Void
+
+    private var alertScope: ThemedAlertScope { .chat(windowState.windowId) }
+
+    /// The persisted row for this tab, if the conversation has been saved.
+    private var persisted: ChatSessionData? {
+        session.sessionId.flatMap { ChatSessionsManager.shared.session(for: $0) }
+    }
+
+    func makeMenu() -> NSMenu {
+        let menu = NSMenu()
+        let session = self.session
+        let windowState = self.windowState
+        if activityStatus != nil {
+            add(to: menu, L("Stop"), icon: "stop.circle") { session.stop() }
+            menu.addItem(.separator())
+        }
+        if let persisted {
+            add(to: menu, L("Open in New Window"), icon: "macwindow.badge.plus") {
+                ChatWindowManager.shared.createWindow(
+                    agentId: persisted.agentId, sessionData: persisted)
+            }
+            menu.addItem(.separator())
+        }
+        if let id = session.sessionId {
+            add(to: menu, L("Rename")) { requestRename() }
+            add(to: menu, session.pinned ? L("Unpin") : L("Pin")) {
+                let pinned = !session.pinned
+                ChatSessionsManager.shared.setPinned(id: id, pinned: pinned)
+                session.pinned = pinned
+                windowState.refreshSessions()
+            }
+            let projects = ProjectManager.shared.projects
+            if !projects.isEmpty {
+                let item = NSMenuItem(
+                    title: session.projectId == nil ? L("Move to Project") : L("Change Project"),
+                    action: nil, keyEquivalent: "")
+                item.submenu = makeProjectSubmenu(id: id, projects: projects)
+                menu.addItem(item)
+            }
+            menu.addItem(.separator())
+            if persisted != nil {
+                add(to: menu, L("Export…")) { requestExport() }
+                menu.addItem(.separator())
+            }
+            add(to: menu, session.archived ? L("Unarchive") : L("Archive")) {
+                let archived = !session.archived
+                ChatSessionsManager.shared.setArchived(id: id, archived: archived)
+                session.archived = archived
+                windowState.refreshSessions()
+            }
+            add(to: menu, L("Delete")) { requestDelete() }
+            menu.addItem(.separator())
+        }
+        if canClose {
+            add(to: menu, L("Close Tab"), handler: onClose)
+        }
+        // A never-saved blank tab that cannot close has nothing to offer.
+        if menu.items.last?.isSeparatorItem == true { menu.removeItem(at: menu.items.count - 1) }
+        return menu
+    }
+
+    /// One row per project (checkmark on the current one) plus "Remove from
+    /// Project" while the chat is in one. Mirrors the sidebar row's submenu.
+    private func makeProjectSubmenu(id: UUID, projects: [Project]) -> NSMenu {
+        let submenu = NSMenu()
+        for project in projects {
+            let item = add(to: submenu, project.name) { setProject(id: id, project.id) }
+            item.state = project.id == session.projectId ? .on : .off
+        }
+        if session.projectId != nil {
+            submenu.addItem(.separator())
+            add(to: submenu, L("Remove from Project")) { setProject(id: id, nil) }
+        }
+        return submenu
+    }
+
+    @discardableResult
+    private func add(
+        to menu: NSMenu, _ title: String, icon: String? = nil, handler: @escaping () -> Void
+    ) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: #selector(TabMenuTarget.select(_:)), keyEquivalent: "")
+        if let icon { item.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil) }
+        let target = TabMenuTarget(handler)
+        item.target = target
+        item.representedObject = target  // keeps the target alive with the item
+        menu.addItem(item)
+        return item
+    }
+
+    private func setProject(id: UUID, _ projectId: UUID?) {
+        ChatSessionsManager.shared.setProject(id: id, projectId: projectId)
+        session.projectId = projectId
+        windowState.refreshSessions()
+    }
+
+    // MARK: - Rename
+
+    /// The sidebar renames inline in its row; a tab chip has no room for a
+    /// field, so the strip asks in the same single-field prompt the sidebar
+    /// uses for project names.
+    private func requestRename() {
+        guard let id = session.sessionId else { return }
+        let requestId = UUID()
+        let scope = alertScope
+        let windowState = self.windowState
+        let session = self.session
+        let sheet = ProjectNamePromptSheet(
+            initialName: session.title,
+            submitLabel: "Save",
+            placeholder: "Chat Title"
+        ) { title in
+            ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+            ChatSessionsManager.shared.rename(id: id, title: title)
+            session.title = title
+            windowState.refreshSessions()
+        }
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: "Rename Chat",
+                message: nil,
+                buttons: [.cancel(L("Cancel"))],
+                showsCloseButton: true,
+                customContent: AnyView(sheet),
+                width: 360,
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
+    }
+
+    // MARK: - Export
+
+    /// Same chooser + coordinator the sidebar row uses.
+    private func requestExport() {
+        guard let metadata = persisted else { return }
+        let requestId = UUID()
+        let scope = alertScope
+        let sheet = ExportChooserSheet(session: metadata) { format, options in
+            ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+            ChatSessionExportCoordinator.run(
+                metadataSession: metadata,
+                format: format,
+                options: options,
+                scope: scope
+            )
+        }
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: "Export Conversation",
+                message: nil,
+                buttons: [.cancel(L("Cancel"))],
+                showsCloseButton: true,
+                customContent: AnyView(sheet),
+                width: 420,
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
+    }
+
+    // MARK: - Delete
+
+    /// Same confirmation (with the session-wide "don't ask again" toggle)
+    /// and the same teardown order as the sidebar: cancel a registry-owned
+    /// run, detach this window's tab, then delete the row.
+    private func requestDelete() {
+        guard let id = session.sessionId else { return }
+        let scope = alertScope
+        let windowState = self.windowState
+        let perform = {
+            if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: id) {
+                BackgroundTaskManager.shared.cancelTask(liveTask.id)
+            }
+            windowState.prepareForSessionDeletion(id: id)
+            ChatSessionsManager.shared.delete(id: id)
+            windowState.refreshSessions()
+        }
+        if DeleteConfirmationPreference.shared.skipForSession {
+            perform()
+            return
+        }
+        let requestId = UUID()
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: "Delete Conversation?",
+                message: L("\"\(session.title)\" will be removed permanently. This can't be undone."),
+                accessory: AnyView(DontAskAgainToggle()),
+                buttons: [
+                    .cancel(L("Cancel")),
+                    .destructive(L("Delete")) { perform() },
+                ],
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
     }
 }
 
@@ -919,6 +1164,80 @@ private struct ChromeCloseButtonStyle: ButtonStyle {
     }
 }
 
+
+/// Invisible AppKit layer over a tab chip that pops the given menu on a
+/// right-click (or control-click) landing on the chip. It never takes part
+/// in hit testing (`hitTest` returns nil), so the tap, drag-to-reorder and
+/// close button keep working. The click is caught with a local event
+/// monitor rather than `rightMouseDown`: the strip lives in an
+/// `NSToolbarItem`, and the toolbar claims right-clicks on its items for its
+/// own display-mode menu (Icon and Text / Icon Only) before they are ever
+/// routed to a subview. The monitor runs before the window dispatches the
+/// event, and consuming it there keeps the toolbar menu from appearing.
+private struct TabRightClickCatcher: NSViewRepresentable {
+    let makeMenu: @MainActor () -> NSMenu
+
+    func makeNSView(context: Context) -> CatcherView { CatcherView(makeMenu: makeMenu) }
+
+    func updateNSView(_ view: CatcherView, context: Context) { view.makeMenu = makeMenu }
+
+    final class CatcherView: NSView {
+        var makeMenu: @MainActor () -> NSMenu
+        // `nonisolated(unsafe)`: deinit is nonisolated and only removes the
+        // monitor; all writes happen on the main thread (same pattern as
+        // WindowXReader's resize observer).
+        private nonisolated(unsafe) var monitor: Any?
+
+        init(makeMenu: @escaping @MainActor () -> NSMenu) {
+            self.makeMenu = makeMenu
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        deinit {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown]) {
+                [weak self] incoming in
+                // Local monitors are delivered on the main thread; the
+                // handler type is not annotated, so assert the isolation.
+                // NSEvent is not Sendable, so it is rebound unchecked to
+                // cross into the isolated block.
+                nonisolated(unsafe) let event = incoming
+                let handled = MainActor.assumeIsolated { () -> Bool in
+                    guard let self, self.shouldHandle(event) else { return false }
+                    NSMenu.popUpContextMenu(self.makeMenu(), with: event, for: self)
+                    return true
+                }
+                return handled ? nil : incoming
+            }
+        }
+
+        /// A right-click (or control-click) in this view's window whose
+        /// location falls inside the chip.
+        private func shouldHandle(_ event: NSEvent) -> Bool {
+            guard let window, event.window === window else { return false }
+            switch event.type {
+            case .rightMouseDown: break
+            case .leftMouseDown where event.modifierFlags.contains(.control): break
+            default: return false
+            }
+            let point = convert(event.locationInWindow, from: nil)
+            return bounds.contains(point)
+        }
+    }
+}
 
 /// Closure target for the overflow-tabs menu items.
 private final class TabMenuTarget: NSObject {

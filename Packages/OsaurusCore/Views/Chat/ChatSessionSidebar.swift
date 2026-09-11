@@ -3369,8 +3369,9 @@ struct SessionStopButton: View {
 
 /// Checkbox row rendered as the delete-confirmation accessory. Writes
 /// straight to the session-scoped preference so the toggle survives
-/// across consecutive deletes within the same app run.
-private struct DontAskAgainToggle: View {
+/// across consecutive deletes within the same app run. Shared with the tab
+/// strip's Delete item.
+struct DontAskAgainToggle: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var pref = DeleteConfirmationPreference.shared
 
