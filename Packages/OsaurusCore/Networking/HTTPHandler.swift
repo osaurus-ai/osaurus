@@ -1559,28 +1559,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
 
+            // Use the Settings lifecycle decisions: an MTP depth/policy edit
+            // invalidates the request snapshot, not the resident weights.
+            // Preserve this endpoint's existing compiled-decode refresh
+            // receipt; a reload still does not replace its required restart.
             let loadedModelRefreshNeeded =
-                previous.cache != next.cache
-                || previous.multimodal != next.multimodal
-                || previous.mtp != next.mtp
-                || previous.memorySafety != next.memorySafety
-                // The tied-head codec and DSV4 activation-QAT choice apply at
-                // model construction, so a change takes effect on the next
-                // load — evicting the resident model makes either toggle live.
-                // Compare
-                // effectivePerformance so a nil<->explicit-default edit
-                // (semantically unchanged) does not force a spurious reload.
-                //
-                // NOTE: the *compiled-decode* lever is different — MLX caches
-                // its compile state at the first model load of the process, so
-                // it can only engage when VMLX_ENABLE_UNSAFE_COMPILE is set
-                // before that first load (i.e. at launch from a persisted
-                // setting). A mid-session reload cannot turn it on; that is
-                // surfaced separately via `compiled_decode_restart_required`.
-                || previous.effectivePerformance != next.effectivePerformance
+                ServerController.loadedModelRuntimeInputsRequireRefresh(previous: previous, next: next)
+                || previous.effectivePerformance.compiledDecode != next.effectivePerformance.compiledDecode
             let runtimeConfigInvalidated =
-                previous.generation != next.generation
-                || previous.concurrency != next.concurrency
+                ServerController.runtimeConfigInputsRequireInvalidate(previous: previous, next: next)
             // Compiled decode is a process-startup lever (see above): a change
             // to it only takes effect after restarting Osaurus, so report that
             // explicitly rather than letting the toggle look live.

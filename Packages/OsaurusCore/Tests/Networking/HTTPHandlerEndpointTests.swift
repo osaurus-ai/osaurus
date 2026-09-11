@@ -151,6 +151,50 @@ struct HTTPHandlerEndpointTests {
     }
 
     @Test @MainActor
+    func runtimeSettings_put_mtpTransitionsMatchControllerDecisions() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenRuntimeSettingsDirectory(dir) {
+            var previous = VMLXServerRuntimeSettings()
+            previous.mtp = .init(mode: .forceOn, explicitDepth: 1)
+            ServerRuntimeSettingsStore.save(previous)
+            let server = try await startServer()
+            defer { Task { await server.shutdown() } }
+
+            // Exercise the real endpoint, not a duplicate decision helper.
+            // No model is resident: load effects here are policy receipts,
+            // not evidence of a real container unload or head activation.
+            let transitions: [(VMLXServerMTPSettings, Bool, Bool)] = [
+                (.init(mode: .forceOn, explicitDepth: 3), false, true),
+                (.init(mode: .auto), false, true),
+                (.init(mode: .auto, draftTokenLimit: 2), false, true),
+                (.init(mode: .auto, draftTokenLimit: 2), false, false),
+                (.init(mode: .off), true, true),
+                (.init(mode: .forceOn, explicitDepth: 1), true, true),
+            ]
+            for (mtp, refreshExpected, invalidateExpected) in transitions {
+                var next = previous
+                next.mtp = mtp
+                let (data, response) = try await putRuntimeSettings(next, server: server)
+                #expect((response as? HTTPURLResponse)?.statusCode == 200)
+                let decoded = try JSONDecoder().decode(RuntimeSettingsResponse.self, from: data)
+                #expect(decoded.effects?.loadedModelRefreshNeeded == refreshExpected)
+                #expect(decoded.effects?.runtimeConfigInvalidated == invalidateExpected)
+                #expect(decoded.settings.mtp == next.mtp)
+                #expect(ServerRuntimeSettingsStore.snapshot().mtp == next.mtp)
+                #expect(
+                    decoded.effects?.loadedModelRefreshNeeded
+                        == ServerController.loadedModelRuntimeInputsRequireRefresh(previous: previous, next: next)
+                )
+                #expect(
+                    decoded.effects?.runtimeConfigInvalidated
+                        == ServerController.runtimeConfigInputsRequireInvalidate(previous: previous, next: next)
+                )
+                previous = next
+            }
+        }
+    }
+
+    @Test @MainActor
     func runtimeSettings_put_clearPersistsNullAndResolvedCapacity()
         async throws
     {
