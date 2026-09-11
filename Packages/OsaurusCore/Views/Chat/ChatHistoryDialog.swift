@@ -900,6 +900,15 @@ private struct ChatHistoryFilterPicker: View {
 
     private static let rowHeight: CGFloat = 36
     private static let chromeHeight: CGFloat = 44
+    /// Tallest the list may grow before it scrolls.
+    private static let maxListHeight: CGFloat = 400
+
+    /// Measured heights of the header and the list content. The panel is
+    /// sized from these rather than from an estimate: an estimate a few
+    /// points short leaves the list scrollable by that much and shows a
+    /// scroll bar for nothing.
+    @State private var headerHeight: CGFloat = 0
+    @State private var listHeight: CGFloat = 0
 
     var body: some View {
         let sourceCounts = countsBySource
@@ -943,11 +952,15 @@ private struct ChatHistoryFilterPicker: View {
         )
         let otherSelected = otherSelectedIds
         let rowCount = sources.count + 4 + 1
+        // Estimate used only until the first measurement lands.
+        let estimatedHeight = CGFloat(rowCount) * Self.rowHeight + Self.chromeHeight + 28
+        let measuredHeight = headerHeight + 1 + min(listHeight, Self.maxListHeight)
         VStack(spacing: 0) {
             header
+                .measureHeight($headerHeight)
             Divider().background(theme.primaryBorder.opacity(0.3))
             ScrollView {
-                LazyVStack(spacing: 2) {
+                VStack(spacing: 2) {
                     ForEach(sources, id: \.self) { source in
                         FilterPickerRow(
                             icon: source.iconName,
@@ -1036,12 +1049,13 @@ private struct ChatHistoryFilterPicker: View {
                     )
                 }
                 .padding(.vertical, 6)
+                .measureHeight($listHeight)
             }
-            .scrollIndicators(.hidden)
+            .scrollIndicators(.automatic)
         }
         .frame(
             width: 260,
-            height: min(CGFloat(rowCount) * Self.rowHeight + Self.chromeHeight + 28, 460)
+            height: listHeight > 0 && headerHeight > 0 ? measuredHeight : min(estimatedHeight, 460)
         )
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -1513,5 +1527,21 @@ private struct FilterSubmenuRow: View {
             guard !Task.isCancelled else { return }
             if !isRowHovered && !isSubmenuHovered { isOpen = false }
         }
+    }
+}
+
+// MARK: - Height measurement
+
+extension View {
+    /// Reports this view's laid-out height into `height` (initially and on
+    /// every change) without affecting its layout.
+    fileprivate func measureHeight(_ height: Binding<CGFloat>) -> some View {
+        background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { height.wrappedValue = proxy.size.height }
+                    .onChange(of: proxy.size.height) { _, new in height.wrappedValue = new }
+            }
+        )
     }
 }
