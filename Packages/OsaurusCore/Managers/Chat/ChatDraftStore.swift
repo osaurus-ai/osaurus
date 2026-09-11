@@ -35,14 +35,6 @@ final class ChatDraftStore {
         drafts.removeValue(forKey: key)
     }
 
-    func peek(for key: Key) -> String? {
-        drafts[key]
-    }
-
-    func discard(for key: Key) {
-        drafts.removeValue(forKey: key)
-    }
-
     func removeAll() {
         drafts.removeAll()
     }

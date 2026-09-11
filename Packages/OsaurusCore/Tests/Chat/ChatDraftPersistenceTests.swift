@@ -121,7 +121,7 @@ extension ChatDraftPersistenceTests {
 
             let session = ChatSession()
             session.load(from: first)
-            session.composerDraft = "draft one"
+            session.noteComposerDraft("draft one")
             #expect(session.input == "")
 
             session.load(from: second)
@@ -139,16 +139,55 @@ extension ChatDraftPersistenceTests {
     /// Switching tabs never reloads or resets the outgoing session, so the
     /// draft only lives in the mirror; promoting it into `input` is what
     /// the remounted composer rehydrates from.
-    @Test("promoteComposerDraft surfaces the mirror without clobbering typed input")
+    @Test("promoteComposerDraft surfaces the mirror and keeps untyped input")
     func promoteComposerDraft() {
         let session = ChatSession()
-        session.composerDraft = "typed in tab"
+        session.noteComposerDraft("typed in tab")
         session.promoteComposerDraft()
         #expect(session.input == "typed in tab")
 
-        session.input = "already here"
-        session.composerDraft = "stale"
-        session.promoteComposerDraft()
-        #expect(session.input == "already here")
+        // Input set programmatically with no keystroke since stays put.
+        let other = ChatSession()
+        other.input = "quick action"
+        other.promoteComposerDraft()
+        #expect(other.input == "quick action")
+    }
+
+    /// After a restore `input` holds the old draft while further keystrokes
+    /// only reach the mirror. The mirror must win on the next stash,
+    /// promote, or hibernate, including when the user deleted everything.
+    @Test("edits after a restore replace the restored draft")
+    func editsAfterRestoreWin() async throws {
+        try await ChatHistoryTestStorage.run {
+            ChatDraftStore.shared.removeAll()
+            let first = ChatSessionData(id: UUID(), title: "First")
+            let second = ChatSessionData(id: UUID(), title: "Second")
+
+            let session = ChatSession()
+            session.load(from: first)
+            session.noteComposerDraft("v1")
+            session.load(from: second)
+            session.load(from: first)
+            #expect(session.input == "v1")
+
+            // User keeps typing; only the mirror sees it.
+            session.noteComposerDraft("v1 plus more")
+            #expect(session.unsentComposerText == "v1 plus more")
+            session.promoteComposerDraft()
+            #expect(session.input == "v1 plus more")
+
+            session.load(from: second)
+            session.load(from: first)
+            #expect(session.input == "v1 plus more")
+
+            // User deletes the whole draft, then leaves and returns.
+            session.noteComposerDraft("")
+            #expect(session.unsentComposerText == "")
+            session.promoteComposerDraft()
+            #expect(session.input == "")
+            session.load(from: second)
+            session.load(from: first)
+            #expect(session.input == "")
+        }
     }
 }

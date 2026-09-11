@@ -329,7 +329,12 @@ final class ChatSession: ObservableObject {
     /// keystrokes local and only writes `input` on send, so this is the
     /// only place the unsent draft is visible to the session. Deliberately
     /// not `@Published`: a keystroke must not re-render the chat.
-    var composerDraft: String = ""
+    private(set) var composerDraft: String = ""
+    /// True once the composer has reported a keystroke since `input` was
+    /// last assigned by the draft machinery. While set, `composerDraft` is
+    /// newer than `input` (which may still hold a restored draft the user
+    /// has since edited or deleted).
+    private var composerDraftIsAuthoritative = false
     @Published var pendingAttachments: [Attachment] = []
     @Published var selectedModel: String? = nil
     @Published var modelSwitchContinuityWarning: ModelSwitchContinuityWarning?
@@ -2981,28 +2986,47 @@ final class ChatSession: ObservableObject {
     /// Remember the current composer text for `draftKey` so it can come
     /// back when the user returns to this chat (#2708).
     func stashDraft() {
-        let draft = input.isEmpty ? composerDraft : input
-        ChatDraftStore.shared.stash(draft, for: draftKey)
+        ChatDraftStore.shared.stash(unsentComposerText, for: draftKey)
         composerDraft = ""
+        composerDraftIsAuthoritative = false
     }
 
-    /// Push the keystroke mirror into `input` so a composer that remounts
-    /// (tab switch, window re-layout) rehydrates from the binding with the
-    /// unsent text instead of an empty string. No-op when `input` already
-    /// holds text or nothing was typed.
+    /// The text the composer currently shows, whichever of the two layers
+    /// is fresher: the keystroke mirror once the card has typed into it,
+    /// otherwise the published `input`.
+    var unsentComposerText: String {
+        if composerDraftIsAuthoritative { return composerDraft }
+        return input.isEmpty ? composerDraft : input
+    }
+
+    /// Composer callback: record the card's current text without touching
+    /// `input`, so a keystroke never re-renders the chat.
+    func noteComposerDraft(_ text: String) {
+        composerDraft = text
+        composerDraftIsAuthoritative = true
+    }
+
+    /// Bring `input` up to date with the keystroke mirror so a composer
+    /// that remounts (tab switch, window re-layout) rehydrates from the
+    /// binding with the current unsent text, including an empty string
+    /// when the user deleted a previously restored draft.
     func promoteComposerDraft() {
-        guard input.isEmpty, !composerDraft.isEmpty else { return }
-        input = composerDraft
+        let text = unsentComposerText
+        guard input != text else { return }
+        input = text
+        composerDraft = text
+        composerDraftIsAuthoritative = false
     }
 
     /// Bring back the composer text remembered for `draftKey`, if any.
     /// Never overwrites text the user has already typed.
     func restoreDraft() {
-        guard input.isEmpty, composerDraft.isEmpty,
+        guard unsentComposerText.isEmpty,
             let draft = ChatDraftStore.shared.take(for: draftKey)
         else { return }
         input = draft
         composerDraft = draft
+        composerDraftIsAuthoritative = false
     }
 
     // MARK: - LLM Context Compaction
@@ -9583,7 +9607,7 @@ struct ChatView: View {
                                 isCompact: windowState.showSidebar,
                                 isEmptyChat: !observedSession.hasVisibleThreadMessages,
                                 onClearChat: { observedSession.reset() },
-                                onDraftChange: { observedSession.composerDraft = $0 },
+                                onDraftChange: { observedSession.noteComposerDraft($0) },
                                 onWillRehydrate: { observedSession.promoteComposerDraft() },
                                 modelSwitchContinuityWarning:
                                     observedSession.modelSwitchContinuityWarning,
