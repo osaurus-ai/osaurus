@@ -54,6 +54,36 @@ import Testing
         #expect(ModelRuntime.requestDraftStrategy(nil, mtp: .init(mode: .forceOn, explicitDepth: 3)) == nil)
     }
 
+    @Test func explicitDepthPrecedenceDoesNotDependOnResidentDepth() {
+        for residentDepth in 1 ... 3 {
+            for selectedDepth in 1 ... 3 {
+                for legacyLimit in 1 ... 3 {
+                    let loaded = DraftStrategy.nativeMTP(depth: residentDepth, verifierMode: nil)
+                    let settings = VMLXServerMTPSettings(
+                        mode: .forceOn, draftTokenLimit: legacyLimit, explicitDepth: selectedDepth)
+                    let strategy = ModelRuntime.requestDraftStrategy(loaded, mtp: settings)
+                    guard case .some(.nativeMTP(let resolvedDepth, _)) = strategy else {
+                        Issue.record("explicit depth lost the resident native head")
+                        continue
+                    }
+                    #expect(resolvedDepth == selectedDepth)
+                    #expect(MLXBatchAdapter.nativeMTPDepthPolicy(settings) == .fixed)
+                }
+            }
+        }
+    }
+
+    @Test func autoStillHonorsItsDraftTokenLimit() {
+        let loaded = DraftStrategy.nativeMTP(depth: 3, verifierMode: nil)
+        let settings = VMLXServerMTPSettings(mode: .auto, draftTokenLimit: 1)
+        guard case .some(.nativeMTP(let depth, _)) = ModelRuntime.requestDraftStrategy(loaded, mtp: settings) else {
+            Issue.record("Auto lost the resident native head")
+            return
+        }
+        #expect(depth == 1)
+        #expect(MLXBatchAdapter.nativeMTPDepthPolicy(settings) == .adaptive(maximumDepth: 1))
+    }
+
     @Test func depthOnlyChangesInvalidateTheSnapshotWithoutReloadingWeights() {
         var previous = VMLXServerRuntimeSettings()
         previous.mtp = .init(mode: .forceOn, explicitDepth: 1)

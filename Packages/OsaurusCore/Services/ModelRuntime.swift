@@ -6124,10 +6124,11 @@ public actor ModelRuntime {
         }
         let mtp = settings ?? ServerRuntimeSettingsStore.snapshot().mtp
         if mtp.mode == .off { return nil }
-        // An explicit user depth (the 1/2/3 buttons) governs the request
-        // initially and imposes the request's maximum exploration depth.
+        // Match resolvedMTPLaunch: explicit depth takes precedence over the
+        // legacy Auto draft-token cap, regardless of the resident head's depth.
+        // It sets the initial depth and the request's exploration ceiling.
         if mtp.mode == .forceOn, let manual = mtp.explicitDepth,
-            (1...3).contains(manual), manual != depth
+            (1...3).contains(manual)
         {
             return .nativeMTP(depth: manual, verifierMode: verifierMode)
         }

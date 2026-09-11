@@ -2491,9 +2491,9 @@ extension FloatingInputCard {
     }
 
     /// Off / Auto / 1 / 2 / 3, beside Reasoning Effort in the picker's Model
-    /// Options. Auto uses the depth the bundle's measured tuning row proved;
-    /// 1-3 pin it lower, which is all the server draft-token limit can do —
-    /// it clamps the measured depth downward, never upward.
+    /// Options. Auto starts from the runtime's eligible recommendation and
+    /// explores within its configured limit. Explicit 1-3 selections activate
+    /// an eligible head and bound exploration by the selected depth.
     private func nativeMTPOption(for model: String) -> ModelOptionDefinition? {
         let identity = Self.mtpIdentity(model)
         guard !isRemoteAgentRun,
