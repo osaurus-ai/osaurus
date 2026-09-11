@@ -247,7 +247,7 @@ struct AgentDelegationDispatcherTests {
         #expect(SessionSource.delegation.inferenceSource == .chatUI)
         // Sidebar/Activity decoration.
         #expect(SessionSource.delegation.originLabel() == "delegated")
-        #expect(SessionSource.delegation.shortLabel == "Delegated")
+        #expect(SessionSource.delegation.shortLabel == "Orchestrator")
         #expect(!SessionSource.delegation.iconName.isEmpty)
     }
 

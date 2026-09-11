@@ -3092,7 +3092,7 @@ private struct SessionRow: View {
         case .imported:
             return Text("Imported", bundle: .module)
         case .delegation:
-            return Text("Delegated", bundle: .module)
+            return Text("Orchestrator", bundle: .module)
         case .workspace:
             if let caller = session.workspace?.callerLabel {
                 return Text(verbatim: "Workspace · \(caller)")

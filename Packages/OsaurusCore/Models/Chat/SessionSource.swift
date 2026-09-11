@@ -125,7 +125,7 @@ extension SessionSource {
         case .watcher: return "Watcher"
         case .selfSchedule: return "Self-scheduled"
         case .imported: return "Imported"
-        case .delegation: return "Delegated"
+        case .delegation: return "Orchestrator"
         case .workspace: return "Workspace"
         }
     }
