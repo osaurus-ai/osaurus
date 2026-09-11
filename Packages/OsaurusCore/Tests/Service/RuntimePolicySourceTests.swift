@@ -3387,9 +3387,23 @@ struct RuntimePolicySourceTests {
         )
         #expect(
             chatView.contains("tools: iterationToolSpecs,")
-                && chatView.contains("userText: trimmed,")
+                && chatView.contains("userText: toolChoiceInput,")
                 && chatView.contains("attempt: attempt"),
             "Chat UI tool-choice policy must see the current iteration tools, original user text, and attempt count so first-turn required routing cannot become a repeated tool loop."
+        )
+        #expect(
+            chatView.contains("let toolChoiceInput = toolIntentText ?? trimmed")
+                && chatView.components(separatedBy: "toolChoiceInput: toolChoiceInput,").count - 1 == 2,
+            "Both immediate and asynchronous Send continuations must preserve the original task intent separately from framework-added context."
+        )
+        let dispatcher = try Self.source("Services/AgentDelegation/AgentDelegationDispatcher.swift")
+        let backgroundTasks = try Self.source("Managers/BackgroundTaskManager.swift")
+        let execution = try Self.source("Managers/ExecutionContext.swift")
+        #expect(
+            dispatcher.contains("toolIntentText: input")
+                && backgroundTasks.contains("toolIntentText: request.toolIntentText")
+                && execution.contains("chatSession.send(prompt, toolIntentText: toolIntentText)"),
+            "Delegation must carry caller-owned task intent across the real dispatcher, background task, execution context and ChatSession boundaries."
         )
         #expect(
             chatView.contains("finalReq.samplingParametersAreImplicit = true"),
