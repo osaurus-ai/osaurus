@@ -1141,7 +1141,6 @@ final class ChatWindowState: ObservableObject {
         // save()/reset() calls all reflect the conversation's true agent
         // (#1005). Without this, clicking "New Chat" afterwards silently
         // re-tags the conversation to the previously-selected agent.
-        ChatDraftDebugLog.log("loadSession target=\(sessionData.id.uuidString.prefix(8)) current=\(self.session.sessionId?.uuidString.prefix(8) ?? "nil") session=\(ObjectIdentifier(self.session)) input=\(ChatDraftDebugLog.short(self.session.input)) composerDraft=\(ChatDraftDebugLog.short(self.session.composerDraft)) agentSwitch=\(targetAgentId != self.agentId)")
         if targetAgentId != agentId {
             adoptAgent(targetAgentId)
         }
@@ -1153,7 +1152,6 @@ final class ChatWindowState: ObservableObject {
         if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: sessionData.id),
             let liveSession = liveTask.chatSession
         {
-            ChatDraftDebugLog.log("loadSession branch=attachLiveTask")
             releaseSharedSessionIfNeeded()
             detachRunningSessionIfNeeded()
             attachSession(liveSession, registryTaskId: liveTask.id)
@@ -1163,7 +1161,6 @@ final class ChatWindowState: ObservableObject {
             // Another surface owns a live
             // instance of this conversation: attach that exact object so
             // both surfaces render one session and never race saves.
-            ChatDraftDebugLog.log("loadSession branch=attachShared")
             releaseSharedSessionIfNeeded()
             detachRunningSessionIfNeeded()
             attachSharedSession(sharedSession)
@@ -1171,13 +1168,10 @@ final class ChatWindowState: ObservableObject {
             // The chat we're leaving is co-owned by another surface, or
             // keeps running in the background; the target loads into a
             // brand-new session so the two never share transcript state.
-            ChatDraftDebugLog.log("loadSession branch=installFresh")
             installFreshSession(agentId: targetAgentId, loading: resolvedData)
         } else {
-            ChatDraftDebugLog.log("loadSession branch=loadInPlace")
             session.load(from: resolvedData)
         }
-        ChatDraftDebugLog.log("loadSession done session=\(ObjectIdentifier(self.session)) input=\(ChatDraftDebugLog.short(self.session.input)) composerDraft=\(ChatDraftDebugLog.short(self.session.composerDraft))")
         reconcileRemoteMode()
         refreshSessions()
         refreshSandboxChanges()
@@ -1586,7 +1580,6 @@ final class ChatWindowState: ObservableObject {
         // `ChatSessionData` carries no composer text; carry the unsent
         // draft across so hibernating a tab does not eat it (#2708).
         cold.input = live.input.isEmpty ? live.composerDraft : live.input
-        ChatDraftDebugLog.log("hibernate sid=\(live.sessionId?.uuidString.prefix(8) ?? "nil") carried=\(ChatDraftDebugLog.short(cold.input))")
         live.warmupController.shutdown()
         live.stop()
         live.onSessionChanged = nil

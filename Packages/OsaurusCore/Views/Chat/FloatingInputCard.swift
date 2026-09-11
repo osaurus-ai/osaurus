@@ -913,7 +913,6 @@ struct FloatingInputCard: View {
                     )
                 )
                 .onChange(of: composerText.text) { _, newValue in
-                    ChatDraftDebugLog.log("card composerText -> \(ChatDraftDebugLog.short(newValue)) hasCallback=\(onDraftChange != nil)")
                     onDraftChange?(newValue)
                     // Reset popup selection whenever the typed query changes.
                     // Attached here (inside the text observation scope) so the
@@ -1010,7 +1009,6 @@ struct FloatingInputCard: View {
                 refreshLoadFeasibility()
                 let isReappear = !localText.isEmpty || voiceInputState != .idle
                 if text.isEmpty { onWillRehydrate?() }
-                ChatDraftDebugLog.log("card onAppear localText=\(ChatDraftDebugLog.short(localText)) text=\(ChatDraftDebugLog.short(text)) historyKey=\(inputHistoryKey?.uuidString.prefix(8) ?? "nil")")
                 localText = text
                 print("[VoiceDebug] FloatingInputCard onAppear (reappear=\(isReappear))")
 
@@ -1125,7 +1123,6 @@ struct FloatingInputCard: View {
             }
             .onChange(of: text) { _, newValue in
                 // Sync from binding when it changes externally (e.g., quick actions)
-                ChatDraftDebugLog.log("card onChange(text) new=\(ChatDraftDebugLog.short(newValue)) localText=\(ChatDraftDebugLog.short(localText))")
                 if newValue != localText {
                     localText = newValue
                 }
@@ -6070,8 +6067,7 @@ extension FloatingInputCard {
         // A different conversation now backs the composer — drop any
         // in-flight history navigation so its index can't recall entries
         // from the previous chat.
-        .onChange(of: inputHistoryKey) { old, new in
-            ChatDraftDebugLog.log("card historyKey \(old?.uuidString.prefix(8) ?? "nil") -> \(new?.uuidString.prefix(8) ?? "nil") localText=\(ChatDraftDebugLog.short(localText)) text=\(ChatDraftDebugLog.short(text))")
+        .onChange(of: inputHistoryKey) { _, _ in
             inputHistoryState = ChatInputHistoryState()
         }
         .overlay(alignment: .topLeading) {

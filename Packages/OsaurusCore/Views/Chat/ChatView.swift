@@ -2868,7 +2868,6 @@ final class ChatSession: ObservableObject {
     }
 
     func reset() {
-        ChatDraftDebugLog.log("reset sessionId=\(sessionId?.uuidString.prefix(8) ?? "nil") agent=\(agentId?.uuidString.prefix(8) ?? "default") session=\(ObjectIdentifier(self))")
         stashDraft()
         stop()
         turns.removeAll()
@@ -2960,7 +2959,6 @@ final class ChatSession: ObservableObject {
         reset()
         // reset() brought back the OLD agent's new-chat draft; put it back
         // and pick up the one typed under the incoming agent instead.
-        ChatDraftDebugLog.log("reset(for:) old=\(agentId?.uuidString.prefix(8) ?? "default") new=\(newAgentId?.uuidString.prefix(8) ?? "default")")
         stashDraft()
         input = ""
         agentId = newAgentId
@@ -2984,9 +2982,6 @@ final class ChatSession: ObservableObject {
     /// back when the user returns to this chat (#2708).
     func stashDraft() {
         let draft = input.isEmpty ? composerDraft : input
-        ChatDraftDebugLog.log(
-            "key=\(ChatDraftDebugLog.key(draftKey)) input=\(ChatDraftDebugLog.short(input)) composerDraft=\(ChatDraftDebugLog.short(composerDraft)) -> stash \(ChatDraftDebugLog.short(draft)) session=\(ObjectIdentifier(self))"
-        )
         ChatDraftStore.shared.stash(draft, for: draftKey)
         composerDraft = ""
     }
@@ -2996,7 +2991,6 @@ final class ChatSession: ObservableObject {
     /// unsent text instead of an empty string. No-op when `input` already
     /// holds text or nothing was typed.
     func promoteComposerDraft() {
-        ChatDraftDebugLog.log("input=\(ChatDraftDebugLog.short(input)) composerDraft=\(ChatDraftDebugLog.short(composerDraft)) session=\(ObjectIdentifier(self))")
         guard input.isEmpty, !composerDraft.isEmpty else { return }
         input = composerDraft
     }
@@ -3004,19 +2998,11 @@ final class ChatSession: ObservableObject {
     /// Bring back the composer text remembered for `draftKey`, if any.
     /// Never overwrites text the user has already typed.
     func restoreDraft() {
-        let stored = ChatDraftStore.shared.peek(for: draftKey)
-        ChatDraftDebugLog.log(
-            "key=\(ChatDraftDebugLog.key(draftKey)) input=\(ChatDraftDebugLog.short(input)) composerDraft=\(ChatDraftDebugLog.short(composerDraft)) stored=\(stored.map(ChatDraftDebugLog.short) ?? "nil") session=\(ObjectIdentifier(self))"
-        )
         guard input.isEmpty, composerDraft.isEmpty,
             let draft = ChatDraftStore.shared.take(for: draftKey)
-        else {
-            ChatDraftDebugLog.log("skipped restore")
-            return
-        }
+        else { return }
         input = draft
         composerDraft = draft
-        ChatDraftDebugLog.log("restored \(ChatDraftDebugLog.short(draft))")
     }
 
     // MARK: - LLM Context Compaction
@@ -3364,7 +3350,6 @@ final class ChatSession: ObservableObject {
 
     /// Load session from persisted data
     func load(from data: ChatSessionData) {
-        ChatDraftDebugLog.log("load from=\(sessionId?.uuidString.prefix(8) ?? "nil") to=\(data.id.uuidString.prefix(8)) session=\(ObjectIdentifier(self))")
         stashDraft()
         // Switching sessions discards the current thread's UI, so suppress the
         // outgoing-session block rebuild that `stop()` would trigger. Cleared
@@ -9598,10 +9583,7 @@ struct ChatView: View {
                                 isCompact: windowState.showSidebar,
                                 isEmptyChat: !observedSession.hasVisibleThreadMessages,
                                 onClearChat: { observedSession.reset() },
-                                onDraftChange: {
-                                    ChatDraftDebugLog.log("onDraftChange \(ChatDraftDebugLog.short($0)) session=\(ObjectIdentifier(observedSession)) sid=\(observedSession.sessionId?.uuidString.prefix(8) ?? "nil")")
-                                    observedSession.composerDraft = $0
-                                },
+                                onDraftChange: { observedSession.composerDraft = $0 },
                                 onWillRehydrate: { observedSession.promoteComposerDraft() },
                                 modelSwitchContinuityWarning:
                                     observedSession.modelSwitchContinuityWarning,
