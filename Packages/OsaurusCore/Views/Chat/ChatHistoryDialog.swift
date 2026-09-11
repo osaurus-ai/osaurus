@@ -1160,8 +1160,10 @@ private struct FilterSubmenuRow: View {
         choices.first { $0.id == selectedId }
     }
 
-    private var selectedCount: Int {
-        selectedChoice?.count ?? choices.reduce(0) { $0 + $1.count }
+    /// Row pill: how many options the submenu offers (projects, workspaces,
+    /// plugins), or the picked option's chat count once one is selected.
+    private var rowCount: Int {
+        selectedChoice?.count ?? choices.count
     }
 
     private static let rowHeight: CGFloat = 36
@@ -1170,7 +1172,7 @@ private struct FilterSubmenuRow: View {
         FilterPickerRow(
             icon: icon,
             title: selectedChoice.map { Text(verbatim: $0.title) } ?? title,
-            count: selectedCount,
+            count: rowCount,
             isSelected: selectedId != nil,
             trailing: AnyView(
                 Image(systemName: "chevron.right")
