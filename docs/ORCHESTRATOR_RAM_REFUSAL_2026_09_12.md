@@ -184,3 +184,33 @@ samples use proc_pid_rusage RUSAGE_INFO_V2, not RSS, and are stored in
 `/private/tmp/osaurus-resident-child-ram-evidence/physical-footprint.jsonl`.
 
 Status remains PARTIAL pending live workflows and complete eval results.
+
+## Concurrent recovery correction
+
+Two callers can sample a refusal before the first caller clears the allocator
+pool. The second must request fresh facts even when its own trim frees zero
+bytes. Successful admission drain now always resamples, while cancellation
+still returns without granting capacity. The real Metal regression failed
+before this correction (1 failed / 2 tests, one assertion), then passed 2/2
+with both queued cancellation/drain cases. Logs:
+`/private/tmp/osaurus-resident-child-ram-empty-pool-red.log` and
+`/private/tmp/osaurus-resident-child-ram-empty-pool-green.log`.
+The combined affected automated matrix passed 460/460 tests in 28 suites at
+`/private/tmp/osaurus-resident-child-ram-complete-matrix.log`.
+
+Added AgentLoopRAMAdmission cases for a single child and two separate
+sequential children under a one-session ceiling, with empty worker personas
+and native bundle samplers. Repeating these cases tests fresh agent loops
+against retained runtime state; assertions check exact result markers, tool
+counts and tool errors without using a judge. Local Release UI scenarios are
+being repeated with the reporter's actual SysAdmin prompt and the
+Research/Marketing sequence, including a fresh chat without process restart.
+
+Initial full model matrix at c00bdbd2f: AgentLoop 33 passed / 10 failed /
+4 skipped out of 47; AgentLoopFrontier 20 passed / 19 failed out of 39.
+Combined: 53 passed / 29 failed / 4 skipped out of 86. Same-model two-worker
+batch passed with effective width 2, two successful exact results, 1,870 MiB
+peak physical footprint, disk L2 reuse, and a 34.81 token/s final continuation.
+These scores are not represented as a perfect model-quality pass. The final
+empty-pool change is inside the refused-admission recovery branch; the focused
+reported-scenario lane is being rerun on that updated production code.

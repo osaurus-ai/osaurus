@@ -1210,10 +1210,8 @@ public actor ModelRuntime {
     /// notification. Release the reusable allocator pool before making that
     /// refusal final; never credit hypothetical bytes to the RAM estimate.
     private func trimFreedBufferCache(reason: String, waitForGenerationDrain: Bool = false) async -> Bool {
-        let generationWasActive = !activeGenerationTasks.isEmpty
         guard !Task.isCancelled,
-            waitForGenerationDrain || !generationWasActive,
-            Memory.cacheMemory > 0 || (waitForGenerationDrain && generationWasActive)
+            waitForGenerationDrain || (activeGenerationTasks.isEmpty && Memory.cacheMemory > 0)
         else { return false }
         // Unlike a committed model teardown, this optional recovery is
         // cancellable while waiting for an embedder/load/other GPU producer.
@@ -1242,9 +1240,11 @@ public actor ModelRuntime {
         genLog.info(
             "allocator trim reason=\(reason, privacy: .public) cached_before=\(before) cached_after=\(after)"
         )
-        // Draining can release transient allocations even with an empty pool.
-        // The caller must remeasure; this grants no arithmetic memory credit.
-        return before > after || (waitForGenerationDrain && generationWasActive)
+        // Another admission or producer may have freed the pool since this
+        // caller sampled its refusal. Completing the drain always requests a
+        // fresh admission sample, including when this trim freed zero bytes.
+        // This grants no arithmetic memory credit or additional engine slots.
+        return waitForGenerationDrain || before > after
     }
 
     /// Unload every resident model with no active generation lease in

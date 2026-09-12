@@ -35,6 +35,10 @@ struct SubagentAllocatorRecoveryLiveTests {
         #expect(Memory.activeMemory == active)
         #expect(retained.asArray(Int32.self) == [11, 22, 33])
         print("ALLOCATOR_PROOF cached_before=\(before) cached_after=\(after) active_bytes=\(active) reclaimable_before=\(availableBefore) reclaimable_after=\(availableAfter)")
+        // Another admission may have sampled its refusal BEFORE the trim
+        // above. Completing a second drain must request fresh facts even
+        // though this attempt has no remaining pool bytes to free itself.
+        #expect(await runtime.reclaimMemoryForSubagentAdmission())
     }
 
     @Test("admission waits for the producer gate and Stop preserves the held pool", arguments: [false, true])
