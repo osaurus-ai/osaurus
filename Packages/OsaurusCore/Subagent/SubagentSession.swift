@@ -362,7 +362,8 @@ public enum SubagentSession {
                     "\(tool) cannot be called from inside a running subagent (\(active)). "
                     + "Finish the current subagent and return its result first.",
                 tool: tool,
-                retryable: false
+                retryable: false,
+                metadata: ["recursion": true]
             ))
         }
 
@@ -512,7 +513,8 @@ public enum SubagentSession {
                     "\(prepared.tool) cannot be called from inside a running subagent (\(active)). "
                     + "Finish the current subagent and return its result first.",
                 tool: prepared.tool,
-                retryable: false
+                retryable: false,
+                metadata: ["recursion": true]
             )
         }
 
@@ -614,7 +616,8 @@ public enum SubagentSession {
                         kind: .unavailable,
                         message: message,
                         tool: prepared.tool,
-                        retryable: true
+                        retryable: true,
+                        metadata: ["admission": "timeout"]
                     )
                 case .cancelled:
                     let message =
@@ -652,7 +655,8 @@ public enum SubagentSession {
                         kind: .unavailable,
                         message: message,
                         tool: prepared.tool,
-                        retryable: true
+                        retryable: true,
+                        metadata: ["admission": "timeout"]
                     )
                 case .cancelled:
                     let message =
@@ -851,7 +855,8 @@ public enum SubagentSession {
                         kind: .unavailable,
                         message: message,
                         tool: prepared.tool,
-                        retryable: true
+                        retryable: true,
+                        metadata: ["admission": "timeout"]
                     )
                 case .cancelled:
                     let message =

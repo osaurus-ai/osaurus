@@ -301,9 +301,17 @@ struct ComputerUseLoopEvalTests {
     /// has to hold. The over-budget failure path mirrors step-efficiency, which
     /// is already covered; faking a non-zero token count would need a model.
     @Test func tokenBudgetScoredAndReportedForScriptedRun() async {
+        // The click flips a status so the scripted `done` is evidence-backed
+        // (the loop no longer accepts a done after an act nothing observed).
         let scene = Scene(
             app: "Form",
-            elements: [El(id: "go", role: "button", label: "Go")],
+            elements: [
+                El(
+                    id: "go", role: "button", label: "Go",
+                    onClick: Scene.ClickEffect(setValues: [Scene.SetValue(id: "status", value: "Went")])
+                ),
+                El(id: "status", role: "statictext", label: "Status", value: "Idle"),
+            ],
             expectOutcome: ["done"],
             successClicked: ["go"],
             scoredMaxModelTokens: 0,

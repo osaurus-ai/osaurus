@@ -691,6 +691,13 @@ public final class ToolRegistry: ObservableObject {
         )
         if let permissioned = tool as? PermissionedTool {
             let requirements = permissioned.requirements
+            // Computer Use funnel: this gate is the one chokepoint every real
+            // `computer_use` invocation passes, so it is where an ATTEMPT is
+            // counted. Every later refusal (agent auth, model, admission) is
+            // attributed by `ComputerUseTool`; the Accessibility refusal below
+            // is the only one that happens before the tool body exists.
+            let isComputerUse = name == ComputerUseTool.toolName
+            if isComputerUse { FeatureTelemetry.computerUseAttempt() }
 
             // Check system permissions and prompt the user for any that are missing
             let missingSystemPermissions = await SystemPermissionService.shared.missingPermissions(
@@ -703,6 +710,9 @@ public final class ToolRegistry: ObservableObject {
                 from: requirements
             )
             if !stillMissing.isEmpty {
+                if isComputerUse {
+                    FeatureTelemetry.computerUseRefused(stage: .permissionAccessibility)
+                }
                 let missingNames = stillMissing.map { $0.displayName }.joined(separator: ", ")
                 throw NSError(
                     domain: "ToolRegistry",

@@ -262343,6 +262343,12 @@
           }
         }
       }
+    },
+    "Unavailable: Accessibility permission is missing": {
+      "comment": "Agent editor Computer Use readiness blocker shown when macOS Accessibility permission has not been granted to Osaurus."
+    },
+    "To drive apps or the browser, chat with a custom agent that has Computer Use or Browser Use enabled (Agents → Configure → Subagents), or add that agent to the Main Chat Spawn allow-list below so the Orchestrator can delegate to it.": {
+      "comment": "Settings → Delegation hint explaining how Computer Use / Browser Use become reachable since the Orchestrator cannot use them directly."
     }
   },
   "version": "1.1"

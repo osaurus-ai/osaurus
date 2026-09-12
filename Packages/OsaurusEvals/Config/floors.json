@@ -9,6 +9,7 @@
     "ToolResultGrounding": 1.0,
     "AgentChannels": 1.0,
     "ComputerUse": 1.0,
+    "ComputerUseLoop": 1.0,
     "ScreenContext": 1.0
   },
   "caseFloors": {

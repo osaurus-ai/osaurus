@@ -223,11 +223,17 @@ public struct CUAppInfo: Sendable, Equatable, Codable {
     public let pid: Int32
     public let bundleId: String?
     public let name: String
+    /// Whether the app exposed a populated accessibility window within the
+    /// open readiness budget. `false` means it launched (or was already
+    /// running) but its tree was not queryable in time — the loop reports
+    /// that instead of calling the open a success.
+    public var ready: Bool
 
-    public init(pid: Int32, bundleId: String?, name: String) {
+    public init(pid: Int32, bundleId: String?, name: String, ready: Bool = true) {
         self.pid = pid
         self.bundleId = bundleId
         self.name = name
+        self.ready = ready
     }
 }
 
@@ -473,6 +479,13 @@ public protocol MacDriver: Sendable {
     /// Launch (or attach to) an app, backgrounded by default.
     func open(identifier: String, background: Bool) async -> Result<CUAppInfo, MacDriverError>
 
+    /// Whether the process the loop is driving is still alive. `nil` when the
+    /// driver cannot tell (scripted / mock drivers), in which case the loop
+    /// skips the liveness check. The native driver answers from NSWorkspace so
+    /// a quit or relaunched app is reported before input is posted at a pid
+    /// that no longer exists (or now belongs to a different process).
+    func isRunning(pid: Int32) async -> Bool?
+
     /// Perceive an app at a given tier. `interactiveOnly` controls whether the
     /// AX traversal keeps only actionable elements (buttons, fields, …) or also
     /// includes passive content roles like `statictext` — the latter is what
@@ -517,6 +530,9 @@ extension MacDriver {
     /// and the fixture replay driver override this; scripted drivers that only
     /// model actionable controls fall back to the snapshot's focused element.
     public func focusedContent(pid: Int32) async -> CUFocusedContent? { nil }
+
+    /// Default: liveness unknown, so the loop does not gate on it.
+    public func isRunning(pid: Int32) async -> Bool? { nil }
 
     public func capture(pid: Int32, tier: CaptureTier) async -> CUSnapshot {
         await capture(
