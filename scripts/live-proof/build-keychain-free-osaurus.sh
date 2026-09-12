@@ -24,6 +24,8 @@ mkdir -p "$(dirname "$DERIVED_DATA")"
 
 echo "derived_data=$DERIVED_DATA"
 echo "configuration=Release"
+echo "code_coverage=disabled"
+echo "build_jobs=2"
 echo "xcode_signing=disabled"
 echo "bundle_seal=ad-hoc-keychain-free"
 echo "bundle_id=$BUNDLE_ID"
@@ -36,7 +38,10 @@ env \
     -workspace "$ROOT/osaurus.xcworkspace" \
     -scheme osaurus \
     -configuration Release \
+    -jobs 2 \
     -derivedDataPath "$DERIVED_DATA" \
+    ENABLE_CODE_COVERAGE=NO \
+    CLANG_COVERAGE_MAPPING=NO \
     CODE_SIGNING_ALLOWED=NO \
     CODE_SIGNING_REQUIRED=NO \
     CODE_SIGN_IDENTITY= \

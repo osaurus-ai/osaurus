@@ -5244,11 +5244,10 @@ final class ChatSession: ObservableObject {
             // Stamp the steady-state tok/s. Single source of truth across
             // local-MLX, remote-API, with-tools, and thinking-on/off paths.
             //
-            // Order matters, and every rung is a real measurement:
-            //   1. the converged rolling window — best steady-state read, and
-            //      immune to first-token amortisation;
-            //   2. the engine's decode rate — a true tokens-over-decode-wall
-            //      figure for replies too short for the window to converge;
+            // Order matters: rolling input estimates tokens per text chunk,
+            // so it must not replace an authoritative engine completion rate.
+            //   1. the engine's actual tokens-over-decode-wall rate;
+            //   2. the rolling estimate when no valid engine rate is available;
             //   3. nothing.
             //
             // Rung 3 is the point. There is no fourth rung that guesses. The old
@@ -5258,7 +5257,7 @@ final class ChatSession: ObservableObject {
             // tok/s on a 7-token answer. A blank cell is honest; that number was
             // not.
             currentTurn.generationTokensPerSecond =
-                rollingRate.finalRate() ?? engineTokensPerSecond
+                rollingRate.finalRate(authoritativeTokensPerSecond: engineTokensPerSecond)
             // Token count: prefer vmlx's authoritative count (already
             // assigned in the stats sentinel branch above) — only fall back
             // to our chars/4 estimate if the stats sentinel never fired
@@ -5273,6 +5272,10 @@ final class ChatSession: ObservableObject {
         // actually generated.
         let streamEndedAt = Date()
         currentTurn.completedAt = streamEndedAt
+        // Final stats are plain turn fields; no content delta follows them.
+        // Refresh now so the footer does not retain its last rolling estimate
+        // until another message or unrelated UI event invalidates the blocks.
+        rebuildVisibleBlocks()
 
         let totalTime = streamEndedAt.timeIntervalSince(streamStartTime)
         // Last visible delta → stream termination. For local models this is
