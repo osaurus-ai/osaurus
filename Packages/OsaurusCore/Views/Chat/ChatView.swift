@@ -9909,6 +9909,19 @@ struct ChatView: View {
                 onClose: {
                     WhatsNewGate.markShown(version: release.version)
                     pendingWhatsNew = nil
+                    // What's New and the first-run announcement dialogs both
+                    // fire on an update launch. The announcements defer while
+                    // this sheet is up (its guard sees `attachedSheet`) and
+                    // have no other trigger this session unless the user
+                    // deactivates/reactivates, so chain them here — the same
+                    // hand-off onboarding completion and the import prompt do.
+                    // Delayed so the sheet has detached before the
+                    // `attachedSheet` guard re-checks.
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(0.5))
+                        AppDelegate.shared?.presentProductHuntLaunchDialogIfEligible()
+                        AppDelegate.shared?.presentWorkspacesIntroDialogIfEligible()
+                    }
                 },
                 onAction: { action in
                     // Only perform the deep link here. The modal owns
