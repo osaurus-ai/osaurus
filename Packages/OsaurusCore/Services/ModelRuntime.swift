@@ -1195,13 +1195,40 @@ public actor ModelRuntime {
     /// anyway. This only returns already-freed buffers to the allocator; it
     /// never touches resident weights or KV state.
     func trimFreedBufferCacheUnderMemoryPressure() async {
-        guard activeGenerationTasks.isEmpty else { return }
-        await MetalGate.shared.enterModelTeardown(model: "memory-pressure-trim")
+        _ = await trimFreedBufferCache(reason: "memory-pressure")
+    }
+
+    /// Admission can run out of headroom before macOS sends a pressure
+    /// notification. Release the reusable allocator pool before making that
+    /// refusal final; never credit hypothetical bytes to the RAM estimate.
+    private func trimFreedBufferCache(reason: String) async -> Bool {
+        guard !Task.isCancelled, activeGenerationTasks.isEmpty,
+            Memory.cacheMemory > 0
+        else { return false }
+        // Unlike a committed model teardown, this optional recovery is
+        // cancellable while waiting for an embedder/load/other GPU producer.
+        let owner = "allocator-trim:\(reason)"
+        do {
+            try await MetalGate.shared.acquireCancellable(owner, shared: false)
+        } catch {
+            return false
+        }
+        // The actor can re-enter while awaiting the gate. A new generation
+        // must not lose its reuse pool merely because the earlier check was idle.
+        guard !Task.isCancelled, activeGenerationTasks.isEmpty else {
+            await MetalGate.shared.release(owner)
+            return false
+        }
+        let before = Memory.cacheMemory
         Stream.gpu.synchronize()
         Memory.clearCache()
         Stream.gpu.synchronize()
-        await MetalGate.shared.exitModelTeardown(model: "memory-pressure-trim")
-        genLog.info("memory pressure: trimmed MLX freed-buffer pool")
+        let after = Memory.cacheMemory
+        await MetalGate.shared.release(owner)
+        genLog.info(
+            "allocator trim reason=\(reason, privacy: .public) cached_before=\(before) cached_after=\(after)"
+        )
+        return before > after
     }
 
     /// Unload every resident model with no active generation lease in
@@ -3521,6 +3548,24 @@ public actor ModelRuntime {
         residencyPlan: ResidencyPlan,
         requestEstimate: SubagentChildRequestEstimate? = nil
     ) async -> SubagentBatchMemoryFacts? {
+        await SubagentBatchAdmissionPlanner.memoryFactsAfterReclaimingIfNeeded(
+            ramSafetyEnabled: residencyPlan.ramSafetyEnabled,
+            sample: {
+                await self.sampleSubagentBatchMemoryFacts(
+                    for: modelName,
+                    residencyPlan: residencyPlan,
+                    requestEstimate: requestEstimate
+                )
+            },
+            reclaim: { await self.trimFreedBufferCache(reason: "subagent-admission") }
+        )
+    }
+
+    private func sampleSubagentBatchMemoryFacts(
+        for modelName: String,
+        residencyPlan: ResidencyPlan,
+        requestEstimate: SubagentChildRequestEstimate?
+    ) async -> SubagentBatchMemoryFacts? {
         guard
             let profile = await subagentMemoryProfile(
                 for: modelName, requestEstimate: requestEstimate)
@@ -3555,10 +3600,9 @@ public actor ModelRuntime {
             ),
             requestBoundedChildHeadroomBytes: profile.requestBoundedChildHeadroomBytes
                 .flatMap(Self.nonnegativeUInt64),
-            // Match the existing subagent handoff preflight exactly. The
-            // broader model-load estimator also counts speculative pages,
-            // which are not part of the conservative handoff admission
-            // contract and could over-admit a batch.
+            // Normal loading and handoff use this same host estimator. After
+            // allocator recovery this is a fresh OS sample, not an arithmetic
+            // credit for buffers that might still be resident.
             reclaimableBytes: Self.nonnegativeUInt64(
                 ChatResidencyHandoff.availableMemoryBytes()
             ),
