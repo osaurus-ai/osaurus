@@ -41,6 +41,7 @@ public struct BenchCommand: Command {
         var port: Int
         var tunePrefill: Bool = false
         var tuneCandidates: [Int] = BenchCommand.defaultTuneCandidates
+        var gauntlet: Bool = false
     }
 
     public static func execute(args: [String]) async {
@@ -67,6 +68,11 @@ public struct BenchCommand: Command {
         if options.tunePrefill {
             await tunePrefill(options: options, model: model, base: base, health: health)
             // tunePrefill exits the process itself.
+        }
+
+        if options.gauntlet {
+            await runGauntlet(options: options, model: model, base: base, health: health)
+            // runGauntlet exits the process itself.
         }
 
         fputs("Benchmarking \(model) (\(options.runs) runs × prompt sizes \(options.promptTokens))…\n", stderr)
@@ -486,7 +492,7 @@ public struct BenchCommand: Command {
         Double(to.uptimeNanoseconds - from.uptimeNanoseconds) / 1_000_000
     }
 
-    private static func fetchJSON(_ url: URL) async -> [String: Any]? {
+    static func fetchJSON(_ url: URL) async -> [String: Any]? {
         var request = URLRequest(url: url)
         request.timeoutInterval = 2
         guard let (data, response) = try? await URLSession.shared.data(for: request),
@@ -536,6 +542,8 @@ public struct BenchCommand: Command {
                 options.port = n
             case "--tune-prefill":
                 options.tunePrefill = true
+            case "--gauntlet":
+                options.gauntlet = true
             case "--candidates":
                 guard let v = value() else { return nil }
                 let parsed = v.split(separator: ",").compactMap { Int($0) }.filter { $0 > 0 }
@@ -547,6 +555,10 @@ public struct BenchCommand: Command {
             }
             index += 1
         }
+        if options.tunePrefill && options.gauntlet {
+            fputs("--tune-prefill and --gauntlet are mutually exclusive.\n", stderr)
+            return nil
+        }
         return options
     }
 
@@ -557,6 +569,7 @@ public struct BenchCommand: Command {
                                  [--max-tokens 128] [--runs 3] [--json <path>] [--port N]
                    osaurus bench --tune-prefill [--model <id>] [--candidates 512,1024,2048,4096]
                                  [--prompt-tokens 8192] [--runs 3]
+                   osaurus bench --gauntlet [--model <id>] [--json <path>] [--port N]
 
             Requires a running server (`osaurus serve`). Reports uncached/cached
             TTFT, prefill tok/s, and decode tok/s per prompt size as JSON.
@@ -564,6 +577,14 @@ public struct BenchCommand: Command {
             --tune-prefill measures the model's TTFT at each candidate prefill
             step size and persists the per-model winner (the optimum is
             model-architecture-dependent); the server applies it immediately.
+
+            --gauntlet runs the onboarding verification suite (load,
+            template-leak, tool-call, stop-sequence, degeneration-canary,
+            mtp-equivalence, perf snapshot) and merge-writes the per-model
+            verdicts and evidence into the capability ledger
+            (~/.osaurus/config/model-ledger.json). V1 records candidate
+            evidence without changing productionServing. Exits non-zero
+            unless every critical probe passes.
 
             """, stderr)
     }
