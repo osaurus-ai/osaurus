@@ -125,6 +125,10 @@
       "frontier.self-schedule-followup",
       "frontier.symbol-rename-across-files"
     ],
+    "AgentLoopRAMAdmission": [
+      "agent_loop.ram-admission-sequential-children",
+      "agent_loop.ram-admission-single-child"
+    ],
     "AppleScript": [
       "apple_script.live-consequential-refusal",
       "apple_script.live-create-if-missing",

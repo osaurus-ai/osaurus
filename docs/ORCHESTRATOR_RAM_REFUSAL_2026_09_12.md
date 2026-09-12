@@ -6,6 +6,62 @@ Source base: Osaurus `4680ce594` (current `live/main` fetched September 12).
 Runtime pin: `74103982a292a5037e82acca6f35b72dc1e75ea7`.
 Worktree: `/Users/eric/osaurus-resident-child-ram`.
 
+## Latest local evidence (supersedes progress entries below)
+
+Production source tested: `ec721fece7779f2cb43139135ed51d6c732a523f`.
+The subsequent catalog/documentation commit changes no runtime or eval-case code.
+Release executable SHA256:
+`40e65df07aec102e7050c0258b2daf8f0898df3f8a8ebe60e2fe00ee94971dda`.
+The exact 8-bit bundle, native generation defaults and runtime pin are recorded below.
+
+- Affected automated matrix: 460/460 tests in 28 suites passed.
+- Real Metal recovery: 2/2 tests passed, including queued drain/cancellation
+  and already-empty-pool resampling. The new empty-pool assertion failed before
+  the correction. Live arrays retained their contents; 64 MiB of freed buffers
+  were reclaimed only after gate acquisition.
+- Exact-model AgentLoopRAMAdmission: single child 3/3 and two sequential
+  children at ceiling one 3/3. Same-model two-worker batch: 3/3. Total 9/9
+  trials, 15 successful child executions, exact markers, no admission errors.
+  Peak footprints were 1,937 / 2,023 / 3,053 MiB respectively; final responses
+  measured 34.98-39.16 token/s. These are harness rows, not native UI scores.
+- Eval harness unit tests: 345/345 passed after adding the two new cases to
+  the committed catalog manifest. CI initially caught that omitted inventory
+  update (344 passed, one manifest mismatch); that failure is retained.
+
+Native Release Chat/Settings proof used isolated storage and port 19312:
+
+| Scenario | Actual result |
+| --- | --- |
+| Exact reporter SysAdmin prompt | 7/7 actual child markers and parent answers matched: initial load, new chat without restart, RAM off, RAM restored on, after Stop, batching off, and after app relaunch with batching restored on. Child envelope throughput 27.5-55.2 token/s; native final-response throughput 84.3-88.4 token/s. |
+| Research then Marketing in separate turns | Both admitted and completed; strict task/output contract failed. Coordinator copied unrelated date instructions; Marketing returned a date while the parent claimed MARKETING-OK. |
+| Two sequential children requested in one prompt | 0/2 workflow passes. Coordinator called spawn_batch over the one-child limit; the second attempt also repeatedly supplied an invalid target_type to spawn_agent. These were invalid_args before RAM admission, not stable_memory_refusal. |
+| Two-slot same-model batch | Both children admitted, process active high-watermark rose from 1 to 2, and active/pending returned to 0 with one model loaded. Children measured 73.2 / 82.1 token/s. Requested marker contract failed because Coordinator invented larger research/marketing tasks. |
+| Stop during active child generation | Stop disappeared, input unlocked, runtime active/pending returned to 0, and the next exact SysAdmin child passed. Partial text (1 through 139) was retained in an ok envelope; cancelled-child throughput was absent. Cleanup passed; cancellation-result presentation/throughput remains partial. |
+
+UI process 57336 peaked at 3,624.43 MiB physical footprint (proc_pid_rusage,
+not RSS). No stable_memory_refusal occurred on this 128 GiB host. Cache
+telemetry reported 3 KV + 12 rotating layers, fp16 effective KV, disk-backed
+restore, zero TurboQuant KV layers, paged RAM off, prefix on, and disk L2
+reuse. The two-slot batch observed two additional disk L2 hits. Final restored
+settings are RAM ON, handoff ON, coexistence OFF, continuous batching ON,
+concurrency one, and child budgets 2048 tokens / 2 turns / 120 seconds.
+The isolated spawn_agent Always Allow permission survived relaunch.
+
+The UI failures are retained, not replaced with retries or prompt/sampler
+repairs. The recovery branch does not run when initial RAM capacity is
+positive; the observed UI batch had ram_slots=168. This correction therefore
+must not be described as a fix for Coordinator task expansion, result
+fabrication, or the complete reported workflow. The 16 GiB reporter workload
+is still unqualified; the supplied counters cannot reconstruct its refusal.
+
+Durable local artifacts:
+`/Users/eric/vmlx-private-evidence/ram-admission-2026-09-12/` contains raw
+reports, transcripts, memory samples, cache snapshots, build/test logs, and
+SHA256SUMS.json. The initial broad model matrix remains 53 passed / 29 failed /
+4 skipped out of 86 at c00bdbd2f, with self-judge and unavailable-fixture
+limitations recorded below. CI for the catalog/documentation commit remains
+a separate merge gate; its final result belongs in PR #2733.
+
 ## Report and acceptance boundary
 
 M4 Mac mini, 16 GB, Gemma 4 E2B 8-bit for Coordinator and every child;
