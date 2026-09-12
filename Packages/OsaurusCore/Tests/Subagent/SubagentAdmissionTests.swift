@@ -737,6 +737,40 @@ private final class DirectResidencyKind:
 
 @Suite("SubagentSession admission")
 struct SubagentSessionAdmissionTests {
+    @Test("two complete chats release same-model admission between all four children")
+    func backToBackChatsReleaseSameModelAdmission() async {
+        let admission = SubagentAdmission(pollNanoseconds: 1_000_000)
+        let probe = DirectResidencyProbe()
+        probe.setPlan(ResidencyPlan(shouldUnload: false, ramSafetyEnabled: true))
+        // This isolates session/admission ownership. It does not simulate
+        // host memory, engine teardown, or the reporter's actual 16 GiB Mac.
+        for chat in 0..<2 {
+            let sessionID = "back-to-back-\(chat)-\(UUID().uuidString)"
+            for child in ["research", "marketing"] {
+                let scope = SubagentScope(
+                    sessionId: sessionID,
+                    toolCallId: "\(child)-\(UUID().uuidString)",
+                    agentId: Agent.defaultId)
+                let preparation = await SubagentSession.prepare(
+                    DirectResidencyKind(probe: probe),
+                    tool: "direct-residency-test", scope: scope)
+                guard case .ready(let prepared) = preparation else {
+                    Issue.record("child did not prepare in chat \(chat)")
+                    return
+                }
+                let envelope = await SubagentSession.runPrepared(
+                    prepared, admissionController: admission,
+                    postAdmissionLocalCapacityOverride: { _, _ in 1 })
+                #expect(ToolEnvelope.isSuccess(envelope))
+                let occupancy = await admission.snapshot()
+                #expect(occupancy.inPlace == 0)
+                #expect(occupancy.exclusive == 0)
+            }
+        }
+        #expect(probe.snapshot().runs == 4)
+        #expect(probe.snapshot().refreshes == 4)
+    }
+
     @Test("queued direct run drops stale handoff after exclusive plan downgrades")
     func directRunRefreshDropsStaleExclusiveHandoff() async {
         let admission = SubagentAdmission(pollNanoseconds: 1_000_000)
