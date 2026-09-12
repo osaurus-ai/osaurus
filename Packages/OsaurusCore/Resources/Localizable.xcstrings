@@ -1,6 +1,40 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Add at least one allowed subagent to turn this on": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Füge mindestens einen erlaubten Unteragenten hinzu, um dies zu aktivieren"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 기능을 켜려면 허용된 서브 에이전트를 하나 이상 추가하세요"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавьте хотя бы одного разрешённого субагента, чтобы включить это"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加至少一个允许的子智能体以启用此功能"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新增至少一個允許的子智能體以啟用此功能"
+          }
+        }
+      }
+    },
     "Archived": {
       "localizations": {
         "de": {
@@ -31,6 +65,74 @@
           "stringUnit": {
             "state": "translated",
             "value": "已封存"
+          }
+        }
+      }
+    },
+    "Check Spelling While Typing": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rechtschreibung während der Eingabe prüfen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "입력 중 맞춤법 검사"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверять орфографию при вводе"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "输入时检查拼写"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "輸入時檢查拼字"
+          }
+        }
+      }
+    },
+    "Checking allowed subagents…": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Erlaubte Unteragenten werden geprüft…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "허용된 서브 에이전트 확인 중…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверка разрешённых субагентов…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在检查允许的子智能体…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在檢查允許的子智能體…"
           }
         }
       }
@@ -359,6 +461,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "通常只需一次，除非模型文件发生变化。"
+          }
+        }
+      }
+    },
+    "Unavailable: none of the allowed subagents can run right now": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nicht verfügbar: Keiner der erlaubten Unteragenten kann derzeit ausgeführt werden"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "사용 불가: 허용된 서브 에이전트 중 현재 실행할 수 있는 것이 없습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Недоступно: ни один из разрешённых субагентов сейчас не может быть запущен"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不可用：目前没有允许的子智能体可以运行"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法使用：目前沒有允許的子智能體可以執行"
           }
         }
       }
