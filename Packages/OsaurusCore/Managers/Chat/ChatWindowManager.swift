@@ -33,6 +33,23 @@ public enum NewChatShortcutSetting {
     public static let defaultsKey = "chatCmdNStartsNewChatInCurrentWindow"
 }
 
+/// Settings ▸ Chat ▸ "Check Spelling While Typing": run the macOS spell
+/// checker (red underline + right-click suggestions) in the chat composer
+/// and the clarify-prompt input. Default off, matching the raw-input feel
+/// the composer has always had; autocorrect and smart substitutions stay
+/// off regardless so text is never rewritten under the user.
+public enum ComposerSpellCheckSetting {
+    public static let defaultsKey = "chatComposerSpellCheckEnabled"
+    public static let defaultValue = false
+
+    /// Current value for callers outside SwiftUI.
+    public static var isEnabled: Bool {
+        UserDefaults.standard.object(forKey: defaultsKey) == nil
+            ? defaultValue
+            : UserDefaults.standard.bool(forKey: defaultsKey)
+    }
+}
+
 /// Manages multiple chat windows in the application
 @MainActor
 public final class ChatWindowManager: NSObject, ObservableObject {

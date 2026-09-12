@@ -106,6 +106,208 @@ struct ChatDraftPersistenceTests {
         #expect(session.input == "fresh")
         ChatDraftStore.shared.removeAll()
     }
+
+    /// The composer only syncs from `input` when the string changes, so an
+    /// in-place agent switch that leaves `input` at `""` must still signal
+    /// the card to drop the previous agent's keystrokes.
+    @Test("reset(for:) bumps composerGeneration even when input reads the same")
+    func resetForBumpsGeneration() async throws {
+        try await ChatHistoryTestStorage.run {
+            ChatDraftStore.shared.removeAll()
+            let session = ChatSession()
+            session.agentId = UUID()
+            session.noteComposerDraft("typed, never promoted")
+            #expect(session.input == "")
+
+            let before = session.composerGeneration
+            session.reset(for: UUID())
+            #expect(session.input == "")
+            #expect(session.composerGeneration > before)
+        }
+    }
+
+    @Test("pending attachments travel with the per-agent draft")
+    func attachmentsFollowAgent() async throws {
+        try await ChatHistoryTestStorage.run {
+            ChatDraftStore.shared.removeAll()
+            let agentA = UUID()
+            let agentB = UUID()
+            let pasted = Attachment.pastedContent(String(repeating: "x", count: 64))
+
+            let session = ChatSession()
+            session.agentId = agentA
+            session.input = "see attached"
+            session.pendingAttachments = [pasted]
+
+            session.reset(for: agentB)
+            #expect(session.input == "")
+            #expect(session.pendingAttachments.isEmpty)
+
+            session.reset(for: agentA)
+            #expect(session.input == "see attached")
+            #expect(session.pendingAttachments == [pasted])
+        }
+    }
+
+    @Test("an attachment with no text is still a draft worth keeping")
+    func attachmentOnlyDraftIsKept() async throws {
+        try await ChatHistoryTestStorage.run {
+            ChatDraftStore.shared.removeAll()
+            let agentA = UUID()
+            let agentB = UUID()
+            let pasted = Attachment.pastedContent(String(repeating: "y", count: 64))
+
+            let session = ChatSession()
+            session.agentId = agentA
+            session.pendingAttachments = [pasted]
+
+            session.reset(for: agentB)
+            #expect(session.pendingAttachments.isEmpty)
+            session.reset(for: agentA)
+            #expect(session.pendingAttachments == [pasted])
+            #expect(session.input == "")
+        }
+    }
+}
+
+// MARK: - Window-level agent switching
+
+extension ChatDraftPersistenceTests {
+    private func makeAgent(_ label: String) -> Agent {
+        let agent = Agent(name: "\(label)-\(UUID().uuidString.prefix(6))")
+        AgentManager.shared.add(agent)
+        return agent
+    }
+
+    /// Blank chat, keystrokes only in the composer mirror, pick another
+    /// agent: the same session is repurposed in place. The incoming agent
+    /// must start empty and the outgoing agent's text must come back.
+    @Test("in-place agent switch keeps the draft with its agent")
+    func inPlaceSwitchKeepsDraftPerAgent() async throws {
+        try await ChatHistoryTestStorage.run {
+            ChatDraftStore.shared.removeAll()
+            let agentB = makeAgent("B")
+            defer { Task { _ = await AgentManager.shared.delete(id: agentB.id) } }
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+
+            let session = window.session
+            session.noteComposerDraft("for the orchestrator")
+
+            window.switchAgent(to: agentB.id)
+            #expect(window.session === session)
+            #expect(session.agentId == agentB.id)
+            #expect(session.input == "")
+            #expect(session.unsentComposerText == "")
+
+            session.noteComposerDraft("for B")
+            window.switchAgent(to: Agent.defaultId)
+            #expect(session.input == "for the orchestrator")
+
+            window.switchAgent(to: agentB.id)
+            #expect(session.input == "for B")
+        }
+    }
+
+    /// The outgoing chat has content, so the incoming agent opens in a
+    /// fresh tab. That fresh New Chat must pick up the draft the user left
+    /// in the agent's earlier (repurposed) blank chat.
+    @Test("a new tab for an agent restores that agent's stranded draft")
+    func newTabRestoresAgentDraft() async throws {
+        try await ChatHistoryTestStorage.run {
+            ChatDraftStore.shared.removeAll()
+            let agentB = makeAgent("B")
+            defer { Task { _ = await AgentManager.shared.delete(id: agentB.id) } }
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+
+            window.session.noteComposerDraft("orchestrator draft")
+            // Blank -> repurposed in place for B; the draft is stashed.
+            window.switchAgent(to: agentB.id)
+            let bSession = window.session
+            #expect(bSession.input == "")
+            bSession.turns.append(ChatTurn(role: .user, content: "hello B"))
+
+            // B has content now, so the Orchestrator opens in a new tab.
+            window.switchAgent(to: Agent.defaultId)
+            #expect(window.session !== bSession)
+            #expect(window.session.agentId == Agent.defaultId)
+            #expect(window.session.input == "orchestrator draft")
+        }
+    }
+
+    /// https://github.com/osaurus-ai/osaurus/issues/2723: open an existing
+    /// conversation, ⌘N a new one, type (not paste), switch to the existing
+    /// tab and back. The typed text must still be in the composer. Both
+    /// tabs stay warm here, so this is the pure tab-switch path (the
+    /// mirror promoted on adopt), not a stash/restore.
+    @Test("typed draft survives switching tabs and back (#2723)")
+    func typedDraftSurvivesTabRoundTrip() async throws {
+        try await ChatHistoryTestStorage.run {
+            ChatDraftStore.shared.removeAll()
+            let existing = ChatSessionData(
+                id: UUID(),
+                title: "Existing",
+                turns: [ChatTurnData(role: .user, content: "earlier question")],
+                agentId: Agent.defaultId
+            )
+            ChatSessionsManager.shared.save(existing)
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+
+            window.loadSession(existing)
+            let existingTabId = window.activeTabId
+            window.newTab()
+            let fresh = window.session
+            let freshTabId = window.activeTabId
+            #expect(fresh.turns.isEmpty)
+            #expect(window.tabs.count == 2)
+
+            // Keystrokes only reach the composer mirror.
+            fresh.noteComposerDraft("half-typed follow up")
+            #expect(fresh.input == "")
+
+            window.selectTab(id: existingTabId)
+            #expect(window.session !== fresh)
+            window.selectTab(id: freshTabId)
+            #expect(window.session === fresh)
+            #expect(fresh.input == "half-typed follow up")
+            #expect(fresh.unsentComposerText == "half-typed follow up")
+        }
+    }
+
+    /// Switching to an agent that already has a tab drops the blank tab
+    /// left behind; the text typed into that blank tab must survive.
+    @Test("a dropped blank tab stashes its draft")
+    func droppedBlankTabKeepsDraft() async throws {
+        try await ChatHistoryTestStorage.run {
+            ChatDraftStore.shared.removeAll()
+            let agentB = makeAgent("B")
+            defer { Task { _ = await AgentManager.shared.delete(id: agentB.id) } }
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+
+            let aSession = window.session
+            aSession.turns.append(ChatTurn(role: .user, content: "hello A"))
+
+            // A has content -> B opens in a fresh blank tab.
+            window.switchAgent(to: agentB.id)
+            let bSession = window.session
+            #expect(bSession !== aSession)
+            bSession.noteComposerDraft("half a question for B")
+
+            // Back to A: focuses A's tab and drops B's blank one.
+            window.switchAgent(to: Agent.defaultId)
+            #expect(window.session === aSession)
+            #expect(window.tabs.count == 1)
+
+            // B has no tab any more; A has content -> B gets a new tab
+            // that restores the dropped draft.
+            window.switchAgent(to: agentB.id)
+            #expect(window.session.agentId == agentB.id)
+            #expect(window.session.input == "half a question for B")
+        }
+    }
 }
 
 extension ChatDraftPersistenceTests {

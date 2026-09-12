@@ -25,21 +25,28 @@ struct SpawnConfigurationUISourceTests {
 
         #expect(agents.components(separatedBy: "SpawnConfigurationEditor(").count - 1 == 1)
         #expect(settings.components(separatedBy: "SpawnConfigurationEditor(").count - 1 == 1)
-        #expect(settings.contains(#"label: "Main Chat Spawn""#))
+        #expect(settings.contains(#"label: "Subagents the Orchestrator can delegate to""#))
+        // Labels converge on "subagent" / "delegate" (the industry-standard
+        // noun and verb); "Spawn" survives only in tool ids.
+        #expect(!settings.contains(#"label: "Main Chat Spawn""#))
+        #expect(editor.contains(#"Text("Allowed subagents", bundle: .module)"#))
         #expect(editor.contains(#"AgentSheetSectionLabel("Allowed agents")"#))
         #expect(editor.contains(#"AgentSheetSectionLabel("Allowed models")"#))
         #expect(editor.contains(#"title: "Max local subagents at once""#))
         #expect(editor.contains(#"title: "Max remote subagents at once""#))
         #expect(editor.contains(#"keyPath: \.maxRemoteParallelSpawns"#))
-        #expect(editor.contains(#"title: "Max child tool calls (0 = default 8)""#))
+        #expect(editor.contains(#"title: "Max turns per subagent""#))
+        #expect(editor.contains(#"title: "Max tool calls per subagent (0 = default 8)""#))
         #expect(editor.contains(#"keyPath: \.maxToolCalls"#))
-        #expect(editor.contains(#"Text("Agent tools only""#))
-        #expect(editor.contains(#"Text("Agent tools + read-only files""#))
-        // Worker tools grant applies to bare-model workers; delegated agents
-        // use their own tools and Working Folder (#2703).
-        #expect(editor.contains("Applies to bare-model workers (spawn_model)"))
-        #expect(editor.contains("host read-only file tools"))
-        #expect(editor.contains("Delegated agents use their own enabled tools and Working Folder"))
+        #expect(editor.contains(#"title: "Time limit per subagent (seconds)""#))
+        // Model-subagent file access is one switch over the two-case
+        // `SpawnToolAccess`; it applies to bare-model subagents only, agent
+        // subagents use their own tools and Working Folder (#2703).
+        #expect(editor.contains(#""Let model subagents read files (read-only)""#))
+        #expect(editor.contains("toolAccess = newValue ? .readOnly : .none"))
+        #expect(editor.contains("Model subagents (an allowed model with no agent attached) have no tools of their own"))
+        #expect(editor.contains("read-only file tools"))
+        #expect(editor.contains("Agent subagents use their own enabled tools and Working Folder"))
         #expect(editor.contains("An agent with a Working Folder (agent editor → Abilities → Working Folder)"))
         #expect(editor.contains("modelPickerCache.chatModelCandidates"))
     }
@@ -172,12 +179,12 @@ struct SpawnConfigurationUISourceTests {
         #expect(editor.contains("SubagentBatchAdmissionPlanner.plan("))
         #expect(editor.contains(#""Configured same-model local ceiling""#))
         #expect(editor.contains("Different local models run in serial model waves"))
-        #expect(editor.contains("persist one configured local limit"))
+        #expect(editor.contains("share one configured local limit"))
         #expect(editor.contains("Remote subagents use the separate remote limit"))
-        #expect(editor.contains("This agent and Server Concurrent Sessions persist"))
+        #expect(editor.contains("This agent and Server Concurrent Sessions share"))
 
         #expect(concurrency.contains("same-model local waves"))
-        #expect(concurrency.contains("Shared with Main Chat Spawn"))
+        #expect(concurrency.contains("Shared with the Orchestrator's and every agent's Max local subagents at once"))
         #expect(concurrency.contains("SpawnBatchConcurrencyContract.bounds"))
         #expect(concurrency.contains("jobs targeting different local models remain serialized"))
         #expect(subagentSettings.contains("architecture-aware KV, SSM, and activation headroom"))

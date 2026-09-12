@@ -22,6 +22,12 @@ import Foundation
 
 public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
     public let name = SubagentCapabilityRegistry.spawnBatchToolName
+
+    /// The batch's single permission prompt, in the same "delegate /
+    /// subagent" vocabulary as the per-job and wave prompts.
+    static func permissionDescription(jobCount: Int) -> String {
+        "Let this agent run \(jobCount) subagents in parallel?"
+    }
     public let description =
         "Run several independent bounded subtasks using the agents and models the user allowed, as "
         + "one explicit job list with one combined result. Each job must name a caller-stable id, one "
@@ -606,8 +612,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 scope: parentScope,
                 policy: initialBatchPolicy,
                 toolName: name,
-                description:
-                    "Allow this agent to spawn \(jobs.count) independent bounded subagents?",
+                description: Self.permissionDescription(jobCount: jobs.count),
                 argumentsJSON: argumentsJSON
             )
             if case .denied(let reason) = decision {
@@ -702,8 +707,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             scope: parentScope,
             policy: batchPolicy,
             toolName: name,
-            description:
-                "Allow this agent to spawn \(jobs.count) independent bounded subagents?",
+            description: Self.permissionDescription(jobCount: jobs.count),
             argumentsJSON: argumentsJSON,
             cancellationRequested: {
                 interrupt.isInterrupted

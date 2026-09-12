@@ -2,10 +2,14 @@
 //  SubagentSettingsSection.swift
 //  osaurus
 //
-//  Spawn policy for the built-in main chat plus system runtime knobs for local
-//  helper jobs. Custom agents edit the same Spawn controls in their Subagents
-//  tab; the built-in chat has no AgentDetailView, so its persisted
-//  SubagentConfiguration must remain reachable here.
+//  Subagent policy for the built-in main chat (the Orchestrator) plus system
+//  runtime knobs for local subagent jobs. Custom agents edit the same
+//  delegation controls in their Subagents tab; the built-in chat has no
+//  AgentDetailView, so its persisted SubagentConfiguration must remain
+//  reachable here.
+//
+//  Vocabulary (matches Claude Code / Cursor / Codex / Gemini CLI): the noun
+//  is "subagent", the verb is "delegate". `spawn_*` survive only as tool ids.
 //
 
 import SwiftUI
@@ -20,12 +24,12 @@ struct SubagentSettingsSection: View {
     }
 
     private var systemSection: some View {
-        SettingsSection(title: "Delegation", icon: "point.3.connected.trianglepath.dotted") {
+        SettingsSection(title: "Subagents", icon: "point.3.connected.trianglepath.dotted") {
             VStack(alignment: .leading, spacing: 16) {
-                SettingsSubsection(label: "Main Chat Capabilities") {
+                SettingsSubsection(label: "Orchestrator Capabilities") {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(
-                            "The Orchestrator may use these model-backed helpers. Browser Use and Computer Use remain custom-agent-only.",
+                            "The Orchestrator may delegate to these model-backed subagents. Browser Use and Computer Use remain custom-agent-only.",
                             bundle: .module
                         )
                         .font(.system(size: 11))
@@ -54,12 +58,12 @@ struct SubagentSettingsSection: View {
                     .overlay(themeManager.currentTheme.inputBorder)
 
                 SettingsSubsection(
-                    label: "Main Chat Spawn",
+                    label: "Subagents the Orchestrator can delegate to",
                     anchorId: "settings.orchestrator.delegation.mainChat"
                 ) {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(
-                            "Choose the agents and local or cloud models the Orchestrator may delegate to. It selects among this allow-list for each job; an empty allow-list keeps delegation unavailable.",
+                            "Choose the agents and local or cloud models the Orchestrator may delegate a task to. It picks from this list for each task; an empty list keeps delegation off.",
                             bundle: .module
                         )
                         .font(.system(size: 11))
@@ -100,28 +104,28 @@ struct SubagentSettingsSection: View {
                     .overlay(themeManager.currentTheme.inputBorder)
 
                 SettingsSubsection(
-                    label: "Local Handoff & RAM Safety",
+                    label: "Local Models & Memory",
                     anchorId: "settings.orchestrator.delegation.handoff"
                 ) {
                     VStack(alignment: .leading, spacing: 12) {
                         SettingsToggle(
-                            title: "Local Orchestrator Handoff",
+                            title: "Swap local models for subagents",
                             description:
-                                "RAM-safety sequence for every delegation whose helper is a different local model: unload the chat model → load the helper → run → unload the helper → load the chat model back → continue the turn. Applies whether or not the chat model was loaded at the start, and to any agent that delegates. Same-model helpers never swap. Off: the helper runs without this sequence and the server eviction policy decides what stays loaded. (Cloud helpers never need this.)",
+                                "Memory-safe sequence whenever a subagent uses a different local model than the chat: unload the chat model → load the subagent's model → run → unload it → load the chat model back → continue the turn. Applies whether or not the chat model was loaded at the start, and to every agent that delegates. Same-model subagents never swap. Off: the subagent runs without this sequence and the server eviction policy decides what stays loaded. (Cloud subagents never need this.)",
                             isOn: $configuration.localTextDelegationEnabled
                         )
 
                         SettingsToggle(
-                            title: "RAM-Safety Preflight",
+                            title: "Check memory before delegating",
                             description:
-                                "Before spawned image or text work, budget one target-model weight footprint plus architecture-aware KV, SSM, and activation headroom for every active child. Same-model batches are split into smaller waves when needed; if even one child cannot fit, refuse before unloading the chat model.",
+                                "Before delegating image or text work, budget one model weight footprint plus architecture-aware KV, SSM, and activation headroom for every subagent that will run. Same-model groups are split into smaller waves when needed; if even one subagent cannot fit, refuse before unloading the chat model.",
                             isOn: $configuration.ramSafetyPreflightEnabled
                         )
 
                         SettingsToggle(
-                            title: "Keep Chat Model Loaded (Coexistence)",
+                            title: "Keep the chat model loaded alongside subagents (experimental)",
                             description:
-                                "Experimental, only while Local Orchestrator Handoff is off: when the server eviction policy is Flexible (Multi Model) and memory projections say both fit, load the helper model alongside the chat model — skipping the swap round-trip on high-RAM Macs. With the handoff on, the unload/reload sequence always runs instead.",
+                                "Only while \"Swap local models for subagents\" is off: when the server eviction policy is Flexible (Multi Model) and memory projections say both fit, load the subagent's model next to the chat model, skipping the swap round-trip on high-RAM Macs. With swapping on, the unload/reload sequence always runs instead.",
                             isOn: $configuration.subagentCoexistenceEnabled
                         )
                     }

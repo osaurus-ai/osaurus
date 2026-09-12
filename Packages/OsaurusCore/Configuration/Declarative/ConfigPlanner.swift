@@ -44,7 +44,7 @@ enum ConfigRisk {
     static let applescriptAutoRun =
         "AppleScript automations auto-run with only a warning (no per-script confirmation)."
     static let ramPreflightDisabled =
-        "Disables the RAM-safety preflight for spawned subagent jobs."
+        "Turns off \"Check memory before delegating\" for subagent tasks."
     static func mcpEndpoint(_ name: String, _ url: String) -> String {
         "Registers external MCP endpoint for `\(name)`: \(url)"
     }

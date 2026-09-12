@@ -164,7 +164,7 @@ enum DelegationResidencySequence {
         }
         if plan.sequencingDisabled {
             return
-                "Local Orchestrator Handoff is off: ran delegate '\(delegateModelName)' "
+                "\"Swap local models for subagents\" is off: ran subagent model '\(delegateModelName)' "
                 + "without the unload/reload sequence; the runtime's eviction policy "
                 + "decides whether '\(main)' stays loaded"
         }

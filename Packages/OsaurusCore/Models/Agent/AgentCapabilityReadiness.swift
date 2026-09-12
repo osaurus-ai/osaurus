@@ -50,11 +50,11 @@ public enum AgentCapabilityBlocker: String, Sendable, Hashable, CaseIterable {
         case .noModelSelected:
             return L("Needs setup: choose a model")
         case .noConfiguredTargets:
-            return L("Needs setup: add an allowed agent or model")
+            return L("Add at least one allowed subagent to turn this on")
         case .noRunnableTargets:
-            return L("Unavailable: no configured target can run right now")
+            return L("Unavailable: none of the allowed subagents can run right now")
         case .checkingTargets:
-            return L("Checking configured targets…")
+            return L("Checking allowed subagents…")
         case .noImageModel:
             return L("Needs setup: install a compatible image model")
         case .noVideoModel:

@@ -50,6 +50,7 @@ struct SpawnConfigurationEditor: View {
             modelOverrideRow
             divider
             handoffWarning
+            allowedSubagentsHeading
             allowedAgents
             divider
             allowedWorkspaceAgents
@@ -58,7 +59,7 @@ struct SpawnConfigurationEditor: View {
             divider
             permissionRow
             divider
-            workerToolsRow
+            modelSubagentToolsRow
             divider
             budgetRows
         }
@@ -115,7 +116,7 @@ struct SpawnConfigurationEditor: View {
                     .font(.system(size: 11))
                     .foregroundColor(theme.warningColor)
                 Text(
-                    "Local Orchestrator Handoff is off. A local target with a different model runs WITHOUT the unload → load helper → run → unload helper → reload sequence, so the server eviction policy decides whether the chat model stays loaded. Turn it on in Settings → Subagents to enforce the sequence for every agent.",
+                    "\"Swap local models for subagents\" is off. A local subagent with a different model runs WITHOUT the unload chat model → load subagent model → run → unload → reload sequence, so the server eviction policy decides whether the chat model stays loaded. Turn it on in Settings → Subagents to enforce the sequence for every agent.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
@@ -144,20 +145,35 @@ struct SpawnConfigurationEditor: View {
         }
     }
 
-    private var workerToolsRow: some View {
+    private var modelSubagentToolsRow: some View {
         controlRow(
-            "Worker tools",
+            "Let model subagents read files (read-only)",
             subtitle:
-                "Applies to bare-model workers (spawn_model), which have no tools of their own. Optionally add host read-only file tools so they can inspect files without copying them into the parent context. Delegated agents use their own enabled tools and Working Folder instead."
+                "Model subagents (an allowed model with no agent attached) have no tools of their own. Turn this on to give them read-only file tools so they can inspect files without copying them into this chat. Agent subagents use their own enabled tools and Working Folder instead."
         ) {
-            Picker("", selection: toolAccessSelection) {
-                Text("Agent tools only", bundle: .module).tag(SpawnToolAccess.none)
-                Text("Agent tools + read-only files", bundle: .module)
-                    .tag(SpawnToolAccess.readOnly)
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .frame(maxWidth: 220)
+            Toggle("", isOn: modelSubagentReadOnlyFilesSelection)
+                .toggleStyle(.switch)
+                .labelsHidden()
+        }
+    }
+
+    // MARK: - Allowed subagents
+
+    /// One heading for the three allow-lists below (agents, teammates'
+    /// shared agents, bare models): together they are the subagents this
+    /// agent may delegate to.
+    private var allowedSubagentsHeading: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Allowed subagents", bundle: .module)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+            Text(
+                "The agents, teammates' shared agents, and models this agent may delegate a task to. An empty list keeps delegation off.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -630,19 +646,19 @@ struct SpawnConfigurationEditor: View {
                         step: 256
                     )
                     budgetStepper(
-                        title: "Max turns",
+                        title: "Max turns per subagent",
                         keyPath: \.maxDelegateTurns,
                         range: SubagentBudgets.turnBounds,
                         step: 1
                     )
                     budgetStepper(
-                        title: "Max child tool calls (0 = default 8)",
+                        title: "Max tool calls per subagent (0 = default 8)",
                         keyPath: \.maxToolCalls,
                         range: SubagentBudgets.toolCallBounds,
                         step: 1
                     )
                     budgetStepper(
-                        title: "Max seconds",
+                        title: "Time limit per subagent (seconds)",
                         keyPath: \.maxElapsedSeconds,
                         range: SubagentBudgets.elapsedBounds,
                         step: 15
@@ -692,10 +708,10 @@ struct SpawnConfigurationEditor: View {
     private var localExecutionContractSubtitle: LocalizedStringKey {
         if excludedAgentID == nil {
             return
-                "Main Chat Spawn and Server Concurrent Sessions persist one configured local limit. Existing engine work and RAM-Safety can queue or split it into smaller waves at run time. Different local models run in serial model waves. Remote subagents use the separate remote limit and run concurrently."
+                "The Orchestrator and Server Concurrent Sessions share one configured local limit. Existing engine work and the memory check can queue or split it into smaller waves at run time. Different local models run in serial model waves. Remote subagents use the separate remote limit and run concurrently."
         }
         return
-            "This agent and Server Concurrent Sessions persist one configured local limit. Existing engine work and RAM-Safety can queue or split it into smaller waves at run time. Different local models run in serial model waves. Remote subagents use the separate remote limit and run concurrently."
+            "This agent and Server Concurrent Sessions share one configured local limit. Existing engine work and the memory check can queue or split it into smaller waves at run time. Different local models run in serial model waves. Remote subagents use the separate remote limit and run concurrently."
     }
 
     /// Reuse the runtime admission planner for the static settings-level
@@ -904,11 +920,13 @@ struct SpawnConfigurationEditor: View {
         )
     }
 
-    private var toolAccessSelection: Binding<SpawnToolAccess> {
+    /// `SpawnToolAccess` has exactly two cases today, so the UI is a single
+    /// switch; the stored enum is kept for forward compatibility.
+    private var modelSubagentReadOnlyFilesSelection: Binding<Bool> {
         Binding(
-            get: { toolAccess },
+            get: { toolAccess == .readOnly },
             set: { newValue in
-                toolAccess = newValue
+                toolAccess = newValue ? .readOnly : .none
                 onChange()
             }
         )

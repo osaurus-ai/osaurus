@@ -85,6 +85,13 @@ struct ChatSettingsView: View {
     /// excluded from the debounced save baseline.
     @AppStorage(NewChatShortcutSetting.defaultsKey)
     private var cmdNStartsNewChatInCurrentWindow: Bool = true
+    /// Run the macOS spell checker in the chat composer. Default off. Bound
+    /// to `UserDefaults` key `ComposerSpellCheckSetting.defaultsKey`, read
+    /// live by `FloatingInputCard` / `ClarifyPromptOverlay` and pushed into
+    /// the `NSTextView`. Applied immediately, so it's excluded from the
+    /// debounced save baseline.
+    @AppStorage(ComposerSpellCheckSetting.defaultsKey)
+    private var composerSpellCheckEnabled: Bool = ComposerSpellCheckSetting.defaultValue
     /// Model that runs LLM context compaction (summarizing older messages
     /// when a chat outgrows its context window). Same provider/name split
     /// as the Core Model picker; empty = "ask on first use" (the first-run
@@ -332,6 +339,14 @@ struct ChatSettingsView: View {
                     isOn: $cmdNStartsNewChatInCurrentWindow
                 )
                 .settingsLandingAnchor("settings.chat.cmdNNewChat")
+
+                SettingsToggle(
+                    title: L("Check Spelling While Typing"),
+                    description:
+                        "Use the macOS spell checker in the chat input: misspelled words are underlined and right-click offers corrections. Uses your System Settings language and dictionary. Autocorrect and smart quotes stay off.",
+                    isOn: $composerSpellCheckEnabled
+                )
+                .settingsLandingAnchor("settings.chat.spellCheck")
 
                 SettingsToggle(
                     title: L("Clipboard Monitoring"),

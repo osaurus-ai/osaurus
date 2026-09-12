@@ -91,6 +91,9 @@ private struct ClarifyPromptCard: View {
     @State private var isInputFocused: Bool = false
     @State private var isComposing: Bool = false
     @Environment(\.theme) private var theme
+    /// Settings ▸ Chat ▸ Check Spelling While Typing, applied live.
+    @AppStorage(ComposerSpellCheckSetting.defaultsKey)
+    private var spellCheckEnabled: Bool = ComposerSpellCheckSetting.defaultValue
 
     private var mode: ClarifyMode {
         ClarifyMode(options: state.options, allowMultiple: state.allowMultiple)
@@ -239,6 +242,7 @@ private struct ClarifyPromptCard: View {
             isFocused: $isInputFocused,
             isComposing: $isComposing,
             maxHeight: inputMaxHeight,
+            spellCheckEnabled: spellCheckEnabled,
             onCommit: { submitFreeForm() },
             onShiftCommit: nil,  // Shift+Enter → newline
             onEscape: {

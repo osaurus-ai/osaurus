@@ -148,7 +148,7 @@ struct SpawnWaveGateTests {
         #expect(SpawnWaveGate.cardToolName(for: same) == "spawn_agent")
         let mixed = [member("a"), member("b", tool: "spawn_model")]
         #expect(SpawnWaveGate.cardToolName(for: mixed) == "spawn_agent / spawn_model")
-        #expect(SpawnWaveGate.cardDescription(count: 3).contains("3 bounded subagents in parallel"))
+        #expect(SpawnWaveGate.cardDescription(count: 3) == "Let this agent run 3 subagents in parallel?")
 
         let json = SpawnWaveGate.cardArgumentsJSON(for: mixed)
         let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
@@ -400,7 +400,7 @@ struct SpawnWaveGateTests {
         #expect(decisions == [.allow, .allow])
         let seen = prompts.value
         #expect(seen.count == 1, "one card for two sibling calls")
-        #expect(seen.first?.description.contains("2 bounded subagents in parallel") == true)
+        #expect(seen.first?.description.contains("run 2 subagents in parallel") == true)
         #expect(seen.first?.argumentsJSON.contains("task a") == true)
         #expect(seen.first?.argumentsJSON.contains("task b") == true)
     }

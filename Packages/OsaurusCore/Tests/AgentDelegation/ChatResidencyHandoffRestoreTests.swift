@@ -86,7 +86,7 @@ struct ChatResidencyHandoffRestoreTests {
         )
         #expect(
             insufficient.localizedDescription
-                == "RAM-safety preflight refused the job: the spawn model needs ~59.3 GB but only ~54.1 GB would be available after freeing the chat model. Use a smaller spawn model, free memory, or disable the RAM-safety preflight in Agent Delegation settings."
+                == "Memory check refused the task: the subagent's model needs ~59.3 GB but only ~54.1 GB would be available after freeing the chat model. Use a smaller model for the subagent, free memory, or turn off \"Check memory before delegating\" in Settings → Subagents."
         )
 
         let busy = ChatResidencyHandoff.HandoffError.chatBusy

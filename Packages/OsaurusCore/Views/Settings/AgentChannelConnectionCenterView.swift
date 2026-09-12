@@ -48,6 +48,9 @@ struct AgentChannelConnectionCenterView: View {
     @State private var nativeBadges: [AgentChannelKind: AgentChannelStatusPresentation] = [:]
     @State private var nativeRoutingDetails: [AgentChannelKind: String] = [:]
     @State private var nativeConfigured: [AgentChannelKind: Bool] = [:]
+    /// True once the first native-credential probe has reported back, so the
+    /// sidebar badge is only published from a complete picture.
+    @State private var nativeBadgesResolved = false
     @State private var anyNativeConfigured = false
     @State private var connections: [AgentChannelConnection] = []
     /// Effective posting rooms: stored bindings plus automatic ones derived
@@ -734,6 +737,8 @@ struct AgentChannelConnectionCenterView: View {
         nativeConfigured[.telegram] = telegramConfigured
         nativeConfigured[.imessage] = imessageConfigured
         nativeConfigured[.whatsapp] = whatsappConfigured
+        nativeBadgesResolved = true
+        publishSidebarBadgeCount()
         // Reply state only makes sense on configured channels; the
         // "Available" list would otherwise show a noisy "Replies off".
         nativeRoutingDetails[.discord] =
@@ -865,6 +870,18 @@ struct AgentChannelConnectionCenterView: View {
                     == .orderedAscending
             }
         reloadPendingOutboxCount()
+        publishSidebarBadgeCount()
+    }
+
+    /// The Settings sidebar shows the same connected-channel count as this
+    /// page's header. The badge store never probes the Keychain itself, so
+    /// this page (which does, off-main) hands it the number whenever the
+    /// native-credential or custom-connection picture changes.
+    private func publishSidebarBadgeCount() {
+        // Before the first Keychain probe lands, `nativeConfigured` is empty
+        // and the count would briefly undershoot; wait for a real reading.
+        guard nativeBadgesResolved else { return }
+        ManagementBadgeStore.shared.setObservedCount(connectedChannelCount, for: .agentChannels)
     }
 
     private func reloadPendingOutboxCount() {

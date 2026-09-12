@@ -335,6 +335,14 @@ final class ChatSession: ObservableObject {
     /// newer than `input` (which may still hold a restored draft the user
     /// has since edited or deleted).
     private var composerDraftIsAuthoritative = false
+    /// Bumped every time the draft machinery re-bases `input` (new chat,
+    /// agent switch, session load). The composer keeps its own copy of the
+    /// text and only syncs from `input` when the binding value changes, so
+    /// an in-place agent switch that leaves `input` at the same string (for
+    /// example `""` -> restored old draft -> `""` within one run loop) would
+    /// otherwise keep showing the previous agent's keystrokes. Observing
+    /// this counter lets the card force a resync regardless of the string.
+    @Published private(set) var composerGeneration: Int = 0
     @Published var pendingAttachments: [Attachment] = []
     @Published var selectedModel: String? = nil
     @Published var modelSwitchContinuityWarning: ModelSwitchContinuityWarning?
@@ -2962,10 +2970,12 @@ final class ChatSession: ObservableObject {
         // stop() → completeRunCleanup() preserves the current session's
         // identity instead of stamping the new agent on it. See #1005.
         reset()
-        // reset() brought back the OLD agent's new-chat draft; put it back
-        // and pick up the one typed under the incoming agent instead.
+        // reset() brought back the OLD agent's new-chat draft (text and
+        // attachments); put it back and pick up the one typed under the
+        // incoming agent instead.
         stashDraft()
         input = ""
+        pendingAttachments = []
         agentId = newAgentId
         restoreDraft()
         // reset() picked a model for the OLD agent; re-resolve for the
@@ -2986,7 +2996,10 @@ final class ChatSession: ObservableObject {
     /// Remember the current composer text for `draftKey` so it can come
     /// back when the user returns to this chat (#2708).
     func stashDraft() {
-        ChatDraftStore.shared.stash(unsentComposerText, for: draftKey)
+        ChatDraftStore.shared.stash(
+            ChatDraftStore.Draft(text: unsentComposerText, attachments: pendingAttachments),
+            for: draftKey
+        )
         composerDraft = ""
         composerDraftIsAuthoritative = false
     }
@@ -3021,14 +3034,23 @@ final class ChatSession: ObservableObject {
     }
 
     /// Bring back the composer text remembered for `draftKey`, if any.
-    /// Never overwrites text the user has already typed.
+    /// Never overwrites text the user has already typed. Always bumps
+    /// `composerGeneration`: every caller has just re-based `input` for a
+    /// different chat or agent, and the composer must resync to it even
+    /// when the string happens to be unchanged.
     func restoreDraft() {
+        defer { composerGeneration &+= 1 }
         guard unsentComposerText.isEmpty,
             let draft = ChatDraftStore.shared.take(for: draftKey)
         else { return }
-        input = draft
-        composerDraft = draft
+        input = draft.text
+        composerDraft = draft.text
         composerDraftIsAuthoritative = false
+        if !draft.attachments.isEmpty {
+            // Anything already attached (a quick action, a drop that landed
+            // before the restore) stays; the remembered ones join it.
+            pendingAttachments.append(contentsOf: draft.attachments.filter { !pendingAttachments.contains($0) })
+        }
     }
 
     // MARK: - LLM Context Compaction
@@ -3434,8 +3456,8 @@ final class ChatSession: ObservableObject {
         voiceInputState = .idle
         showVoiceOverlay = false
         input = ""
-        restoreDraft()
         pendingAttachments = []
+        restoreDraft()
         pendingOneOffSkillId = nil
         queuedSend = nil
         transientSessionIdForCurrentRun = nil
@@ -9654,6 +9676,10 @@ struct ChatView: View {
                                 warmupController: observedSession.warmupController,
                                 folderState: observedSession.folderState
                             )
+                            // Passed through the environment rather than as
+                            // an init argument: the initializer above is at
+                            // the type-checker's limit already.
+                            .environment(\.composerGeneration, observedSession.composerGeneration)
                             .frame(maxWidth: 1100)
                             .frame(maxWidth: .infinity)
                             .opacity(isPromptOverlayActive ? 0.55 : 1.0)

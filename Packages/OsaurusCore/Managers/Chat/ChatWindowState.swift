@@ -595,7 +595,7 @@ final class ChatWindowState: ObservableObject {
         if isBlank(session) {
             if agentId != Agent.defaultId { adoptAgent(Agent.defaultId) }
             if releaseSharedSessionIfNeeded() || detachRunningSessionIfNeeded() {
-                installFreshSession(agentId: Agent.defaultId)
+                installFreshSession(agentId: Agent.defaultId, restoresDraft: false)
             } else {
                 session.reset(for: Agent.defaultId)
             }
@@ -605,7 +605,9 @@ final class ChatWindowState: ObservableObject {
             refreshSandboxChanges()
             return
         }
-        newTab(agentId: Agent.defaultId)
+        // The tab is stamped as the team agent's right below; the hosting
+        // local agent's own New Chat draft must not land in it.
+        newTab(agentId: Agent.defaultId, restoresDraft: false)
         stampWorkspaceContext(address: address, workspaceId: workspaceId, on: session)
         reconcileRemoteMode()
         refreshSessions()
@@ -628,6 +630,9 @@ final class ChatWindowState: ObservableObject {
         if let outgoing, !outgoing.isHibernated, isBlank(outgoing.session),
             ChatTabScope.of(outgoing.session) != scope
         {
+            // The blank tab goes away, but whatever the user had typed in
+            // it comes back the next time this agent gets a New Chat.
+            outgoing.session.stashDraft()
             dropTab(outgoing)
         }
         return true
@@ -649,7 +654,7 @@ final class ChatWindowState: ObservableObject {
             adoptAgentWorkingFolder(on: fresh)
             return ChatTab(id: UUID(), session: fresh)
         case .workspace(let address, let workspaceId):
-            let fresh = makeFreshSession(agentId: Agent.defaultId)
+            let fresh = makeFreshSession(agentId: Agent.defaultId, restoresDraft: false)
             stampWorkspaceContext(address: address, workspaceId: workspaceId, on: fresh)
             return ChatTab(id: UUID(), session: fresh)
         }
@@ -1189,7 +1194,7 @@ final class ChatWindowState: ObservableObject {
     /// Open a new tab with a fresh empty chat and make it active. The
     /// outgoing tab keeps its session untouched (no detach — the tab still
     /// owns it).
-    func newTab(agentId newAgentId: UUID? = nil, startsConversation: Bool = true) {
+    func newTab(agentId newAgentId: UUID? = nil, startsConversation: Bool = true, restoresDraft: Bool = true) {
         persistActiveSessionForTabSwitch()
         // A new tab from a team-agent tab stays with that agent, same as
         // sidebar New Chat (`startNewChat`). Without the carried context the
@@ -1204,7 +1209,10 @@ final class ChatWindowState: ObservableObject {
         if let newAgentId, newAgentId != agentId {
             adoptAgent(newAgentId)
         }
-        let fresh = makeFreshSession(agentId: agentId)
+        let fresh = makeFreshSession(
+            agentId: agentId,
+            restoresDraft: restoresDraft && carriedWorkspace == nil
+        )
         fresh.workspaceContext = carriedWorkspace
         // Local tabs only: a new tab that stays with a team agent must not
         // inherit the hosting local agent's working folder.
@@ -1615,12 +1623,27 @@ final class ChatWindowState: ObservableObject {
 
     /// Build a fresh, window-linked `ChatSession` (shared by `newTab` and
     /// `installFreshSession`).
-    private func makeFreshSession(agentId: UUID, loading data: ChatSessionData? = nil) -> ChatSession {
+    /// `restoresDraft` is false for sessions about to be stamped with a
+    /// workspace agent's context: those are keyed by the hosting local
+    /// agent until stamped, and must not pick up that agent's own draft.
+    private func makeFreshSession(
+        agentId: UUID,
+        loading data: ChatSessionData? = nil,
+        restoresDraft: Bool = true
+    ) -> ChatSession {
         let fresh = ChatSession()
         fresh.windowState = self
         fresh.agentId = agentId
         fresh.applyInitialModelSelection()
-        if let data { fresh.load(from: data) }
+        if let data {
+            fresh.load(from: data)
+        } else if restoresDraft {
+            // A fresh New Chat for this agent picks up the draft the user
+            // left in an earlier New Chat for the same agent (a blank tab
+            // repurposed or dropped on the way to another agent), so
+            // coming back to the agent reads like switching tabs.
+            fresh.restoreDraft()
+        }
         fresh.onSessionChanged = { [weak self] in
             self?.refreshSessionsDebounced()
         }
@@ -1710,8 +1733,12 @@ final class ChatWindowState: ObservableObject {
     /// Install a brand-new `ChatSession` for this window (optionally loading
     /// persisted turns), used after the previous one was detached to the
     /// registry.
-    private func installFreshSession(agentId: UUID, loading data: ChatSessionData? = nil) {
-        session = makeFreshSession(agentId: agentId, loading: data)
+    private func installFreshSession(
+        agentId: UUID,
+        loading data: ChatSessionData? = nil,
+        restoresDraft: Bool = true
+    ) {
+        session = makeFreshSession(agentId: agentId, loading: data, restoresDraft: restoresDraft)
         // A blank replacement (not a history load) starts in the agent's
         // sticky working folder; a loaded session keeps its own.
         if data == nil {

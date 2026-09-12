@@ -112,6 +112,9 @@ struct ChatSessionSidebar: View {
     /// scrolls the first one into view so the user can see where the
     /// imports landed (they sort by original date, not to the top).
     @ObservedObject private var importHighlight = ChatSessionImportHighlight.shared
+    /// Agents that appeared during this app run and haven't been opened
+    /// yet; their rows carry an accent ring and a "New" pill until tapped.
+    @ObservedObject private var newAgentHighlight = NewAgentHighlightStore.shared
     @State private var editingSessionId: UUID?
     @State private var editingBuffer: String = ""
     /// IDs the user has multi-selected (⌘-click to toggle, ⇧-click to
@@ -303,12 +306,29 @@ struct ChatSessionSidebar: View {
         .onChange(of: searchQuery) { _, query in
             scheduleContentSearch(query)
         }
-        .onChange(of: agentId) { _, _ in
+        .onChange(of: agentId) { _, newAgentId in
             sourceFilter = .all
             searchQuery = ""
             hoveredFilter = nil
             if !keepsProjectsLens { selectedTab = .chats }
             clearSelection()
+            // Opening an agent by any route (row tap, tab switch, deep link)
+            // is "seen": the new-agent ring comes off.
+            if workspaceAgentAddress == nil {
+                newAgentHighlight.markSeen(localAgentId: newAgentId)
+            }
+        }
+        .onChange(of: workspaceAgentAddress) { _, address in
+            if let address {
+                newAgentHighlight.markSeen(sharedAgentAddress: address)
+            }
+        }
+        .onAppear {
+            if let workspaceAgentAddress {
+                newAgentHighlight.markSeen(sharedAgentAddress: workspaceAgentAddress)
+            } else {
+                newAgentHighlight.markSeen(localAgentId: agentId)
+            }
         }
         // Switching lenses is a context change like an agent switch: the
         // inner filter/search/selection state belongs to the previous lens.
@@ -1089,7 +1109,11 @@ struct ChatSessionSidebar: View {
                             guard let address = agent.agentAddress else { return }
                             unshare(SharedAgentIdentity.resolve(address: address, workspaceId: workspace.id), from: workspace)
                         },
-                        onSelect: { onSelectAgent?(agent.id) },
+                        isNew: newAgentHighlight.isNew(localAgentId: agent.id),
+                        onSelect: {
+                            newAgentHighlight.markSeen(localAgentId: agent.id)
+                            onSelectAgent?(agent.id)
+                        },
                         onStop: activity == nil ? nil : { stopActivity(for: agent) },
                         isReorderable: !agent.isBuiltIn,
                         isDragging: draggingAgentId == agent.id,
@@ -1180,9 +1204,13 @@ struct ChatSessionSidebar: View {
                         ? sessions.first(where: { $0.id == currentSessionId })?.title
                         : nil,
                     activityStatus: activityStatus(forRemoteAgentAddress: address, workspaceId: ""),
+                    isNew: newAgentHighlight.isNew(sharedAgentAddress: address),
                     // Same tab / history / connect flow as a team agent; the
                     // session context simply carries no workspace id.
-                    onSelect: { onSelectWorkspaceAgent?(address, "") },
+                    onSelect: {
+                        newAgentHighlight.markSeen(sharedAgentAddress: address)
+                        onSelectWorkspaceAgent?(address, "")
+                    },
                     onRemove: { removeDirectShare(remote) }
                 )
             }
@@ -1284,7 +1312,11 @@ struct ChatSessionSidebar: View {
                             ? sessions.first(where: { $0.id == currentSessionId })?.title
                             : nil,
                         activityStatus: activityStatus(forRemoteAgentAddress: address, workspaceId: workspaceId),
-                        onSelect: { onSelectWorkspaceAgent?(address, workspaceId) },
+                        isNew: newAgentHighlight.isNew(sharedAgentAddress: address),
+                        onSelect: {
+                            newAgentHighlight.markSeen(sharedAgentAddress: address)
+                            onSelectWorkspaceAgent?(address, workspaceId)
+                        },
                         onOpenWorkspace: { openWorkspaceInSettings(id: workspaceId) }
                     )
                 }
@@ -1440,7 +1472,11 @@ struct ChatSessionSidebar: View {
                                 ? sessions.first(where: { $0.id == currentSessionId })?.title
                                 : nil,
                             activityStatus: activityStatus(forRemoteAgentAddress: address, workspaceId: workspace.id),
-                            onSelect: { onSelectWorkspaceAgent?(address, workspace.id) },
+                            isNew: newAgentHighlight.isNew(sharedAgentAddress: address),
+                            onSelect: {
+                                newAgentHighlight.markSeen(sharedAgentAddress: address)
+                                onSelectWorkspaceAgent?(address, workspace.id)
+                            },
                             onOpenInNewWindow: {
                                 ChatWindowManager.shared.openNewChatWindow(withWorkspaceAgentAddress: address,
                                     workspaceId: workspace.id
@@ -1821,6 +1857,8 @@ private struct AgentSidebarRow: View {
     var sharedWorkspaces: [OsaurusRouterWorkspaceSummary] = []
     var onShareToWorkspace: ((OsaurusRouterWorkspaceSummary) -> Void)?
     var onUnshareFromWorkspace: ((OsaurusRouterWorkspaceSummary) -> Void)?
+    /// Appeared during this app run and not opened yet: accent ring + pill.
+    var isNew: Bool = false
     let onSelect: () -> Void
     /// Stop every live run on this agent. Shown on hover while
     /// `activityStatus` is non-nil.
@@ -1874,6 +1912,10 @@ private struct AgentSidebarRow: View {
                                 )
                             )
                             .accessibilityLabel(Text("Shared with workspace", bundle: .module))
+                    }
+                    if isNew {
+                        NewAgentPill()
+                            .transition(.opacity.combined(with: .scale(scale: 0.8)))
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1932,6 +1974,7 @@ private struct AgentSidebarRow: View {
         .padding(.vertical, 8)
         .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
         .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        .newAgentHighlight(isNew)
         .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
         .offset(y: dragOffset)
         .zIndex(isDragging ? 1 : 0)
@@ -2016,6 +2059,51 @@ private struct AgentSidebarRow: View {
     }
 }
 
+// MARK: - New Agent Highlight
+
+/// Accent ring + soft glow around an agent row that appeared after the
+/// sidebar first saw the agent list (created, imported, shared, or paired
+/// during this app run). Same idiom as the session-import flash, but it
+/// stays until the user opens the agent once (`NewAgentHighlightStore`).
+private struct NewAgentRowHighlight: ViewModifier {
+    let isNew: Bool
+    @Environment(\.theme) private var theme
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous)
+                    .stroke(theme.accentColor.opacity(isNew ? 0.75 : 0), lineWidth: 1.5)
+                    .shadow(color: theme.accentColor.opacity(isNew ? 0.45 : 0), radius: 5)
+                    .allowsHitTesting(false)
+            )
+            .animation(.easeOut(duration: 0.6), value: isNew)
+    }
+}
+
+extension View {
+    fileprivate func newAgentHighlight(_ isNew: Bool) -> some View {
+        modifier(NewAgentRowHighlight(isNew: isNew))
+    }
+}
+
+/// Small "New" capsule after an agent's name so the row reads as new even
+/// where the ring is subtle (light themes, a row at the very edge).
+private struct NewAgentPill: View {
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Text("New", bundle: .module)
+            .font(.system(size: 8, weight: .bold))
+            .textCase(.uppercase)
+            .foregroundColor(theme.accentColor)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1.5)
+            .background(Capsule().fill(theme.accentColor.opacity(0.16)))
+            .accessibilityLabel(Text("New agent", bundle: .module))
+    }
+}
+
 // MARK: - Workspace Agent Row
 
 /// Row for a shared agent on a workspace roster — a teammate's (chat over the
@@ -2031,6 +2119,8 @@ private struct WorkspaceAgentSidebarRow: View {
     let isSelected: Bool
     var currentSessionTitle: String? = nil
     var activityStatus: SessionActivityMonitor.Status? = nil
+    /// Appeared on the roster during this app run and not opened yet.
+    var isNew: Bool = false
     let onSelect: () -> Void
     /// Own agent: open its Settings ▸ Agents detail (the gear).
     var onOpenSettings: (() -> Void)?
@@ -2086,11 +2176,17 @@ private struct WorkspaceAgentSidebarRow: View {
             .animation(theme.springAnimation(responseMultiplier: 0.8), value: activityStatus)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(identity.name)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 4) {
+                    Text(identity.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                    if isNew {
+                        NewAgentPill()
+                            .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 subtitle
                     .font(.system(size: 10))
@@ -2120,6 +2216,7 @@ private struct WorkspaceAgentSidebarRow: View {
         .padding(.vertical, 8)
         .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
         .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        .newAgentHighlight(isNew)
         .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
         .onTapGesture(perform: onSelect)
         .contextMenu { contextMenuItems }
@@ -2319,6 +2416,8 @@ private struct RemoteAgentSidebarRow: View {
     let isSelected: Bool
     var currentSessionTitle: String? = nil
     var activityStatus: SessionActivityMonitor.Status? = nil
+    /// Paired during this app run and not opened yet.
+    var isNew: Bool = false
     let onSelect: () -> Void
     /// Direct share: forget the pairing.
     var onRemove: (() -> Void)?
@@ -2350,11 +2449,17 @@ private struct RemoteAgentSidebarRow: View {
             .animation(theme.springAnimation(responseMultiplier: 0.8), value: activityStatus)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(agent.name)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 4) {
+                    Text(agent.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                    if isNew {
+                        NewAgentPill()
+                            .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 // The section header already says "Shared with you"; a row
                 // with no note or model shows no subtitle, like a local
@@ -2393,6 +2498,7 @@ private struct RemoteAgentSidebarRow: View {
         .padding(.vertical, 8)
         .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
         .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        .newAgentHighlight(isNew)
         .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
         .onTapGesture(perform: onSelect)
         .contextMenu {

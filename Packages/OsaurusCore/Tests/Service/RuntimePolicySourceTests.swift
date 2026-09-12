@@ -1330,7 +1330,7 @@ struct RuntimePolicySourceTests {
         #expect(concurrency.contains("`maxConcurrentSequences` hot-resizes"))
         #expect(concurrency.contains("pins each local model to one active job"))
         #expect(concurrency.contains("Concurrent Sessions"))
-        #expect(concurrency.contains("Shared with Main Chat Spawn"))
+        #expect(concurrency.contains("Shared with the Orchestrator's and every agent's Max local subagents at once"))
         #expect(concurrency.contains("SpawnBatchConcurrencyContract.bounds"))
         #expect(concurrency.contains("Continuous Batching"))
         #expect(concurrency.contains("Prompt Prefill Chunk Size"))

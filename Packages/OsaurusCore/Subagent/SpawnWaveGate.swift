@@ -363,7 +363,7 @@ actor SpawnWaveGate {
     }
 
     static func cardDescription(count: Int) -> String {
-        "Allow this agent to spawn \(count) bounded subagents in parallel?"
+        "Let this agent run \(count) subagents in parallel?"
     }
 
     /// One JSON document listing each sibling's approval arguments in model
