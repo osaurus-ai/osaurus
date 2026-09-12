@@ -1198,12 +1198,22 @@ public actor ModelRuntime {
         _ = await trimFreedBufferCache(reason: "memory-pressure")
     }
 
+    /// A parsed spawn tool can reach admission while its parent's engine
+    /// tail still owns the GPU gate. Wait for that drain only when the fresh
+    /// admission estimate has already refused the child. Pressure callbacks
+    /// retain their nonblocking behavior while generations are active.
+    func reclaimMemoryForSubagentAdmission() async -> Bool {
+        await trimFreedBufferCache(reason: "subagent-admission", waitForGenerationDrain: true)
+    }
+
     /// Admission can run out of headroom before macOS sends a pressure
     /// notification. Release the reusable allocator pool before making that
     /// refusal final; never credit hypothetical bytes to the RAM estimate.
-    private func trimFreedBufferCache(reason: String) async -> Bool {
-        guard !Task.isCancelled, activeGenerationTasks.isEmpty,
-            Memory.cacheMemory > 0
+    private func trimFreedBufferCache(reason: String, waitForGenerationDrain: Bool = false) async -> Bool {
+        let generationWasActive = !activeGenerationTasks.isEmpty
+        guard !Task.isCancelled,
+            waitForGenerationDrain || !generationWasActive,
+            Memory.cacheMemory > 0 || (waitForGenerationDrain && generationWasActive)
         else { return false }
         // Unlike a committed model teardown, this optional recovery is
         // cancellable while waiting for an embedder/load/other GPU producer.
@@ -1213,9 +1223,13 @@ public actor ModelRuntime {
         } catch {
             return false
         }
-        // The actor can re-enter while awaiting the gate. A new generation
-        // must not lose its reuse pool merely because the earlier check was idle.
-        guard !Task.isCancelled, activeGenerationTasks.isEmpty else {
+        // The exclusive GPU gate is the authoritative allocator boundary.
+        // A generation wrapper may still be releasing its lease after the
+        // producer exits the gate; that bookkeeping must not suppress recovery.
+        // Background pressure callbacks still skip newly active generations.
+        guard !Task.isCancelled,
+            waitForGenerationDrain || activeGenerationTasks.isEmpty
+        else {
             await MetalGate.shared.release(owner)
             return false
         }
@@ -1228,7 +1242,9 @@ public actor ModelRuntime {
         genLog.info(
             "allocator trim reason=\(reason, privacy: .public) cached_before=\(before) cached_after=\(after)"
         )
-        return before > after
+        // Draining can release transient allocations even with an empty pool.
+        // The caller must remeasure; this grants no arithmetic memory credit.
+        return before > after || (waitForGenerationDrain && generationWasActive)
     }
 
     /// Unload every resident model with no active generation lease in
@@ -3557,7 +3573,7 @@ public actor ModelRuntime {
                     requestEstimate: requestEstimate
                 )
             },
-            reclaim: { await self.trimFreedBufferCache(reason: "subagent-admission") }
+            reclaim: { await self.reclaimMemoryForSubagentAdmission() }
         )
     }
 

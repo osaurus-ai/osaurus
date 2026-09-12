@@ -126,3 +126,61 @@ field also reports the effective bounded cost rather than the larger cap cost.
 - The first opt-in setup attempt could not locate the metallib. The executed
   row colocated the matching Release-build metallib as `mlx.metallib` beside
   the xctest executable; no source or kernel fallback was introduced.
+
+
+## Producer-drain correction and final candidate tests
+
+Tool invocation is intentionally dispatched before the engine-owned terminal
+cache drain. The producer retains the Metal gate until serialization and
+allocator-window teardown complete; its runtime task record can outlive the
+gate while releasing a model lease and scheduling idle residency. Admission
+recovery now waits cancellably for the exclusive GPU gate instead of refusing
+to recover merely because that task record is still present. Normal pressure
+notifications retain their skip-while-active behavior. No global tool-dispatch
+barrier, forced slot, sampler change, or model-specific exception was added.
+
+Final expanded matrix: 349/349 tests in 27 suites passed, including
+SubagentAdmission, SubagentSessionAdmission, SubagentBatchAdmission, SpawnBatch,
+DelegatedBudget, DelegatedModel, SubagentResidency, ChatResidencyHandoff,
+OwnedSubagent, MetalGate, ModelRuntimeFindDirectory, ChatToolChoicePolicy,
+Watcher, SwapPressureMonitor, ModelRuntimeRAMFeasibility, MemoryWarningState,
+and GenerationEventMapper. Log: `/private/tmp/osaurus-resident-child-ram-final-matrix.log`.
+
+Real Metal proof: 2/2 tests (the producer-drain test has two parameter cases)
+passed. Recovery waits behind the generation gate, then frees 67,108,864 bytes;
+cancellation while queued leaves all 67,108,864 bytes untouched. The retained
+array test keeps its 12-byte live allocation and correct contents. Log:
+`/private/tmp/osaurus-resident-child-ram-allocator-final.log`.
+
+The exact reporter bundle was absent from the local stores, then downloaded
+into the Hugging Face cache: `OsaurusAI/gemma-4-E2B-it-8bit`, revision
+`433003a1e3fbfd10819ad15179d5e3c4d02d7ea7`, 5,932,060,468 bytes across 11 files.
+Bundle generation defaults are temperature 1, top-p .95, top-k 64, sampling on,
+EOS IDs [1, 106, 50]. This supersedes the earlier QAT-only model-availability
+limitation. The host remains 128 GiB; it does not reproduce the reporter's
+16 GiB hardware or system-wide swapped workload.
+
+Swap/prelaunch source trace: SwapPressureMonitor state feeds the chat warning,
+not the admission planner. Normal load, UI prelaunch projection, handoff and
+spawn use the shared physical-minus-wired/compressor/nonpurgeable-anonymous
+estimator. The reporter's memory_pressure output omits internal_page_count,
+so its 59 percent headline is insufficient to reconstruct that estimator.
+The prelaunch projection is advisory for ordinary mmap loads; materialized
+loads and the resolved memory-safety plan have their own authoritative limits.
+Same-model admission charges weights once against the total model budget,
+zero incremental weight bytes when resident, and bounded KV/activation state
+per concurrent child. Batch engine capacity and reservation ownership remain
+independent clamps; recovery never changes either.
+
+Isolated Release UI onboarding completed, telemetry disabled. RAM-safety,
+handoff and coexistence toggled and restored to ON/ON/OFF; persisted JSON
+matches. Research, Marketing and SysAdmin models changed via UI to exact E2B
+8-bit with visible Saved state. Full post-relaunch workflows remain pending.
+AgentLoop and AgentLoopFrontier exact-model evals are running at
+`/private/tmp/osaurus-resident-child-ram-evals-full.log`; reports are in
+`/private/tmp/osaurus-resident-child-ram-evals/reports`. No external judge key
+is available, so rubric results require manual attribution. Physical-footprint
+samples use proc_pid_rusage RUSAGE_INFO_V2, not RSS, and are stored in
+`/private/tmp/osaurus-resident-child-ram-evidence/physical-footprint.jsonl`.
+
+Status remains PARTIAL pending live workflows and complete eval results.

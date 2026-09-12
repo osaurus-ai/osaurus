@@ -6,7 +6,7 @@ import Testing
 
 /// Opt-in, model-free Metal proof. Run alone with a matching metallib beside
 /// the test executable; ordinary CI must not allocate GPU buffers here.
-@Suite("Live allocator recovery", .enabled(if: ProcessInfo.processInfo.environment["OSAURUS_ADMISSION_ALLOCATOR_PROOF"] == "1"))
+@Suite("Live allocator recovery", .serialized, .enabled(if: ProcessInfo.processInfo.environment["OSAURUS_ADMISSION_ALLOCATOR_PROOF"] == "1"))
 struct SubagentAllocatorRecoveryLiveTests {
     @Test("real freed buffers return to MLX while a live array survives")
     func freedBuffersAreReclaimed() async {
@@ -35,5 +35,39 @@ struct SubagentAllocatorRecoveryLiveTests {
         #expect(Memory.activeMemory == active)
         #expect(retained.asArray(Int32.self) == [11, 22, 33])
         print("ALLOCATOR_PROOF cached_before=\(before) cached_after=\(after) active_bytes=\(active) reclaimable_before=\(availableBefore) reclaimable_after=\(availableAfter)")
+    }
+
+    @Test("admission waits for the producer gate and Stop preserves the held pool", arguments: [false, true])
+    func admissionDrain(cancel: Bool) async throws {
+        let runtime = ModelRuntime.shared
+        await runtime.trimFreedBufferCacheUnderMemoryPressure()
+        let originalLimit = Memory.cacheLimit
+        Memory.cacheLimit = 128 << 20
+        defer { Memory.cacheLimit = originalLimit }
+        try await MetalGate.shared.enterGeneration(model: "admission-drain-proof")
+        autoreleasepool {
+            let scratch = MLXArray(Array(repeating: UInt8(7), count: 64 << 20))
+            eval(scratch)
+        }
+        Stream.gpu.synchronize()
+        let before = Memory.cacheMemory
+        #expect(before >= 64 << 20)
+        let recovery = Task { await runtime.reclaimMemoryForSubagentAdmission() }
+        // Recovery may be scheduled at any point here, but cannot clear the
+        // pool while a real producer owns the same process-wide Metal gate.
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(Memory.cacheMemory == before)
+        if cancel {
+            recovery.cancel()
+            #expect(await recovery.value == false)
+            #expect(Memory.cacheMemory == before)
+        }
+        await MetalGate.shared.exitGeneration(model: "admission-drain-proof")
+        if !cancel {
+            #expect(await recovery.value)
+            #expect(Memory.cacheMemory < before)
+        }
+        print("ADMISSION_DRAIN_PROOF cancelled=\(cancel) cached_before=\(before) cached_after=\(Memory.cacheMemory)")
+        await runtime.trimFreedBufferCacheUnderMemoryPressure()
     }
 }
