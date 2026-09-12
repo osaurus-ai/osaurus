@@ -1983,11 +1983,18 @@ private struct AgentSidebarRow: View {
         .contextMenu { agentContextMenu }
         // Same threshold as the tab strip: a short travel keeps clicks as
         // taps; beyond it the press becomes a reorder drag.
+        //
+        // A non-reorderable row (the built-in Orchestrator) must keep every
+        // gesture applied ABOVE this modifier alive: the tap that selects the
+        // agent, the hover gear, and the context menu. `.subviews` disables
+        // only the drag added here; `.none` would disable the whole subview
+        // hierarchy's gestures too, which made the Orchestrator row
+        // unselectable (#2729).
         .gesture(
             DragGesture(minimumDistance: 4, coordinateSpace: .global)
                 .onChanged { onDragChanged?($0.translation.height) }
                 .onEnded { _ in onDragEnded?() },
-            including: isReorderable ? .all : .none
+            including: isReorderable ? .all : .subviews
         )
         .onHover { hovering in
             withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {

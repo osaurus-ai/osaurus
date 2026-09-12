@@ -319,6 +319,38 @@ final class ChatWindowState: ObservableObject {
         windowContentWidth = width
     }
 
+    /// The size the chat layout is designed to fit into at minimum: with the
+    /// sidebar open (260pt) plus the tab strip, anything narrower squished
+    /// the chat column, and anything shorter left the composer and the
+    /// empty-state hero fighting for room. Windows on screens that can show
+    /// this much use it verbatim; see `minimumContentSize`.
+    static let designMinimumContentSize = CGSize(width: 800, height: 620)
+
+    /// The effective minimum content size for THIS window: the design
+    /// minimum, clamped to what its screen can actually show. The root view
+    /// applies it as `.frame(minWidth:minHeight:)`, which the hosting
+    /// controller mirrors into the window's `contentMinSize`. Without the
+    /// clamp, a screen whose visible area is smaller than the design minimum
+    /// (e.g. a 14" MacBook Pro at "Larger Text", 1024x665) gets a window
+    /// AppKit cannot shrink to fit, so it hangs off the bottom of the screen
+    /// with the composer cut off (#2728). Pushed by `ChatWindowManager` on
+    /// creation and whenever the window changes screen.
+    @Published private(set) var minimumContentSize: CGSize = ChatWindowState.designMinimumContentSize
+
+    /// Clamp the design minimum to `availableContentSize`, the largest
+    /// content area the window's screen can show (visible frame minus the
+    /// window's own titlebar/toolbar chrome). An axis at or below zero means
+    /// "no screen known" and keeps the design value, so a transient
+    /// measurement can't collapse the floor.
+    func updateMinimumContentSize(availableContentSize available: CGSize) {
+        let design = Self.designMinimumContentSize
+        var next = design
+        if available.width > 0 { next.width = min(design.width, floor(available.width)) }
+        if available.height > 0 { next.height = min(design.height, floor(available.height)) }
+        guard next != minimumContentSize else { return }
+        minimumContentSize = next
+    }
+
     /// True while the window is in native full screen. AppKit draws the
     /// full-screen toolbar with an opaque system backdrop that clashes with
     /// custom themes, so the NSToolbar is hidden in full screen and the

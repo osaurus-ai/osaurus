@@ -9768,15 +9768,21 @@ struct ChatView: View {
         // (chips collapse to icons, tabs fold into an overflow menu), so a narrow
         // width reflows the same UI rather than clipping it.
         //
+        // The floor is the window's `minimumContentSize`: the 800x620 design
+        // minimum, clamped by `ChatWindowManager` to what the window's screen
+        // can show so a small display never gets a window taller than itself
+        // (#2728). The hosting controller mirrors this into the panel's
+        // `contentMinSize`, so it is the single source of truth for the floor.
+        //
         // The ideal size is what a brand-new window actually opens at: the
         // hosting controller pushes the root view's fitting size onto the
         // window when it is attached, overriding the panel's content rect.
         // Keep it tied to the shared default so both agree.
         .frame(
-            minWidth: 800,
+            minWidth: windowState.minimumContentSize.width,
             idealWidth: WindowConfiguration.chat.defaultSize.width,
             maxWidth: .infinity,
-            minHeight: 620,
+            minHeight: windowState.minimumContentSize.height,
             idealHeight: WindowConfiguration.chat.defaultSize.height,
             maxHeight: .infinity
         )
