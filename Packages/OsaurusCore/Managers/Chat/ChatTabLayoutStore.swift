@@ -35,9 +35,10 @@ struct ChatTabLayout: Codable, Equatable {
     var windows: [UUID: ChatTabLayoutRecord] = [:]
 }
 
-/// `UserDefaults` is thread-safe, and the store holds nothing else, so
-/// the shared instance is safe to reach from any isolation domain.
-struct ChatTabLayoutStore: Sendable {
+/// `UserDefaults` is documented thread-safe but not marked `Sendable`;
+/// the store holds nothing else, so the shared instance is safe to reach
+/// from any isolation domain.
+struct ChatTabLayoutStore: @unchecked Sendable {
     static let shared = ChatTabLayoutStore()
     static let defaultsKey = "chatTabLayout.v1"
 
