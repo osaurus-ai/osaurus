@@ -319,6 +319,38 @@ final class ChatWindowState: ObservableObject {
         windowContentWidth = width
     }
 
+    /// The size the chat layout is designed to fit into at minimum: with the
+    /// sidebar open (260pt) plus the tab strip, anything narrower squished
+    /// the chat column, and anything shorter left the composer and the
+    /// empty-state hero fighting for room. Windows on screens that can show
+    /// this much use it verbatim; see `minimumContentSize`.
+    static let designMinimumContentSize = CGSize(width: 800, height: 620)
+
+    /// The effective minimum content size for THIS window: the design
+    /// minimum, clamped to what its screen can actually show. The root view
+    /// applies it as `.frame(minWidth:minHeight:)`, which the hosting
+    /// controller mirrors into the window's `contentMinSize`. Without the
+    /// clamp, a screen whose visible area is smaller than the design minimum
+    /// (e.g. a 14" MacBook Pro at "Larger Text", 1024x665) gets a window
+    /// AppKit cannot shrink to fit, so it hangs off the bottom of the screen
+    /// with the composer cut off (#2728). Pushed by `ChatWindowManager` on
+    /// creation and whenever the window changes screen.
+    @Published private(set) var minimumContentSize: CGSize = ChatWindowState.designMinimumContentSize
+
+    /// Clamp the design minimum to `availableContentSize`, the largest
+    /// content area the window's screen can show (visible frame minus the
+    /// window's own titlebar/toolbar chrome). An axis at or below zero means
+    /// "no screen known" and keeps the design value, so a transient
+    /// measurement can't collapse the floor.
+    func updateMinimumContentSize(availableContentSize available: CGSize) {
+        let design = Self.designMinimumContentSize
+        var next = design
+        if available.width > 0 { next.width = min(design.width, floor(available.width)) }
+        if available.height > 0 { next.height = min(design.height, floor(available.height)) }
+        guard next != minimumContentSize else { return }
+        minimumContentSize = next
+    }
+
     /// True while the window is in native full screen. AppKit draws the
     /// full-screen toolbar with an opaque system backdrop that clashes with
     /// custom themes, so the NSToolbar is hidden in full screen and the
@@ -595,7 +627,7 @@ final class ChatWindowState: ObservableObject {
         if isBlank(session) {
             if agentId != Agent.defaultId { adoptAgent(Agent.defaultId) }
             if releaseSharedSessionIfNeeded() || detachRunningSessionIfNeeded() {
-                installFreshSession(agentId: Agent.defaultId)
+                installFreshSession(agentId: Agent.defaultId, restoresDraft: false)
             } else {
                 session.reset(for: Agent.defaultId)
             }
@@ -605,7 +637,9 @@ final class ChatWindowState: ObservableObject {
             refreshSandboxChanges()
             return
         }
-        newTab(agentId: Agent.defaultId)
+        // The tab is stamped as the team agent's right below; the hosting
+        // local agent's own New Chat draft must not land in it.
+        newTab(agentId: Agent.defaultId, restoresDraft: false)
         stampWorkspaceContext(address: address, workspaceId: workspaceId, on: session)
         reconcileRemoteMode()
         refreshSessions()
@@ -628,6 +662,9 @@ final class ChatWindowState: ObservableObject {
         if let outgoing, !outgoing.isHibernated, isBlank(outgoing.session),
             ChatTabScope.of(outgoing.session) != scope
         {
+            // The blank tab goes away, but whatever the user had typed in
+            // it comes back the next time this agent gets a New Chat.
+            outgoing.session.stashDraft()
             dropTab(outgoing)
         }
         return true
@@ -649,7 +686,7 @@ final class ChatWindowState: ObservableObject {
             adoptAgentWorkingFolder(on: fresh)
             return ChatTab(id: UUID(), session: fresh)
         case .workspace(let address, let workspaceId):
-            let fresh = makeFreshSession(agentId: Agent.defaultId)
+            let fresh = makeFreshSession(agentId: Agent.defaultId, restoresDraft: false)
             stampWorkspaceContext(address: address, workspaceId: workspaceId, on: fresh)
             return ChatTab(id: UUID(), session: fresh)
         }
@@ -1189,7 +1226,7 @@ final class ChatWindowState: ObservableObject {
     /// Open a new tab with a fresh empty chat and make it active. The
     /// outgoing tab keeps its session untouched (no detach — the tab still
     /// owns it).
-    func newTab(agentId newAgentId: UUID? = nil, startsConversation: Bool = true) {
+    func newTab(agentId newAgentId: UUID? = nil, startsConversation: Bool = true, restoresDraft: Bool = true) {
         persistActiveSessionForTabSwitch()
         // A new tab from a team-agent tab stays with that agent, same as
         // sidebar New Chat (`startNewChat`). Without the carried context the
@@ -1204,7 +1241,10 @@ final class ChatWindowState: ObservableObject {
         if let newAgentId, newAgentId != agentId {
             adoptAgent(newAgentId)
         }
-        let fresh = makeFreshSession(agentId: agentId)
+        let fresh = makeFreshSession(
+            agentId: agentId,
+            restoresDraft: restoresDraft && carriedWorkspace == nil
+        )
         fresh.workspaceContext = carriedWorkspace
         // Local tabs only: a new tab that stays with a team agent must not
         // inherit the hosting local agent's working folder.
@@ -1615,12 +1655,27 @@ final class ChatWindowState: ObservableObject {
 
     /// Build a fresh, window-linked `ChatSession` (shared by `newTab` and
     /// `installFreshSession`).
-    private func makeFreshSession(agentId: UUID, loading data: ChatSessionData? = nil) -> ChatSession {
+    /// `restoresDraft` is false for sessions about to be stamped with a
+    /// workspace agent's context: those are keyed by the hosting local
+    /// agent until stamped, and must not pick up that agent's own draft.
+    private func makeFreshSession(
+        agentId: UUID,
+        loading data: ChatSessionData? = nil,
+        restoresDraft: Bool = true
+    ) -> ChatSession {
         let fresh = ChatSession()
         fresh.windowState = self
         fresh.agentId = agentId
         fresh.applyInitialModelSelection()
-        if let data { fresh.load(from: data) }
+        if let data {
+            fresh.load(from: data)
+        } else if restoresDraft {
+            // A fresh New Chat for this agent picks up the draft the user
+            // left in an earlier New Chat for the same agent (a blank tab
+            // repurposed or dropped on the way to another agent), so
+            // coming back to the agent reads like switching tabs.
+            fresh.restoreDraft()
+        }
         fresh.onSessionChanged = { [weak self] in
             self?.refreshSessionsDebounced()
         }
@@ -1710,8 +1765,12 @@ final class ChatWindowState: ObservableObject {
     /// Install a brand-new `ChatSession` for this window (optionally loading
     /// persisted turns), used after the previous one was detached to the
     /// registry.
-    private func installFreshSession(agentId: UUID, loading data: ChatSessionData? = nil) {
-        session = makeFreshSession(agentId: agentId, loading: data)
+    private func installFreshSession(
+        agentId: UUID,
+        loading data: ChatSessionData? = nil,
+        restoresDraft: Bool = true
+    ) {
+        session = makeFreshSession(agentId: agentId, loading: data, restoresDraft: restoresDraft)
         // A blank replacement (not a history load) starts in the agent's
         // sticky working folder; a loaded session keeps its own.
         if data == nil {

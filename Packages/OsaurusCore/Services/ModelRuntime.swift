@@ -1195,13 +1195,56 @@ public actor ModelRuntime {
     /// anyway. This only returns already-freed buffers to the allocator; it
     /// never touches resident weights or KV state.
     func trimFreedBufferCacheUnderMemoryPressure() async {
-        guard activeGenerationTasks.isEmpty else { return }
-        await MetalGate.shared.enterModelTeardown(model: "memory-pressure-trim")
+        _ = await trimFreedBufferCache(reason: "memory-pressure")
+    }
+
+    /// A parsed spawn tool can reach admission while its parent's engine
+    /// tail still owns the GPU gate. Wait for that drain only when the fresh
+    /// admission estimate has already refused the child. Pressure callbacks
+    /// retain their nonblocking behavior while generations are active.
+    func reclaimMemoryForSubagentAdmission() async -> Bool {
+        await trimFreedBufferCache(reason: "subagent-admission", waitForGenerationDrain: true)
+    }
+
+    /// Admission can run out of headroom before macOS sends a pressure
+    /// notification. Release the reusable allocator pool before making that
+    /// refusal final; never credit hypothetical bytes to the RAM estimate.
+    private func trimFreedBufferCache(reason: String, waitForGenerationDrain: Bool = false) async -> Bool {
+        guard !Task.isCancelled,
+            waitForGenerationDrain || (activeGenerationTasks.isEmpty && Memory.cacheMemory > 0)
+        else { return false }
+        // Unlike a committed model teardown, this optional recovery is
+        // cancellable while waiting for an embedder/load/other GPU producer.
+        let owner = "allocator-trim:\(reason)"
+        do {
+            try await MetalGate.shared.acquireCancellable(owner, shared: false)
+        } catch {
+            return false
+        }
+        // The exclusive GPU gate is the authoritative allocator boundary.
+        // A generation wrapper may still be releasing its lease after the
+        // producer exits the gate; that bookkeeping must not suppress recovery.
+        // Background pressure callbacks still skip newly active generations.
+        guard !Task.isCancelled,
+            waitForGenerationDrain || activeGenerationTasks.isEmpty
+        else {
+            await MetalGate.shared.release(owner)
+            return false
+        }
+        let before = Memory.cacheMemory
         Stream.gpu.synchronize()
         Memory.clearCache()
         Stream.gpu.synchronize()
-        await MetalGate.shared.exitModelTeardown(model: "memory-pressure-trim")
-        genLog.info("memory pressure: trimmed MLX freed-buffer pool")
+        let after = Memory.cacheMemory
+        await MetalGate.shared.release(owner)
+        genLog.info(
+            "allocator trim reason=\(reason, privacy: .public) cached_before=\(before) cached_after=\(after)"
+        )
+        // Another admission or producer may have freed the pool since this
+        // caller sampled its refusal. Completing the drain always requests a
+        // fresh admission sample, including when this trim freed zero bytes.
+        // This grants no arithmetic memory credit or additional engine slots.
+        return waitForGenerationDrain || before > after
     }
 
     /// Unload every resident model with no active generation lease in
@@ -3521,6 +3564,24 @@ public actor ModelRuntime {
         residencyPlan: ResidencyPlan,
         requestEstimate: SubagentChildRequestEstimate? = nil
     ) async -> SubagentBatchMemoryFacts? {
+        await SubagentBatchAdmissionPlanner.memoryFactsAfterReclaimingIfNeeded(
+            ramSafetyEnabled: residencyPlan.ramSafetyEnabled,
+            sample: {
+                await self.sampleSubagentBatchMemoryFacts(
+                    for: modelName,
+                    residencyPlan: residencyPlan,
+                    requestEstimate: requestEstimate
+                )
+            },
+            reclaim: { await self.reclaimMemoryForSubagentAdmission() }
+        )
+    }
+
+    private func sampleSubagentBatchMemoryFacts(
+        for modelName: String,
+        residencyPlan: ResidencyPlan,
+        requestEstimate: SubagentChildRequestEstimate?
+    ) async -> SubagentBatchMemoryFacts? {
         guard
             let profile = await subagentMemoryProfile(
                 for: modelName, requestEstimate: requestEstimate)
@@ -3555,10 +3616,9 @@ public actor ModelRuntime {
             ),
             requestBoundedChildHeadroomBytes: profile.requestBoundedChildHeadroomBytes
                 .flatMap(Self.nonnegativeUInt64),
-            // Match the existing subagent handoff preflight exactly. The
-            // broader model-load estimator also counts speculative pages,
-            // which are not part of the conservative handoff admission
-            // contract and could over-admit a batch.
+            // Normal loading and handoff use this same host estimator. After
+            // allocator recovery this is a fresh OS sample, not an arithmetic
+            // credit for buffers that might still be resident.
             reclaimableBytes: Self.nonnegativeUInt64(
                 ChatResidencyHandoff.availableMemoryBytes()
             ),

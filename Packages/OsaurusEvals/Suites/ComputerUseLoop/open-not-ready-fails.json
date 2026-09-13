@@ -1,0 +1,26 @@
+{
+  "id": "computer_use_loop.open-not-ready-fails",
+  "domain": "computer_use_loop",
+  "label": "CU loop • an open whose readiness poll exhausted is reported, not 'Opened'",
+  "query": "Open Preview and report what you see.",
+  "notes": "Deterministic (scripted-model) case for open readiness: the driver's open resolves the app but reports ready:false (the accessibility tree was not queryable within the readiness budget) and the follow-up capture is empty. The loop must report the open as not ready rather than 'Opened Preview' over an empty view. The scripted model reads that and gives up with the reason.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Preview",
+      "maxSteps": 4,
+      "openNotReady": true,
+      "elements": [
+        { "id": "zoom", "role": "button", "label": "Zoom In" }
+      ],
+      "expectOutcome": ["gaveUp"],
+      "failIfClicked": ["zoom"],
+      "feedTitleContains": ["not ready"],
+      "expectVerbsInOrder": ["open"],
+      "scriptedActions": [
+        "{\"verb\":\"open\",\"app\":\"Preview\"}",
+        "{\"verb\":\"give_up\",\"reason\":\"Preview did not expose a window in time, so I could not read it.\"}"
+      ]
+    }
+  }
+}

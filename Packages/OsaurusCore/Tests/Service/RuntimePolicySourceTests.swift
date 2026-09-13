@@ -808,7 +808,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "0c6ca3f9c91b050fd9b0155386056a5c6a6ac1da"
+        let expectedRuntimeHardenedRevision = "74103982a292a5037e82acca6f35b72dc1e75ea7"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -1330,7 +1330,7 @@ struct RuntimePolicySourceTests {
         #expect(concurrency.contains("`maxConcurrentSequences` hot-resizes"))
         #expect(concurrency.contains("pins each local model to one active job"))
         #expect(concurrency.contains("Concurrent Sessions"))
-        #expect(concurrency.contains("Shared with Main Chat Spawn"))
+        #expect(concurrency.contains("Shared with the Orchestrator's and every agent's Max local subagents at once"))
         #expect(concurrency.contains("SpawnBatchConcurrencyContract.bounds"))
         #expect(concurrency.contains("Continuous Batching"))
         #expect(concurrency.contains("Prompt Prefill Chunk Size"))

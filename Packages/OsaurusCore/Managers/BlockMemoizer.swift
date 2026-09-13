@@ -19,6 +19,24 @@ final class BlockMemoizer {
     private var lastTurnId: UUID?
     private var lastContentLen = 0
     private var lastThinkingLen = 0
+    /// Final engine statistics arrive after the last content delta. They can
+    /// change without a text/version tick, so they belong in the cache key.
+    private struct GenerationStatsKey: Equatable {
+        let ttft: TimeInterval?
+        let tokensPerSecond: Double?
+        let tokenCount: Int?
+        let unclosedReasoning: Bool
+        let modelLoad: TimeInterval?
+
+        init(_ turn: ChatTurn) {
+            ttft = turn.timeToFirstToken
+            tokensPerSecond = turn.generationTokensPerSecond
+            tokenCount = turn.generationTokenCount
+            unclosedReasoning = turn.unclosedReasoning
+            modelLoad = turn.modelLoadSeconds
+        }
+    }
+    private var lastGenerationStats: GenerationStatsKey?
     private var lastPendingToolName: String?
     private var lastPendingToolArgSize = 0
     /// Remote-agent (Mode 2) tool-activity counter of the streaming turn. A
@@ -61,6 +79,7 @@ final class BlockMemoizer {
         let lastId = turns.last?.id
         let contentLen = turns.last?.contentLength ?? 0
         let thinkingLen = turns.last?.thinkingLength ?? 0
+        let generationStats = turns.last.map(GenerationStatsKey.init)
         let pendingToolName = turns.last?.pendingToolName
         let pendingToolArgSize = turns.last?.pendingToolArgSize ?? 0
         let remoteToolTick = turns.last?.remoteToolActivityTick ?? 0
@@ -72,6 +91,7 @@ final class BlockMemoizer {
         if !agentNameChanged
             && count == lastCount && lastId == lastTurnId
             && contentLen == lastContentLen && thinkingLen == lastThinkingLen
+            && generationStats == lastGenerationStats
             && pendingToolName == lastPendingToolName
             && pendingToolArgSize == lastPendingToolArgSize
             && remoteToolTick == lastRemoteToolTick
@@ -144,6 +164,7 @@ final class BlockMemoizer {
         lastTurnId = lastId
         lastContentLen = contentLen
         lastThinkingLen = thinkingLen
+        lastGenerationStats = generationStats
         lastPendingToolName = pendingToolName
         lastPendingToolArgSize = pendingToolArgSize
         lastRemoteToolTick = remoteToolTick
@@ -241,6 +262,7 @@ final class BlockMemoizer {
         lastTurnId = nil
         lastContentLen = 0
         lastThinkingLen = 0
+        lastGenerationStats = nil
         lastPendingToolName = nil
         lastPendingToolArgSize = 0
         lastVersion = -1

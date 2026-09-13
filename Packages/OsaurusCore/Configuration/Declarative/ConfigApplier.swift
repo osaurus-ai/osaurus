@@ -575,6 +575,9 @@ enum ConfigApplier {
             if let v = desired.budgetMaxToolCalls { config.budgets.maxToolCalls = v }
             if let v = desired.budgetMaxSeconds { config.budgets.maxElapsedSeconds = v }
             if let v = desired.budgetMaxParallelSpawns { config.budgets.maxParallelSpawns = v }
+            if let v = desired.budgetMaxRemoteParallelSpawns {
+                config.budgets.maxRemoteParallelSpawns = v
+            }
             if let v = desired.ramSafetyPreflight { config.ramSafetyPreflightEnabled = v }
             if let v = desired.coexistenceEnabled { config.subagentCoexistenceEnabled = v }
         }

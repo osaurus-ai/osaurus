@@ -382,11 +382,11 @@ final class TextSubagentKind:
         switch target {
         case .agent:
             return
-                "Spawning a different local agent requires \"Local Orchestrator Handoff\" enabled "
-                + "in Settings → Subagents (so the chat model can unload to make room)."
+                "Delegating to a different local agent requires \"Swap local models for subagents\" "
+                + "enabled in Settings → Subagents (so the chat model can unload to make room)."
         case .model:
             return
-                "Spawning a local model requires \"Local Orchestrator Handoff\" enabled in "
+                "Delegating to a local model requires \"Swap local models for subagents\" enabled in "
                 + "Settings → Subagents (so the chat model can unload to make room)."
         case .workspaceAgent:
             // Never thrown: a workspace run touches no local residency.
@@ -394,11 +394,12 @@ final class TextSubagentKind:
         }
     }
 
+    /// Feed / activity title: "Delegated to X" (plus "(workspace)" for a
+    /// teammate's agent).
     var feedTitle: String {
         switch target {
-        case .agent(let id): return "spawn → \(resolvedAgentName.isEmpty ? id.uuidString : resolvedAgentName)"
-        case .model(let id): return "spawn → \(id)"
-        case .workspaceAgent: return "spawn → \(targetLabel) (workspace)"
+        case .agent, .model: return "Delegated to \(targetLabel)"
+        case .workspaceAgent: return "Delegated to \(targetLabel) (workspace)"
         }
     }
 
@@ -799,13 +800,20 @@ final class TextSubagentKind:
         if permissionPreauthorized {
             return .allow
         }
+        let argumentsJSON = approvalArgumentsJSON(resolvedModel: resolved.name)
         return await SpawnPermissionGate.authorize(
             scope: scope,
             policy: resolvedPermissionPolicy,
             toolName: toolName,
-            description:
-                "Allow this agent to spawn one bounded \(targetKindLabel) subagent?",
-            argumentsJSON: approvalArgumentsJSON(resolvedModel: resolved.name)
+            description: permissionDescription,
+            argumentsJSON: argumentsJSON,
+            waveMember: SpawnWaveGate.Member(
+                callId: scope.toolCallId,
+                toolName: toolName,
+                scope: scope,
+                argumentsJSON: argumentsJSON,
+                isLocal: resolved.isLocal
+            )
         )
     }
 
@@ -978,11 +986,15 @@ final class TextSubagentKind:
         }
     }
 
-    private var targetKindLabel: String {
+    /// One-line permission prompt: "Let this agent delegate a task to X?"
+    /// Plain "delegate"/"subagent" vocabulary, naming the target so the user
+    /// knows who runs it (and where, for a teammate's agent).
+    var permissionDescription: String {
         switch target {
-        case .agent: return "configured-agent"
-        case .model: return "model"
-        case .workspaceAgent: return "workspace-agent (runs on a teammate's Mac)"
+        case .agent, .model:
+            return "Let this agent delegate a task to \(targetLabel)?"
+        case .workspaceAgent:
+            return "Let this agent delegate a task to \(targetLabel)? It runs on a teammate's Mac."
         }
     }
 

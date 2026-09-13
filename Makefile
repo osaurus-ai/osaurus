@@ -365,10 +365,17 @@ EVALS_DETERMINISTIC_SUITES := $(shell jq -r '.suitePassRates | keys_unsorted[]' 
 print-evals-deterministic-suites:
 	@echo $(EVALS_DETERMINISTIC_SUITES)
 
+#
+# Model-free by construction: `OSAURUS_EVALS_SCRIPTED_ONLY=1` makes mixed
+# suites (ComputerUseLoop) SKIP their live model-driven cases and score only
+# the scripted rows, and `OSAURUS_EVALS_DISABLE_WARMUP=1` stops the runner from
+# warming whatever model the local ChatConfiguration happens to point at —
+# neither lane may load a local model.
 evals-deterministic:
 	@rc=0; for name in $(EVALS_DETERMINISTIC_SUITES); do \
 		echo ""; \
 		echo "── $(EVALS_ROOT)/$$name ──"; \
+		OSAURUS_EVALS_SCRIPTED_ONLY=1 OSAURUS_EVALS_DISABLE_WARMUP=1 \
 		swift run --package-path Packages/OsaurusEvals osaurus-evals run \
 			--suite $(EVALS_ROOT)/$$name \
 			--fail-on-floor \

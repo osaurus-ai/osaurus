@@ -335,6 +335,14 @@ final class ChatSession: ObservableObject {
     /// newer than `input` (which may still hold a restored draft the user
     /// has since edited or deleted).
     private var composerDraftIsAuthoritative = false
+    /// Bumped every time the draft machinery re-bases `input` (new chat,
+    /// agent switch, session load). The composer keeps its own copy of the
+    /// text and only syncs from `input` when the binding value changes, so
+    /// an in-place agent switch that leaves `input` at the same string (for
+    /// example `""` -> restored old draft -> `""` within one run loop) would
+    /// otherwise keep showing the previous agent's keystrokes. Observing
+    /// this counter lets the card force a resync regardless of the string.
+    @Published private(set) var composerGeneration: Int = 0
     @Published var pendingAttachments: [Attachment] = []
     @Published var selectedModel: String? = nil
     @Published var modelSwitchContinuityWarning: ModelSwitchContinuityWarning?
@@ -2962,10 +2970,12 @@ final class ChatSession: ObservableObject {
         // stop() → completeRunCleanup() preserves the current session's
         // identity instead of stamping the new agent on it. See #1005.
         reset()
-        // reset() brought back the OLD agent's new-chat draft; put it back
-        // and pick up the one typed under the incoming agent instead.
+        // reset() brought back the OLD agent's new-chat draft (text and
+        // attachments); put it back and pick up the one typed under the
+        // incoming agent instead.
         stashDraft()
         input = ""
+        pendingAttachments = []
         agentId = newAgentId
         restoreDraft()
         // reset() picked a model for the OLD agent; re-resolve for the
@@ -2986,7 +2996,10 @@ final class ChatSession: ObservableObject {
     /// Remember the current composer text for `draftKey` so it can come
     /// back when the user returns to this chat (#2708).
     func stashDraft() {
-        ChatDraftStore.shared.stash(unsentComposerText, for: draftKey)
+        ChatDraftStore.shared.stash(
+            ChatDraftStore.Draft(text: unsentComposerText, attachments: pendingAttachments),
+            for: draftKey
+        )
         composerDraft = ""
         composerDraftIsAuthoritative = false
     }
@@ -3021,14 +3034,23 @@ final class ChatSession: ObservableObject {
     }
 
     /// Bring back the composer text remembered for `draftKey`, if any.
-    /// Never overwrites text the user has already typed.
+    /// Never overwrites text the user has already typed. Always bumps
+    /// `composerGeneration`: every caller has just re-based `input` for a
+    /// different chat or agent, and the composer must resync to it even
+    /// when the string happens to be unchanged.
     func restoreDraft() {
+        defer { composerGeneration &+= 1 }
         guard unsentComposerText.isEmpty,
             let draft = ChatDraftStore.shared.take(for: draftKey)
         else { return }
-        input = draft
-        composerDraft = draft
+        input = draft.text
+        composerDraft = draft.text
         composerDraftIsAuthoritative = false
+        if !draft.attachments.isEmpty {
+            // Anything already attached (a quick action, a drop that landed
+            // before the restore) stays; the remembered ones join it.
+            pendingAttachments.append(contentsOf: draft.attachments.filter { !pendingAttachments.contains($0) })
+        }
     }
 
     // MARK: - LLM Context Compaction
@@ -3434,8 +3456,8 @@ final class ChatSession: ObservableObject {
         voiceInputState = .idle
         showVoiceOverlay = false
         input = ""
-        restoreDraft()
         pendingAttachments = []
+        restoreDraft()
         pendingOneOffSkillId = nil
         queuedSend = nil
         transientSessionIdForCurrentRun = nil
@@ -5244,11 +5266,10 @@ final class ChatSession: ObservableObject {
             // Stamp the steady-state tok/s. Single source of truth across
             // local-MLX, remote-API, with-tools, and thinking-on/off paths.
             //
-            // Order matters, and every rung is a real measurement:
-            //   1. the converged rolling window — best steady-state read, and
-            //      immune to first-token amortisation;
-            //   2. the engine's decode rate — a true tokens-over-decode-wall
-            //      figure for replies too short for the window to converge;
+            // Order matters: rolling input estimates tokens per text chunk,
+            // so it must not replace an authoritative engine completion rate.
+            //   1. the engine's actual tokens-over-decode-wall rate;
+            //   2. the rolling estimate when no valid engine rate is available;
             //   3. nothing.
             //
             // Rung 3 is the point. There is no fourth rung that guesses. The old
@@ -5258,7 +5279,7 @@ final class ChatSession: ObservableObject {
             // tok/s on a 7-token answer. A blank cell is honest; that number was
             // not.
             currentTurn.generationTokensPerSecond =
-                rollingRate.finalRate() ?? engineTokensPerSecond
+                rollingRate.finalRate(authoritativeTokensPerSecond: engineTokensPerSecond)
             // Token count: prefer vmlx's authoritative count (already
             // assigned in the stats sentinel branch above) — only fall back
             // to our chars/4 estimate if the stats sentinel never fired
@@ -5273,6 +5294,10 @@ final class ChatSession: ObservableObject {
         // actually generated.
         let streamEndedAt = Date()
         currentTurn.completedAt = streamEndedAt
+        // Final stats are plain turn fields; no content delta follows them.
+        // Refresh now so the footer does not retain its last rolling estimate
+        // until another message or unrelated UI event invalidates the blocks.
+        rebuildVisibleBlocks()
 
         let totalTime = streamEndedAt.timeIntervalSince(streamStartTime)
         // Last visible delta → stream termination. For local models this is
@@ -7141,10 +7166,14 @@ final class ChatSession: ObservableObject {
                     }
 
                     // Approval-aware parallel batch execution (chat
-                    // semantics): approvals resolve FIRST, serially and in
-                    // model order, so permission prompts never stack or
-                    // race; the approved set then executes concurrently
-                    // (registry dispatch only); results post-process on the
+                    // semantics): REGISTRY approvals (`PermissionedTool`)
+                    // resolve FIRST, serially and in model order; the
+                    // approved set then executes concurrently (registry
+                    // dispatch only). Tools that prompt from their own body
+                    // (spawn, image/video billing) still prompt during the
+                    // parallel phase — `ToolPermissionPromptService` queues
+                    // those cards one at a time and sibling spawn calls share
+                    // one wave card. Results post-process on the
                     // MainActor in model order. On a denial the remaining
                     // unstarted calls are skipped with a paired envelope —
                     // the chat policy (`stopOnToolRejection`) stops the
@@ -9647,6 +9676,10 @@ struct ChatView: View {
                                 warmupController: observedSession.warmupController,
                                 folderState: observedSession.folderState
                             )
+                            // Passed through the environment rather than as
+                            // an init argument: the initializer above is at
+                            // the type-checker's limit already.
+                            .environment(\.composerGeneration, observedSession.composerGeneration)
                             .frame(maxWidth: 1100)
                             .frame(maxWidth: .infinity)
                             .opacity(isPromptOverlayActive ? 0.55 : 1.0)
@@ -9735,15 +9768,21 @@ struct ChatView: View {
         // (chips collapse to icons, tabs fold into an overflow menu), so a narrow
         // width reflows the same UI rather than clipping it.
         //
+        // The floor is the window's `minimumContentSize`: the 800x620 design
+        // minimum, clamped by `ChatWindowManager` to what the window's screen
+        // can show so a small display never gets a window taller than itself
+        // (#2728). The hosting controller mirrors this into the panel's
+        // `contentMinSize`, so it is the single source of truth for the floor.
+        //
         // The ideal size is what a brand-new window actually opens at: the
         // hosting controller pushes the root view's fitting size onto the
         // window when it is attached, overriding the panel's content rect.
         // Keep it tied to the shared default so both agree.
         .frame(
-            minWidth: 800,
+            minWidth: windowState.minimumContentSize.width,
             idealWidth: WindowConfiguration.chat.defaultSize.width,
             maxWidth: .infinity,
-            minHeight: 620,
+            minHeight: windowState.minimumContentSize.height,
             idealHeight: WindowConfiguration.chat.defaultSize.height,
             maxHeight: .infinity
         )

@@ -93,7 +93,7 @@ enum ChatResidencyHandoff {
             case let .insufficientMemory(neededGB, availableGB):
                 return String(
                     format:
-                        "RAM-safety preflight refused the job: the spawn model needs ~%.1f GB but only ~%.1f GB would be available after freeing the chat model. Use a smaller spawn model, free memory, or disable the RAM-safety preflight in Agent Delegation settings.",
+                        "Memory check refused the task: the subagent's model needs ~%.1f GB but only ~%.1f GB would be available after freeing the chat model. Use a smaller model for the subagent, free memory, or turn off \"Check memory before delegating\" in Settings → Subagents.",
                     neededGB,
                     availableGB
                 )

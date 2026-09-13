@@ -251,6 +251,17 @@ public enum SettingsSearchIndex {
                 "approval", "always allow", "never ask", "tool prompt",
             ]
         ),
+        .init(
+            id: "settings.chat.spellCheck",
+            tab: .chat,
+            section: "Chat",
+            title: "Check Spelling While Typing",
+            keywords: [
+                "spell", "spelling", "spellcheck", "spell check", "spell checker",
+                "grammar", "typo", "typos", "dictionary", "underline", "misspelled",
+                "composer", "input",
+            ]
+        ),
 
         // MARK: Settings (Notifications / Legal)
         // Usage-analytics + crash-reporting consent now live at the top of the
@@ -723,31 +734,36 @@ public enum SettingsSearchIndex {
         .init(
             id: "settings.orchestrator.delegation",
             tab: .orchestrator,
-            section: "Delegation",
-            title: "Delegation",
+            section: "Subagents",
+            title: "Subagents",
             keywords: [
-                "spawn", "delegate", "delegation", "subagent",
+                "spawn", "delegate", "delegation", "subagent", "subagents",
                 "helper jobs", "agent delegation", "allowed agents",
-                "allowed models", "main chat", "batch subagents", "orchestrator",
+                "allowed models", "allowed subagents", "main chat",
+                "batch subagents", "orchestrator",
             ]
         ),
         .init(
             id: "settings.orchestrator.delegation.mainChat",
             tab: .orchestrator,
-            section: "Delegation",
-            title: "Main Chat Spawn",
+            section: "Subagents",
+            title: "Subagents the Orchestrator can delegate to",
             keywords: [
-                "default agent", "built-in chat", "spawn pool", "model notes",
-                "worker tools", "max subagents", "permission", "cloud model",
-                "local model",
+                "default agent", "built-in chat", "spawn pool", "main chat spawn",
+                "model notes", "worker tools", "model subagent tools",
+                "read-only files", "max subagents", "limits", "permission",
+                "cloud model", "local model",
             ]
         ),
         .init(
             id: "settings.orchestrator.delegation.handoff",
             tab: .orchestrator,
-            section: "Delegation",
-            title: "Local Handoff & RAM Safety",
-            keywords: ["handoff", "ram safety", "residency", "unload", "preflight"]
+            section: "Subagents",
+            title: "Local Models & Memory",
+            keywords: [
+                "handoff", "swap local models", "swap", "ram safety", "memory check",
+                "residency", "unload", "preflight", "coexistence", "keep chat model loaded",
+            ]
         ),
         .init(
             id: "privacy.tab",

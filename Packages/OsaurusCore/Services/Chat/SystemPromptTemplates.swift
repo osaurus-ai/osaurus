@@ -1088,7 +1088,8 @@ public enum SystemPromptTemplates {
         workspaceAgents: [SpawnWorkspaceAgentDescriptor] = [],
         availableToolNames: Set<String>? = nil,
         toolAccess: SpawnToolAccess = .none,
-        maxParallel: Int = 1
+        maxParallel: Int = 1,
+        maxRemoteParallel: Int = SubagentBudgets.defaultMaxRemoteParallelSpawns
     ) -> String {
         let agentToolAvailable =
             availableToolNames?.contains(SubagentCapabilityRegistry.spawnAgentToolName)
@@ -1099,6 +1100,7 @@ public enum SystemPromptTemplates {
         let batchToolAvailable =
             availableToolNames?.contains(SubagentCapabilityRegistry.spawnBatchToolName)
             ?? true
+        let singleToolAvailable = agentToolAvailable || modelToolAvailable
         var lines: [String] = ["## Delegating subtasks (spawn)", ""]
         lines.append(
             "- You can hand a bounded, self-contained subtask to a worker and get back ONLY a "
@@ -1111,6 +1113,14 @@ public enum SystemPromptTemplates {
                 + "and extraction over long material, log/error triage, first drafts. Prefer a "
                 + "small/local worker for that kind of work when one is listed; keep orchestration "
                 + "and the final answer to the user here."
+        )
+        lines.append(
+            parallelSpawnGuidance(
+                singleToolAvailable: singleToolAvailable,
+                batchToolAvailable: batchToolAvailable,
+                maxParallel: maxParallel,
+                maxRemoteParallel: maxRemoteParallel
+            )
         )
         if !agents.isEmpty {
             if agentToolAvailable {
@@ -1160,13 +1170,10 @@ public enum SystemPromptTemplates {
         }
         if batchToolAvailable {
             lines.append(
-                "- `spawn_batch(jobs)` fans out INDEPENDENT work across the same allowed agents/models. "
+                "- `spawn_batch(jobs)` is the same fan-out written as one explicit job list. "
                     + "Each job needs a unique `id`, `target_type` (`agent` or `model`), exact `target`, "
-                    + "and complete `input`. This agent allows at most \(maxParallel) jobs in one batch; "
-                    + "\(maxParallel) is an upper bound on concurrent workers, while engine occupancy "
-                    + "and RAM safety may queue or split local work. Results "
-                    + "come back in input order. Use one batch instead of emitting several separate "
-                    + "spawn calls when the subtasks do not depend on each other."
+                    + "and complete `input`; every result comes back in one envelope, in input order, "
+                    + "matched by `id`. Use it when you want the whole set of results in one place."
             )
         }
         if !agents.isEmpty, agentToolAvailable || batchToolAvailable {
@@ -1206,11 +1213,54 @@ public enum SystemPromptTemplates {
                 + "if none clearly fits, just do it yourself rather than guessing."
         )
         lines.append(
-            "- Remote/cloud batch jobs may overlap. Local jobs for the SAME model share one load and "
-                + "may batch together; different local models are serialized so they cannot race "
-                + "GPU residency or repeatedly unload the parent."
+            "- Remote/cloud workers run concurrently. Local workers for the SAME model share one "
+                + "load and may batch together; different local models are serialized so they cannot "
+                + "race GPU residency or repeatedly unload the parent."
+        )
+        lines.append(
+            "- `background: true` on `spawn_agent` / `spawn_model` returns immediately; the worker's "
+                + "result arrives later as a follow-up message. Use it for long jobs you do not need "
+                + "before your next step."
         )
         return lines.joined(separator: "\n")
+    }
+
+    /// The one fan-out story the model is told, regardless of which spawn
+    /// tools are in its schema: several spawn calls in one message ARE a
+    /// batch (one approval, shared limits, concurrent execution), and
+    /// `spawn_batch` is the same thing written as an explicit job list.
+    static func parallelSpawnGuidance(
+        singleToolAvailable: Bool,
+        batchToolAvailable: Bool,
+        maxParallel: Int,
+        maxRemoteParallel: Int
+    ) -> String {
+        let limits =
+            "Limits per wave: up to \(maxParallel) local-model workers and "
+            + "\(maxRemoteParallel) remote-model workers at once; extra calls beyond a limit are "
+            + "refused with a typed result and can be run after the others finish."
+        switch (singleToolAvailable, batchToolAvailable) {
+        case (true, true):
+            return
+                "- Each `spawn_agent` / `spawn_model` call is one worker. To run several INDEPENDENT "
+                + "workers at once, emit all the spawn calls together in ONE message — they run as one "
+                + "batch (one approval, shared limits, concurrent execution) and each call returns its "
+                + "own digest. `spawn_batch(jobs)` is the same fan-out as one explicit job list with one "
+                + "combined result. Never spawn independent work one message at a time. " + limits
+        case (true, false):
+            return
+                "- Each `spawn_agent` / `spawn_model` call is one worker. To run several INDEPENDENT "
+                + "workers at once, emit all the spawn calls together in ONE message — they run as one "
+                + "batch (one approval, shared limits, concurrent execution) and each call returns its "
+                + "own digest. Never spawn independent work one message at a time. " + limits
+        case (false, true):
+            return
+                "- `spawn_batch(jobs)` runs several INDEPENDENT workers at once with one approval and "
+                + "one combined, input-ordered result. Put all independent jobs in one call instead "
+                + "of spawning one message at a time. " + limits
+        case (false, false):
+            return "- " + limits
+        }
     }
 
     /// One `spawn_agent` target line: `` `uuid` — name `` — description (meta).

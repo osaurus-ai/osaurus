@@ -212,10 +212,67 @@ struct SpawnGuidanceTests {
         #expect(text.contains("bulk reading + summarization"))
         #expect(text.contains("COMPLETE task as a self-contained prompt"))
         #expect(text.contains("not this conversation"))
-        #expect(text.contains("at most 3 jobs in one batch"))
-        #expect(text.contains("3 is an upper bound on concurrent workers"))
+        #expect(text.contains("up to 3 local-model workers"))
+        #expect(text.contains("8 remote-model workers"))
         #expect(text.contains("SAME model share one load"))
         #expect(text.contains("different local models are serialized"))
+        #expect(text.contains("`background: true`"))
+    }
+
+    // MARK: - One fan-out story
+
+    @Test("the model is told one story: N spawn calls in one message ARE a batch")
+    func parallelSpawnStoryIsUnified() {
+        let both = SystemPromptTemplates.spawnGuidance(
+            agents: [agent("helper")],
+            models: [model("remote/r", displayName: "R", isLocal: false, provider: "P")],
+            maxParallel: 2,
+            maxRemoteParallel: 6
+        )
+        #expect(both.contains("emit all the spawn calls together in ONE message"))
+        #expect(both.contains("one approval, shared limits, concurrent execution"))
+        #expect(both.contains("each call returns its own digest"))
+        #expect(both.contains("`spawn_batch(jobs)` is the same fan-out"))
+        #expect(both.contains("Never spawn independent work one message at a time"))
+        #expect(both.contains("up to 2 local-model workers and 6 remote-model workers"))
+        #expect(both.contains("refused with a typed result"))
+        // The old contradictory instruction is gone.
+        #expect(!both.contains("instead of emitting several separate"))
+        #expect(!both.contains("jobs in one batch;"))
+
+        // Batch-only schema: the story is told in spawn_batch terms only.
+        let batchOnly = SystemPromptTemplates.spawnGuidance(
+            agents: [agent("helper")],
+            models: [],
+            availableToolNames: [SubagentCapabilityRegistry.spawnBatchToolName],
+            maxParallel: 2
+        )
+        #expect(batchOnly.contains("Put all independent jobs in one call"))
+        #expect(!batchOnly.contains("emit all the spawn calls together"))
+
+        // Single tools without spawn_batch: the wave story stands alone.
+        let singlesOnly = SystemPromptTemplates.spawnGuidance(
+            agents: [agent("helper")],
+            models: [],
+            availableToolNames: [SubagentCapabilityRegistry.spawnAgentToolName],
+            maxParallel: 2
+        )
+        #expect(singlesOnly.contains("emit all the spawn calls together in ONE message"))
+        #expect(!singlesOnly.contains("`spawn_batch(jobs)`"))
+    }
+
+    @Test("the three tool descriptions tell the same fan-out story")
+    func toolDescriptionsAgree() {
+        let agentTool = SpawnAgentTool().description
+        let modelTool = SpawnModelTool().description
+        let batchTool = SpawnBatchTool().description
+        #expect(agentTool.contains("One call = one worker"))
+        #expect(agentTool.contains("emit all the spawn calls together in one message"))
+        #expect(modelTool.contains("One call = one worker"))
+        #expect(modelTool.contains("emit all the spawn calls together in one message"))
+        #expect(batchTool.contains("one explicit job list with one combined result"))
+        #expect(batchTool.contains("is the same fan-out with one digest per call"))
+        #expect(!batchTool.contains("Use this only for independent work"))
     }
 
     @Test("artifact delivery guidance steers file deliverables to share_artifact, not the digest")

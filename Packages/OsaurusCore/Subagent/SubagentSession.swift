@@ -362,7 +362,8 @@ public enum SubagentSession {
                     "\(tool) cannot be called from inside a running subagent (\(active)). "
                     + "Finish the current subagent and return its result first.",
                 tool: tool,
-                retryable: false
+                retryable: false,
+                metadata: ["recursion": true]
             ))
         }
 
@@ -431,6 +432,13 @@ public enum SubagentSession {
                 message: reason,
                 tool: tool,
                 retryable: false
+            ))
+        case .unavailable(let reason):
+            return .failure(ToolEnvelope.failure(
+                kind: .unavailable,
+                message: reason,
+                tool: tool,
+                retryable: true
             ))
         }
         if interrupt?.isInterrupted == true || Task.isCancelled {
@@ -505,7 +513,8 @@ public enum SubagentSession {
                     "\(prepared.tool) cannot be called from inside a running subagent (\(active)). "
                     + "Finish the current subagent and return its result first.",
                 tool: prepared.tool,
-                retryable: false
+                retryable: false,
+                metadata: ["recursion": true]
             )
         }
 
@@ -582,7 +591,7 @@ public enum SubagentSession {
             // Process-wide admission: the TaskLocal guard above only covers one
             // task tree; parallel tool calls can reach here concurrently.
             if admissionClass == .localInPlace {
-                let capacity = await localInPlaceSlotCapacity(for: prepared)
+                let capacity = await localInPlaceCapacityDecision(for: prepared).capacity
                 let reservation = await admissionController.reserveLocalInPlace(
                     modelKey: admissionModelKey,
                     requestedSlots: 1,
@@ -607,7 +616,8 @@ public enum SubagentSession {
                         kind: .unavailable,
                         message: message,
                         tool: prepared.tool,
-                        retryable: true
+                        retryable: true,
+                        metadata: ["admission": "timeout"]
                     )
                 case .cancelled:
                     let message =
@@ -645,7 +655,8 @@ public enum SubagentSession {
                         kind: .unavailable,
                         message: message,
                         tool: prepared.tool,
-                        retryable: true
+                        retryable: true,
+                        metadata: ["admission": "timeout"]
                     )
                 case .cancelled:
                     let message =
@@ -844,7 +855,8 @@ public enum SubagentSession {
                         kind: .unavailable,
                         message: message,
                         tool: prepared.tool,
-                        retryable: true
+                        retryable: true,
+                        metadata: ["admission": "timeout"]
                     )
                 case .cancelled:
                     let message =
@@ -919,6 +931,7 @@ public enum SubagentSession {
 
             if refreshedClass == .localInPlace {
                 let refreshedCapacity: Int
+                var memoryDiagnostics: [String: Any] = [:]
                 if let postAdmissionLocalCapacityOverride {
                     refreshedCapacity =
                         await postAdmissionLocalCapacityOverride(
@@ -926,11 +939,35 @@ public enum SubagentSession {
                             currentPlan
                         )
                 } else {
-                    refreshedCapacity = await localInPlaceSlotCapacity(
+                    let decision = await localInPlaceCapacityDecision(
                         for: prepared,
                         residencyPlan: currentPlan,
                         rejectUnsafeSingleRun: true
                     )
+                    refreshedCapacity = decision.capacity
+                    memoryDiagnostics = decision.plan?.memoryDiagnostics ?? [:]
+                }
+
+                // Memory recovery may wait for the GPU gate. Stop during
+                // that wait must settle as cancellation before any child runs.
+                if interrupt.isInterrupted || Task.isCancelled {
+                    if admissionHeld {
+                        await admissionController.release(
+                            admissionClass, modelKey: admissionModelKey
+                        )
+                        admissionHeld = false
+                    }
+                    let envelope = ToolEnvelope.failure(
+                        kind: interrupt.isInterrupted ? .userDenied : .executionError,
+                        message: "Run was cancelled during RAM-safety admission before execution began.",
+                        tool: prepared.tool,
+                        retryable: false,
+                        metadata: ["cancelled": true]
+                    )
+                    if presentation.finishFeed {
+                        feed.finish(success: false, summary: ToolEnvelope.failureMessage(envelope))
+                    }
+                    return envelope
                 }
 
                 if admissionHeldSlots > 0 {
@@ -963,8 +1000,8 @@ public enum SubagentSession {
                     let message =
                         "\(prepared.tool) was rejected by RAM-safety admission: the "
                         + "local model has no free capacity for a child run under the "
-                        + "current memory and batching limits, and waiting did not "
-                        + "free any. Do not retry this turn — tell the user the "
+                        + "current memory and batching limits after the fresh memory "
+                        + "check. Do not retry this turn — tell the user the "
                         + "delegation could not run; it may succeed after memory or "
                         + "settings change."
                     if presentation.finishFeed {
@@ -978,6 +1015,7 @@ public enum SubagentSession {
                         metadata: [
                             "admission": "stable_memory_refusal",
                             "refreshed_capacity": refreshedCapacity,
+                            "memory_decision": memoryDiagnostics,
                         ]
                     )
                 }
@@ -1142,11 +1180,16 @@ public enum SubagentSession {
     /// aggregate width must honor the same server/agent/RAM ceiling as
     /// `spawn_batch`. This computes that ceiling for an ordinary one-child
     /// spawn; the admission actor accounts for already-reserved sibling slots.
-    private static func localInPlaceSlotCapacity(
+    private struct LocalInPlaceCapacityDecision: Sendable {
+        var capacity: Int
+        var plan: SubagentBatchAdmissionPlan? = nil
+    }
+
+    private static func localInPlaceCapacityDecision(
         for prepared: PreparedSubagentRun,
         residencyPlan suppliedResidencyPlan: ResidencyPlan? = nil,
         rejectUnsafeSingleRun: Bool = false
-    ) async -> Int {
+    ) async -> LocalInPlaceCapacityDecision {
         let runtime = ServerRuntimeSettingsStore.snapshot()
         let engineSlots = InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
             in: .standard,
@@ -1166,9 +1209,9 @@ public enum SubagentSession {
             let residencyPlan =
                 suppliedResidencyPlan ?? prepared.textResidencyPlan
         else {
-            return 1
+            return .init(capacity: 1)
         }
-        if requested == 1, !rejectUnsafeSingleRun { return 1 }
+        if requested == 1, !rejectUnsafeSingleRun { return .init(capacity: 1) }
 
         let memoryFacts = await ModelRuntime.shared.subagentBatchMemoryFacts(
             for: prepared.resolved.name,
@@ -1186,10 +1229,10 @@ public enum SubagentSession {
             failClosedWhenEstimateUnknown: true
         )
         if case .admitted = plan.verdict {
-            return max(1, plan.localCapacity)
+            return .init(capacity: max(1, plan.localCapacity), plan: plan)
         }
         guard rejectUnsafeSingleRun, requested > 1 else {
-            return rejectUnsafeSingleRun ? 0 : 1
+            return .init(capacity: rejectUnsafeSingleRun ? 0 : 1, plan: plan)
         }
 
         // A wider batch can be unsafe while the one already-reserved direct
@@ -1205,8 +1248,10 @@ public enum SubagentSession {
             memoryFacts: memoryFacts,
             failClosedWhenEstimateUnknown: true
         )
-        guard case .admitted = singleRunPlan.verdict else { return 0 }
-        return 1
+        guard case .admitted = singleRunPlan.verdict else {
+            return .init(capacity: 0, plan: singleRunPlan)
+        }
+        return .init(capacity: 1, plan: singleRunPlan)
     }
 
     /// Residency-relevant phase titles whose durations are worth reporting:

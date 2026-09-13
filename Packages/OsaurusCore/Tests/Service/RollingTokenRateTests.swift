@@ -29,6 +29,27 @@ import Testing
 @Suite("RollingTokenRate — steady-state tok/s estimator")
 struct RollingTokenRateTests {
 
+    @Test("Authoritative completion rate wins over a converged chunk estimate")
+    func authoritativeCompletionRateWins() {
+        var rate = RollingTokenRate()
+        let start = Date(timeIntervalSinceReferenceDate: 1000)
+        for index in 0 ..< 100 {
+            rate.observe(tokens: 3, at: start.addingTimeInterval(Double(index) * 0.02))
+        }
+        #expect((rate.finalRate() ?? 0) > 100)
+        #expect(rate.finalRate(authoritativeTokensPerSecond: 21.7) == 21.7)
+        for invalid in [Double.nan, .infinity, 0, -1] {
+            #expect(rate.finalRate(authoritativeTokensPerSecond: invalid) == rate.finalRate())
+        }
+    }
+
+    @Test("An engine completion rate does not require text-window convergence")
+    func authoritativeShortResponseRate() {
+        let rate = RollingTokenRate()
+        #expect(rate.finalRate() == nil)
+        #expect(rate.finalRate(authoritativeTokensPerSecond: 30) == 30)
+    }
+
     // MARK: - Warm-up gating
 
     @Test("Warm-up: rate is nil before warmupSeconds elapse")

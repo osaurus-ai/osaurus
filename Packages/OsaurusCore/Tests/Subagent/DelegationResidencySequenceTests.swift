@@ -345,7 +345,7 @@ struct DelegationResidencySequenceTests {
             mainResident: true,
             delegateModelName: "local-b"
         )
-        #expect(summary.contains("Local Orchestrator Handoff is off"))
+        #expect(summary.contains("\"Swap local models for subagents\" is off"))
     }
 
     // MARK: (e) same model

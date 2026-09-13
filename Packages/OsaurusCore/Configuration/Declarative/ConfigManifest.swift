@@ -274,7 +274,10 @@ public enum ConfigManifest {
                     comment: "15..1800"),
                 ConfigKeySpec(
                     "budget_max_parallel_spawns", .scalar(.integer, example: "3"),
-                    comment: "1..32 (mirrors Server Concurrent Sessions)"),
+                    comment: "1..32 local workers per wave (mirrors Server Concurrent Sessions)"),
+                ConfigKeySpec(
+                    "budget_max_remote_parallel_spawns", .scalar(.integer, example: "8"),
+                    comment: "1..32 remote workers per wave (independent of local capacity)"),
                 ConfigKeySpec(
                     "ram_safety_preflight", .scalar(.boolean, example: "true"),
                     comment: "false skips the RAM preflight (HIGH RISK)"),

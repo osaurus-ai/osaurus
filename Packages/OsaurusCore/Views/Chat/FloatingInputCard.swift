@@ -83,6 +83,17 @@ struct FloatingInputCard: View {
     /// Called when the card (re)appears so the owner can surface any unsent
     /// draft into `text` before the card rehydrates from it (#2708).
     var onWillRehydrate: (() -> Void)? = nil
+    /// Incremented by the owner whenever it re-bases `text` for a different
+    /// chat or agent (`ChatSession.composerGeneration`). The card then
+    /// resyncs its local copy from `text` even when the string is equal to
+    /// what the binding held before, which `.onChange(of: text)` cannot see.
+    /// Delivered through the environment because the card's initializer
+    /// call site in `ChatView` is already at the type-checker's limit.
+    @Environment(\.composerGeneration) private var composerGeneration
+    /// Settings ▸ Chat ▸ Check Spelling While Typing, applied live to the
+    /// composer's NSTextView.
+    @AppStorage(ComposerSpellCheckSetting.defaultsKey)
+    private var spellCheckEnabled: Bool = ComposerSpellCheckSetting.defaultValue
     /// Set after a manual model change in a non-empty conversation. The
     /// warning is advisory: the user may keep the selected model or start a
     /// clean chat whose first prefix is built for it.
@@ -1125,6 +1136,14 @@ struct FloatingInputCard: View {
                 // Sync from binding when it changes externally (e.g., quick actions)
                 if newValue != localText {
                     localText = newValue
+                }
+            }
+            .onChange(of: composerGeneration) { _, _ in
+                // The owner switched chat/agent in place: `text` is now the
+                // incoming draft (possibly the same string as before), so the
+                // previous agent's keystrokes must not linger in the card.
+                if text != localText {
+                    localText = text
                 }
             }
             .onChange(of: showSlashPopup) { _, _ in
@@ -6069,6 +6088,7 @@ extension FloatingInputCard {
             maxHeight: maxHeight,
             focusController: textViewFocusController,
             isEditable: composerLock == nil,
+            spellCheckEnabled: spellCheckEnabled,
             onCommit: { handleInputCommit() },
             onShiftCommit: nil,
             onArrowUp: { handleInputArrowUp() },

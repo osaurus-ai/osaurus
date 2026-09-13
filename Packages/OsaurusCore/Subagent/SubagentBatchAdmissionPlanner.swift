@@ -203,7 +203,15 @@ struct SubagentBatchMemoryFacts: Sendable, Equatable {
 struct SubagentBatchAdmissionInput: Sendable, Equatable {
     let localJobCount: Int
     let remoteJobCount: Int
+    /// Per-agent LOCAL fan-out (`SubagentBudgets.maxParallelSpawns`, mirrored
+    /// from Server Concurrent Sessions). Remote jobs never consume it: they
+    /// allocate no local model, KV state, or engine slot.
     let agentParallelLimit: Int
+    /// Per-agent REMOTE fan-out (`SubagentBudgets.maxRemoteParallelSpawns`).
+    /// The tool enforces the exact per-agent value before planning (typed
+    /// `invalid_args` the model can correct); the planner re-checks against
+    /// whatever the caller passes, defaulting to the schema-wide hard cap.
+    var remoteParallelLimit: Int = SubagentBudgets.remoteParallelSpawnBounds.upperBound
     /// vMLX `maxConcurrentSequences`. The planner independently applies the
     /// Continuous Batching toggle so a stale or contradictory caller cannot
     /// accidentally admit concurrent local work while batching is disabled.
@@ -238,9 +246,59 @@ struct SubagentBatchAdmissionPlan: Sendable, Equatable {
     /// queued), so this wave deliberately submits only one request and lets
     /// BatchEngine own the queue.
     var engineQueuedAtAdmission = false
+    /// Preserve the exact sampled inputs with the decision. A later OS sample
+    /// must not be presented as the reason for an earlier refusal.
+    var memoryFacts: SubagentBatchMemoryFacts? = nil
+
+    var memoryDiagnostics: [String: Any] {
+        var result: [String: Any] = [
+            "engine_slots": engineSlots,
+            "ram_slots": ramSlots ?? NSNull(),
+            "limited_by": limitingFactors.map(\.rawValue).sorted(),
+        ]
+        guard let m = memoryFacts else { return result }
+        result["canonical_model"] = m.canonicalModelKey
+        result["target_already_resident"] = m.targetAlreadyResident
+        result["target_load_bytes"] = m.targetLoadFootprintBytes ?? NSNull()
+        result["per_child_bytes"] = m.effectiveChildHeadroomBytes ?? NSNull()
+        result["per_child_cap_bytes"] = m.perActiveChildHeadroomBytes ?? NSNull()
+        result["reclaimable_bytes"] = m.reclaimableBytes ?? NSNull()
+        result["releasable_parent_bytes"] = m.releasableParentBytes
+        result["os_reserve_bytes"] = m.osHeadroomBytes
+        result["load_budget_bytes"] = m.resolvedLoadBudgetBytes ?? NSNull()
+        return result
+    }
 }
 
 enum SubagentBatchAdmissionPlanner {
+    /// Resolve live facts at the single-child floor before a caller chooses
+    /// its wave width. Both direct spawns and batches use this boundary.
+    static func memoryFactsAfterReclaimingIfNeeded(
+        isolation: isolated (any Actor)? = #isolation,
+        ramSafetyEnabled: Bool,
+        sample: () async -> SubagentBatchMemoryFacts?,
+        reclaim: () async -> Bool
+    ) async -> SubagentBatchMemoryFacts? {
+        let initial = await sample()
+        guard ramSafetyEnabled, !Task.isCancelled,
+            let facts = initial,
+            let footprint = positive(facts.targetLoadFootprintBytes),
+            let perChild = positive(facts.effectiveChildHeadroomBytes),
+            let capacity = resolveMemoryCapacity(facts), capacity.slots == 0
+        else { return initial }
+        // Reclamation cannot make a request fit an explicit total budget.
+        // Nor do we trim just to widen a batch that can already serialize.
+        if let budget = facts.resolvedLoadBudgetBytes,
+            saturatingSubtract(budget, footprint) < perChild
+        { return initial }
+        guard await reclaim(), !Task.isCancelled else { return initial }
+        let refreshed = await sample()
+        log.info(
+            "[admission-recovery] model=\(facts.canonicalModelKey, privacy: .public) reclaimable_before=\(facts.reclaimableBytes ?? 0) reclaimable_after=\(refreshed?.reclaimableBytes ?? 0) fresh_estimate_available=\(refreshed != nil)"
+        )
+        return refreshed
+    }
+
     private static let log = Logger(
         subsystem: "ai.osaurus", category: "SubagentAdmission")
 
@@ -278,7 +336,8 @@ enum SubagentBatchAdmissionPlanner {
     }
 
     static func plan(_ input: SubagentBatchAdmissionInput) -> SubagentBatchAdmissionPlan {
-        let plan = planInternal(input)
+        var plan = planInternal(input)
+        plan.memoryFacts = input.memory
         logDiagnostics(input, plan)
         return plan
     }
@@ -288,19 +347,23 @@ enum SubagentBatchAdmissionPlanner {
     ) -> SubagentBatchAdmissionPlan {
         let localJobs = max(0, input.localJobCount)
         let remoteJobs = max(0, input.remoteJobCount)
-        let requestedJobs = saturatingIntAdd(localJobs, remoteJobs)
         let engineSlots =
             input.continuousBatchingEnabled
             ? max(1, input.engineParallelLimit)
             : 1
 
-        guard input.agentParallelLimit > 0 else {
+        guard input.agentParallelLimit > 0, input.remoteParallelLimit > 0 else {
             return rejected(
                 .invalidParallelLimit,
                 engineSlots: engineSlots
             )
         }
-        guard requestedJobs <= input.agentParallelLimit else {
+        // Local and remote fan-out are independent budgets: a wave of eight
+        // cloud workers must not be refused because the local BatchEngine is
+        // configured for three concurrent sequences.
+        guard localJobs <= input.agentParallelLimit,
+            remoteJobs <= input.remoteParallelLimit
+        else {
             return rejected(
                 .batchExceedsAgentLimit,
                 engineSlots: engineSlots,
@@ -476,7 +539,7 @@ enum SubagentBatchAdmissionPlanner {
             incrementalWeightChargeBytes: memory.flatMap { facts -> UInt64? in
                 facts.targetAlreadyResident ? 0 : facts.targetLoadFootprintBytes
             },
-            perActiveChildHeadroomBytes: memory?.perActiveChildHeadroomBytes,
+            perActiveChildHeadroomBytes: memory?.effectiveChildHeadroomBytes,
             projectedIncrementalPeakBytes: nil,
             projectedModelWorkingSetBytes: nil,
             limitingFactors: limitingFactors
@@ -494,11 +557,6 @@ enum SubagentBatchAdmissionPlanner {
 
     private static func saturatingMultiply(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
         let (value, overflow) = lhs.multipliedReportingOverflow(by: rhs)
-        return overflow ? .max : value
-    }
-
-    private static func saturatingIntAdd(_ lhs: Int, _ rhs: Int) -> Int {
-        let (value, overflow) = lhs.addingReportingOverflow(rhs)
         return overflow ? .max : value
     }
 

@@ -53,6 +53,11 @@ struct EditableTextView: NSViewRepresentable {
     /// read-only teammate conversation). Selection stays enabled so the
     /// user can still copy a draft.
     var isEditable: Bool = true
+    /// Run the macOS spell checker (red underline, right-click suggestions,
+    /// grammar hints) on the text. Autocorrect and smart substitutions stay
+    /// off regardless so nothing is rewritten under the user. Toggled live
+    /// from Settings ▸ Chat (`ComposerSpellCheckSetting`).
+    var spellCheckEnabled: Bool = false
     var onCommit: (() -> Void)? = nil
     var onShiftCommit: (() -> Void)? = nil
     /// Called on ↑ arrow key. Return true to consume the event (prevents cursor movement).
@@ -110,6 +115,8 @@ struct EditableTextView: NSViewRepresentable {
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
+        textView.isAutomaticSpellingCorrectionEnabled = false
+        Self.applySpellCheck(spellCheckEnabled, to: textView)
 
         let coordinator = context.coordinator
         textView.onMarkedTextChanged = { [weak coordinator] in coordinator?.parent.isComposing = $0 }
@@ -133,11 +140,33 @@ struct EditableTextView: NSViewRepresentable {
         syncText(textView, scrollView: scrollView)
         if textView.isEditable != isEditable { textView.isEditable = isEditable }
         syncStyling(textView, coord: coord)
+        syncSpellCheck(textView)
         syncFocus(textView)
         syncScrollerVisibility(textView, scrollView: scrollView, coord: coord)
     }
 
     // MARK: - updateNSView helpers
+
+    /// Only write on a real diff: toggling continuous spell checking
+    /// re-scans the whole document.
+    private func syncSpellCheck(_ textView: CustomNSTextView) {
+        guard textView.isContinuousSpellCheckingEnabled != spellCheckEnabled else { return }
+        Self.applySpellCheck(spellCheckEnabled, to: textView)
+    }
+
+    static func applySpellCheck(_ enabled: Bool, to textView: NSTextView) {
+        textView.isContinuousSpellCheckingEnabled = enabled
+        textView.isGrammarCheckingEnabled = enabled
+        if !enabled, let layoutManager = textView.layoutManager {
+            // Drop any underline already drawn; the marks are temporary
+            // layout attributes and would otherwise linger until the next
+            // edit of that range.
+            layoutManager.removeTemporaryAttribute(
+                .spellingState,
+                forCharacterRange: NSRange(location: 0, length: textView.string.utf16.count)
+            )
+        }
+    }
 
     private func syncMaxHeight(_ textView: CustomNSTextView, scrollView: NSScrollView) {
         // Avoids triggering NSTextView layout when nothing changed.

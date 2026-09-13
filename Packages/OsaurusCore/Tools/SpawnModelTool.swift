@@ -20,7 +20,9 @@ public final class SpawnModelTool: OsaurusTool, @unchecked Sendable {
         "Delegate a bounded subtask directly to a model the user has marked spawnable (local or remote), "
         + "with no agent or system prompt attached, and get back only a compact result digest — the "
         + "subagent transcript is not returned. The model id must be in this agent's spawnable model list. "
-        + "Use `spawn_agent` instead to hand a task to a configured agent (its own prompt + model)."
+        + "Use `spawn_agent` instead to hand a task to a configured agent (its own prompt + model). One "
+        + "call = one worker; to run several independent workers at once, emit all the spawn calls "
+        + "together in one message — they run as one batch with one approval and shared limits."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -77,6 +79,10 @@ public final class SpawnModelTool: OsaurusTool, @unchecked Sendable {
     }
 
     public func execute(argumentsJSON: String) async throws -> String {
+        // Sibling spawn calls in one model message rendezvous for a single
+        // approval card. Whatever path this call takes out — validation
+        // failure, denial, completion — it must stop counting as pending.
+        defer { SpawnWaveGate.settleCurrentCall() }
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
         let inputReq = requireString(args, "input", expected: "the task for the subagent", tool: name)

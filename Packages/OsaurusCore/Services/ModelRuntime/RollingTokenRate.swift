@@ -183,7 +183,13 @@ struct RollingTokenRate: Sendable {
     /// arrival timestamps. The caller has the engine's real decode wall-clock
     /// (`GenerateCompletionInfo.generateTime`, measured from the end of prefill)
     /// and should prefer that when this returns `nil`.
-    func finalRate() -> Double? {
+    /// Prefer an authoritative engine rate for the completed response. The
+    /// rolling input may be a per-text-chunk token estimate, not token IDs;
+    /// convergence does not make that estimate authoritative.
+    func finalRate(authoritativeTokensPerSecond: Double? = nil) -> Double? {
+        if let rate = authoritativeTokensPerSecond, rate.isFinite, rate > 0 {
+            return rate
+        }
         guard lastAt != nil else { return nil }
         return currentRate(at: lastAt!)
     }

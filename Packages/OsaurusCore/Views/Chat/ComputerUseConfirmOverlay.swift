@@ -40,6 +40,11 @@ struct ComputerUseConfirmOverlay: View {
             payloadExpanded = false
             approveRemaining = false
         }
+        // Tell the queue a surface exists that can render its cards. A run
+        // whose confirm would otherwise park forever (chat window closed,
+        // background dispatch) fails fast with a typed reason instead.
+        .onAppear { queue.registerPresenter() }
+        .onDisappear { queue.unregisterPresenter() }
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: queue.pending.first?.id)
         .animation(
             .spring(response: 0.3, dampingFraction: 0.85),

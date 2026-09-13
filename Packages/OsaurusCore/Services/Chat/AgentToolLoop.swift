@@ -1782,7 +1782,14 @@ enum AgentToolLoop {
                 )
             }
             do {
-                return AgentLoopToolExecution(result: try await execute(call.invocation, call.callId))
+                // Every surface's tool body sees its own call id (the chat
+                // surface also binds it; headless surfaces relied on a random
+                // fallback before). Spawn siblings key their wave membership
+                // on it, so it must be the id the loop recorded.
+                let result = try await ChatExecutionContext.$currentToolCallId.withValue(call.callId) {
+                    try await execute(call.invocation, call.callId)
+                }
+                return AgentLoopToolExecution(result: result)
             } catch {
                 return AgentLoopToolExecution(
                     result: ToolEnvelope.fromError(error, tool: call.invocation.toolName),
@@ -1812,25 +1819,41 @@ enum AgentToolLoop {
             groups.append([index])
         }
 
+        // Two or more foreground spawn calls in one message are one fan-out
+        // wave: they share one approval card and one fan-out limit check in
+        // `SpawnWaveGate`, while each still returns its own digest.
+        let spawnWave = SpawnWaveContext.make(for: calls)
+        if let spawnWave {
+            await SpawnWaveGate.shared.open(spawnWave)
+        }
+        defer {
+            if let spawnWave {
+                let waveId = spawnWave.waveId
+                Task { await SpawnWaveGate.shared.close(waveId: waveId) }
+            }
+        }
+
         // One batch id for the whole wave so multi-file operations group
         // in the file-operation undo log (`FileOperation.batchId`).
         let indexed: [(Int, AgentLoopToolExecution)] = await ChatExecutionContext.$currentBatchId
             .withValue(UUID()) {
-                await withTaskGroup(of: [(Int, AgentLoopToolExecution)].self) { group in
-                    for slotGroup in groups {
-                        group.addTask {
-                            var results: [(Int, AgentLoopToolExecution)] = []
-                            results.reserveCapacity(slotGroup.count)
-                            for index in slotGroup {
-                                results.append((index, await executeOne(calls[index])))
+                await ChatExecutionContext.$spawnWave.withValue(spawnWave) {
+                    await withTaskGroup(of: [(Int, AgentLoopToolExecution)].self) { group in
+                        for slotGroup in groups {
+                            group.addTask {
+                                var results: [(Int, AgentLoopToolExecution)] = []
+                                results.reserveCapacity(slotGroup.count)
+                                for index in slotGroup {
+                                    results.append((index, await executeOne(calls[index])))
+                                }
+                                return results
                             }
-                            return results
                         }
+                        var collected: [(Int, AgentLoopToolExecution)] = []
+                        collected.reserveCapacity(calls.count)
+                        for await items in group { collected.append(contentsOf: items) }
+                        return collected
                     }
-                    var collected: [(Int, AgentLoopToolExecution)] = []
-                    collected.reserveCapacity(calls.count)
-                    for await items in group { collected.append(contentsOf: items) }
-                    return collected
                 }
             }
 
@@ -1840,13 +1863,16 @@ enum AgentToolLoop {
     /// Canonical-registry two-phase batch (the chat surface pioneered the
     /// pattern; headless surfaces share it here):
     ///
-    /// - Phase 1 — approvals resolve FIRST, serially and in model order,
-    ///   so permission prompts never stack or race. On a denial the
-    ///   remaining unstarted calls are skipped with a paired rejection
-    ///   envelope (the assistant `tool_use` never dangles).
-    /// - Phase 2 — the approved set executes in parallel with the gate
-    ///   pre-resolved (`permissionGateResolved: true`), so no prompt can
-    ///   pop mid-flight.
+    /// - Phase 1 — REGISTRY approvals (`PermissionedTool` policies) resolve
+    ///   FIRST, serially and in model order. On a denial the remaining
+    ///   unstarted calls are skipped with a paired rejection envelope (the
+    ///   assistant `tool_use` never dangles).
+    /// - Phase 2 — the approved set executes in parallel with the registry
+    ///   gate pre-resolved (`permissionGateResolved: true`). Tools whose
+    ///   approval lives in their own body (`spawn_agent` / `spawn_model`,
+    ///   image/video billing, config fallback) still prompt here — the
+    ///   prompt service serialises those cards through one FIFO queue, and
+    ///   sibling spawn calls collapse into one wave card (`SpawnWaveGate`).
     ///
     /// Each phase scopes `ChatExecutionContext` so tools and the gate see
     /// the same session/agent ids they would on a sequential dispatch.
@@ -2241,8 +2267,44 @@ enum AgentToolLoop {
         if let preserved = invocation.toolCallId, !preserved.isEmpty {
             return preserved
         }
+        return mintCallId()
+    }
+
+    static func mintCallId() -> String {
         let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
         return "call_" + String(raw.prefix(24))
+    }
+
+    /// One batch, unique call ids. Some providers and small local models emit
+    /// the same `tool_call_id` for every call in a message; downstream, the
+    /// id keys the live feed / Stop registration, the chat row, and now the
+    /// spawn wave membership, so two siblings sharing an id would overwrite
+    /// each other. The first occurrence keeps the model's id; later
+    /// duplicates (and missing ids) are minted, in model order, so the
+    /// assistant `tool_calls` record and the paired results agree.
+    static func uniquelyIdentifiedInvocations(
+        _ invocations: [ServiceToolInvocation]
+    ) -> [ServiceToolInvocation] {
+        var seen: Set<String> = []
+        return invocations.map { invocation in
+            let supplied = invocation.toolCallId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let resolved: String
+            if !supplied.isEmpty, !seen.contains(supplied) {
+                resolved = supplied
+            } else {
+                var minted = mintCallId()
+                while seen.contains(minted) { minted = mintCallId() }
+                resolved = minted
+            }
+            seen.insert(resolved)
+            guard resolved != invocation.toolCallId else { return invocation }
+            return ServiceToolInvocation(
+                toolName: invocation.toolName,
+                jsonArguments: invocation.jsonArguments,
+                toolCallId: resolved,
+                geminiThoughtSignature: invocation.geminiThoughtSignature
+            )
+        }
     }
 
     /// Short, stable fingerprint of an outbound message array, for Router
@@ -2806,9 +2868,11 @@ enum AgentToolLoop {
                 // not in scope is left exactly as emitted, so the registry's
                 // `tool_not_found` still answers it — decoration never
                 // reaches a withheld tool.
-                let invocations = Self.canonicalizedInvocations(
-                    emittedInvocations,
-                    authorizedToolNames: hooks.authorizedToolNames?()
+                let invocations = Self.uniquelyIdentifiedInvocations(
+                    Self.canonicalizedInvocations(
+                        emittedInvocations,
+                        authorizedToolNames: hooks.authorizedToolNames?()
+                    )
                 )
                 // A productive turn — reset the empty-turn and announce-only
                 // recovery budgets so a later unrelated stall gets its own

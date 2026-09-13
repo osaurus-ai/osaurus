@@ -249,6 +249,16 @@ struct SystemPromptComposerToolResolutionTests {
         return Int(value)
     }
 
+    private func spawnBatchJobsDescription(_ tools: [Tool]) -> String? {
+        guard let spawn = tools.first(where: { $0.function.name == "spawn_batch" }),
+            case .object(let root)? = spawn.function.parameters,
+            case .object(let properties)? = root["properties"],
+            case .object(let jobs)? = properties["jobs"],
+            case .string(let value)? = jobs["description"]
+        else { return nil }
+        return value
+    }
+
     // MARK: - Auto mode
 
     @Test
@@ -1936,8 +1946,10 @@ struct SystemPromptComposerToolResolutionTests {
 
             #expect(spawnModelEnum(first) == spawnModelEnum(frozenFollowup))
             #expect(spawnBatchTargetEnum(first) == spawnBatchTargetEnum(frozenFollowup))
-            #expect(spawnBatchMaxItems(first) == 4)
-            #expect(spawnBatchMaxItems(frozenFollowup) == 4)
+            // `maxItems` is the local ceiling plus the remote ceiling
+            // (default 8): a batch may carry both lanes at once.
+            #expect(spawnBatchMaxItems(first) == 4 + SubagentBudgets.defaultMaxRemoteParallelSpawns)
+            #expect(spawnBatchMaxItems(frozenFollowup) == spawnBatchMaxItems(first))
             #expect(
                 PromptPrefixHasher.hash(systemContent: "prefix", tools: first)
                     == PromptPrefixHasher.hash(
@@ -1989,11 +2001,11 @@ struct SystemPromptComposerToolResolutionTests {
                         "local/old-model",
                     ]
             )
-            #expect(spawnBatchMaxItems(frozen) == 2)
+            #expect(spawnBatchMaxItems(frozen) == 2 + SubagentBudgets.defaultMaxRemoteParallelSpawns)
 
             let updated = SubagentConfiguration(
                 spawnableAgentIDs: [newAgent.id],
-                budgets: SubagentBudgets(maxParallelSpawns: 6),
+                budgets: SubagentBudgets(maxParallelSpawns: 6, maxRemoteParallelSpawns: 3),
                 spawnableModelNames: [
                     "anthropic/claude-opus-4-8",
                     "local/new-model",
@@ -2022,7 +2034,7 @@ struct SystemPromptComposerToolResolutionTests {
                         "local/new-model",
                     ]
             )
-            #expect(spawnBatchMaxItems(refreshed) == 6)
+            #expect(spawnBatchMaxItems(refreshed) == 6 + 3, "local + remote, both from the current budgets")
             #expect(!spawnBatchTargetEnum(refreshed).contains(oldAgent.id.uuidString))
             #expect(!spawnBatchTargetEnum(refreshed).contains("local/old-model"))
             #expect(!spawnBatchTargetEnum(refreshed).contains("Stale delegation target"))
@@ -2062,16 +2074,23 @@ struct SystemPromptComposerToolResolutionTests {
                 executionMode: .none
             )
             let resolvedLimit = spawnBatchMaxItems(tools)
+            let resolvedLocalLimit = (resolvedLimit ?? -1) - SubagentBudgets.defaultMaxRemoteParallelSpawns
             let guidance = SystemPromptTemplates.spawnGuidance(
                 agents: [],
                 models: [],
                 availableToolNames: [SubagentCapabilityRegistry.spawnBatchToolName],
-                maxParallel: resolvedLimit ?? -1
+                maxParallel: resolvedLocalLimit
             )
 
-            #expect(resolvedLimit == 2)
-            #expect(guidance.contains("at most 2 jobs in one batch"))
-            #expect(!guidance.contains("at most 7 jobs in one batch"))
+            // Server concurrency (2) wins over the stale Spawn mirror (7) for
+            // the local lane; the remote lane adds its own default ceiling.
+            #expect(resolvedLimit == 2 + SubagentBudgets.defaultMaxRemoteParallelSpawns)
+            #expect(resolvedLocalLimit == 2)
+            #expect(guidance.contains("up to 2 local-model workers"))
+            #expect(!guidance.contains("up to 7 local-model workers"))
+            let jobsDescription = spawnBatchJobsDescription(tools) ?? ""
+            #expect(jobsDescription.contains("at most 2 local-model jobs"))
+            #expect(!jobsDescription.contains("at most 7 local-model jobs"))
         }
     }
 

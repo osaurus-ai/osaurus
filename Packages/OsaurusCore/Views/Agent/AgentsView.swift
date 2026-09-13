@@ -1011,7 +1011,7 @@ private enum DetailTab: String, CaseIterable {
             return L("Pick which tools this agent can use. Skills come from the shared library and are always available.")
         case .subagents:
             return L(
-                "Let this agent delegate work — control your Mac, hand tasks to other agents, or generate images."
+                "Let this agent delegate work — control your Mac, delegate tasks to other agents or models, or generate images."
             )
         case .customization: return L("Avatar, empty state, and visual theme.")
         case .network: return L("Bonjour discovery and relay tunnel.")
@@ -1645,7 +1645,7 @@ struct AgentDetailView: View {
         .onReceive(NotificationCenter.default.publisher(for: .watchersChanged)) { _ in
             refreshDetailCaches()
         }
-        // The Spawn editor reads Local Orchestrator Handoff from the shared
+        // The subagent editor reads "Swap local models for subagents" from the shared
         // global store. Keep an already-open custom agent in sync when the
         // setting changes elsewhere, matching ConfigurationView's
         // notification-driven refresh instead of requiring the user to close
@@ -4073,9 +4073,9 @@ struct AgentDetailView: View {
             case .spawn:
                 return PerAgentFeature(
                     flag: .spawn,
-                    title: "Spawn",
+                    title: "Delegate to subagents",
                     subtitle:
-                        "Let this agent hand a bounded task to another agent or model you allow below — the subagent runs it and returns just the result."
+                        "Let this agent delegate a bounded task to an agent or model you allow below. The subagent runs it and returns only the result."
                 )
             case .image:
                 return PerAgentFeature(
@@ -4189,7 +4189,12 @@ struct AgentDetailView: View {
             hasReadyImageModel: ModelPickerItemCache.shared.hasReadyImageModel,
             hasReadyVideoModel: ModelPickerItemCache.shared.hasReadyVideoGenerationModel,
             hasReadyAppleScriptModel: ModelPickerItemCache.shared.hasReadyAppleScriptModel,
-            permission: permission
+            permission: permission,
+            // Computer Use's runtime floor is Accessibility (the registry
+            // permission gate fails the first call without it). Only that
+            // flag consults TCC; `AXIsProcessTrusted` is a cheap local read.
+            hasRequiredSystemPermissions: flag != .computerUse
+                || SystemPermissionService.shared.isGranted(.accessibility)
         )
     }
 
@@ -4422,7 +4427,7 @@ struct AgentDetailView: View {
                 onChange: debouncedSave
             )
             subagentFootnote(
-                "Local handoff and RAM-safety for spawn jobs are system settings in Settings → Subagents."
+                "Local model swapping and memory checks for subagents are system settings in Settings → Subagents."
             )
         case .image:
             imageModelPickerRows

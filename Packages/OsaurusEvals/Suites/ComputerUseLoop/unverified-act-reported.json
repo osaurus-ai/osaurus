@@ -1,0 +1,26 @@
+{
+  "id": "computer_use_loop.unverified-act-reported",
+  "domain": "computer_use_loop",
+  "label": "CU loop • posted-but-unobserved input is reported, not called success",
+  "query": "Click Save, then check whether anything happened.",
+  "notes": "Deterministic (scripted-model) case for the honest verify step: the Save button accepts the click but changes nothing, so the loop must count it as an unverified act and surface that (feed title 'No visible change (input unverified)') instead of 'Action succeeded'. The scripted model reads the honest result and gives up with the reason, which is the correct outcome for an input that could not be proven to land.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Notes",
+      "maxSteps": 4,
+      "elements": [
+        { "id": "save", "role": "button", "label": "Save" }
+      ],
+      "expectOutcome": ["gaveUp"],
+      "successClicked": ["save"],
+      "minUnverifiedActs": 1,
+      "feedTitleContains": ["No visible change (input unverified)"],
+      "finalSummaryContains": ["no change"],
+      "scriptedActions": [
+        "{\"verb\":\"click\",\"target\":{\"mark\":1},\"note\":\"save\"}",
+        "{\"verb\":\"give_up\",\"reason\":\"Clicking Save produced no change in Notes, so I cannot confirm it saved.\"}"
+      ]
+    }
+  }
+}

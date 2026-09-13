@@ -197,18 +197,135 @@ struct SpawnPermissionGateTests {
         probe: SpawnPromptProbe,
         choice: SpawnPermissionGate.PromptChoice
     ) async -> SubagentDecision {
-        await SpawnPermissionGate.$promptOverride.withValue(
-            { request in
-                await probe.record(request, returning: choice)
+        // The explicit `policy` is the effective one for this call: the gate
+        // re-reads the store before prompting (queued-sibling revalidation),
+        // so pin the override to keep the test independent of what an
+        // earlier test persisted into the shared configuration store.
+        await SpawnPermissionGate.$policyOverrideForTests.withValue(policy) {
+            await SpawnPermissionGate.$promptOverride.withValue(
+                { request in
+                    await probe.record(request, returning: choice)
+                }
+            ) {
+                await SpawnPermissionGate.authorize(
+                    scope: scope ?? defaultScope,
+                    policy: policy,
+                    toolName: SubagentCapabilityRegistry.spawnAgentToolName,
+                    description: "Allow one bounded subagent?",
+                    argumentsJSON: #"{"agent":"Worker","input":"Do one task"}"#
+                )
             }
-        ) {
-            await SpawnPermissionGate.authorize(
-                scope: scope ?? defaultScope,
-                policy: policy,
-                toolName: SubagentCapabilityRegistry.spawnAgentToolName,
-                description: "Allow one bounded subagent?",
-                argumentsJSON: #"{"agent":"Worker","input":"Do one task"}"#
+        }
+    }
+
+    @Test("a queued Ask prompt settles silently once a sibling persisted Always Allow")
+    func queuedPromptRevalidatesAgainstCurrentPolicy() async {
+        // The launcher's effective policy is Always Allow by the time this
+        // prompt would present (a sibling card was answered Always Allow while
+        // it waited). The gate must allow without asking again.
+        let probe = SpawnPromptProbe()
+        let decision = await SpawnPermissionGate.$policyOverrideForTests.withValue(.alwaysAllow) {
+            await SpawnPermissionGate.$promptOverride.withValue(
+                { request in await probe.record(request, returning: .deny) }
+            ) {
+                await SpawnPermissionGate.authorize(
+                    scope: defaultScope,
+                    policy: .ask,
+                    toolName: SubagentCapabilityRegistry.spawnAgentToolName,
+                    description: "Allow one bounded subagent?",
+                    argumentsJSON: "{}"
+                )
+            }
+        }
+        #expect(decision == .allow)
+        #expect((await probe.snapshot()).requests.isEmpty, "no second card for an already-granted policy")
+    }
+
+    @Test("Always Allow on a prompt does not re-persist when the policy is already Always Allow")
+    @MainActor
+    func alwaysAllowChoiceSkipsRedundantPersist() async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent(
+                    "osaurus-spawn-always-allow-idempotent-\(UUID().uuidString)",
+                    isDirectory: true
+                )
+            try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let previousRoot = OsaurusPaths.overrideRoot
+            // Hold the store lease before the first refresh: refreshing agents
+            // under a new root can write the delegation store, which must not
+            // race a sibling test's revision assertions.
+            let lease = await acquireSubagentStoreSandbox("spawn-always-allow-idempotent")
+            defer { lease.release() }
+            OsaurusPaths.overrideRoot = root
+            AgentManager.shared.refresh()
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                AgentManager.shared.refresh()
+                try? FileManager.default.removeItem(at: root)
+            }
+
+            var launcher = Agent(
+                name: "IdempotentAlwaysAllow",
+                description: "d",
+                systemPrompt: "stable",
+                autonomousExec: AutonomousExecConfig(enabled: false)
             )
+            launcher.settings.subagentPermissions.setPolicy(
+                .ask,
+                for: SubagentCapabilityRegistry.spawn.id
+            )
+            AgentStore.save(launcher)
+            AgentManager.shared.refresh()
+            let scope = SubagentScope(
+                sessionId: "idempotent",
+                toolCallId: "idempotent",
+                agentId: launcher.id
+            )
+            let baseline = AgentManager.shared.spawnAuthoritySnapshot(for: launcher.id).revisions
+
+            // While this card is open, a sibling's card is answered Always
+            // Allow and persists (+1 permission revision). This card is then
+            // answered Always Allow too: it must not write a second time,
+            // which would trip the sibling's exactly-+1 ABA check.
+            let launcherId = launcher.id
+            let first = await SpawnPermissionGate.$promptOverride.withValue(
+                { _ in
+                    await SpawnPermissionGate.persistAlwaysAllow(launchingAgentId: launcherId)
+                    return .alwaysAllow
+                }
+            ) {
+                await SpawnPermissionGate.authorize(
+                    scope: scope,
+                    policy: .ask,
+                    toolName: SubagentCapabilityRegistry.spawnAgentToolName,
+                    description: "d",
+                    argumentsJSON: "{}"
+                )
+            }
+            #expect(first == .allow)
+            let afterFirst = AgentManager.shared.spawnAuthoritySnapshot(for: launcher.id).revisions
+            #expect(afterFirst.permission == baseline.permission + 1)
+            #expect(await SpawnPermissionGate.effectivePolicy(for: scope) == .alwaysAllow)
+
+            // A later Ask-policy call re-reads the store before prompting and
+            // settles silently: no card, no write.
+            let probe = SpawnPromptProbe()
+            let second = await SpawnPermissionGate.$promptOverride.withValue(
+                { request in await probe.record(request, returning: .deny) }
+            ) {
+                await SpawnPermissionGate.authorize(
+                    scope: scope,
+                    policy: .ask,
+                    toolName: SubagentCapabilityRegistry.spawnAgentToolName,
+                    description: "d",
+                    argumentsJSON: "{}"
+                )
+            }
+            #expect(second == .allow)
+            #expect((await probe.snapshot()).requests.isEmpty)
+            let afterSecond = AgentManager.shared.spawnAuthoritySnapshot(for: launcher.id).revisions
+            #expect(afterSecond.permission == afterFirst.permission)
         }
     }
 
@@ -317,6 +434,10 @@ struct SpawnPermissionGateTests {
                 at: root,
                 withIntermediateDirectories: true
             )
+            // `refresh()` seeds the delegation store; hold the store lease so
+            // that write cannot race another suite's revision assertions.
+            let lease = await acquireSubagentStoreSandbox("spawn-permission-gate-root")
+            defer { lease.release() }
             let previousRoot = OsaurusPaths.overrideRoot
             OsaurusPaths.overrideRoot = root
             AgentManager.shared.refresh()
@@ -393,14 +514,16 @@ struct SpawnPermissionGateTests {
                 at: root,
                 withIntermediateDirectories: true
             )
-            let previousRoot = OsaurusPaths.overrideRoot
-            OsaurusPaths.overrideRoot = root
-            AgentManager.shared.refresh()
             let lease = await acquireSubagentStoreSandbox(
                 "direct-spawn-authority"
             )
+            // Hold the store lease across BOTH refreshes: `refresh()` seeds the
+            // delegation store, which must not race another suite's lease.
+            defer { lease.release() }
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            AgentManager.shared.refresh()
             defer {
-                lease.release()
                 OsaurusPaths.overrideRoot = previousRoot
                 AgentManager.shared.refresh()
                 try? FileManager.default.removeItem(at: root)
@@ -686,6 +809,10 @@ struct SpawnPermissionGateTests {
                 at: root,
                 withIntermediateDirectories: true
             )
+            // `refresh()` seeds the delegation store; hold the store lease so
+            // that write cannot race another suite's revision assertions.
+            let lease = await acquireSubagentStoreSandbox("spawn-permission-gate-root")
+            defer { lease.release() }
             let previousRoot = OsaurusPaths.overrideRoot
             OsaurusPaths.overrideRoot = root
             AgentManager.shared.refresh()
@@ -1202,14 +1329,16 @@ struct SpawnPermissionGateTests {
                 at: root,
                 withIntermediateDirectories: true
             )
-            let previousRoot = OsaurusPaths.overrideRoot
-            OsaurusPaths.overrideRoot = root
-            AgentManager.shared.refresh()
             let lease = await acquireSubagentStoreSandbox(
                 "custom-batch-always-allow"
             )
+            // Hold the store lease across BOTH refreshes: `refresh()` seeds the
+            // delegation store, which must not race another suite's lease.
+            defer { lease.release() }
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            AgentManager.shared.refresh()
             defer {
-                lease.release()
                 OsaurusPaths.overrideRoot = previousRoot
                 AgentManager.shared.refresh()
                 try? FileManager.default.removeItem(at: root)
@@ -1409,14 +1538,16 @@ struct SpawnPermissionGateTests {
                 at: root,
                 withIntermediateDirectories: true
             )
-            let previousRoot = OsaurusPaths.overrideRoot
-            OsaurusPaths.overrideRoot = root
-            AgentManager.shared.refresh()
             let lease = await acquireSubagentStoreSandbox(
                 "spawn-batch-launcher-revocation"
             )
+            // Hold the store lease across BOTH refreshes: `refresh()` seeds the
+            // delegation store, which must not race another suite's lease.
+            defer { lease.release() }
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            AgentManager.shared.refresh()
             defer {
-                lease.release()
                 OsaurusPaths.overrideRoot = previousRoot
                 AgentManager.shared.refresh()
                 try? FileManager.default.removeItem(at: root)
@@ -1533,14 +1664,16 @@ struct SpawnPermissionGateTests {
                 at: root,
                 withIntermediateDirectories: true
             )
-            let previousRoot = OsaurusPaths.overrideRoot
-            OsaurusPaths.overrideRoot = root
-            AgentManager.shared.refresh()
             let lease = await acquireSubagentStoreSandbox(
                 "spawn-batch-target-edit"
             )
+            // Hold the store lease across BOTH refreshes: `refresh()` seeds the
+            // delegation store, which must not race another suite's lease.
+            defer { lease.release() }
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            AgentManager.shared.refresh()
             defer {
-                lease.release()
                 OsaurusPaths.overrideRoot = previousRoot
                 AgentManager.shared.refresh()
                 try? FileManager.default.removeItem(at: root)

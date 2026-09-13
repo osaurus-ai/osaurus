@@ -53,9 +53,17 @@ public struct SubagentScope: Sendable, Equatable {
     }
 
     /// Resolve from the active chat execution context. Outside chat we fall
-    /// back to fresh ids and the default agent (mirrors
-    /// `ComputerUseTool.execute`), so a subagent still runs from HTTP / eval
-    /// surfaces — it just won't bind to a chat row.
+    /// back to fresh ids and the default agent, so kinds the Default agent may
+    /// run (spawn / image) still work from HTTP / eval surfaces — they just
+    /// won't bind to a chat row.
+    ///
+    /// The Default-agent fallback is NOT neutral for custom-agent-only kinds:
+    /// `ComputerUseKind` / `BrowserUseKind` authorize against `agentId` and
+    /// refuse `Agent.defaultId`, so a surface that wants them must bind
+    /// `ChatExecutionContext.currentAgentId` to the owning custom agent
+    /// (the chat turn, `AgentDelegationDispatcher`, `/agents/{id}/run`, and
+    /// the Claude Code bridge grant all do). A bare `/v1` tool execution
+    /// with no agent binding is refused with the Default-agent message.
     public static func current() -> SubagentScope {
         SubagentScope(
             sessionId: ChatExecutionContext.currentSessionId ?? UUID().uuidString,
@@ -120,6 +128,11 @@ public enum SubagentDecision: Sendable, Equatable {
     /// Refuse because the user explicitly declined an approval prompt. Maps
     /// to a `user_denied` envelope.
     case userDenied(String)
+    /// Approved, but there is no capacity for this member right now (a
+    /// sibling wave exceeded the launcher's local or remote fan-out limit).
+    /// Maps to a retryable `unavailable` envelope: the model may run the
+    /// work after the admitted siblings finish.
+    case unavailable(String)
 }
 
 // MARK: - Result

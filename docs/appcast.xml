@@ -3,6 +3,43 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.1</title>
+            <pubDate>Sat, 12 Sep 2026 05:12:44 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.1</sparkle:version>
+            <sparkle:shortVersionString>0.25.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.1/Osaurus-0.25.1.dmg" length="76656490" type="application/octet-stream" sparkle:edSignature="ttHmjS6ksYA/sufMQ+63NeVdvEthG03Yt4FhlKZbVsfol2Te/wkQhi7r8xSEygSn9mOl3H8eVPl6Qs1TEgpLAg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Pin recurrent disk-cache state preservation (#2719) by @jjang-ai
+- Pin Flash PLE per-gather row deduplication (#2712) by @jjang-ai
+- Pin isolated Flash QSA optimization for AR and prefill (#2710) by @jjang-ai
+- Make the chat folder chip persist as the agent's working folder (#2701) by @tpae
+- Add host-side "Share my models for inference" toggle for paired peers (#2700) by @tpae
+- Show model alignment preparation only on direct chat Send (#2697) by @jjang-ai
+
+## 🚀 Features
+
+- added filters in chat history modal (#2711) by @RaajeevChandran
+- added interactive workspaces walkthrough (#2706) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Queue tool permission prompts and run sibling spawn calls as one wave (#2720) by @tpae
+- keep unsent composer text across chat and agent switches (#2715) by @RaajeevChandran
+- fix chat window sizing for the workspaces intro and restore the minimum size (#2716) by @RaajeevChandran
+- MTP: pre-Send controls, bounded depths and preserved sampling (#2714) by @jjang-ai
+- fix project page staying open after picking an agent from the sidebar (#2713) by @RaajeevChandran
+- Let delegated agents write files in their own Working Folder (#2703) (#2707) by @tpae
+- accept non-function tools on /v1/responses and surface decode errors (#2705) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.0...0.25.1
+]]></description>
+        </item>
+        <item>
             <title>0.25.0</title>
             <pubDate>Wed, 09 Sep 2026 17:32:44 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

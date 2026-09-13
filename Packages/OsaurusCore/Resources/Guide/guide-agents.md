@@ -33,4 +33,4 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 
 ## Subagents and delegation
 
-Agents can delegate work to subagents (spawn other local/cloud models in parallel), with budgets and permission modes you control. The Orchestrator's delegation allow-list and budgets live in Settings → Orchestrator; each custom agent's spawn policy lives in its own Subagents tab.
+Agents can delegate work to subagents (other agents or local/cloud models, in parallel), with limits and permission modes you control. The Orchestrator's allowed subagents and limits live in Settings → Orchestrator → Subagents; each custom agent's "Delegate to subagents" settings live in its own Subagents tab.

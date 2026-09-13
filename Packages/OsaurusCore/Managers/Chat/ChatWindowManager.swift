@@ -33,6 +33,23 @@ public enum NewChatShortcutSetting {
     public static let defaultsKey = "chatCmdNStartsNewChatInCurrentWindow"
 }
 
+/// Settings ▸ Chat ▸ "Check Spelling While Typing": run the macOS spell
+/// checker (red underline + right-click suggestions) in the chat composer
+/// and the clarify-prompt input. Default off, matching the raw-input feel
+/// the composer has always had; autocorrect and smart substitutions stay
+/// off regardless so text is never rewritten under the user.
+public enum ComposerSpellCheckSetting {
+    public static let defaultsKey = "chatComposerSpellCheckEnabled"
+    public static let defaultValue = false
+
+    /// Current value for callers outside SwiftUI.
+    public static var isEnabled: Bool {
+        UserDefaults.standard.object(forKey: defaultsKey) == nil
+            ? defaultValue
+            : UserDefaults.standard.bool(forKey: defaultsKey)
+    }
+}
+
 /// Manages multiple chat windows in the application
 @MainActor
 public final class ChatWindowManager: NSObject, ObservableObject {
@@ -143,6 +160,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
 
         nsWindows[windowId] = window
         ensureTaskRegistrationObserver()
+        ensureScreenParametersObserver()
         if let state = windowStates[windowId] {
             attachRegistryRuns(to: state)
         }
@@ -690,6 +708,86 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         windowStates[id]?.isFullScreen = isFullScreen
     }
 
+    // MARK: - Screen fit
+
+    /// The largest content area `screen` can show for `panel`: the visible
+    /// frame (menu bar and Dock excluded) minus the window's own titlebar /
+    /// toolbar chrome. `.zero` when no screen is known, which
+    /// `updateMinimumContentSize` treats as "keep the design minimum".
+    private static func availableContentSize(for panel: NSWindow, on screen: NSScreen?) -> CGSize {
+        guard let vf = screen?.visibleFrame else { return .zero }
+        // With `.fullSizeContentView` the content view runs under the
+        // toolbar, but the SwiftUI root lays out inside the safe area, so
+        // the hosting controller's minimum includes that strip on top of the
+        // root's `.frame(minHeight:)`. Leave room for it.
+        let chrome = max(0, panel.frame.height - panel.contentLayoutRect.height)
+        return CGSize(width: vf.width, height: vf.height - chrome)
+    }
+
+    /// Clamp `windowState`'s minimum content size to what `screen` can show.
+    private func pushMinimumContentSize(for panel: NSWindow, on screen: NSScreen?, windowState: ChatWindowState) {
+        windowState.updateMinimumContentSize(
+            availableContentSize: Self.availableContentSize(for: panel, on: screen)
+        )
+    }
+
+    /// Keep `panel` inside its screen's visible frame: clamp the floor the
+    /// SwiftUI root enforces, then shrink the frame if it is larger than the
+    /// screen and move it back on screen. Runs after creation (the restored
+    /// autosave frame may come from a larger display) and whenever the
+    /// window lands on another screen. A window taller than its screen could
+    /// otherwise only be shown with its top under the menu bar and its
+    /// bottom, where the composer lives, cut off (#2728).
+    ///
+    /// `repositions` also pulls a window that FITS but sits partly off
+    /// screen back into view; only creation wants that. A window the user
+    /// dragged partly off screen on purpose is left alone, and nothing moves
+    /// while a mouse button is down (a drag between displays is in
+    /// progress; snapping mid-drag would fight the user). Full screen is
+    /// left to AppKit.
+    private func fitToScreen(_ panel: NSWindow, windowState: ChatWindowState, repositions: Bool) {
+        guard !panel.styleMask.contains(.fullScreen),
+            let screen = panel.screen ?? NSScreen.main
+        else { return }
+        pushMinimumContentSize(for: panel, on: screen, windowState: windowState)
+        guard NSEvent.pressedMouseButtons == 0 else { return }
+        let vf = screen.visibleFrame
+        var frame = panel.frame
+        frame.size.width = min(frame.width, vf.width)
+        frame.size.height = min(frame.height, vf.height)
+        if repositions || frame.size != panel.frame.size {
+            frame.origin.x = min(max(frame.minX, vf.minX), vf.maxX - frame.width)
+            frame.origin.y = min(max(frame.minY, vf.minY), vf.maxY - frame.height)
+        }
+        guard frame != panel.frame else { return }
+        panel.setFrame(frame, display: true)
+    }
+
+    fileprivate func windowDidChangeScreen(id: UUID) {
+        guard let panel = nsWindows[id], let state = windowStates[id] else { return }
+        fitToScreen(panel, windowState: state, repositions: false)
+    }
+
+    private var screenParametersCancellable: AnyCancellable?
+
+    /// Re-fit every window when a display's resolution or arrangement
+    /// changes (e.g. switching to "Larger Text" scaling, or unplugging the
+    /// external display the window was on). Armed on first window creation
+    /// like `ensureTaskRegistrationObserver`.
+    private func ensureScreenParametersObserver() {
+        guard screenParametersCancellable == nil else { return }
+        screenParametersCancellable = NotificationCenter.default
+            .publisher(for: NSApplication.didChangeScreenParametersNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                for (id, panel) in self.nsWindows {
+                    guard let state = self.windowStates[id] else { continue }
+                    self.fitToScreen(panel, windowState: state, repositions: false)
+                }
+            }
+    }
+
     /// Set window pinned (float on top) state
     public func setWindowPinned(id: UUID, pinned: Bool) {
         guard let window = nsWindows[id] else { return }
@@ -744,6 +842,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         nsWindows[windowId] = window
         windowStates[windowId] = windowState
         ensureTaskRegistrationObserver()
+        ensureScreenParametersObserver()
         attachRegistryRuns(to: windowState)
 
         if showImmediately { showWindow(id: windowId) }
@@ -823,6 +922,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         attach(hostingController, to: panel)
 
         applyWindowFramePersistence(panel: panel)
+        fitToScreen(panel, windowState: windowState, repositions: true)
 
         return panel
     }
@@ -850,6 +950,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         attach(hostingController, to: panel)
 
         applyWindowFramePersistence(panel: panel)
+        fitToScreen(panel, windowState: windowState, repositions: true)
 
         return panel
     }
@@ -972,6 +1073,12 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         let delegate = ChatWindowDelegate(windowId: windowId, manager: self)
         windowDelegates[windowId] = delegate
         panel.delegate = delegate
+
+        // The root view's floor must already fit the target screen when the
+        // hosting controller attaches: its first layout pass mirrors that
+        // floor into `contentMinSize`, and a too-tall floor at that point
+        // would grow the window past the screen before `fitToScreen` runs.
+        pushMinimumContentSize(for: panel, on: screen, windowState: windowState)
 
         return panel
     }
@@ -1577,6 +1684,12 @@ private final class ChatWindowDelegate: NSObject, NSWindowDelegate {
             let contentView = window.contentView
         else { return }
         manager?.windowState(id: windowId)?.updateWindowContentWidth(contentView.bounds.width)
+    }
+
+    /// Dragged onto another display: re-clamp the minimum size to that
+    /// screen and keep the frame inside it.
+    func windowDidChangeScreen(_ notification: Notification) {
+        manager?.windowDidChangeScreen(id: windowId)
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {

@@ -9,7 +9,7 @@ order: 45
 The built-in Osaurus agent is the default Orchestrator. New chat windows open on it unless you start a chat on a custom agent. It has two jobs:
 
 1. **Configure and explain Osaurus.** It answers questions about the app and changes settings for you through the declarative `osaurus_config` tool (see the Declarative Configuration topic): it plans the change, shows an approval card, and applies only after you confirm.
-2. **Delegate work.** It can spawn your custom agents and allowed local/cloud models as subagents — in parallel, within budgets you set — and weave their results back into the conversation.
+2. **Delegate work.** It can delegate tasks to your custom agents and allowed local/cloud models as subagents — in parallel, within limits you set — and weave their results back into the conversation.
 
 It deliberately does *not* do hands-on work itself: no sandbox, no working folder, no browser or computer use. Those capabilities belong to custom agents, which keeps the Orchestrator safe and predictable.
 
@@ -21,12 +21,12 @@ The Orchestrator has its own settings tab (Management ⌘⇧M → Orchestrator):
 
 - **Identity** — display name (defaults to "Osaurus") and system prompt (persona). Its model is picked from the chat model selector, or ask it to switch models.
 - **Generation** — temperature and max output tokens.
-- **Delegation** — its delegation helpers:
-  - *Main Chat Capabilities*: allow image or AppleScript helper models.
-  - *Main Chat Spawn*: the allow-list of agents and local/cloud models it may delegate to, worker tool access, permission mode, and child budgets (tokens, turns, tool calls, seconds, parallel spawns).
-  - *Local Handoff & RAM Safety*: local orchestrator handoff, RAM-safety preflight, and the experimental coexistence mode.
+- **Subagents** — what it can delegate to:
+  - *Orchestrator Capabilities*: allow image or AppleScript model subagents.
+  - *Subagents the Orchestrator can delegate to*: the allowed subagents (agents, teammates' shared agents, and local/cloud models), whether model subagents may read files, permission mode, and per-subagent limits (tokens, turns, tool calls, time, how many run at once).
+  - *Local Models & Memory*: swap local models for subagents, check memory before delegating, and the experimental keep-the-chat-model-loaded mode.
 
-Custom agents join this spawn pool automatically on creation; existing custom agents are seeded once. Remove an agent in Settings → Orchestrator if you do not want it spawnable — removals persist. Local/cloud model targets stay on an explicit allow-list.
+Custom agents join the Orchestrator's allowed subagents automatically on creation; existing custom agents are seeded once. Remove an agent in Settings → Orchestrator if you do not want it delegated to — removals persist. Local/cloud model subagents stay on an explicit allow-list.
 
 ## Renaming the Orchestrator
 

@@ -1306,6 +1306,10 @@ struct MacAppInfo: Encodable, Sendable {
     let pid: Int32
     let bundleId: String?
     let name: String
+    /// False when `waitUntilReady` exhausted its budget without seeing a
+    /// populated AX window. The app is running; its tree just isn't
+    /// queryable yet (still launching, hidden, or windowless).
+    var ready: Bool = true
 }
 
 struct MacAppError: Error, Sendable {
@@ -1357,11 +1361,14 @@ func openApplication(
     if let info = runningMatch {
         // Flip Chromium/Electron into exposing its full tree BEFORE we wait, so
         // the readiness poll can block until that tree actually populates.
+        let pid = info.pid
         await AccessibilityManager.runOffMain {
-            AccessibilityManager.shared.prepareForAccessibility(pid: info.pid)
+            AccessibilityManager.shared.prepareForAccessibility(pid: pid)
         }
-        await waitUntilReady(pid: info.pid, requireFrontmost: !background)
-        return .success(info)
+        let ready = await waitUntilReady(pid: pid, requireFrontmost: !background)
+        return .success(
+            MacAppInfo(pid: pid, bundleId: info.bundleId, name: info.name, ready: ready)
+        )
     }
 
     do {
@@ -1369,11 +1376,18 @@ func openApplication(
             identifier: identifier,
             background: background
         )
+        let pid = info.pid
         await AccessibilityManager.runOffMain {
-            AccessibilityManager.shared.prepareForAccessibility(pid: info.pid)
+            AccessibilityManager.shared.prepareForAccessibility(pid: pid)
         }
-        await waitUntilReady(pid: info.pid, isNewLaunch: true, requireFrontmost: !background)
-        return .success(info)
+        let ready = await waitUntilReady(
+            pid: pid,
+            isNewLaunch: true,
+            requireFrontmost: !background
+        )
+        return .success(
+            MacAppInfo(pid: pid, bundleId: info.bundleId, name: info.name, ready: ready)
+        )
     } catch {
         return .failure(
             MacAppError(message: "Failed to open application: \(error.localizedDescription)")
@@ -1381,12 +1395,17 @@ func openApplication(
     }
 }
 
+/// Poll until the app exposes a populated AX window (and is frontmost when
+/// required). Returns `true` when it did within the budget, `false` when the
+/// budget or the task ran out first — callers surface that instead of
+/// treating "the wait ended" as "the app is ready".
+@discardableResult
 private func waitUntilReady(
     pid: Int32,
     isNewLaunch: Bool = false,
     requireFrontmost: Bool = false,
     timeoutSeconds: Double = 5.0
-) async {
+) async -> Bool {
     let pollInterval: UInt64 = 100_000_000
 
     let initialDelay: UInt64 = isNewLaunch ? 500_000_000 : 200_000_000
@@ -1399,7 +1418,7 @@ private func waitUntilReady(
     while Date() < deadline {
         // A cancelled run (user hit Stop, tool deadline fired) must release
         // its caller immediately instead of finishing the readiness budget.
-        if Task.isCancelled { return }
+        if Task.isCancelled { return false }
 
         // In background mode we only need the AX tree to be queryable; the app
         // can stay hidden, occluded, or behind another Space.
@@ -1439,11 +1458,12 @@ private func waitUntilReady(
 
         if frontmostOK && treeReady {
             try? await Task.sleep(nanoseconds: 200_000_000)
-            return
+            return true
         }
 
         try? await Task.sleep(nanoseconds: pollInterval)
     }
+    return false
 }
 
 /// Copy a single AX attribute, returning nil when the element doesn't expose it.

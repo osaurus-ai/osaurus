@@ -1,0 +1,30 @@
+{
+  "id": "computer_use_loop.confirm-pause-extends-deadline",
+  "domain": "computer_use_loop",
+  "label": "CU loop • time spent on the confirm card is not the run's time",
+  "query": "Save the draft.",
+  "notes": "Deterministic (scripted-model) case for the wall-clock/confirm contract. Under `balanced` the bare Save commit confirms; the harness plays a slow user who takes 1.2s to approve while the run's whole wall-clock budget is 1s. Before the fix the loop came back to 'Reached the time limit' with the save undone. Now the confirm wait is credited back to the deadline, the save lands (status flips to Saved, so the done is verified), and the run ends done.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Notes",
+      "maxSteps": 4,
+      "preset": "balanced",
+      "wallClockSeconds": 1,
+      "confirmDelaySeconds": 1.2,
+      "elements": [
+        { "id": "status", "role": "statictext", "label": "Status", "value": "Unsaved" },
+        { "id": "save", "role": "button", "label": "Save", "onClick": { "setValues": [{ "id": "status", "value": "Saved" }] } }
+      ],
+      "expectOutcome": ["done"],
+      "successClicked": ["save"],
+      "successValues": [{ "id": "status", "equals": "Saved" }],
+      "minVerifyChanged": 1,
+      "feedTitleContains": ["Confirm:", "Approved:"],
+      "scriptedActions": [
+        "{\"verb\":\"click\",\"target\":{\"mark\":2},\"note\":\"save the draft\"}",
+        "{\"verb\":\"done\",\"reason\":\"saved\"}"
+      ]
+    }
+  }
+}

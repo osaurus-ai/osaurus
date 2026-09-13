@@ -89,6 +89,15 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
     /// override, or the same local model already resident).
     private var residencyPlan: ResidencyPlan = .none
 
+    /// Funnel attribution for `ComputerUseTool`. `loopStarted` flips the
+    /// moment `run` hands control to `ComputerUseLoop` (from then on the run
+    /// emits its own `computer_use_run`); `refusalStage` names the gate that
+    /// refused inside this kind so the tool can report it without parsing
+    /// the failure envelope. Host-level refusals (recursion, admission, RAM
+    /// safety) are classified from the envelope instead.
+    private(set) var loopStarted = false
+    private(set) var refusalStage: ComputerUseRefusalStage?
+
     /// Idle-wait budget (seconds) for the residency unload to wait for chat to
     /// go idle before giving up. The loop itself is step-capped (`RunLimits`),
     /// so this bounds only the pre-unload wait, not the run.
@@ -113,16 +122,18 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
         // Defense in depth for stale/direct invocations that did not pass
         // through a request ToolExecutionScope. Computer Use is custom-agent
         // only and remains governed by both its per-agent flag and Tools.
-        let allowed = await MainActor.run {
-            guard agentId != Agent.defaultId,
-                let agent = AgentManager.shared.agent(for: agentId)
-            else { return false }
-            return agent.toolsEnabled && agent.settings.computerUseEnabled
-        }
-        guard allowed else {
-            throw SubagentError.denied(
-                "Computer Use is not enabled for this custom agent."
+        // Each refusal names its own gate: one shared "not enabled" string
+        // sent users to the per-agent toggle when the real fix was switching
+        // off the Default agent or turning Tools back on.
+        let refusal: String? = await MainActor.run {
+            Self.authorizationRefusal(
+                agentId: agentId,
+                agent: AgentManager.shared.agent(for: agentId)
             )
+        }
+        if let refusal {
+            refusalStage = .agentAuth
+            throw SubagentError.denied(refusal)
         }
         // One shared path for precedence (per-agent `computer_use` override →
         // the parent agent's model), the availability fallback, and the live
@@ -131,19 +142,28 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
         // the parent turn is awaiting this tool result. `evalModel` is nil: the
         // eval harness is handled by the early-return above (it carries a
         // driver/gate/vision, not just a model).
-        let resolved = try await SubagentModelResolution.resolve(
-            capabilityId: capability.id,
-            agentId: agentId,
-            evalModel: nil,
-            idleWaitSeconds: Self.residencyIdleWaitSeconds,
-            deniedMessage:
-                "Running Computer Use on a different local model requires \"Local Orchestrator "
-                + "Handoff\" enabled in Settings → Subagents (so the chat model can unload to "
-                + "make room).",
-            unavailableMessage:
-                "No model is selected for this agent, so Computer Use can't run. Pick a model first.",
-            defaultModel: { AgentManager.shared.effectiveModel(for: agentId) }
-        )
+        let resolved: SubagentModelResolution.Resolved
+        do {
+            resolved = try await SubagentModelResolution.resolve(
+                capabilityId: capability.id,
+                agentId: agentId,
+                evalModel: nil,
+                idleWaitSeconds: Self.residencyIdleWaitSeconds,
+                deniedMessage:
+                    "Running Computer Use on a different local model requires \"Local Orchestrator "
+                    + "Handoff\" enabled in Settings → Subagents (so the chat model can unload to "
+                    + "make room).",
+                unavailableMessage:
+                    "No model is selected for this agent, so Computer Use can't run. Pick a model first.",
+                defaultModel: { AgentManager.shared.effectiveModel(for: agentId) }
+            )
+        } catch SubagentError.denied(let message) {
+            refusalStage = .handoffDenied
+            throw SubagentError.denied(message)
+        } catch SubagentError.unavailable(let message) {
+            refusalStage = .modelUnavailable
+            throw SubagentError.unavailable(message)
+        }
         let modelId = resolved.model
         // Snapshot the run rules from the RESOLVED model in a second main-actor
         // hop: the agent's autonomy ceiling, a snapshot of the user policy, and
@@ -172,6 +192,30 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
         )
         self.residencyPlan = resolved.decision.plan
         return ResolvedModel(name: modelId, id: nil, isLocal: resolved.decision.isLocal)
+    }
+
+    /// The stage-specific refusal for a direct/stale invocation, or `nil` when
+    /// the agent may run Computer Use. Pure over the resolved agent so the
+    /// message contract is unit-testable without `AgentManager`.
+    static func authorizationRefusal(agentId: UUID, agent: Agent?) -> String? {
+        if agentId == Agent.defaultId {
+            return "Computer Use is not available to the built-in Default agent. "
+                + "Switch to a custom agent that has Computer Use enabled "
+                + "(Agents → Configure → Subagents → Computer Use)."
+        }
+        guard let agent else {
+            return "Computer Use is not enabled for this custom agent: the agent could not be "
+                + "found, so its Computer Use setting cannot be checked."
+        }
+        if !agent.toolsEnabled {
+            return "Computer Use is paused for this custom agent because Tools is off. "
+                + "Turn Tools on for the agent to use Computer Use."
+        }
+        if !agent.settings.computerUseEnabled {
+            return "Computer Use is not enabled for this custom agent. Enable it under "
+                + "Agents → Configure → Subagents → Computer Use."
+        }
+        return nil
     }
 
     func makeHandoff() -> SubagentHandoff {
@@ -223,6 +267,7 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
         guard let config else {
             throw SubagentError.unavailable("Computer Use could not resolve its run configuration.")
         }
+        loopStarted = true
         let toolCallId = scope.toolCallId
         // The confirm/consent overlay drains off `ComputerUsePromptQueue`; clear
         // any pending prompts for this run when it ends (mirrors the old tool's
@@ -248,6 +293,13 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
             },
             requestCloudVisionConsent: {
                 await ComputerUsePromptQueue.shared.requestCloudVisionConsent(toolCallId: toolCallId)
+            },
+            confirmUnavailable: {
+                await MainActor.run {
+                    ComputerUsePromptQueue.shared.canPresent
+                        ? nil
+                        : "no chat window is open to show the approval card"
+                }
             },
             limits: limits,
             policySummary: config.policySummary,
