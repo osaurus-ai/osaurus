@@ -80,14 +80,18 @@ struct ChatTabLayoutPersistenceTests {
 
             window.loadSession(first)
             window.openSessionInNewTab(second)
+            // A conversation typed into a fresh tab: switching away saves
+            // it (it gets its id then), so it is remembered like the others.
+            window.newTab(agentId: Agent.defaultId)
+            addTurn(window.session, "typed here")
+            #expect(window.session.sessionId == nil, "unsaved until the tab switch")
             // A trailing blank tab with nothing typed (⌘T) — not remembered.
             window.newTab(agentId: Agent.defaultId)
-            addTurn(window.session, "unsaved")  // has a turn but no id yet
-            window.newTab(agentId: Agent.defaultId)
             #expect(window.tabs.count == 4)
+            let third = try #require(window.tabs[2].session.sessionId, "saved on the way out")
 
             let record = window.tabLayoutSnapshot()
-            #expect(record.tabs.map(\.sessionId) == [first.id, second.id])
+            #expect(record.tabs.map(\.sessionId) == [first.id, second.id, third])
             #expect(record.activeSessionId == nil, "the active blank tab has nothing to reopen")
 
             window.selectTab(id: window.tabs[1].id)
