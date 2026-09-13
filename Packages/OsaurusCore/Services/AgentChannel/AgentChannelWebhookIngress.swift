@@ -30,7 +30,8 @@ struct AgentChannelWebhookIngressResponse: Error, Equatable, Sendable {
     var penalizeSource: Bool = false
 
     static func json(_ status: Int, _ object: [String: Any], penalize: Bool = false) -> Self {
-        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]))
+        let data =
+            (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]))
             ?? Data(#"{"error":{"code":"encoding_failed"}}"#.utf8)
         return Self(status: status, body: String(decoding: data, as: UTF8.self), penalizeSource: penalize)
     }
@@ -137,7 +138,8 @@ actor AgentChannelWebhookIngress {
     typealias ConnectionLookup = @Sendable (String) -> AgentChannelConnection?
     typealias RelaySubmit = @Sendable (AgentChannelInboundRelayRequest) async -> AgentChannelInboundRelaySubmission
     typealias TaskLookup = @Sendable (UUID) async -> AgentChannelWebhookTaskSnapshot?
-    typealias ReplyHandlerFactory = @Sendable (AgentChannelConnection, AgentChannelN8nEnvelope)
+    typealias ReplyHandlerFactory =
+        @Sendable (AgentChannelConnection, AgentChannelN8nEnvelope)
         -> AgentChannelInboundReplyHandler?
 
     private let substrate: AgentChannelAsyncSubstrate
@@ -150,7 +152,9 @@ actor AgentChannelWebhookIngress {
     private let relaySubmit: RelaySubmit
     private let taskLookup: TaskLookup
     private let rateLimiter: PairingRateLimiter
-    /// Optional outbound push (Stage 2 wires the n8n preset here).
+    /// Runner used for the optional outbound push (reply to n8n webhook).
+    private let outboundRunner: any AgentChannelCustomJSONRunning
+    /// Test seam; when nil the n8n preset decides whether a push applies.
     private var replyHandlerFactory: ReplyHandlerFactory?
 
     private var taskOwners: [UUID: String] = [:]
@@ -168,6 +172,7 @@ actor AgentChannelWebhookIngress {
         relaySubmit: RelaySubmit? = nil,
         taskLookup: TaskLookup? = nil,
         rateLimiter: PairingRateLimiter = PairingRateLimiter(window: 60, maxPerWindow: 120, denialCooldown: 10),
+        outboundRunner: (any AgentChannelCustomJSONRunning)? = nil,
         replyHandlerFactory: ReplyHandlerFactory? = nil
     ) {
         self.substrate = substrate
@@ -176,14 +181,17 @@ actor AgentChannelWebhookIngress {
         self.messageStore = messageStore
         self.activityCenter = activityCenter
         self.transportHealth = transportHealth
-        self.connectionLookup = connectionLookup ?? { id in
-            AgentChannelConfigurationStore.load().connection(id: id)
-        }
-        self.relaySubmit = relaySubmit ?? { request in
-            await AgentChannelInboundRelay.shared.submit(request)
-        }
+        self.connectionLookup =
+            connectionLookup ?? { id in
+                AgentChannelConfigurationStore.load().connection(id: id)
+            }
+        self.relaySubmit =
+            relaySubmit ?? { request in
+                await AgentChannelInboundRelay.shared.submit(request)
+            }
         self.taskLookup = taskLookup ?? Self.defaultTaskLookup
         self.rateLimiter = rateLimiter
+        self.outboundRunner = outboundRunner ?? AgentChannelCustomJSONRunner()
         self.replyHandlerFactory = replyHandlerFactory
     }
 
@@ -236,8 +244,14 @@ actor AgentChannelWebhookIngress {
                 $0.inboundRejected += 1
                 $0.lastFailureReason = "unauthorized"
             }
-            await publishHealth(connection: connection, failure: "Inbound request failed \(n8n.inboundVerification.method.rawValue) verification.")
-            return penalizing(.error(401, code: "unauthorized", message: "Channel request did not verify.", penalize: true), source: request.sourceAddress)
+            await publishHealth(
+                connection: connection,
+                failure: "Inbound request failed \(n8n.inboundVerification.method.rawValue) verification."
+            )
+            return penalizing(
+                .error(401, code: "unauthorized", message: "Channel request did not verify.", penalize: true),
+                source: request.sourceAddress
+            )
         }
 
         let envelope: AgentChannelN8nEnvelope
@@ -315,7 +329,11 @@ actor AgentChannelWebhookIngress {
                     "event_id": envelope.eventId,
                     "task_id": partition.sessionId.uuidString.lowercased(),
                     "session_id": partition.sessionId.uuidString.lowercased(),
-                    "poll_url": Self.pollPath(kind: request.kind, connectionId: connection.id, taskId: partition.sessionId),
+                    "poll_url": Self.pollPath(
+                        kind: request.kind,
+                        connectionId: connection.id,
+                        taskId: partition.sessionId
+                    ),
                 ]
             )
         case .denied:
@@ -375,8 +393,9 @@ actor AgentChannelWebhookIngress {
                 content: envelope.content,
                 attachments: envelope.attachments.map(\.stored),
                 settings: n8n.inboundDispatch,
-                sourceLabel: "n8n connection \(connection.id), conversation \(envelope.conversationId), sender \(envelope.sender.id)",
-                reply: replyHandlerFactory?(connection, envelope)
+                sourceLabel:
+                    "n8n connection \(connection.id), conversation \(envelope.conversationId), sender \(envelope.sender.id)",
+                reply: replyHandler(for: connection, envelope: envelope)
             )
         )
 
@@ -460,7 +479,10 @@ actor AgentChannelWebhookIngress {
         )
         guard verification.status == .verified else {
             bump(connectionId) { $0.signatureFailures += 1 }
-            return penalizing(.error(401, code: "unauthorized", message: "Channel request did not verify.", penalize: true), source: request.sourceAddress)
+            return penalizing(
+                .error(401, code: "unauthorized", message: "Channel request did not verify.", penalize: true),
+                source: request.sourceAddress
+            )
         }
 
         guard let taskId = UUID(uuidString: rawTaskId.trimmingCharacters(in: .whitespacesAndNewlines)) else {
@@ -595,6 +617,21 @@ actor AgentChannelWebhookIngress {
 
     // MARK: - Private
 
+    private func replyHandler(
+        for connection: AgentChannelConnection,
+        envelope: AgentChannelN8nEnvelope
+    ) -> AgentChannelInboundReplyHandler? {
+        if let replyHandlerFactory {
+            return replyHandlerFactory(connection, envelope)
+        }
+        return AgentChannelN8nPreset.replyHandler(
+            for: connection,
+            envelope: envelope,
+            runner: outboundRunner,
+            ingress: self
+        )
+    }
+
     private struct ResolvedConnection {
         var connection: AgentChannelConnection
         var n8n: AgentChannelN8nConfiguration
@@ -605,7 +642,9 @@ actor AgentChannelWebhookIngress {
         connectionId: String
     ) -> Result<ResolvedConnection, AgentChannelWebhookIngressResponse> {
         guard let requestedKind = AgentChannelKind(rawValue: kind), requestedKind == .n8n else {
-            return .failure(.error(400, code: "unsupported_kind", message: "Channel kind '\(kind)' has no webhook ingress."))
+            return .failure(
+                .error(400, code: "unsupported_kind", message: "Channel kind '\(kind)' has no webhook ingress.")
+            )
         }
         guard !connectionId.isEmpty, let connection = connectionLookup(connectionId) else {
             return .failure(.error(404, code: "connection_not_found", message: "Channel connection not found."))
@@ -617,7 +656,9 @@ actor AgentChannelWebhookIngress {
             return .failure(.error(403, code: "connection_disabled", message: "Channel connection is disabled."))
         }
         guard let n8n = connection.n8n else {
-            return .failure(.error(400, code: "unsupported_kind", message: "Connection is missing its n8n configuration."))
+            return .failure(
+                .error(400, code: "unsupported_kind", message: "Connection is missing its n8n configuration.")
+            )
         }
         return .success(ResolvedConnection(connection: connection, n8n: n8n))
     }
@@ -660,11 +701,12 @@ actor AgentChannelWebhookIngress {
         if case .dispatched(let dispatchedTarget, _)? = submission {
             target = dispatchedTarget
         } else {
-            target = AgentChannelDispatchRouter.resolve(
-                settings: n8n.inboundDispatch,
-                roomId: envelope.conversationId,
-                content: envelope.content
-            )?.target ?? n8n.inboundDispatch.target
+            target =
+                AgentChannelDispatchRouter.resolve(
+                    settings: n8n.inboundDispatch,
+                    roomId: envelope.conversationId,
+                    content: envelope.content
+                )?.target ?? n8n.inboundDispatch.target
         }
         return substrate.makeSessionPartition(
             target: target,
@@ -708,7 +750,8 @@ actor AgentChannelWebhookIngress {
         } else if row.inboundAccepted > 0 {
             status = .healthy
             severity = .info
-            summary = "Verified n8n events are flowing (\(row.inboundAccepted) accepted, \(row.inboundRejected) rejected)."
+            summary =
+                "Verified n8n events are flowing (\(row.inboundAccepted) accepted, \(row.inboundRejected) rejected)."
         } else {
             status = .idle
             severity = .info

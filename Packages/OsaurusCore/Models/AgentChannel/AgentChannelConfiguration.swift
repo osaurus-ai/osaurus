@@ -404,6 +404,8 @@ struct AgentChannelCustomHTTPAction: Codable, Equatable, Sendable {
     var idempotency: AgentChannelCustomHTTPIdempotency?
     var timeoutSeconds: Double?
     var maxResponseBytes: Int?
+    /// Additive: HMAC header over the rendered body (see `AgentChannelCustomHTTPBodySignature`).
+    var bodySignature: AgentChannelCustomHTTPBodySignature?
 
     init(
         method: String = "GET",
@@ -415,7 +417,8 @@ struct AgentChannelCustomHTTPAction: Codable, Equatable, Sendable {
         responseMapping: AgentChannelCustomHTTPResponseMapping = AgentChannelCustomHTTPResponseMapping(),
         idempotency: AgentChannelCustomHTTPIdempotency? = nil,
         timeoutSeconds: Double? = nil,
-        maxResponseBytes: Int? = nil
+        maxResponseBytes: Int? = nil,
+        bodySignature: AgentChannelCustomHTTPBodySignature? = nil
     ) {
         self.method = method.uppercased()
         self.path = path
@@ -427,6 +430,7 @@ struct AgentChannelCustomHTTPAction: Codable, Equatable, Sendable {
         self.idempotency = idempotency?.normalized
         self.timeoutSeconds = timeoutSeconds.map(Self.clampTimeout)
         self.maxResponseBytes = maxResponseBytes.map(Self.clampResponseBytes)
+        self.bodySignature = bodySignature?.normalized
     }
 
     init(from decoder: Decoder) throws {
@@ -448,6 +452,9 @@ struct AgentChannelCustomHTTPAction: Codable, Equatable, Sendable {
         timeoutSeconds = try container.decodeIfPresent(Double.self, forKey: .timeoutSeconds).map(Self.clampTimeout)
         maxResponseBytes = try container.decodeIfPresent(Int.self, forKey: .maxResponseBytes)
             .map(Self.clampResponseBytes)
+        bodySignature =
+            try container.decodeIfPresent(AgentChannelCustomHTTPBodySignature.self, forKey: .bodySignature)?
+            .normalized
     }
 
     var normalized: AgentChannelCustomHTTPAction {
@@ -461,7 +468,8 @@ struct AgentChannelCustomHTTPAction: Codable, Equatable, Sendable {
             responseMapping: responseMapping,
             idempotency: idempotency,
             timeoutSeconds: timeoutSeconds,
-            maxResponseBytes: maxResponseBytes
+            maxResponseBytes: maxResponseBytes,
+            bodySignature: bodySignature
         )
     }
 

@@ -44,7 +44,8 @@ enum AgentChannelConnectionManagerError: LocalizedError, Equatable, Sendable {
         case .missingN8nConfiguration(let id):
             return "n8n channel `\(id)` requires an n8n configuration block."
         case .invalidN8nOutboundURL(let url):
-            return "n8n outbound webhook URL `\(url)` must be an absolute http(s) URL."
+            return
+                "n8n outbound webhook URL `\(url)` must be an absolute HTTPS URL to a public host. Loopback, private-network, and plain-HTTP targets are refused by the outbound host policy; use pull-based replies for local n8n."
         case .invalidN8nVerificationHeader(let header):
             return "n8n verification header `\(header)` is not a valid HTTP header name."
         case .invalidCustomHTTPBaseURL(let url):
@@ -345,7 +346,10 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
     private func validatedConnection(
         _ connection: AgentChannelConnection
     ) throws -> AgentChannelConnection {
-        let normalized = connection.normalized
+        // n8n: project the optional outbound webhook onto the generic custom
+        // HTTP fields the runner reads (secret reference, actions, write
+        // allowlists) before validation so the stored row is self-consistent.
+        let normalized = AgentChannelN8nPreset.applyingOutbound(to: connection).normalized
         guard !normalized.id.isEmpty else {
             throw AgentChannelConnectionManagerError.emptyConnectionId
         }
@@ -368,7 +372,16 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
             // action set so every runner gate applies unchanged; validate it
             // exactly like a custom connection when present.
             if normalized.customHTTP != nil {
-                try validateCustomHTTPConfiguration(for: normalized)
+                do {
+                    try validateCustomHTTPConfiguration(for: normalized)
+                } catch AgentChannelConnectionManagerError.invalidCustomHTTPBaseURL {
+                    // The runner's host policy (C2) refused the outbound target
+                    // (loopback / private ranges / plain HTTP). Name the n8n
+                    // field the operator actually edited.
+                    throw AgentChannelConnectionManagerError.invalidN8nOutboundURL(
+                        normalized.n8n?.outbound.webhookURL ?? normalized.customHTTP?.baseURL ?? ""
+                    )
+                }
             }
         }
         return normalized

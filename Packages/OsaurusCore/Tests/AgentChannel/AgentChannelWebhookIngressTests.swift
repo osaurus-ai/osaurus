@@ -308,7 +308,9 @@ struct AgentChannelWebhookIngressTests {
             #expect(audit.count == 1)
             #expect(audit.first?.reason == "sender_not_allowlisted")
             #expect(audit.first?.shouldDispatch == false)
-            try #expect(harness.store.recentMessages(connectionId: Self.connectionId, roomId: "conv-1", limit: 5).isEmpty)
+            try #expect(
+                harness.store.recentMessages(connectionId: Self.connectionId, roomId: "conv-1", limit: 5).isEmpty
+            )
             let stages = await harness.activity.recent(connectionId: Self.connectionId).map(\.stage)
             #expect(stages == [.rejected, .received])
         }
@@ -755,8 +757,47 @@ struct AgentChannelWebhookIngressTests {
                 try manager.upsertConnection(badHeader)
             }
 
+            // C2 refuses loopback / private / plain-HTTP push targets at save time.
+            for blocked in [
+                "http://localhost:5678/webhook/reply",
+                "https://127.0.0.1:5678/webhook/reply",
+                "https://10.0.0.7:5678/webhook/reply",
+            ] {
+                var loopback = Self.connection()
+                loopback.n8n?.outbound = AgentChannelN8nOutboundConfiguration(webhookURL: blocked)
+                #expect(throws: AgentChannelConnectionManagerError.invalidN8nOutboundURL(blocked)) {
+                    try manager.upsertConnection(loopback)
+                }
+            }
+
             try manager.upsertConnection(Self.connection())
-            #expect(AgentChannelConfigurationStore.load().connection(id: "n8n-main")?.kind == .n8n)
+            let pollOnly = try #require(AgentChannelConfigurationStore.load().connection(id: "n8n-main"))
+            #expect(pollOnly.kind == .n8n)
+            #expect(pollOnly.customHTTP == nil)
+            #expect(!pollOnly.writeEnabled)
+            #expect(pollOnly.spaceAllowlist.contains(AgentChannelN8nConfiguration.spaceId))
+            #expect(pollOnly.secrets.map(\.name) == [AgentChannelN8nConfiguration.defaultSecretName])
+
+            // A public HTTPS webhook is projected onto the runner-visible fields.
+            var pushed = Self.connection()
+            pushed.n8n?.outbound = AgentChannelN8nOutboundConfiguration(
+                webhookURL: "https://n8n.example.com/webhook/osaurus-reply"
+            )
+            try manager.upsertConnection(pushed, replacingOriginalId: "n8n-main")
+            let stored = try #require(AgentChannelConfigurationStore.load().connection(id: "n8n-main"))
+            #expect(stored.customHTTP?.baseURL == "https://n8n.example.com")
+            #expect(stored.customHTTP?.actions[AgentChannelAction.sendMessage.rawValue]?.bodySignature != nil)
+            #expect(stored.supportedActions.contains(.sendMessage))
+            #expect(stored.writeEnabled)
+            #expect(stored.writeRoomAllowlist == stored.inboundAuthorization.roomAllowlist)
+
+            // Clearing the webhook removes the projection again.
+            var cleared = stored
+            cleared.n8n?.outbound = AgentChannelN8nOutboundConfiguration()
+            try manager.upsertConnection(cleared, replacingOriginalId: "n8n-main")
+            let reloaded = try #require(AgentChannelConfigurationStore.load().connection(id: "n8n-main"))
+            #expect(reloaded.customHTTP == nil)
+            #expect(!reloaded.supportedActions.contains(.sendMessage))
         }
     }
 }

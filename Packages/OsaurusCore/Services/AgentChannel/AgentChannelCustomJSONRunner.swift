@@ -82,7 +82,7 @@ struct PermissiveAgentChannelCustomJSONAuthorizationPolicy: AgentChannelCustomJS
     func authorize(_: AgentChannelCustomJSONAuthorizationRequest) throws {}
 }
 
-protocol AgentChannelCustomJSONRunning {
+protocol AgentChannelCustomJSONRunning: Sendable {
     func diagnostics(connection: AgentChannelConnection) async -> [String: Any]
     func listSpaces(connection: AgentChannelConnection) async throws -> [[String: Any]]
     func listRooms(connection: AgentChannelConnection, spaceId: String) async throws -> [[String: Any]]
@@ -262,8 +262,10 @@ final class AgentChannelCustomJSONRunner: AgentChannelCustomJSONRunning, @unchec
                 "header_names": action.headers.keys.sorted(),
                 "body_template_configured": action.bodyTemplate != nil,
                 "required_inputs": placeholders.inputs.sorted(),
-                "secret_references": placeholders.secrets.sorted(),
+                "secret_references": (placeholders.secrets.union([action.bodySignature?.secretName].compactMap { $0 }))
+                    .sorted(),
                 "idempotency_configured": action.idempotency != nil,
+                "body_signature_configured": action.bodySignature != nil,
                 "response_mapping_configured": action.responseMapping != AgentChannelCustomHTTPResponseMapping(),
                 "success_status_codes": action.successStatusCodes,
                 "dry_run": true,
@@ -936,6 +938,31 @@ final class AgentChannelCustomJSONRunner: AgentChannelCustomJSONRunning, @unchec
                 )
             }
             request.httpBody = bodyData
+        }
+
+        if let signature = action.bodySignature {
+            try Self.validateHeaderName(signature.header)
+            guard signature.algorithm == AgentChannelCustomHTTPBodySignature.hmacSHA256 else {
+                throw AgentChannelCustomJSONRunnerError.invalidRequest(
+                    "Unsupported body signature algorithm `\(signature.algorithm)`."
+                )
+            }
+            guard let reference = connection.secrets.first(where: { $0.name == signature.secretName }) else {
+                throw AgentChannelCustomJSONRunnerError.missingSecret(signature.secretName)
+            }
+            guard let secret = secretResolver.secret(
+                named: reference.name,
+                keychainId: reference.keychainId,
+                connection: connection
+            ), !secret.isEmpty else {
+                throw AgentChannelCustomJSONRunnerError.missingSecret(signature.secretName)
+            }
+            redactor.register(name: reference.name, value: secret)
+            let digest = AgentChannelAsyncSubstrate.hmacSHA256Hex(body: request.httpBody ?? Data(), secret: secret)
+            let value = signature.prefix + digest
+            try Self.validateHeaderValue(value)
+            request.setValue(value, forHTTPHeaderField: signature.header)
+            renderedHeaders[signature.header] = value
         }
 
         let redactedBody = request.httpBody.flatMap { bodyData -> String? in

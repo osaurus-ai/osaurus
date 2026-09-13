@@ -144,6 +144,54 @@ struct AgentChannelCustomHTTPResponseMapping: Codable, Equatable, Sendable {
         }
     }
 }
+/// Optional HMAC over the rendered request body, attached as a header so the
+/// receiver (an n8n Webhook trigger, for example) can verify the payload came
+/// from this Osaurus connection. The secret is resolved from the connection's
+/// `secrets` by name at request time and is never rendered into the body.
+struct AgentChannelCustomHTTPBodySignature: Codable, Equatable, Sendable {
+    static let defaultHeader = "X-Osaurus-Channel-Signature"
+    static let defaultPrefix = "sha256="
+    static let hmacSHA256 = "hmac_sha256"
+
+    var header: String
+    var secretName: String
+    var algorithm: String
+    var prefix: String
+
+    init(
+        header: String = AgentChannelCustomHTTPBodySignature.defaultHeader,
+        secretName: String,
+        algorithm: String = AgentChannelCustomHTTPBodySignature.hmacSHA256,
+        prefix: String = AgentChannelCustomHTTPBodySignature.defaultPrefix
+    ) {
+        let trimmedHeader = header.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.header = trimmedHeader.isEmpty ? Self.defaultHeader : trimmedHeader
+        self.secretName = secretName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAlgorithm = algorithm.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        self.algorithm = trimmedAlgorithm.isEmpty ? Self.hmacSHA256 : trimmedAlgorithm
+        self.prefix = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            header: try container.decodeIfPresent(String.self, forKey: .header) ?? Self.defaultHeader,
+            secretName: try container.decode(String.self, forKey: .secretName),
+            algorithm: try container.decodeIfPresent(String.self, forKey: .algorithm) ?? Self.hmacSHA256,
+            prefix: try container.decodeIfPresent(String.self, forKey: .prefix) ?? Self.defaultPrefix
+        )
+    }
+
+    var normalized: AgentChannelCustomHTTPBodySignature {
+        AgentChannelCustomHTTPBodySignature(
+            header: header,
+            secretName: secretName,
+            algorithm: algorithm,
+            prefix: prefix
+        )
+    }
+}
+
 struct AgentChannelCustomHTTPIdempotency: Codable, Equatable, Sendable {
     var header: String?
     var keyTemplate: String?
