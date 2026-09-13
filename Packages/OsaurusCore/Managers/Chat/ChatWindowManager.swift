@@ -238,6 +238,17 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     /// Stop all active sessions (chat and work) across all windows.
     /// Called during app termination to prevent crashes from in-flight inference.
     public func stopAllSessions() {
+        // Quit path: record every window's tabs BEFORE the teardown below
+        // drops the inactive ones, and stop listening so the teardown's own
+        // change signals cannot overwrite that record with the lone
+        // survivor. Termination is deferred, so the windows stay on screen
+        // while this runs; order them out so the user does not watch the
+        // tabs disappear.
+        persistTabLayoutNow()
+        for (id, state) in windowStates {
+            state.onTabLayoutChanged = nil
+            nsWindows[id]?.orderOut(nil)
+        }
         for (_, state) in windowStates {
             state.cleanup()
         }
