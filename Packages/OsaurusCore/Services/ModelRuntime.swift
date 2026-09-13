@@ -3617,8 +3617,9 @@ public actor ModelRuntime {
             requestBoundedChildHeadroomBytes: profile.requestBoundedChildHeadroomBytes
                 .flatMap(Self.nonnegativeUInt64),
             // Normal loading and handoff use this same host estimator. After
-            // allocator recovery this is a fresh OS sample, not an arithmetic
-            // credit for buffers that might still be resident.
+            // allocator recovery the planner waits out the kernel's cached
+            // statistics window before sampling again. Never credit freed
+            // buffers arithmetically: other work may have consumed the RAM.
             reclaimableBytes: Self.nonnegativeUInt64(
                 ChatResidencyHandoff.availableMemoryBytes()
             ),

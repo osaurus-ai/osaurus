@@ -277,7 +277,16 @@ enum SubagentBatchAdmissionPlanner {
         isolation: isolated (any Actor)? = #isolation,
         ramSafetyEnabled: Bool,
         sample: () async -> SubagentBatchMemoryFacts?,
-        reclaim: () async -> Bool
+        reclaim: () async -> Bool,
+        waitForPostReclaimSample: () async throws -> Void = {
+            // XNU rate-limits third-party host_statistics64 callers using a
+            // shared 1-second cache (osfmk/kern/host.c,
+            // rate_limit_host_statistics). A second successful syscall can
+            // return the PRE-reclaim counters. Outlive that window before
+            // making recovery's final decision; polling it faster cannot
+            // force a refresh. The extra 100ms avoids a boundary sample.
+            try await Task.sleep(for: .milliseconds(1_100))
+        }
     ) async -> SubagentBatchMemoryFacts? {
         let initial = await sample()
         guard ramSafetyEnabled, !Task.isCancelled,
@@ -292,6 +301,12 @@ enum SubagentBatchAdmissionPlanner {
             saturatingSubtract(budget, footprint) < perChild
         { return initial }
         guard await reclaim(), !Task.isCancelled else { return initial }
+        do {
+            try await waitForPostReclaimSample()
+        } catch {
+            return initial
+        }
+        guard !Task.isCancelled else { return initial }
         let refreshed = await sample()
         log.info(
             "[admission-recovery] model=\(facts.canonicalModelKey, privacy: .public) reclaimable_before=\(facts.reclaimableBytes ?? 0) reclaimable_after=\(refreshed?.reclaimableBytes ?? 0) fresh_estimate_available=\(refreshed != nil)"

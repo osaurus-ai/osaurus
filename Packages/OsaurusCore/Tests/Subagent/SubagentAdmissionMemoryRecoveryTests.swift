@@ -5,6 +5,51 @@ import Testing
 
 @Suite("Admission freed-buffer recovery")
 struct SubagentAdmissionMemoryRecoveryTests {
+    @Test("post-reclaim admission must outlive the kernel host-statistics cache window")
+    func recoveryDoesNotReuseKernelCachedPreReleaseFacts() async throws {
+        let before = facts(availableMiB: 3_328)
+        let after = facts(availableMiB: 3_584)
+        var releasedAt: ContinuousClock.Instant?
+        var samples = 0
+        let recovered = await SubagentBatchAdmissionPlanner.memoryFactsAfterReclaimingIfNeeded(
+            ramSafetyEnabled: true,
+            sample: {
+                samples += 1
+                // Match XNU's observable contract: a successful syscall may
+                // still return the pre-release sample inside its 1s window.
+                guard let releasedAt,
+                    releasedAt.duration(to: .now) >= .seconds(1)
+                else { return before }
+                return after
+            },
+            reclaim: { releasedAt = .now; return true }
+        )
+        #expect(samples == 2)
+        #expect(recovered == after)
+        #expect(plan(recovered).localCapacity == 1)
+    }
+
+    @Test("cancellation in the kernel sampling wait stops recovery before resampling")
+    func cancellationDuringSamplingWait() async {
+        let task = Task {
+            var samples = 0
+            let before = facts(availableMiB: 3_328)
+            let result = await SubagentBatchAdmissionPlanner.memoryFactsAfterReclaimingIfNeeded(
+                ramSafetyEnabled: true,
+                sample: { samples += 1; return before },
+                reclaim: { true },
+                waitForPostReclaimSample: {
+                    withUnsafeCurrentTask { $0?.cancel() }
+                    try Task.checkCancellation()
+                }
+            )
+            #expect(samples == 1)
+            #expect(result == before)
+            #expect(Task.isCancelled)
+        }
+        await task.value
+    }
+
     private func facts(availableMiB: UInt64, budgetMiB: UInt64 = 11_264) -> SubagentBatchMemoryFacts {
         SubagentBatchMemoryFacts(
             canonicalModelKey: "same-resident-model",
