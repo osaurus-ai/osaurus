@@ -839,6 +839,35 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         loadMetadataInternal(filter: (agentId: agentId, source: source))
     }
 
+    /// Session rows (no turns) for the given ids, in one statement. Ids
+    /// without a row are simply absent from the result; order is not
+    /// guaranteed. Used to build hibernated tab stand-ins without reading
+    /// whole transcripts.
+    public func loadMetadata(ids: [UUID]) -> [ChatSessionData] {
+        guard !ids.isEmpty else { return [] }
+        var sessions: [ChatSessionData] = []
+        let placeholders = (1...ids.count).map { "?\($0)" }.joined(separator: ",")
+        let sql = Self.baseSessionSelectSQL + " WHERE id IN (\(placeholders))"
+        do {
+            try prepareAndExecute(
+                sql,
+                bind: { stmt in
+                    for (offset, id) in ids.enumerated() {
+                        Self.bindText(stmt, index: offset + 1, value: id.uuidString)
+                    }
+                },
+                process: { stmt in
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        sessions.append(Self.readSession(stmt, turns: []))
+                    }
+                }
+            )
+        } catch {
+            print("[ChatHistoryDatabase] loadMetadata(ids:) failed: \(error)")
+        }
+        return sessions
+    }
+
     /// Aggregated turn counts keyed by session id.
     ///
     /// Reads the maintained `turn_count` column on `sessions` rather than

@@ -61,6 +61,46 @@ enum ChatSessionStore {
         return recovered
     }
 
+    /// Metadata rows (turns empty) for the given ids, in one query. Writes
+    /// still deferred behind a closed database are overlaid so a chat saved
+    /// moments ago is not reported missing. Ids with no row are absent.
+    static func loadMetadata(ids: [UUID]) -> [ChatSessionData] {
+        ensureOpen()
+        var byId: [UUID: ChatSessionData] = [:]
+        for row in ChatHistoryDatabase.shared.loadMetadata(ids: ids) {
+            byId[row.id] = row
+        }
+        for id in ids {
+            if var pending = pendingSaves[id] {
+                pending.turns = []
+                byId[id] = pending
+            }
+        }
+        return ids.compactMap { byId[$0] }
+    }
+
+    /// `load(id:)` with the database read off the main actor, for callers
+    /// on the interactive path (waking a hibernated tab) that must not park
+    /// the main thread behind the history queue. Same pending-save overlay
+    /// and transcript recovery as the synchronous load.
+    static func loadAsync(id: UUID) async -> ChatSessionData? {
+        ensureOpen()
+        if let pending = pendingSaves[id] { return pending }
+        guard didOpen else { return nil }
+        let db = ChatHistoryDatabase.shared
+        guard let session = await Task.detached(priority: .userInitiated, operation: { db.loadSession(id: id) }).value
+        else { return nil }
+        let recovered = recoverTranscriptTurnsIfNeeded(session)
+        if session.turns.isEmpty, !recovered.turns.isEmpty, didOpen {
+            do {
+                try ChatHistoryDatabase.shared.saveSession(recovered)
+            } catch {
+                print("[ChatSessionStore] Failed to heal recovered turns for \(id): \(error)")
+            }
+        }
+        return recovered
+    }
+
     /// Session ids whose message bodies contain `text` (case-insensitive
     /// substring). Backs the sidebar's full-text search; returns an empty set
     /// for a blank query or while the database is deferred/closed. The scan

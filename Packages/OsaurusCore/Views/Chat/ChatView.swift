@@ -171,6 +171,11 @@ final class ChatSession: ObservableObject {
     /// gate keys on `isStreaming`, which still waits for the real end.
     @Published var outputComplete: Bool = false
 
+    /// True while a hibernated tab's transcript is being read from disk
+    /// (`ChatWindowState.wake`). The chat surface shows a loading state
+    /// instead of the empty-chat greeting for the gap.
+    @Published var isHydratingTranscript: Bool = false
+
     @Published var isStreaming: Bool = false {
         didSet {
             guard isStreaming != oldValue else { return }
@@ -9518,7 +9523,16 @@ struct ChatView: View {
                         // Content area (show immediately, model discovery is async)
                         if session.hasAnyModel || session.isDiscoveringModels {
                             if !session.hasVisibleThreadMessages {
-                                emptyStateView
+                                if session.isHydratingTranscript {
+                                    // A hibernated tab being woken: its
+                                    // transcript is on its way, so don't
+                                    // flash the new-chat greeting.
+                                    ProgressView()
+                                        .controlSize(.small)
+                                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                } else {
+                                    emptyStateView
+                                }
                             } else {
                                 // Message thread. While a prompt
                                 // overlay is mounted, blur the thread

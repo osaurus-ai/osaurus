@@ -139,7 +139,14 @@ struct ChatTabLayoutPersistenceTests {
             #expect(window.tabs.count == 2)
             #expect(window.tabs.map(\.session.sessionId) == [first.id, second.id])
             #expect(window.session.sessionId == second.id, "reopens on the chat that was showing")
+            // The transcript is read off the main thread: the tab is selected
+            // at once, shows a loading state, and fills in when the load lands.
+            #expect(window.session.isHydratingTranscript)
+            #expect(window.session.turns.isEmpty)
+            await window.awaitTranscriptHydration()
+            #expect(!window.session.isHydratingTranscript)
             #expect(window.session.turns.count == 1, "the active tab is woken from disk")
+            #expect(window.tabs.first { $0.session.sessionId == second.id }?.isHibernated == false)
 
             let inactive = try #require(window.tabs.first { $0.session.sessionId == first.id })
             #expect(inactive.isHibernated)
@@ -168,6 +175,92 @@ struct ChatTabLayoutPersistenceTests {
             #expect(window.session.sessionId == other.id)
             #expect(window.tabs.count == 2)
             #expect(window.tabs.last?.isHibernated == true)
+        }
+    }
+
+    @Test func restore_buildsStubsFromMetadataOnly() async throws {
+        try await ChatHistoryTestStorage.run {
+            // A chat NOT in the sessions manager cache (saved straight to the
+            // store) still comes back, via the batched metadata query, with
+            // its title but no transcript.
+            let stored = storedSession("Cold")
+            let record = ChatTabLayoutRecord(
+                tabs: [.init(sessionId: stored.id, lastActivatedAt: Date())],
+                activeSessionId: nil, savedAt: Date())
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+            addTurn(window.session, "keep the initial tab")
+
+            #expect(window.restoreTabs(from: record) == 1)
+            let tab = try #require(window.tabs.first { $0.session.sessionId == stored.id })
+            #expect(tab.isHibernated)
+            #expect(tab.session.title == "Cold")
+            #expect(tab.session.turns.isEmpty)
+            #expect(!tab.session.isHydratingTranscript, "nothing loads until the tab is selected")
+        }
+    }
+
+    // MARK: Waking
+
+    @Test func wake_switchingAwayBeforeTheLoadLands_hydratesInPlaceWithoutStealingFocus() async throws {
+        try await ChatHistoryTestStorage.run {
+            let stored = storedSession("Slow")
+            let record = ChatTabLayoutRecord(
+                tabs: [.init(sessionId: stored.id, lastActivatedAt: Date())],
+                activeSessionId: nil, savedAt: Date())
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+            addTurn(window.session, "home")
+            let home = window.activeTabId
+            #expect(window.restoreTabs(from: record) == 1)
+            let cold = try #require(window.tabs.first { $0.session.sessionId == stored.id })
+
+            window.selectTab(id: cold.id)
+            #expect(cold.session.isHydratingTranscript)
+            // Selecting it again while loading must not start a second load.
+            window.selectTab(id: home)
+            window.selectTab(id: cold.id)
+            window.selectTab(id: home)
+
+            await window.awaitTranscriptHydration()
+            #expect(window.activeTabId == home, "the load completing never changes the selection")
+            let woken = try #require(window.tabs.first { $0.id == cold.id })
+            #expect(!woken.isHibernated)
+            #expect(woken.session.turns.count == 1, "hydrated in place")
+        }
+    }
+
+    @Test func wake_closingTheTabBeforeTheLoadLands_isDropped() async throws {
+        try await ChatHistoryTestStorage.run {
+            let stored = storedSession("Closed early")
+            let record = ChatTabLayoutRecord(
+                tabs: [.init(sessionId: stored.id, lastActivatedAt: Date())],
+                activeSessionId: nil, savedAt: Date())
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+            addTurn(window.session, "home")
+            #expect(window.restoreTabs(from: record) == 1)
+            let cold = try #require(window.tabs.first { $0.session.sessionId == stored.id })
+
+            window.selectTab(id: cold.id)
+            window.closeTab(id: cold.id)
+            #expect(window.tabs.count == 1)
+
+            await window.awaitTranscriptHydration()
+            #expect(window.tabs.count == 1, "a closed tab does not come back")
+            #expect(cold.session.turns.isEmpty, "the discarded stand-in is left alone")
+        }
+    }
+
+    @Test func store_loadMetadataByIds_returnsRowsWithoutTurns() async throws {
+        try await ChatHistoryTestStorage.run {
+            let a = storedSession("A")
+            let b = storedSession("B")
+            let missing = UUID()
+            let rows = ChatSessionStore.loadMetadata(ids: [b.id, missing, a.id])
+            #expect(rows.map(\.id) == [b.id, a.id], "requested order, missing ids absent")
+            #expect(rows.allSatisfy { $0.turns.isEmpty })
+            #expect(rows.map(\.title) == ["B", "A"])
         }
     }
 

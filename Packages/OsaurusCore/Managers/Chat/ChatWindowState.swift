@@ -1462,12 +1462,13 @@ final class ChatWindowState: ObservableObject {
     @discardableResult
     func restoreTabs(from record: ChatTabLayoutRecord) -> Int {
         var restored = 0
-        for entry in record.tabs {
-            guard !tabs.contains(where: { $0.session.sessionId == entry.sessionId }),
-                BackgroundTaskManager.shared.taskState(for: entry.sessionId) == nil,
-                var snapshot = ChatSessionStore.load(id: entry.sessionId)
-            else { continue }
-            snapshot.turns = []
+        let candidates = record.tabs.filter { entry in
+            !tabs.contains { $0.session.sessionId == entry.sessionId }
+                && BackgroundTaskManager.shared.taskState(for: entry.sessionId) == nil
+        }
+        let stubs = transcriptStubs(for: candidates.map(\.sessionId))
+        for entry in candidates {
+            guard let snapshot = stubs[entry.sessionId] else { continue }
             let cold = makeFreshSession(agentId: snapshot.agentId ?? agentId, loading: snapshot)
             var tab = ChatTab(id: UUID(), session: cold)
             tab.isHibernated = true
@@ -1522,8 +1523,7 @@ final class ChatWindowState: ObservableObject {
     func attachRetainedTab(for task: BackgroundTaskState) -> Bool {
         guard !task.isSubagentMirror, task.chatSession == nil, !task.status.isActive else { return false }
         guard !tabs.contains(where: { $0.session.sessionId == task.id }) else { return false }
-        guard var snapshot = ChatSessionStore.load(id: task.id) else { return false }
-        snapshot.turns = []
+        guard let snapshot = transcriptStubs(for: [task.id])[task.id] else { return false }
         let cold = makeFreshSession(agentId: snapshot.agentId ?? task.agentId, loading: snapshot)
         var tab = ChatTab(id: UUID(), session: cold)
         tab.isHibernated = true
@@ -1727,13 +1727,71 @@ final class ChatWindowState: ObservableObject {
         tabs[idx].isHibernated = true
     }
 
-    /// Reload a hibernated tab's transcript from disk in place.
+    /// Metadata-only session snapshots (turns empty) for hibernated tab
+    /// stand-ins. The sessions manager already holds every chat's row for
+    /// the sidebar, so most ids cost no disk read at all; the rest come
+    /// from one batched metadata query. Never a full transcript load: with
+    /// dozens of remembered tabs those reads, on the main thread at window
+    /// creation, were the dominant cost of opening a window.
+    private func transcriptStubs(for ids: [UUID]) -> [UUID: ChatSessionData] {
+        var stubs: [UUID: ChatSessionData] = [:]
+        var missing: [UUID] = []
+        for id in ids {
+            if var cached = ChatSessionsManager.shared.session(for: id) {
+                cached.turns = []
+                stubs[id] = cached
+            } else {
+                missing.append(id)
+            }
+        }
+        for var row in ChatSessionStore.loadMetadata(ids: missing) {
+            row.turns = []
+            stubs[row.id] = row
+        }
+        return stubs
+    }
+
+    /// Reload a hibernated tab's transcript in place, off the main thread.
+    /// The tab stays `isHibernated` (title from the stand-in, no transcript)
+    /// and its session reports `isHydratingTranscript` so the chat surface
+    /// shows a loading state rather than the empty-chat greeting; both clear
+    /// when the transcript lands. The completion is dropped if the tab was
+    /// closed or its session replaced meanwhile (the stand-in is no longer
+    /// in `tabs`), and a second select while a load is in flight does not
+    /// start another.
     private func wake(tabAt idx: Int) {
         let cold = tabs[idx].session
-        if let sid = cold.sessionId, let full = ChatSessionStore.load(id: sid) {
-            cold.load(from: full)
+        guard let sid = cold.sessionId else {
+            tabs[idx].isHibernated = false
+            return
         }
-        tabs[idx].isHibernated = false
+        guard !cold.isHydratingTranscript else { return }
+        cold.isHydratingTranscript = true
+        let task = Task { @MainActor [weak self] in
+            let full = await ChatSessionStore.loadAsync(id: sid)
+            guard let self else { return }
+            defer { self.hydrationTasks.removeValue(forKey: ObjectIdentifier(cold)) }
+            cold.isHydratingTranscript = false
+            guard let liveIdx = self.tabs.firstIndex(where: { $0.session === cold && $0.isHibernated }),
+                cold.sessionId == sid
+            else { return }
+            if let full {
+                cold.load(from: full)
+            }
+            self.tabs[liveIdx].isHibernated = false
+        }
+        hydrationTasks[ObjectIdentifier(cold)] = task
+    }
+
+    /// In-flight transcript loads keyed by the stand-in session, so tests
+    /// (and any caller that needs a hydrated transcript) can wait for them.
+    private var hydrationTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
+
+    /// Wait for every in-flight tab wake to finish.
+    func awaitTranscriptHydration() async {
+        while let task = hydrationTasks.values.first {
+            await task.value
+        }
     }
 
     /// Sessions that are actually hydrated in this window (excludes
