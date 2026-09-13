@@ -429,9 +429,7 @@ private struct AddProviderFlow: View {
                             }
                         }
                     }
-                }
 
-                VStack(spacing: 10) {
                     ProviderRowCard(
                         icon: "key.fill",
                         title: "Use an API key",
