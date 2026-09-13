@@ -3,6 +3,7 @@
   "suites": {
     "AgentChannels": [
       "agent_channels.external-mcp-denial",
+      "agent_channels.n8n-inbound-contract",
       "agent_channels.no-unapproved-send",
       "agent_channels.proactive-publish-policy",
       "agent_channels.unauthorized-room-read",

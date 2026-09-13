@@ -262,6 +262,53 @@ validation, nonce replay protection, message-store dedupe, and the write kill
 switch. The helper prunes stale in-memory rate windows and task leases lazily
 when authorized channel requests are evaluated.
 
+## Webhook Ingress (`/channels/`)
+
+The generic inbound route `POST /channels/{kind}/{connection_id}/inbound` and
+its poll twin `GET /channels/{kind}/{connection_id}/tasks/{task_id}` are
+bearer-exempt: they are reachable without an `osk-v1` key because the caller is
+an external automation (today: n8n) that cannot hold one. The connection
+secret is therefore the entire authentication, and `AgentChannelWebhookIngress`
+applies these rules in order, before any other work:
+
+- **Rate limit first.** A dedicated per-source limiter (120 requests/min with
+  a 10 s cooldown after a denial) runs before connection lookup, so an unknown
+  caller cannot enumerate connection ids cheaply. `401` and foreign-task `404`
+  responses penalize the source.
+- **Connection gate.** Unknown ids return `404 connection_not_found`, disabled
+  connections `403 connection_disabled`, kinds without ingress `400
+  unsupported_kind`.
+- **Remote transport policy.** Non-loopback plaintext callers receive `426
+  secure_channel_required` unless the connection explicitly opts into
+  `plaintext_allowed`. Loopback and Secure Channel (`/secure/call`) callers
+  always pass. This is the same fail-closed posture the agent request gate
+  uses; the Docker-on-the-same-Mac topology is the documented reason the
+  opt-in exists.
+- **Verify before parse.** Bodies over 256 KiB are refused with `413`. The
+  shared-secret header or HMAC-SHA256 body signature is checked with
+  constant-time comparison via `AgentChannelAsyncSubstrate.verifyWebhookSource`
+  *before* the body is decoded. A failed verification returns `401
+  unauthorized`, increments a per-connection `signature_failures` counter,
+  and writes nothing to the message store or activity feed. `none` is not an
+  accepted verification method for this route.
+- **Fail-closed authorization.** After parsing, `authorizeInboundMessage`
+  requires non-empty sender and room allowlists that match the envelope;
+  denials are recorded as audit rows (`202 rejected` with a typed reason) and
+  never dispatched.
+- **Dedupe.** `event_id` is the provider event id; replays acknowledge with
+  `200 duplicate` and do not create a second dispatch.
+- **Poll ownership.** A task is readable only by the connection that
+  dispatched it. Unknown and foreign tasks are indistinguishable (`404`), and
+  the returned `output` passes through `ChannelRemoteSafetyGate.sanitizeResult`.
+- **Redaction.** The verification header is the credential; the HTTP shim logs
+  only a redacted header twin and a byte count, and the secret never appears in
+  responses, activity rows, audit rows, or diagnostics.
+
+Residual risk to state, not hide: a `plaintext_allowed` connection reachable
+from a non-loopback network relies solely on the secret and rate limiter, and
+the read-only poll route is replayable within its window. Secure Channel
+remains the default and recommended remote transport.
+
 ## Local State Assumption
 
 The nonce table and kill-switch state are local JSON files. They are intended to

@@ -60,8 +60,12 @@ public enum AgentChannelEvalHarness {
 
         func authTest(token: String) async throws -> SlackAuthIdentity {
             SlackAuthIdentity(
-                url: nil, team: "Eval", user: "evalbot",
-                teamId: "T-EVAL", userId: "U-BOT", botId: "B-BOT"
+                url: nil,
+                team: "Eval",
+                user: "evalbot",
+                teamId: "T-EVAL",
+                userId: "U-BOT",
+                botId: "B-BOT"
             )
         }
 
@@ -70,45 +74,67 @@ public enum AgentChannelEvalHarness {
         }
 
         func conversations(
-            token: String, limit: Int, cursor: String?
+            token: String,
+            limit: Int,
+            cursor: String?
         ) async throws -> SlackConversationPage {
             SlackConversationPage(conversations: [])
         }
 
         func users(
-            token: String, limit: Int, cursor: String?
+            token: String,
+            limit: Int,
+            cursor: String?
         ) async throws -> SlackUserPage {
             SlackUserPage(users: [])
         }
 
         func messages(
-            channelId: String, token: String, limit: Int, cursor: String?
+            channelId: String,
+            token: String,
+            limit: Int,
+            cursor: String?
         ) async throws -> SlackMessagePage {
             lock.withLock { _fetchedChannelIds.append(channelId) }
             return SlackMessagePage(
                 messages: [
                     SlackMessage(
-                        type: "message", user: "U-ALICE", username: "alice",
-                        botId: nil, text: "fixture message", ts: "1700000000.000100",
-                        threadTs: nil, replyCount: nil
+                        type: "message",
+                        user: "U-ALICE",
+                        username: "alice",
+                        botId: nil,
+                        text: "fixture message",
+                        ts: "1700000000.000100",
+                        threadTs: nil,
+                        replyCount: nil
                     )
                 ]
             )
         }
 
         func threadMessages(
-            channelId: String, threadTs: String, token: String, limit: Int, cursor: String?
+            channelId: String,
+            threadTs: String,
+            token: String,
+            limit: Int,
+            cursor: String?
         ) async throws -> SlackMessagePage {
             SlackMessagePage(messages: [])
         }
 
         func sendMessage(
-            _ request: SlackOutboundMessageRequest, token: String
+            _ request: SlackOutboundMessageRequest,
+            token: String
         ) async throws -> SlackMessage {
             lock.withLock { _sendRequests.append(request) }
             return SlackMessage(
-                type: "message", user: "U-BOT", username: "evalbot", botId: "B-BOT",
-                text: request.content, ts: "1700000001.000200", threadTs: request.threadTs,
+                type: "message",
+                user: "U-BOT",
+                username: "evalbot",
+                botId: "B-BOT",
+                text: request.content,
+                ts: "1700000001.000200",
+                threadTs: request.threadTs,
                 replyCount: nil
             )
         }
@@ -130,8 +156,12 @@ public enum AgentChannelEvalHarness {
 
         func getChat(chatId: String, token: String) async throws -> TelegramChat {
             TelegramChat(
-                id: Int64(chatId) ?? 0, type: "group", title: "Eval Chat",
-                username: nil, firstName: nil, lastName: nil
+                id: Int64(chatId) ?? 0,
+                type: "group",
+                title: "Eval Chat",
+                username: nil,
+                firstName: nil,
+                lastName: nil
             )
         }
 
@@ -142,20 +172,36 @@ public enum AgentChannelEvalHarness {
         func deleteWebhook(token: String) async throws -> Bool { true }
 
         func getUpdates(
-            offset: Int64?, limit: Int, timeout: Int, token: String
+            offset: Int64?,
+            limit: Int,
+            timeout: Int,
+            token: String
         ) async throws -> [TelegramUpdate] { [] }
 
         func sendMessage(
-            chatId: String, text: String, replyToMessageId: Int?, parseMode: String?, token: String
+            chatId: String,
+            text: String,
+            replyToMessageId: Int?,
+            parseMode: String?,
+            token: String
         ) async throws -> TelegramMessage {
             lock.withLock { _sentTexts.append((chatId, text)) }
             return TelegramMessage(
-                messageId: 1, date: 0,
+                messageId: 1,
+                date: 0,
                 chat: TelegramChat(
-                    id: Int64(chatId) ?? 0, type: "group", title: "Eval Chat",
-                    username: nil, firstName: nil, lastName: nil
+                    id: Int64(chatId) ?? 0,
+                    type: "group",
+                    title: "Eval Chat",
+                    username: nil,
+                    firstName: nil,
+                    lastName: nil
                 ),
-                from: nil, senderChat: nil, text: text, caption: nil, replyToMessage: nil
+                from: nil,
+                senderChat: nil,
+                text: text,
+                caption: nil,
+                replyToMessage: nil
             )
         }
     }
@@ -236,6 +282,14 @@ public enum AgentChannelEvalHarness {
             runMCPDenial(expect: expect)
         case "proactive_publish":
             await runProactivePublish(expect: expect)
+        case "n8n_inbound_contract":
+            await runN8nInboundContract(
+                allowedRoomIds: allowedRoomIds,
+                deniedRoomId: deniedRoomId ?? "other-room",
+                allowedSenderId: allowedSenderId ?? "tpae",
+                deniedSenderId: deniedSenderId ?? "mallory",
+                expect: expect
+            )
         default:
             expect(false, "unknown agent_channels scenario '\(scenario)'")
         }
@@ -536,7 +590,9 @@ public enum AgentChannelEvalHarness {
             do {
                 _ = try await service.sendMessage(
                     TelegramWriteRequest(
-                        chatId: roomId, text: "unapproved", replyToMessageId: nil,
+                        chatId: roomId,
+                        text: "unapproved",
+                        replyToMessageId: nil,
                         confirmSend: false
                     )
                 )
@@ -548,7 +604,9 @@ public enum AgentChannelEvalHarness {
             do {
                 _ = try await service.sendMessage(
                     TelegramWriteRequest(
-                        chatId: roomId, text: "approved", replyToMessageId: nil,
+                        chatId: roomId,
+                        text: "approved",
+                        replyToMessageId: nil,
                         confirmSend: true
                     )
                 )
@@ -791,7 +849,9 @@ public enum AgentChannelEvalHarness {
         )
         let ambiguous = await ambiguousService.publish(
             AgentChannelPublishRequest(
-                bindingId: "own-autonomous", content: "maybe sent", intentKey: "k-ambiguous"
+                bindingId: "own-autonomous",
+                content: "maybe sent",
+                intentKey: "k-ambiguous"
             ),
             context: context(source: .schedule, isUnattendedDispatch: true)
         )
@@ -801,7 +861,9 @@ public enum AgentChannelEvalHarness {
         )
         let ambiguousReplay = await ambiguousService.publish(
             AgentChannelPublishRequest(
-                bindingId: "own-autonomous", content: "maybe sent", intentKey: "k-ambiguous"
+                bindingId: "own-autonomous",
+                content: "maybe sent",
+                intentKey: "k-ambiguous"
             ),
             context: context(source: .schedule, isUnattendedDispatch: true)
         )
@@ -855,7 +917,9 @@ public enum AgentChannelEvalHarness {
         )
         let staleQueued = await staleService.publish(
             AgentChannelPublishRequest(
-                bindingId: "own-confirm", content: "queued body", intentKey: "k-stale"
+                bindingId: "own-confirm",
+                content: "queued body",
+                intentKey: "k-stale"
             ),
             context: context(source: .schedule, isUnattendedDispatch: true)
         )
@@ -970,7 +1034,9 @@ public enum AgentChannelEvalHarness {
         )
         let derivedQueued = await derivedService.publish(
             AgentChannelPublishRequest(
-                bindingId: derivedAutoId, content: "derived body", intentKey: "k-derived"
+                bindingId: derivedAutoId,
+                content: "derived body",
+                intentKey: "k-derived"
             ),
             context: context(source: .schedule, isUnattendedDispatch: true)
         )
@@ -1015,6 +1081,327 @@ public enum AgentChannelEvalHarness {
         )
 
         store.close()
+    }
+
+    /// n8n webhook ingress contract over the REAL `AgentChannelWebhookIngress`
+    /// with an in-memory store, a fixed secret and a recording relay (no
+    /// NIO, no model): verify-before-parse (bad secret + garbage body -> 401
+    /// with nothing stored), fail-closed sender/conversation allowlists,
+    /// duplicate `event_id` acknowledged without a second dispatch, envelope
+    /// version/shape enforcement, remote transport policy, poll ownership
+    /// and output sanitization, and the secret never appearing in any
+    /// response or audit row.
+    private static func runN8nInboundContract(
+        allowedRoomIds: [String],
+        deniedRoomId: String,
+        allowedSenderId: String,
+        deniedSenderId: String,
+        expect: (Bool, String) -> Void
+    ) async {
+        let secret = "n8n-eval-secret-0123456789abcdef"
+        let connectionId = "n8n-eval"
+        let agentId = UUID(uuidString: "33333333-3333-3333-3333-333333333333")!
+        let conversationId = allowedRoomIds.first ?? "n8n-test"
+
+        struct FixedSecretResolver: AgentChannelSecretResolving {
+            let secret: String
+            func secret(named name: String, keychainId: String, connection: AgentChannelConnection) -> String? {
+                secret
+            }
+        }
+
+        final class RelayRecorder: @unchecked Sendable {
+            private let lock = NSLock()
+            private var _requests: [AgentChannelInboundRelayRequest] = []
+            var requests: [AgentChannelInboundRelayRequest] { lock.withLock { _requests } }
+            func record(_ request: AgentChannelInboundRelayRequest) { lock.withLock { _requests.append(request) } }
+        }
+
+        func connection(policy: AgentChannelN8nRemoteTransportPolicy) -> AgentChannelConnection {
+            AgentChannelConnection(
+                id: connectionId,
+                name: "n8n Eval",
+                kind: .n8n,
+                supportedActions: [.diagnostics],
+                spaceAllowlist: [AgentChannelN8nConfiguration.spaceId],
+                inboundAuthorization: AgentChannelInboundAuthorizationPolicy(
+                    senderAllowlist: [allowedSenderId],
+                    roomAllowlist: allowedRoomIds.isEmpty ? [conversationId] : allowedRoomIds
+                ),
+                n8n: AgentChannelN8nConfiguration(
+                    inboundVerification: AgentChannelN8nInboundVerification(method: .sharedSecretHeader),
+                    inboundDispatch: AgentChannelInboundDispatchConfiguration(
+                        enabled: true,
+                        targetAgentId: agentId
+                    ),
+                    remoteTransportPolicy: policy
+                )
+            )
+        }
+
+        final class ConnectionBox: @unchecked Sendable {
+            private let lock = NSLock()
+            private var _connection: AgentChannelConnection
+            init(_ connection: AgentChannelConnection) { _connection = connection }
+            var connection: AgentChannelConnection {
+                get { lock.withLock { _connection } }
+                set { lock.withLock { _connection = newValue } }
+            }
+        }
+        let connectionBox = ConnectionBox(connection(policy: .secureChannelRequired))
+        // Inbound authorization runs through the real connection service,
+        // which resolves allowlists from the configuration store; seed it
+        // under the eval's isolated root and restore afterwards.
+        let previousConfiguration = AgentChannelConfigurationStore.load()
+        defer { try? AgentChannelConfigurationStore.save(previousConfiguration) }
+        try? AgentChannelConfigurationStore.save(
+            AgentChannelConfiguration(connections: [connection(policy: .secureChannelRequired)])
+        )
+
+        let ownTask = AgentChannelAsyncSubstrate.shared.makeSessionPartition(
+            target: .local(agentId),
+            connectionId: connectionId,
+            providerRoute: AgentChannelProviderRoute(conversationId: conversationId, threadId: nil)
+        ).sessionId
+        let foreignTask = UUID()
+        let taskLookup: AgentChannelWebhookIngress.TaskLookup = { id in
+            switch id {
+            case ownTask:
+                return AgentChannelWebhookTaskSnapshot(
+                    status: .completed,
+                    output: "PONG (api_key=sk-live-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456)",
+                    summary: "Chat completed",
+                    externalSessionKey: "agent-channel:\(connectionId):abc:s0",
+                    isChannelSource: true
+                )
+            case foreignTask:
+                return AgentChannelWebhookTaskSnapshot(
+                    status: .completed,
+                    output: "private",
+                    summary: nil,
+                    externalSessionKey: "agent-channel:other-connection:abc:s0",
+                    isChannelSource: true
+                )
+            default:
+                return nil
+            }
+        }
+
+        let store = AgentChannelMessageStore()
+        try? store.openInMemory()
+        defer { store.close() }
+        let activity = AgentChannelInboundActivityCenter()
+        let relay = RelayRecorder()
+        let ingress = AgentChannelWebhookIngress(
+            secretResolver: FixedSecretResolver(secret: secret),
+            messageStore: store,
+            activityCenter: activity,
+            transportHealth: AgentChannelTransportHealthCenter(),
+            connectionLookup: { id in id == connectionId ? connectionBox.connection : nil },
+            relaySubmit: { request in
+                relay.record(request)
+                return .dispatched(agentId: agentId, rule: "default")
+            },
+            taskLookup: taskLookup,
+            rateLimiter: PairingRateLimiter(window: 60, maxPerWindow: 1_000, denialCooldown: 0)
+        )
+
+        func envelope(
+            eventId: String,
+            conversation: String = conversationId,
+            sender: String = allowedSenderId,
+            version: Int = 1,
+            content: String? = "Reply with the single word PONG"
+        ) -> Data {
+            var object: [String: Any] = [
+                "v": version,
+                "event_id": eventId,
+                "conversation_id": conversation,
+                "sender": ["id": sender, "display": sender, "is_bot": false],
+            ]
+            if let content { object["content"] = content }
+            return (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
+        }
+
+        func request(
+            body: Data,
+            headers: [String: String]? = nil,
+            isLoopback: Bool = true,
+            isSecureChannel: Bool = false
+        ) -> AgentChannelWebhookIngressRequest {
+            AgentChannelWebhookIngressRequest(
+                kind: "n8n",
+                connectionId: connectionId,
+                headers: headers ?? ["X-Osaurus-Channel-Secret": secret, "Content-Type": "application/json"],
+                body: body,
+                sourceAddress: isLoopback ? "127.0.0.1" : "192.168.65.1",
+                isLoopback: isLoopback,
+                isSecureChannel: isSecureChannel
+            )
+        }
+
+        func json(_ response: AgentChannelWebhookIngressResponse) -> [String: Any] {
+            (try? JSONSerialization.jsonObject(with: Data(response.body.utf8))) as? [String: Any] ?? [:]
+        }
+
+        func errorCode(_ response: AgentChannelWebhookIngressResponse) -> String? {
+            (json(response)["error"] as? [String: Any])?["code"] as? String
+        }
+
+        // 1. Verify before parse: a bad secret with an unparseable body is 401
+        //    and nothing is parsed, stored, dispatched or audited.
+        let badSecret = await ingress.handleInbound(
+            request(body: Data("{not json".utf8), headers: ["X-Osaurus-Channel-Secret": "wrong"])
+        )
+        expect(badSecret.status == 401, "bad secret + malformed body -> 401 (got \(badSecret.status))")
+        expect(
+            errorCode(badSecret) == "unauthorized",
+            "401 code is unauthorized (got \(errorCode(badSecret) ?? "nil"))"
+        )
+        expect(badSecret.penalizeSource, "bad secret penalizes the source")
+        expect(relay.requests.isEmpty, "no dispatch after a bad secret")
+        let rowsAfterBadSecret = (try? store.messageCount(connectionId: connectionId, roomId: conversationId)) ?? -1
+        expect(rowsAfterBadSecret == 0, "no message rows after a bad secret (found \(rowsAfterBadSecret))")
+        let missingSecret = await ingress.handleInbound(request(body: envelope(eventId: "evt-0"), headers: [:]))
+        expect(missingSecret.status == 401, "missing secret header -> 401 (got \(missingSecret.status))")
+
+        // 2. Happy path: 202 accepted with a deterministic task id and poll URL.
+        let accepted = await ingress.handleInbound(request(body: envelope(eventId: "evt-1")))
+        expect(accepted.status == 202, "verified, allowlisted envelope -> 202 (got \(accepted.status))")
+        let acceptedBody = json(accepted)
+        expect(acceptedBody["status"] as? String == "accepted", "202 status is accepted")
+        expect(acceptedBody["dispatch"] as? String == "dispatched", "202 reports dispatched")
+        expect(
+            acceptedBody["task_id"] as? String == ownTask.uuidString.lowercased(),
+            "task_id equals the session partition id (got \(acceptedBody["task_id"] ?? "nil"))"
+        )
+        expect(
+            (acceptedBody["poll_url"] as? String)
+                == "/channels/n8n/\(connectionId)/tasks/\(ownTask.uuidString.lowercased())",
+            "poll_url points at the task route (got \(acceptedBody["poll_url"] ?? "nil"))"
+        )
+        expect(relay.requests.count == 1, "exactly one dispatch after the happy path (\(relay.requests.count))")
+        if let relayed = relay.requests.first {
+            expect(relayed.identity.kind == .n8n, "relay identity kind is n8n")
+            expect(relayed.identity.groupId == conversationId, "relay identity group is the conversation")
+            expect(relayed.identity.trustLevel == .verified, "relay identity is verified")
+            expect(relayed.content == "Reply with the single word PONG", "relay carries the envelope content verbatim")
+        }
+        let storedRows = (try? store.messageCount(connectionId: connectionId, roomId: conversationId)) ?? -1
+        expect(storedRows == 1, "one stored inbound row after the happy path (found \(storedRows))")
+
+        // 3. Duplicate event_id: acknowledged, same task id, no second dispatch.
+        let duplicate = await ingress.handleInbound(request(body: envelope(eventId: "evt-1")))
+        expect(duplicate.status == 200, "duplicate event_id -> 200 (got \(duplicate.status))")
+        expect(json(duplicate)["status"] as? String == "duplicate", "duplicate status reported")
+        expect(
+            json(duplicate)["task_id"] as? String == ownTask.uuidString.lowercased(),
+            "duplicate returns the original task id"
+        )
+        expect(relay.requests.count == 1, "no second dispatch for a duplicate (\(relay.requests.count))")
+
+        // 4. Fail-closed authorization: unknown sender and unknown conversation.
+        let badSender = await ingress.handleInbound(request(body: envelope(eventId: "evt-2", sender: deniedSenderId)))
+        expect(badSender.status == 202, "non-allowlisted sender -> 202 rejected (got \(badSender.status))")
+        expect(json(badSender)["status"] as? String == "rejected", "non-allowlisted sender status is rejected")
+        expect(
+            json(badSender)["reason"] as? String == "sender_not_allowlisted",
+            "reason is sender_not_allowlisted (got \(json(badSender)["reason"] ?? "nil"))"
+        )
+        let badRoom = await ingress.handleInbound(
+            request(body: envelope(eventId: "evt-3", conversation: deniedRoomId))
+        )
+        expect(json(badRoom)["status"] as? String == "rejected", "non-allowlisted conversation is rejected")
+        expect(
+            json(badRoom)["reason"] as? String == "room_not_allowlisted",
+            "reason is room_not_allowlisted (got \(json(badRoom)["reason"] ?? "nil"))"
+        )
+        expect(relay.requests.count == 1, "rejected events never dispatch (\(relay.requests.count))")
+        let rejectedRows = (try? store.messageCount(connectionId: connectionId, roomId: deniedRoomId)) ?? -1
+        expect(rejectedRows == 0, "no message rows for the denied conversation (found \(rejectedRows))")
+
+        // 5. Envelope contract is enforced only after verification.
+        let wrongVersion = await ingress.handleInbound(request(body: envelope(eventId: "evt-4", version: 2)))
+        expect(wrongVersion.status == 400, "v:2 -> 400 (got \(wrongVersion.status))")
+        expect(
+            errorCode(wrongVersion) == "unsupported_envelope_version",
+            "v:2 code is unsupported_envelope_version (got \(errorCode(wrongVersion) ?? "nil"))"
+        )
+        let missingContent = await ingress.handleInbound(request(body: envelope(eventId: "evt-5", content: nil)))
+        expect(missingContent.status == 400, "missing content -> 400 (got \(missingContent.status))")
+        expect(
+            errorCode(missingContent) == "invalid_payload",
+            "missing content code is invalid_payload (got \(errorCode(missingContent) ?? "nil"))"
+        )
+        expect(relay.requests.count == 1, "malformed envelopes never dispatch (\(relay.requests.count))")
+
+        // 6. Remote transport policy: non-loopback plaintext is 426 unless allowed.
+        let remotePlain = await ingress.handleInbound(request(body: envelope(eventId: "evt-6"), isLoopback: false))
+        expect(
+            remotePlain.status == 426,
+            "remote plaintext under secure_channel_required -> 426 (got \(remotePlain.status))"
+        )
+        expect(
+            errorCode(remotePlain) == "secure_channel_required",
+            "426 code is secure_channel_required (got \(errorCode(remotePlain) ?? "nil"))"
+        )
+        let remoteSecure = await ingress.handleInbound(
+            request(body: envelope(eventId: "evt-7"), isLoopback: false, isSecureChannel: true)
+        )
+        expect(remoteSecure.status == 202, "remote call through Secure Channel -> 202 (got \(remoteSecure.status))")
+        connectionBox.connection = connection(policy: .plaintextAllowed)
+        let remoteAllowed = await ingress.handleInbound(request(body: envelope(eventId: "evt-8"), isLoopback: false))
+        expect(
+            remoteAllowed.status == 202,
+            "remote plaintext under plaintext_allowed -> 202 (got \(remoteAllowed.status))"
+        )
+        connectionBox.connection = connection(policy: .secureChannelRequired)
+
+        // 7. Poll: owned task is sanitized; foreign and unknown tasks are 404.
+        let owned = await ingress.handleTaskPoll(request(body: Data()), taskId: ownTask.uuidString)
+        expect(owned.status == 200, "owned task poll -> 200 (got \(owned.status))")
+        expect(json(owned)["status"] as? String == "completed", "owned task status is completed")
+        let output = json(owned)["output"] as? String ?? ""
+        expect(output.contains("PONG"), "owned task output carries the reply")
+        expect(
+            !output.contains("sk-live-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"),
+            "owned task output is sanitized by ChannelRemoteSafetyGate"
+        )
+        let foreign = await ingress.handleTaskPoll(request(body: Data()), taskId: foreignTask.uuidString)
+        expect(foreign.status == 404, "foreign task poll -> 404 (got \(foreign.status))")
+        expect(!foreign.body.contains("private"), "foreign task output never leaks")
+        let unknown = await ingress.handleTaskPoll(request(body: Data()), taskId: UUID().uuidString)
+        expect(unknown.status == 404, "unknown task poll -> 404 (got \(unknown.status))")
+        let pollBadSecret = await ingress.handleTaskPoll(
+            request(body: Data(), headers: ["X-Osaurus-Channel-Secret": "wrong"]),
+            taskId: ownTask.uuidString
+        )
+        expect(pollBadSecret.status == 401, "poll with a bad secret -> 401 (got \(pollBadSecret.status))")
+
+        // 8. The secret never appears in responses, activity or audit rows.
+        let responses = [
+            badSecret, missingSecret, accepted, duplicate, badSender, badRoom, wrongVersion,
+            missingContent, remotePlain, remoteSecure, remoteAllowed, owned, foreign, unknown, pollBadSecret,
+        ]
+        expect(
+            !responses.contains { $0.body.contains(secret) },
+            "secret never appears in any response body"
+        )
+        let events = await activity.events(connectionId: connectionId, since: .distantPast)
+        expect(!events.isEmpty, "activity center recorded ingress stages (\(events.count) events)")
+        expect(
+            !events.contains { "\($0)".contains(secret) },
+            "secret never appears in activity events"
+        )
+        let audit = (try? store.recentAuditEvents(connectionId: connectionId, limit: 50)) ?? []
+        expect(
+            !audit.contains { "\($0)".contains(secret) },
+            "secret never appears in audit rows"
+        )
+        let health = await ingress.healthSnapshot(connectionId: connectionId)
+        expect(health.signatureFailures >= 3, "signature failures counted (\(health.signatureFailures))")
+        expect(health.inboundAccepted >= 3, "accepted events counted (\(health.inboundAccepted))")
+        expect(health.inboundDuplicates == 1, "duplicates counted (\(health.inboundDuplicates))")
     }
 
     /// Every agent_channel_* tool must be in the external-surface deny set
