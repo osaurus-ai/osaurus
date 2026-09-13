@@ -204,6 +204,7 @@ struct ConfigurationView: View {
                     SettingsToggle(
                         title: L("Hide Dock Icon"),
                         description: "Run in menu bar only (requires restart)",
+                        anchorId: "settings.general.dock",
                         isOn: $tempHideDockIcon
                     )
 
@@ -385,7 +386,8 @@ struct ConfigurationView: View {
                                             label: "Max Visible Toasts",
                                             text: $tempToastMaxVisible,
                                             placeholder: "5",
-                                            help: "Maximum toasts shown at once. Empty uses default 5"
+                                            help: "Maximum toasts shown at once. Empty uses default 5",
+                                            anchorId: "settings.notifications.maxVisible"
                                         )
                                         .onChange(of: tempToastMaxVisible) { _, _ in
                                             saveToastConfig()
@@ -396,7 +398,8 @@ struct ConfigurationView: View {
                                             label: "Max Concurrent Tasks",
                                             text: $tempToastMaxConcurrent,
                                             placeholder: "5",
-                                            help: "Maximum background tasks running at once. Empty uses default 5"
+                                            help: "Maximum background tasks running at once. Empty uses default 5",
+                                            anchorId: "settings.notifications.maxConcurrent"
                                         )
                                         .onChange(of: tempToastMaxConcurrent) { _, _ in
                                             saveToastConfig()

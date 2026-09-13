@@ -129,7 +129,7 @@ struct DefaultAgentSystemPromptBuilderTests {
         // of real tool calls, and compact under-specified osaurus_help's
         // action shape. The compact prompt must name actions explicitly and
         // never coin a "read tools" noun.
-        #expect(compact.contains("{action: 'topics' | 'read', topic: ...}"))
+        #expect(compact.contains("{action: 'topics' | 'read' | 'find', topic/query: ...}"))
         #expect(!compact.contains("read tools"))
         #expect(!compact.contains("Reads are"))
     }
@@ -351,6 +351,10 @@ struct DefaultAgentSystemPromptBuilderTests {
             #expect(rendered.contains("osaurus_help"))
             #expect(rendered.contains("answer"))
             #expect(rendered.lowercased().contains("memory") || rendered.contains("from its text"))
+            #expect(rendered.contains("find"))
+            #expect(
+                rendered.contains("Computer Use") || rendered.localizedCaseInsensitiveContains("spawn"),
+                "both variants must forbid hunting Settings via spawn/Computer Use")
         }
     }
 

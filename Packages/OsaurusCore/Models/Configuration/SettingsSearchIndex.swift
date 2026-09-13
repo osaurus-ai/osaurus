@@ -32,6 +32,11 @@ public struct SettingsSearchEntry: Identifiable, Sendable, Hashable {
     /// For tabs with their own inner navigation (e.g. Voice), the raw value of
     /// the sub-tab to open on landing. `nil` for flat tabs.
     public let subTab: String?
+    /// Short "not this" note when aliases collide (shown in search + `osaurus_help` find).
+    public let disambiguation: String?
+    /// `ConfigSectionID.rawValue` when `osaurus_config` can change this setting.
+    /// `nil` means Settings UI only.
+    public let declarativeSection: String?
 
     public init(
         id: String,
@@ -39,7 +44,9 @@ public struct SettingsSearchEntry: Identifiable, Sendable, Hashable {
         section: String = "",
         title: String,
         keywords: [String] = [],
-        subTab: String? = nil
+        subTab: String? = nil,
+        disambiguation: String? = nil,
+        declarativeSection: String? = nil
     ) {
         self.id = id
         self.tab = tab
@@ -47,6 +54,8 @@ public struct SettingsSearchEntry: Identifiable, Sendable, Hashable {
         self.title = title
         self.keywords = keywords
         self.subTab = subTab
+        self.disambiguation = disambiguation
+        self.declarativeSection = declarativeSection
     }
 
     /// Breadcrumb shown in results, e.g. ["Voice", "Speech to Text", "Transcription Model"].
@@ -57,6 +66,13 @@ public struct SettingsSearchEntry: Identifiable, Sendable, Hashable {
             ? [tab.label, title]
             : [tab.label, section, title]
     }
+
+    /// Management path the Orchestrator should quote, e.g. `Server › Cache › Context Window Cap`.
+    public var breadcrumbPath: String {
+        breadcrumb.joined(separator: " › ")
+    }
+
+    public var isSettingsUIOnly: Bool { declarativeSection == nil }
 }
 
 public enum SettingsSearchIndex {
@@ -89,6 +105,61 @@ public enum SettingsSearchIndex {
             .sorted { ($0.element.rank, $0.offset) < ($1.element.rank, $1.offset) }
             .map { $0.element.entry }
     }
+
+    /// Index rows that land on a tab (or section) rather than a single control.
+    /// Completeness tests allow these to lack a dedicated `settingsLandingAnchor`.
+    public static let tabLevelEntryIDs: Set<String> = [
+        "models.overview",
+        "providers.overview",
+        "knowledge.overview",
+        "tools.overview",
+        "skills.overview",
+        "commands.overview",
+        "schedules.overview",
+        "watchers.overview",
+        "sandbox.overview",
+        "insights.overview",
+        "agents.overview",
+        "agents.configure",
+        "agents.database",
+        "imageGeneration.tab",
+        "imageGeneration.models",
+        "imageGeneration.permission",
+        "imageGeneration.loadPolicy",
+        "imageGeneration.download",
+        "search.providers",
+        "search.premium",
+        "credits.webSearch",
+        "voice.stt.model",
+        "voice.stt.vad",
+        "voice.models",
+        "privacy.tab",
+        "server.connection",
+        "server.cors",
+        "server.auth",
+        "server.generation",
+        "server.residency",
+        "server.concurrency",
+        "server.proxy",
+        "server.cache",
+        "server.memorySafety",
+        "server.decode",
+        "server.speculative",
+        "server.liveActivity",
+        "server.multimodal",
+        "server.tools",
+        "server.power",
+        "server.requestLimits",
+        "server.peerInference",
+        "computerUse.enable",
+        "themes.appearance",
+        "memory.settings",
+        "workspaces.overview",
+        "identity.keys",
+        "settings.orchestrator.delegation",
+        "settings.orchestrator.delegation.mainChat",
+        "settings.orchestrator.delegation.handoff",
+    ]
 
     /// Every searchable setting, grouped by tab in declaration order.
     public static let entries: [SettingsSearchEntry] = [
@@ -135,6 +206,13 @@ public enum SettingsSearchIndex {
             title: "Factory Reset",
             keywords: ["reset", "wipe", "erase", "maintenance"]
         ),
+        .init(
+            id: "settings.general.dock",
+            tab: .settings,
+            section: "General",
+            title: "Hide Dock Icon",
+            keywords: ["dock", "menu bar", "menubar", "hide dock"]
+        ),
 
         // MARK: Chat (generation knobs now live in the dedicated Chat tab)
         .init(
@@ -142,14 +220,16 @@ public enum SettingsSearchIndex {
             tab: .orchestrator,
             section: "Identity",
             title: "System Prompt",
-            keywords: ["persona", "instructions", "system prompt", "orchestrator"]
+            keywords: ["persona", "instructions", "system prompt", "orchestrator"],
+            declarativeSection: "default_agent"
         ),
         .init(
             id: "settings.orchestrator.name",
             tab: .orchestrator,
             section: "Identity",
             title: "Orchestrator Name",
-            keywords: ["name", "rename", "display name", "orchestrator", "default agent", "osaurus"]
+            keywords: ["name", "rename", "display name", "orchestrator", "default agent", "osaurus"],
+            declarativeSection: "default_agent"
         ),
         .init(
             id: "settings.chat.autoGenerateTitles",
@@ -173,14 +253,45 @@ public enum SettingsSearchIndex {
             keywords: ["cmd n", "new chat", "shortcut", "keyboard", "new window", "hotkey"]
         ),
         .init(
+            id: "settings.chat.smoothStreaming",
+            tab: .chat,
+            section: "Chat",
+            title: "Smooth Streaming",
+            keywords: ["typewriter", "streaming pace", "token reveal", "smooth tokens"]
+        ),
+        .init(
             id: "settings.chat.thinkingDisplay",
             tab: .chat,
             section: "Chat",
             title: "Expand Thinking While Streaming",
             keywords: [
                 "thinking", "reasoning", "expand thinking", "show thinking",
-                "group thinking", "tool activity", "chain of thought",
+                "chain of thought",
             ]
+        ),
+        .init(
+            id: "settings.chat.activityRollup",
+            tab: .chat,
+            section: "Chat",
+            title: "Group Thinking & Tool Activity",
+            keywords: [
+                "group thinking", "tool activity", "rollup", "worked for",
+                "collapse tools", "activity row",
+            ]
+        ),
+        .init(
+            id: "settings.chat.clipboard",
+            tab: .chat,
+            section: "Chat",
+            title: "Clipboard Monitoring",
+            keywords: ["clipboard", "copied text", "grab selection", "paste context"]
+        ),
+        .init(
+            id: "settings.chat.keepAwakeForAgentRuns",
+            tab: .chat,
+            section: "Agent Sessions",
+            title: "Keep Mac Awake While Agents Run",
+            keywords: ["sleep", "awake", "caffeinate", "idle sleep", "power", "keep awake"]
         ),
         .init(
             id: "settings.chat.compactionModel",
@@ -194,7 +305,8 @@ public enum SettingsSearchIndex {
             tab: .orchestrator,
             section: "Generation",
             title: "Temperature",
-            keywords: ["randomness", "creativity", "sampling"]
+            keywords: ["randomness", "creativity", "sampling"],
+            declarativeSection: "default_agent"
         ),
         .init(
             id: "settings.orchestrator.maxTokens",
@@ -203,21 +315,47 @@ public enum SettingsSearchIndex {
             title: "Max Output Tokens",
             keywords: [
                 "response length", "output tokens", "generation config",
-                "max new tokens", "not context", "not kv",
-            ]
+                "max new tokens", "max tokens",
+            ],
+            disambiguation:
+                "Per-response length for the Orchestrator — not the chat context window, KV retention, or Server Sampling Defaults.",
+            declarativeSection: "default_agent"
         ),
         .init(
             id: "settings.chat.contextLength",
             tab: .server,
             section: "Cache",
-            title: "Context & KV Policy",
+            title: "Context Window Cap (tokens)",
             keywords: [
-                "context window", "context", "model maximum",
-                "metadata fallback", "kv retention", "cache window",
-                "context window cap", "context cap", "max context",
-                "limit context",
+                "context window", "context", "context length", "context budget",
+                "token budget", "model maximum", "context window cap",
+                "context cap", "max context", "limit context",
             ],
-            subTab: "cache"
+            subTab: "cache",
+            disambiguation:
+                "Lowers every model's chat window. Not Memory Budget, not Orchestrator max output tokens, not KV retention."
+        ),
+        .init(
+            id: "settings.server.contextMetadataFallback",
+            tab: .server,
+            section: "Cache",
+            title: "Unknown-Model Metadata Fallback (tokens)",
+            keywords: [
+                "metadata fallback", "unknown model", "context length fallback",
+            ],
+            subTab: "cache",
+            disambiguation:
+                "Used only when a model does not report a maximum. Does not constrain local bundles — use Context Window Cap for that."
+        ),
+        .init(
+            id: "settings.server.kvRetention",
+            tab: .server,
+            section: "Cache",
+            title: "KV Retention Override (tokens)",
+            keywords: ["kv retention", "cache window", "kv cap", "retention override"],
+            subTab: "cache",
+            disambiguation:
+                "GPU/SSD KV retention, not the semantic chat context window."
         ),
         .init(
             id: "settings.chat.topP",
@@ -302,11 +440,27 @@ public enum SettingsSearchIndex {
             keywords: ["timeout", "duration", "auto dismiss", "seconds"]
         ),
         .init(
+            id: "settings.notifications.maxVisible",
+            tab: .settings,
+            section: "Notifications",
+            title: "Max Visible Toasts",
+            keywords: ["max toasts", "toast stack", "visible toasts"]
+        ),
+        .init(
+            id: "settings.notifications.maxConcurrent",
+            tab: .settings,
+            section: "Notifications",
+            title: "Max Concurrent Tasks",
+            keywords: ["concurrent tasks", "background tasks", "task limit"]
+        ),
+        .init(
             id: "settings.toolPermissions",
             tab: .chat,
             section: "Tool Permissions",
             title: "Folder Tool Permissions",
-            keywords: ["permissions", "shell", "git", "write files", "edit files"]
+            keywords: ["folder permissions", "write files", "edit files", "working folder"],
+            disambiguation:
+                "Chat folder-tool policies (write/edit/shell/git). Not the Tools catalog and not macOS TCC."
         ),
         .init(
             id: "settings.legal",
@@ -329,8 +483,11 @@ public enum SettingsSearchIndex {
             id: "voice.stt.hotkey",
             tab: .voice,
             section: "Speech to Text",
-            title: "Dictation Hotkey",
-            keywords: ["push to talk", "voice hotkey", "shortcut"],
+            title: "Activation Hotkey",
+            keywords: [
+                "dictation hotkey", "push to talk", "voice hotkey", "shortcut",
+                "global hotkey", "activation hotkey",
+            ],
             subTab: "Speech To Text"
         ),
         .init(
@@ -371,6 +528,14 @@ public enum SettingsSearchIndex {
             section: "Text to Speech",
             title: "Spoken Voice",
             keywords: ["tts", "read aloud", "speech synthesis", "voice"],
+            subTab: "Text To Speech"
+        ),
+        .init(
+            id: "voice.tts.remote",
+            tab: .voice,
+            section: "Text to Speech",
+            title: "Remote TTS",
+            keywords: ["remote tts", "tts endpoint", "openai tts", "speech server"],
             subTab: "Text To Speech"
         ),
         .init(
@@ -421,9 +586,12 @@ public enum SettingsSearchIndex {
             section: "Sampling Defaults",
             title: "Generation Defaults",
             keywords: [
-                "top p", "temperature", "sampling", "sampler", "top k", "min p", "defaults",
+                "top p", "temperature", "sampling", "sampler", "top k", "min p",
+                "defaults", "max tokens",
             ],
-            subTab: "sampling"
+            subTab: "sampling",
+            disambiguation:
+                "Server/API sampling defaults. Orchestrator Max Output Tokens and agent Max Tokens are separate."
         ),
         .init(
             id: "server.residency",
@@ -556,14 +724,28 @@ public enum SettingsSearchIndex {
         .init(
             id: "permissions.tools",
             tab: .permissions,
-            title: "Tool Permissions",
-            keywords: ["allow", "ask", "deny", "shell", "files", "git", "auto approve"]
+            title: "macOS Permissions",
+            keywords: [
+                "system permissions", "tcc", "accessibility", "microphone",
+                "screen recording", "full disk access", "privacy",
+            ],
+            disambiguation:
+                "macOS grants (TCC). Not the Tools catalog Auto/Ask/Deny policies, and not Chat folder-tool permissions."
+        ),
+        .init(
+            id: "server.peerInference",
+            tab: .server,
+            title: "Share my models for inference",
+            keywords: ["peer inference", "share models", "lan inference", "expose models"]
         ),
         .init(
             id: "computerUse.enable",
             tab: .computerUse,
             title: "Computer Use",
-            keywords: ["screen control", "cursor", "automation", "accessibility", "per-app"]
+            keywords: [
+                "screen control", "cursor", "automation", "accessibility", "per-app",
+                "autonomy", "app allowlist", "screen context",
+            ]
         ),
         .init(
             id: "browser.enable",
@@ -588,7 +770,8 @@ public enum SettingsSearchIndex {
             keywords: [
                 "agent channels", "integrations", "channels", "discord", "slack", "telegram",
                 "imessage", "whatsapp", "custom json", "custom http", "remote channel",
-            ]
+            ],
+            declarativeSection: "channels"
         ),
         .init(
             id: "agentChannels.globalWrites",
@@ -741,7 +924,9 @@ public enum SettingsSearchIndex {
                 "helper jobs", "agent delegation", "allowed agents",
                 "allowed models", "allowed subagents", "main chat",
                 "batch subagents", "orchestrator",
-            ]
+                "image subagent", "applescript", "child budgets",
+            ],
+            declarativeSection: "delegation"
         ),
         .init(
             id: "settings.orchestrator.delegation.mainChat",
@@ -841,14 +1026,35 @@ public enum SettingsSearchIndex {
             id: "memory.settings",
             tab: .memory,
             title: "Memory",
-            keywords: ["memories", "facts", "recall", "long term memory"]
+            keywords: ["memories", "facts", "recall", "long term memory"],
+            declarativeSection: "memory"
+        ),
+        .init(
+            id: "memory.settings.enabled",
+            tab: .memory,
+            section: "Configuration",
+            title: "Enable Memory",
+            keywords: ["turn on memory", "disable memory", "memory switch"],
+            subTab: "settings",
+            declarativeSection: "memory"
         ),
         .init(
             id: "memory.settings.budget",
             tab: .memory,
             section: "Configuration",
             title: "Memory Budget",
-            keywords: ["memory tokens", "context budget", "injection"],
+            keywords: ["memory tokens", "injection", "memory budget"],
+            subTab: "settings",
+            disambiguation:
+                "Tokens of long-term memory injected per turn — not the chat Context Window Cap.",
+            declarativeSection: "memory"
+        ),
+        .init(
+            id: "memory.settings.consolidation",
+            tab: .memory,
+            section: "Configuration",
+            title: "Consolidation Interval",
+            keywords: ["consolidation", "decay", "dedup", "eviction interval"],
             subTab: "settings"
         ),
         .init(
@@ -872,7 +1078,20 @@ public enum SettingsSearchIndex {
             keywords: [
                 "agent", "assistant", "persona", "custom agent", "create agent",
                 "system prompt", "agent settings",
-            ]
+            ],
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.configure",
+            tab: .agents,
+            title: "Configure Agent",
+            keywords: [
+                "per-agent", "capabilities", "max tokens", "temperature",
+                "advanced", "agent model", "configure",
+            ],
+            disambiguation:
+                "Per-agent Advanced generation and capability toggles. Orchestrator defaults live under Orchestrator → Generation.",
+            declarativeSection: "agents"
         ),
         .init(
             id: "agents.database",
@@ -933,7 +1152,82 @@ public enum SettingsSearchIndex {
             tab: .search,
             section: "Advanced",
             title: "Custom Search Provider",
-            keywords: ["custom api", "json definition", "searxng", "perplexity", "self-hosted"]
+            keywords: ["custom api", "json definition", "searxng", "perplexity", "self-hosted"],
+            declarativeSection: "search_providers"
+        ),
+
+        // MARK: Tab-level rows for Management areas that had zero search hits
+        .init(
+            id: "models.overview",
+            tab: .models,
+            title: "Local Models",
+            keywords: ["install model", "download model", "mlx", "huggingface", "catalog"],
+            declarativeSection: "models"
+        ),
+        .init(
+            id: "providers.overview",
+            tab: .providers,
+            title: "Cloud Models",
+            keywords: ["provider", "api key", "openai", "anthropic", "openrouter", "xai"],
+            declarativeSection: "providers"
+        ),
+        .init(
+            id: "knowledge.overview",
+            tab: .knowledge,
+            title: "Knowledge",
+            keywords: ["collections", "documents", "rag", "index files"],
+            declarativeSection: "knowledge_collections"
+        ),
+        .init(
+            id: "tools.overview",
+            tab: .tools,
+            title: "Tools",
+            keywords: [
+                "tool catalog", "enable tools", "ask deny", "auto ask deny",
+                "mcp", "plugins", "tool policy",
+            ],
+            disambiguation:
+                "Global tool enablement and Auto/Ask/Deny. Not macOS Permissions and not Chat folder-tool policies.",
+            declarativeSection: "tools"
+        ),
+        .init(
+            id: "skills.overview",
+            tab: .skills,
+            title: "Skills",
+            keywords: ["skill packs", "install skill", "skill.md"]
+        ),
+        .init(
+            id: "commands.overview",
+            tab: .commands,
+            title: "Commands",
+            keywords: ["slash commands", "custom command", "prompt command"],
+            declarativeSection: "commands"
+        ),
+        .init(
+            id: "schedules.overview",
+            tab: .schedules,
+            title: "Schedules",
+            keywords: ["cron", "interval", "timed job", "recurring"],
+            declarativeSection: "schedules"
+        ),
+        .init(
+            id: "watchers.overview",
+            tab: .watchers,
+            title: "Watchers",
+            keywords: ["folder watcher", "file events", "watch folder"],
+            declarativeSection: "watchers"
+        ),
+        .init(
+            id: "sandbox.overview",
+            tab: .sandbox,
+            title: "Sandbox",
+            keywords: ["container", "isolation", "sandbox resources"]
+        ),
+        .init(
+            id: "insights.overview",
+            tab: .insights,
+            title: "Insights",
+            keywords: ["analytics", "usage", "charts", "metrics"]
         ),
     ]
 }

@@ -164,6 +164,7 @@ private struct PeerInferenceSharingSection: View {
                     "Teammates, local-network peers, and invite-link connections can list the models you expose in Server → Models and run inference through your Osaurus. Off: they see no models and inference requests are refused; shared-agent chat is unaffected.",
                 isOn: $isEnabled
             )
+            .settingsLandingAnchor("server.peerInference")
             .onChange(of: isEnabled) { _, newValue in
                 PeerInferenceSharing.setEnabled(newValue)
             }

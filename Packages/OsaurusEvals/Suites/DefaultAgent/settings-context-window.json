@@ -1,0 +1,27 @@
+{
+  "id": "default_agent.settings-context-window",
+  "domain": "default_agent",
+  "label": "default agent • context window / budget ask cites Server Cache, no spawn",
+  "query": "Change my default context window / context budget.",
+  "notes": "User-feedback lane: the Orchestrator used to invent Settings → Chat → context length, then spawn Computer Use to hunt Management. The catalog path is Management → Server → Settings → Cache → Context Window Cap. Must call osaurus_help (find or read). Must not spawn, must not apply a fake declarative key, must not claim the cap was changed.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_help"],
+      "mustNotCallTools": [
+        "spawn_agent",
+        "spawn_batch",
+        "spawn_model",
+        "computer_use",
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "rubric": [
+        "Tells the user the default context window is Context Window Cap under Management → Server → Settings → Cache (Context & KV Policy), not Chat.",
+        "Does NOT claim the cap was changed, applied, or updated — no fabricated success.",
+        "Does NOT spawn a specialist or Computer Use agent to click through Settings."
+      ],
+      "maxIterations": 6
+    }
+  }
+}

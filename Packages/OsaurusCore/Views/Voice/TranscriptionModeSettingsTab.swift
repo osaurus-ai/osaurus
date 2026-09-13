@@ -284,7 +284,7 @@ struct TranscriptionModeSettingsTab: View {
     // MARK: - Hotkey Settings Card
 
     private var hotkeySettingsCard: some View {
-        SettingsSection(title: "Activation Hotkey", icon: "command") {
+        SettingsSection(title: "Activation Hotkey", icon: "command", anchorId: "voice.stt.hotkey") {
             SettingsField(
                 label: "Global Hotkey",
                 hint: "Press this shortcut to start/stop transcription"

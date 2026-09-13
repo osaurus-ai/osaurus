@@ -7114,7 +7114,34 @@ private struct ContextBreakdownPopover: View {
                 divider
                 compactionSection
             }
+
+            divider
+            contextWindowCapLink
         }
+    }
+
+    private var contextWindowCapLink: some View {
+        Button {
+            ManagementStateManager.shared.serverSectionRequest = "cache"
+            SettingsHighlightCoordinator.shared.request("settings.chat.contextLength")
+            AppDelegate.shared?.showManagementWindow(initialTab: .server)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("Open Context Window Cap", bundle: .module)
+                    .font(.system(size: 11, weight: .medium))
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .foregroundColor(theme.accentColor)
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .localizedHelp("Open Management → Server → Cache → Context Window Cap")
     }
 
     // MARK: - Disk cache

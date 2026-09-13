@@ -1002,25 +1002,34 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
 public final class OsaurusHelpTool: OsaurusTool, @unchecked Sendable {
     public let name = "osaurus_help"
     public let description =
-        "Bundled Osaurus user guide — answers questions about what Osaurus is and how its features "
-        + "work (models, providers, agents, skills, plugins, MCP, schedules, memory, server/API, "
-        + "voice, themes, channels, automation). "
+        "Bundled Osaurus user guide and settings catalog — answers questions about what Osaurus is "
+        + "and how its features work, and where a setting lives. "
         + "`action`: topics (index of topic ids with summaries), read (needs `topic` id; returns the "
-        + "full topic text). Answer from the topic text — for the user's CURRENT configuration use "
-        + "osaurus_inspect instead."
+        + "full topic text), find (needs `query`; returns Management breadcrumbs from the same "
+        + "catalog as in-app settings search). Answer from the topic or find results — for the "
+        + "user's CURRENT configuration use osaurus_inspect instead. Never spawn an agent or use "
+        + "Computer Use to hunt Osaurus Settings."
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
         "properties": .object([
             "action": .object([
                 "type": .string("string"),
-                "enum": .array([.string("topics"), .string("read")]),
-                "description": .string("Operation: list all topics, or read one topic."),
+                "enum": .array([.string("topics"), .string("read"), .string("find")]),
+                "description": .string(
+                    "Operation: list all topics, read one topic, or find a setting by name."
+                ),
             ]),
             "topic": .object([
                 "type": .string("string"),
                 "description": .string(
                     "Topic id from the `topics` index (e.g. getting-started, local-models). Required for read."
+                ),
+            ]),
+            "query": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Natural-language setting name (e.g. context window, memory budget). Required for find."
                 ),
             ]),
         ]),
@@ -1035,7 +1044,7 @@ public final class OsaurusHelpTool: OsaurusTool, @unchecked Sendable {
         }
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
-        let actionReq = requireAction(args, allowed: ["topics", "read"])
+        let actionReq = requireAction(args, allowed: ["topics", "read", "find"])
         guard case .value(let action) = actionReq else { return actionReq.failureEnvelope ?? "" }
 
         switch action {
@@ -1047,7 +1056,8 @@ public final class OsaurusHelpTool: OsaurusTool, @unchecked Sendable {
                 tool: name,
                 result: [
                     "topics": items,
-                    "note": "Call osaurus_help({action: 'read', topic: '<id>'}) for the full text.",
+                    "note": "Call osaurus_help({action: 'read', topic: '<id>'}) for the full text, "
+                        + "or osaurus_help({action: 'find', query: '<setting name>'}) to locate a control.",
                 ]
             )
         case "read":
@@ -1068,6 +1078,38 @@ public final class OsaurusHelpTool: OsaurusTool, @unchecked Sendable {
                     "id": topic.id,
                     "title": topic.title,
                     "content": topic.body,
+                ]
+            )
+        case "find":
+            let queryReq = requireString(args, "query", expected: "setting query", tool: name)
+            guard case .value(let query) = queryReq else { return queryReq.failureEnvelope ?? "" }
+            let hits = SettingsSearchIndex.search(query).prefix(8).map { entry -> [String: Any] in
+                var row: [String: Any] = [
+                    "id": entry.id,
+                    "title": entry.title,
+                    "path": entry.breadcrumbPath,
+                    "settings_ui_only": entry.isSettingsUIOnly,
+                ]
+                if let section = entry.declarativeSection {
+                    row["declarative_section"] = section
+                }
+                if let note = entry.disambiguation {
+                    row["not_this"] = note
+                }
+                return row
+            }
+            return ConfigurationReadNextStep.success(
+                tool: name,
+                result: [
+                    "query": query,
+                    "matches": Array(hits),
+                    "note": hits.isEmpty
+                        ? "No catalog match. Try another name, or action 'topics' then 'read'. "
+                            + "Do not spawn an agent or use Computer Use to hunt Settings. "
+                            + "Do not claim you changed a Settings-UI-only control."
+                        : "Quote the `path` breadcrumb. Settings-UI-only rows cannot be changed "
+                            + "with osaurus_config — tell the user to open that Management path. "
+                            + "Never spawn an agent or use Computer Use to find a setting.",
                 ]
             )
         default:
@@ -1458,13 +1500,27 @@ extension OsaurusInspectTool {
             "agents, models, providers, mcp, plugins, schedules, skills, watchers, "
             + "knowledge, themes, commands, channels, search"
         if settingsUIOnlyScopes.contains(scope.lowercased()) {
+            let path: String
+            switch scope.lowercased() {
+            case "server":
+                path =
+                    "Management ⌘⇧M → Server → Settings (port, sampling, Cache → Context Window Cap, KV). "
+                    + "Find the exact control with osaurus_help {action: 'find', query: '…'}."
+            case "chat":
+                path =
+                    "Management ⌘⇧M → Chat (compaction, clipboard, streaming). "
+                    + "Context Window Cap is Server → Settings → Cache, not Chat."
+            default:
+                path =
+                    "Management ⌘⇧M → General (login, dock icon, hotkey, toasts). "
+                    + "Find the exact control with osaurus_help {action: 'find', query: '…'}."
+            }
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message:
                     "`\(scope)` settings are managed in the Settings UI, not declaratively — "
-                    + "there is nothing to read or apply here. Tell the user to open "
-                    + "Settings for \(scope) changes; do NOT claim to have changed anything. "
-                    + "Inspect scopes: \(valid).",
+                    + "there is nothing to read or apply here. Tell the user to open \(path) "
+                    + "Do NOT claim to have changed anything. Inspect scopes: \(valid).",
                 field: "scope",
                 tool: tool
             )
