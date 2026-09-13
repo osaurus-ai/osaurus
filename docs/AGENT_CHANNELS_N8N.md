@@ -285,9 +285,13 @@ service — posting through the custom runner alone skips the kill switch.
 With `shared_secret_header` the two signature headers become a single
 `X-Osaurus-Channel-Secret: <secret>` header on both requests.
 
-A dedicated `n8n-nodes-osaurus` community node (operations: *Send message and
-wait*, *Poll task*, *Verify inbound push*) is planned to replace steps 2–6; it
-will speak exactly this contract.
+A dedicated [`n8n-nodes-osaurus`](https://github.com/osaurus-ai/n8n-nodes-osaurus)
+community node (operations: *Send message and wait*, *Poll task*, *Verify
+inbound push*, plus an HMAC-verified **Osaurus Trigger** for outbound push)
+replaces steps 2–6 and speaks exactly this contract. The stock HTTP recipe
+above remains the no-install fallback. The package also offers a plaintext
+`osk-v1` credential for loopback `/agents/{id}/run`; that key is **not** the
+inbound channel secret, and the node does not implement Secure Channel.
 
 ## Observability
 
