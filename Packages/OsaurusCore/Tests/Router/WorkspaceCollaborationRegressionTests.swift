@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Testing
 @testable import OsaurusCore
@@ -70,6 +71,54 @@ struct WorkspaceCollaborationRegressionTests {
         store.noteHostReachable(agentAddress: "0xabc")
         store.now = { now.addingTimeInterval(WorkspaceRosterStore.verificationLifetime + 1) }
         #expect(store.presence(forAddress: "0xabc", workspaceId: "a") == .unknown)
+    }
+
+    /// `/workspaces/sync` heartbeats every few seconds. A heartbeat that
+    /// changes nothing visible (every roster still verified, no evidence to
+    /// drop) must not publish, or every roster observer re-renders on each
+    /// one. It still publishes when a workspace flips back to verified or
+    /// when host-reachable evidence is superseded.
+    @Test func heartbeatPublishesOnlyWhenVisibleStateChanges() throws {
+        let store = WorkspaceRosterStore(observeAppActivation: false)
+        let summary = try JSONDecoder().decode(
+            OsaurusRouterWorkspaceSummary.self,
+            from: Data(#"{"id":"a","name":"A","role":"member"}"#.utf8)
+        )
+        let agent = try JSONDecoder().decode(
+            OsaurusRouterWorkspaceAgent.self,
+            from: Data(#"{"agent_address":"0xabc","online":true}"#.utf8)
+        )
+        var now = Date()
+        store.now = { now }
+        store.apply(rosters: [.init(workspace: summary, agents: [agent])])
+
+        var publishes = 0
+        let subscription = store.objectWillChange.sink { _ in publishes += 1 }
+        defer { subscription.cancel() }
+
+        // Steady state: repeated heartbeats within the lease are silent.
+        store.renewVerification()
+        now = now.addingTimeInterval(15)
+        store.renewVerification()
+        #expect(publishes == 0)
+        #expect(store.presence(forAddress: "0xabc", workspaceId: "a") == .online)
+
+        // Expired, then re-verified: one publish for the expiry, one for the flip back.
+        now = now.addingTimeInterval(WorkspaceRosterStore.verificationLifetime + 1)
+        store.expireVerification()
+        #expect(publishes == 1)
+        #expect(store.presence(forAddress: "0xabc", workspaceId: "a") == .unknown)
+        store.renewVerification()
+        #expect(publishes == 2)
+        #expect(store.presence(forAddress: "0xabc", workspaceId: "a") == .online)
+
+        // Host-reachable evidence superseded by the router's verdict: publishes once.
+        store.noteHostReachable(agentAddress: "0xabc")
+        let before = publishes
+        store.renewVerification()
+        #expect(publishes == before + 1)
+        store.renewVerification()
+        #expect(publishes == before + 1)
     }
 
     /// The router can list a shared agent with no presence verdict at all
@@ -287,10 +336,36 @@ extension WorkspaceCollaborationRegressionTests {
 
 
 extension WorkspaceCollaborationRegressionTests {
+    /// The router's steady-state `/workspaces/sync` tick is 15 s ± 20 %, so a
+    /// healthy stream can legitimately go 18 s without a frame. The lease
+    /// must outlive that (a 3 s lease tore down and reconnected a healthy
+    /// stream every ~9 s, republishing every roster on each reconnect) and
+    /// agree with the roster store's own verification lifetime.
     @Test func subscriptionRenewalRetainsOnlyTheLastVerifiedLease() {
         let lastFrame = Date(timeIntervalSince1970: 1_000)
         #expect(WorkspaceSyncService.verificationIsFresh(lastFrameAt: lastFrame, now: lastFrame.addingTimeInterval(1)))
-        #expect(!WorkspaceSyncService.verificationIsFresh(lastFrameAt: lastFrame, now: lastFrame.addingTimeInterval(3)))
+        // One late steady-state tick (15 s + 20 % jitter) must not expire it.
+        #expect(WorkspaceSyncService.verificationIsFresh(lastFrameAt: lastFrame, now: lastFrame.addingTimeInterval(18)))
+        // Two consecutive missed ticks still do.
+        #expect(
+            !WorkspaceSyncService.verificationIsFresh(
+                lastFrameAt: lastFrame,
+                now: lastFrame.addingTimeInterval(WorkspaceSyncService.verificationLease)
+            )
+        )
         #expect(!WorkspaceSyncService.verificationIsFresh(lastFrameAt: .distantPast, now: lastFrame))
+        #expect(WorkspaceSyncService.verificationLease >= 36)
+        #expect(WorkspaceSyncService.verificationLease == WorkspaceRosterStore.verificationLifetime)
+
+        // A connection that never delivers its first snapshot still falls
+        // back to polling quickly; only a *verified* stream gets the long lease.
+        let started = lastFrame
+        #expect(WorkspaceSyncService.connectionIsPending(startedAt: started, now: started.addingTimeInterval(3)))
+        #expect(
+            !WorkspaceSyncService.connectionIsPending(
+                startedAt: started, now: started.addingTimeInterval(WorkspaceSyncService.firstFrameDeadline)
+            )
+        )
+        #expect(WorkspaceSyncService.firstFrameDeadline < WorkspaceSyncService.verificationLease)
     }
 }

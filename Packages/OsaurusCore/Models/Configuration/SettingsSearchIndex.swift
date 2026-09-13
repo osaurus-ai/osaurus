@@ -774,6 +774,15 @@ public enum SettingsSearchIndex {
 
         // MARK: Identity / Storage / Themes / Memory
         .init(
+            id: "identity.osaurusId",
+            tab: .identity,
+            title: "Osaurus ID",
+            keywords: [
+                "osaurus id", "handle", "username", "profile", "display name", "bio", "claim",
+                "public name",
+            ]
+        ),
+        .init(
             id: "identity.keys",
             tab: .identity,
             title: "Identity & Recovery",
