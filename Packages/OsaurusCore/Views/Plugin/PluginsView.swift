@@ -52,8 +52,6 @@ struct PluginsView: View {
     private let claudeSlashCommands = SlashCommandRegistry.shared
     @ObservedObject private var claudeMCPManager = MCPProviderManager.shared
 
-    // GitHub-import sheet state.
-    @State private var showGitHubImport: Bool = false
     // Claude userConfig sheet.
     @State private var showClaudeUserConfigSheet: Bool = false
     @State private var claudeUserConfigTarget: ClaudePluginInstalled?
@@ -277,34 +275,6 @@ struct PluginsView: View {
                     onSave: { reload() }
                 )
             }
-        }
-        .sheet(isPresented: $showGitHubImport) {
-            GitHubImportSheet(
-                onImport: { skills in
-                    Task { @MainActor in
-                        _ = await claudeSkillManager.importSkillsFromMarkdown(skills)
-                        showGitHubImport = false
-                        claudeAggregator.refresh()
-                        showSuccess(
-                            skills.count == 1 ? L("Imported 1 item") : L("Imported \(skills.count) items")
-                        )
-                    }
-                },
-                onCancel: { showGitHubImport = false },
-                onPluginInstallComplete: { report in
-                    Task { @MainActor in
-                        await claudeSkillManager.refresh()
-                        claudeAggregator.refresh()
-                        await updateFilteredLists()
-                        let total =
-                            report.totalImportedSkills + report.totalImportedAgents
-                            + report.totalImportedCommands + report.totalImportedMCPProviders
-                        if total > 0 {
-                            showSuccess(total == 1 ? L("Installed 1 item") : L("Installed \(total) items"))
-                        }
-                    }
-                }
-            )
         }
         .sheet(isPresented: $showClaudeUserConfigSheet) {
             if let target = claudeUserConfigTarget,
@@ -531,9 +501,6 @@ struct PluginsView: View {
                     reload()
                     isRefreshButtonLoading = false
                 }
-            }
-            ClaudePluginImportButton {
-                showGitHubImport = true
             }
         } tabsRow: {
             let claudeCount = filteredClaudePlugins.count
@@ -1065,51 +1032,6 @@ struct PluginsView: View {
         PluginsView()
     }
 #endif
-
-// MARK: - Claude Plugin Import Button
-
-/// Single-action button mirroring the Skills header dropdown but
-/// scoped to Claude plugins (GitHub-only). Lifts the dispatch-after-
-/// dismiss safety net from `SkillsView`'s `ImportDropdownButton` so a
-/// `.sheet` presented from inside the menu doesn't deadlock SwiftUI.
-private struct ClaudePluginImportButton: View {
-    @Environment(\.theme) private var theme
-    let onSelect: () -> Void
-
-    @State private var isHovering = false
-
-    var body: some View {
-        Button(action: { dispatchAfterDismiss(onSelect) }) {
-            HStack(spacing: 6) {
-                Image(systemName: "square.and.arrow.down")
-                    .font(.system(size: 13, weight: .medium))
-                Text("Import", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .foregroundStyle(theme.secondaryText)
-            .fixedSize()
-            .padding(.horizontal, 12)
-            .frame(height: 32)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.tertiaryBackground)
-                    .opacity(isHovering ? 0.8 : 1)
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) { isHovering = hovering }
-        }
-        .localizedHelp("Import Claude plugin from GitHub")
-    }
-
-    private func dispatchAfterDismiss(_ action: @escaping () -> Void) {
-        Task { @MainActor in
-            try? await Task.sleepForPopoverDismiss()
-            action()
-        }
-    }
-}
 
 // MARK: - Plugin Card (Grid)
 
