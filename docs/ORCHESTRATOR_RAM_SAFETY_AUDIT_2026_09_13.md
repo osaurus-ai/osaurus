@@ -13,9 +13,10 @@ both revisions; the Cmlx source trees are identical between these pins.
 
 Evidence root: `/Users/eric/vmlx-private-evidence/ram-admission-2026-09-13/`.
 Local machine: macOS 26.4 / 25E246, Darwin 25.4.0, 128 GiB. The reporter's
-machine is M4/16 GB and a different OS version. No new model generation or
-Release UI campaign was performed for this audit; tokenization and a 64 MiB
-anonymous-allocation probe are not model-runtime acceptance tests.
+machine is M4/16 GB and a different OS version. The implementation follow-up
+now includes real exact-bundle generation and a native Release UI campaign
+on the local 128 GiB host. These are separate from the controlled 16 GiB
+policy regressions and do not qualify the actual reporter machine.
 
 ## Implementation follow-up (local, not yet merged)
 
@@ -42,20 +43,71 @@ existing exclusive lane and measures again instead of pretending that every
 reserved byte is already allocated. This may serialize tight-memory overlaps;
 it preserves normal batching when the full reservation fits.
 
-Intermediate verification: 109/109 focused tests, then 181/181 expanded tests,
-then 299/299 tests in 16 suites. The last score predates the final volatile-cache
-reclaim and effective-output guard placement; the broader final matrix is in
-progress. New regressions cover exact-token rejection, integer overflow,
-soft-cap underpricing, aggregate engine slots, parked-gate cancellation,
-sibling drain/recheck, Gemma cache topology, and parent restoration on a
-post-release memory refusal. The original four failing audit probes are
-preserved in the evidence directory; tests now exercise the corrected paths.
+Verification of memory implementation `3224aefe7`:
 
-A fresh isolated Release build is in progress. No new live-model or native UI
-row is claimed yet. The actual M4/16 GB failure remains unqualified until its
-failed decision inputs or a reporter rerun confirm the outcome. Requested:
-complete failed spawn JSON including memory_decision, Memory Safety slider,
-and TurboQuant KV setting. No answer has arrived yet.
+- Final affected Core matrix: **523/523 in 48 suites**, explicitly serialized
+  (`--no-parallel`). Two earlier combined parallel runs exposed shared-setting
+  and path-alias test interference; their failed logs are preserved. Isolated
+  failing suites and the complete serialized matrix passed.
+- Eval harness: **346/346 in 42 suites**, including a new exact child-summary
+  assertion. A parent's failure explanation echoing a marker cannot pass it.
+- Exact Gemma tokenizer/runtime boundary: **2/2 over-budget calls refused
+  before prefill**, 20,008 actual prompt tokens plus 2,048 output against an
+  11,596-position contract. Both immediate follow-ups returned exact markers,
+  31.68/31.66 tok/s, peak physical footprint 470.63 MiB, active/pending zero.
+- Real Metal allocator recovery: **2/2 tests** including parameterized drain
+  cases. A 64 MiB freed-buffer cache drained to zero; live arrays remained.
+  Cancellation while another producer held the GPU gate did not free its cache.
+- Original targeted live run: single-child **3/3**, sequential pair **3/3**,
+  native batch admission **3/3** with observed width two. Strict batch content
+  was only **2/3**: the first parent expanded the marker task and a child's
+  failure explanation was incorrectly accepted by the old contains grader.
+  Original JSON and manual correction remain preserved; the stricter rerun is
+  recorded separately, never substituted for this failure. The stricter rerun
+  passed both single/sequential cases 3/3, but native batch exact content only
+  **1/3** despite all three admitting both children at width two.
+- The architecture-capped serialization suite was mistakenly run against
+  Gemma, which supports width two: **0/3**, preserved. It expects an actual
+  architecture cap of one and cannot serve as a batching-off control. A
+  separate `AgentLoopBatchDisabled` fixture now sets Continuous Batching off
+  explicitly. Its first run exercised width one and `[1,1]` subwaves, but the
+  test expectation omitted the `continuousBatchingDisabled` diagnostic; that
+  failed run is preserved and the corrected fixture is rerun separately.
+- Full AgentLoop: **36 passed, 7 failed, 4 skipped / 47**. Full Frontier:
+  **22 passed, 17 failed / 39**. The process exited 1. Failures include malformed
+  tool calls, unperformed file work, compaction expectations, and unavailable
+  alternate-worker delegation with no exposed spawn schema. Self-judged
+  rubric rows are identified in raw JSON;
+  this is not a green full-model qualification or a matched baseline comparison.
+- Fresh Release native UI before the time-context correction: two exact
+  SysAdmin prompts in separate chats without restart both passed, child
+  throughput 42.5/42.6 tok/s. RAM-off control passed at 40.1 tok/s. Parent Stop
+  during a live child cleared the run; immediate follow-up child passed at
+  33.9 tok/s. Sequential Research/Marketing both admitted, but the parent
+  invented a date task and Marketing returned `Marketing-OK`, failing the exact
+  requested casing. Native batch attempt failed at malformed tool arguments;
+  it did not exercise the batch allocator. Settings changes mirrored the
+  Orchestrator and Server concurrency controls, and batching-off was saved.
+
+Native task-expansion evidence exposed a separate input-composition defect:
+`SystemPromptTemplates.timeContext` injected the imperative “Resolve relative
+dates” and concrete example dates into every latest user message. Coordinator
+copied that text into Research's input and subsequently asked about an invented
+time-conversion task. The correction retains the timestamp and timezone as
+facts and removes that extra instruction/example. It does not change the
+user's prompt, bundle sampler, model template, or reasoning controls. The six focused time-context tests pass. Its new
+Release rerun is pending; this observation alone does not prove that all
+Coordinator task-expansion behavior has been eliminated.
+
+The handoff setting description now reflects both the feasibility check and
+the post-unload measurement/restoration path. No setting title changed.
+
+Private evidence: `implementation-3224aefe7/` under the root above contains
+raw test logs, all full-eval JSON/failed transcripts, targeted reports, native
+chat database exports, cache snapshots, and a 250 ms `proc_pid_rusage`
+physical-footprint stream. The actual M4/16 GB failure remains unqualified.
+Requested: complete failed spawn JSON including `memory_decision`, Memory
+Safety slider, and TurboQuant KV setting. No answer has arrived yet.
 
 The ranked findings below describe the pre-fix audit and its original evidence.
 
@@ -263,6 +315,12 @@ marker itself needs excessive KV memory.
   its severity is not a direct input to child admission. Host compressor pages
   still legitimately affect the host estimate. Neither swap-used bytes nor
   memory_pressure's headline percentage are a direct RAM-slot calculation.
+- Kernel counter overlap was checked against [Apple's host statistics code](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/osfmk/kern/host.c#L816).
+  `internal_page_count` is populated from pageable internal pages plus local
+  queue internal pages, not the broader resident internal-object count.
+  Therefore merely adding wired and internal counters is not evidence of
+  charging every wired anonymous page twice. No speculative counter refund
+  was introduced.
 - Scheduled/watcher/delegated chat paths propagate the delegated contract via
   DispatchRequest, BackgroundTaskManager, ExecutionContext, and ChatSession.
   The main problem found there is what the contract actually enforces, not a
@@ -283,8 +341,9 @@ marker itself needs excessive KV memory.
   temporary probes. They were removed from the normal test target after the
   diagnostic run; no failure is relabeled as a passing production test.
 - Exact bundle tokenizer controls: four measured rows, no generation.
-- New Release UI / throughput / full AgentLoop matrix / actual 16 GB rows:
-  **not run**. The previous #2733 campaign does not validate this new patch.
+- New Release UI / throughput / full AgentLoop matrix: see the current
+  implementation follow-up above. Actual 16 GB: **still unqualified**.
+  The previous #2733 campaign does not validate this new patch.
 
 Prioritize the reporter's decision-time `memory_decision` and before/after
 recovery values alongside the demonstrated freshness correction. Correct the
