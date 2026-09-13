@@ -89,7 +89,7 @@ struct AgentChannelSetupFlowTests {
     @Test func addCatalogListsGuidedProvidersFirstAndCustomLastAsAdvanced() {
         #expect(
             AgentChannelAddCatalog.choices == [
-                .discord, .slack, .telegram, .imessage, .whatsapp, .customHTTP,
+                .discord, .slack, .telegram, .imessage, .whatsapp, .n8n, .customHTTP,
             ]
         )
         #expect(AgentChannelAddCatalog.choices.last == .customHTTP)

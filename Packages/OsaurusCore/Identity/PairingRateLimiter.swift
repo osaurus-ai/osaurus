@@ -18,11 +18,23 @@ public final class PairingRateLimiter: @unchecked Sendable {
     private var hits: [String: [Date]] = [:]
     private var cooldownUntil: [String: Date] = [:]
 
-    private let window: TimeInterval = 60
-    private let maxPerWindow = 5
-    private let denialCooldown: TimeInterval = 30
+    private let window: TimeInterval
+    private let maxPerWindow: Int
+    private let denialCooldown: TimeInterval
 
-    private init() {}
+    private convenience init() {
+        self.init(window: 60, maxPerWindow: 5, denialCooldown: 30)
+    }
+
+    /// Dedicated limiter for another unauthenticated surface (for example
+    /// the Agent Channel webhook ingress) whose traffic profile differs from
+    /// pairing. Each instance keeps its own per-source ledger so a chatty
+    /// webhook cannot burn the pairing budget or vice versa.
+    public init(window: TimeInterval, maxPerWindow: Int, denialCooldown: TimeInterval) {
+        self.window = window
+        self.maxPerWindow = max(1, maxPerWindow)
+        self.denialCooldown = denialCooldown
+    }
 
     /// Record an attempt from `ip`. Returns `false` when the caller is inside a
     /// denial cooldown or has exceeded `maxPerWindow` attempts in the trailing

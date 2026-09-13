@@ -529,8 +529,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "/", "/health", "/pair", "/pair/challenge", "/pair-invite", "/secure/session",
             ]
             let isPluginRoute = path.hasPrefix("/plugins/")
+            // Agent Channel webhook routes are authenticated by the connection's
+            // provider secret (shared header or HMAC) inside the ingress, not by
+            // an access key; `AgentChannelWebhookIngress` fails closed on its own.
+            let isChannelRoute = path.hasPrefix("/channels/")
             let isLoopback = isLoopbackConnection(context)
-            if !publicPaths.contains(path) && !isPluginRoute && !isLoopback {
+            if !publicPaths.contains(path) && !isPluginRoute && !isChannelRoute && !isLoopback {
                 let authHeader = head.headers.first(name: "Authorization") ?? ""
                 let token =
                     authHeader.hasPrefix("Bearer ")
@@ -880,6 +884,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     head: head,
                     context: context,
                     path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if path.hasPrefix("/channels/"), let route = AgentChannelWebhookIngress.route(for: path) {
+                handleChannelWebhookEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    route: route,
                     startTime: startTime,
                     userAgent: userAgent
                 )
@@ -5336,6 +5349,124 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     AgentInviteStore.rollbackConsume(nonce: invite.nonce, for: agent.id)
                 }
                 reply(status: .internalServerError, body: #"{"error":"Failed to mint access key"}"#, code: 500)
+            }
+        }
+    }
+
+    /// `POST /channels/{kind}/{connection_id}/inbound` and
+    /// `GET /channels/{kind}/{connection_id}/tasks/{task_id}` — the Agent
+    /// Channel webhook ingress. Bearer-exempt: the connection's provider secret
+    /// (shared header or HMAC over the raw body) is the authentication, and the
+    /// ingress verifies it before interpreting a single body byte. The shim only
+    /// copies the raw body, captures the transport facts (source IP, loopback,
+    /// Secure Channel) and hops off the event loop; every decision lives in
+    /// `AgentChannelWebhookIngress` so it is unit-testable without NIO.
+    private func handleChannelWebhookEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        route: AgentChannelWebhookIngress.Route,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let method = head.method
+        let expectedMethod: HTTPMethod
+        switch route {
+        case .inbound: expectedMethod = .POST
+        case .taskPoll: expectedMethod = .GET
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+
+        guard method == expectedMethod else {
+            let body = #"{"error":{"code":"method_not_allowed","message":"Use \#(expectedMethod.rawValue) for this channel route.","type":"invalid_request_error"}}"#
+            var headers = [("Content-Type", "application/json; charset=utf-8"), ("Allow", expectedMethod.rawValue)]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: .methodNotAllowed, headers: headers, body: body)
+            logRequest(
+                method: method.rawValue,
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: 405,
+                startTime: startTime
+            )
+            return
+        }
+
+        var data = Data()
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            data = Data(bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? [])
+        }
+        var headerMap: [String: String] = [:]
+        for (name, value) in head.headers {
+            headerMap[name] = value
+        }
+        // Only the redacted twin ever reaches the Insights request log: the
+        // verification header IS the credential.
+        let redactedHeaders = AgentChannelWebhookIngress.redactedHeaders(headerMap)
+        let logRequestBody: String? = {
+            var summary: [String: Any] = ["headers": redactedHeaders.filter { key, _ in
+                let lowered = key.lowercased()
+                return lowered.hasPrefix("x-osaurus") || lowered == "content-type" || lowered == "idempotency-key"
+            }]
+            summary["body_bytes"] = data.count
+            return (try? JSONSerialization.data(withJSONObject: summary, options: [.sortedKeys]))
+                .map { String(decoding: $0, as: UTF8.self) }
+        }()
+
+        let ingressRequest = AgentChannelWebhookIngressRequest(
+            kind: {
+                switch route {
+                case .inbound(let kind, _), .taskPoll(let kind, _, _): return kind
+                }
+            }(),
+            connectionId: {
+                switch route {
+                case .inbound(_, let id), .taskPoll(_, let id, _): return id
+                }
+            }(),
+            headers: headerMap,
+            body: data,
+            sourceAddress: remoteIP(context),
+            isLoopback: isLoopbackConnection(context),
+            isSecureChannel: stateRef.value.isSecureChannel
+        )
+
+        runRequestTask(priority: .userInitiated) {
+            let response: AgentChannelWebhookIngressResponse
+            switch route {
+            case .inbound:
+                response = await AgentChannelWebhookIngress.shared.handleInbound(ingressRequest)
+            case .taskPoll(_, _, let taskId):
+                response = await AgentChannelWebhookIngress.shared.handleTaskPoll(ingressRequest, taskId: taskId)
+            }
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: HTTPResponseStatus(statusCode: response.status),
+                    headers: headers,
+                    body: response.body
+                )
+                logSelf.logRequest(
+                    method: method.rawValue,
+                    path: path,
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: response.body,
+                    responseStatus: response.status,
+                    startTime: logStartTime
+                )
             }
         }
     }

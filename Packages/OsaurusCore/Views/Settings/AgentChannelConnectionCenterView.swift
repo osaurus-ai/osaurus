@@ -140,8 +140,9 @@ struct AgentChannelConnectionCenterView: View {
                 IMessageSettingsView()
             case .native(.whatsapp):
                 WhatsAppSettingsView()
-            case .native(.customHTTP):
-                // Custom HTTP is never presented as a native channel.
+            case .native(.customHTTP), .native(.n8n):
+                // Custom HTTP and n8n connections are stored rows, never
+                // presented as a fixed native channel.
                 EmptyView()
             case .editCustom(let connection):
                 AgentChannelCustomConnectionSheet(connection: connection) {
@@ -668,6 +669,7 @@ struct AgentChannelConnectionCenterView: View {
         case .telegram: return L("Bot access to allowlisted chats and groups")
         case .imessage: return L("This Mac's Messages app, allowlisted chats only")
         case .whatsapp: return L("QR-linked WhatsApp Web bridge, allowlisted chats only")
+        case .n8n: return L("Secret-verified webhook bridge for n8n workflows")
         case .customHTTP: return L("JSON-defined HTTP channel")
         }
     }

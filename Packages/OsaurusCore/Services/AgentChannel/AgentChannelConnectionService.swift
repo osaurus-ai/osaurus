@@ -192,6 +192,34 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 payload["action_policies"] = actionPolicies(for: connection).map(\.dictionary)
                 payload["relay_receive_policy"] = relayReceivePolicy(for: connection).dictionary
                 return payload
+            case .n8n:
+                // Outbound (optional push) rides the custom JSON runner; the
+                // inbound webhook ingress owns receive health.
+                var payload: [String: Any]
+                if connection.customHTTP != nil {
+                    payload = await customJSONRunner.diagnostics(connection: connection)
+                } else {
+                    payload = [
+                        "connection_id": connection.id,
+                        "kind": connection.kind.rawValue,
+                        "status": connection.enabled ? "configured" : "disabled",
+                        "outbound": "not_configured",
+                    ]
+                }
+                payload["standard_actions"] = connection.supportedActions.map(\.rawValue)
+                payload["action_policies"] = actionPolicies(for: connection).map(\.dictionary)
+                payload["relay_receive_policy"] = relayReceivePolicy(for: connection).dictionary
+                payload["inbound_ingress"] = await AgentChannelWebhookIngress.shared
+                    .healthSnapshot(connectionId: connection.id)
+                    .dictionary
+                payload["receive_transport"] = [
+                    "status": (connection.n8n?.inboundDispatch.isConfigured ?? false)
+                        ? "configured" : "not_configured",
+                    "transport_id": AgentChannelWebhookIngress.transportId,
+                    "summary":
+                        "n8n posts verified envelopes to /channels/n8n/\(connection.id)/inbound and polls /channels/n8n/\(connection.id)/tasks/{task_id} for replies.",
+                ]
+                return payload
             }
         } catch {
             return [
@@ -254,7 +282,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                     "raw": row,
                 ]
             }
-        case .customHTTP:
+        case .customHTTP, .n8n:
             return try await customJSONRunner.listSpaces(connection: connection)
         }
     }
@@ -331,7 +359,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                     "raw": row,
                 ]
             }
-        case .customHTTP:
+        case .customHTTP, .n8n:
             return try await customJSONRunner.listRooms(connection: connection, spaceId: spaceId)
         }
     }
@@ -369,7 +397,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["room_id"] = roomId
             payload["standard_kind"] = "chat_messages"
             return payload
-        case .customHTTP:
+        case .customHTTP, .n8n:
             return try await customJSONRunner.readMessages(connection: connection, roomId: roomId, limit: limit)
         }
     }
@@ -388,7 +416,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["connection_id"] = connection.id
             payload["standard_kind"] = "thread_messages"
             return payload
-        case .customHTTP:
+        case .customHTTP, .n8n:
             return try await customJSONRunner.readThread(connection: connection, threadId: threadId, limit: limit)
         case .telegram, .imessage, .whatsapp:
             throw AgentChannelConnectionServiceError.unsupportedKind(connection.kind)
@@ -459,7 +487,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["room_ids"] = roomIds ?? []
             payload["standard_kind"] = "message_search"
             return payload
-        case .customHTTP:
+        case .customHTTP, .n8n:
             return try await customJSONRunner.searchMessages(
                 connection: connection,
                 query: query,
@@ -503,7 +531,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["room_id"] = roomId
             payload["standard_kind"] = "message_draft"
             return payload
-        case .customHTTP:
+        case .customHTTP, .n8n:
             return try customJSONRunner.draftMessage(connection: connection, roomId: roomId, content: content)
         }
     }
@@ -570,7 +598,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["room_id"] = roomId
             payload["standard_kind"] = "message_sent"
             return payload
-        case .customHTTP:
+        case .customHTTP, .n8n:
             return try await customJSONRunner.sendMessage(
                 connection: connection,
                 roomId: roomId,
@@ -619,7 +647,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             payload["connection_id"] = connection.id
             payload["standard_kind"] = "thread_reply_sent"
             return payload
-        case .customHTTP:
+        case .customHTTP, .n8n:
             return try await customJSONRunner.replyThread(
                 connection: connection,
                 threadId: threadId,
@@ -679,7 +707,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 content: content,
                 confirmSend: confirmSend
             )
-        case .customHTTP:
+        case .customHTTP, .n8n:
             payload = try await customJSONRunner.editMessage(
                 connection: connection,
                 roomId: roomId,
@@ -736,7 +764,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 messageId: messageId,
                 confirmSend: confirmSend
             )
-        case .customHTTP:
+        case .customHTTP, .n8n:
             payload = try await customJSONRunner.deleteMessage(
                 connection: connection,
                 roomId: roomId,
@@ -804,7 +832,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 adding: adding,
                 confirmSend: confirmSend
             )
-        case .customHTTP:
+        case .customHTTP, .n8n:
             payload = try await customJSONRunner.setReaction(
                 connection: connection,
                 roomId: roomId,
@@ -849,7 +877,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 chatId: roomId,
                 confirmSend: confirmSend
             )
-        case .customHTTP:
+        case .customHTTP, .n8n:
             payload = try await customJSONRunner.sendTyping(
                 connection: connection,
                 roomId: roomId,
@@ -1535,8 +1563,13 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         }
 
         switch connection.kind {
-        case .customHTTP:
+        case .customHTTP, .n8n:
             guard let customHTTP = connection.customHTTP else {
+                if connection.kind == .n8n {
+                    return action == .diagnostics
+                        ? (.available, nil)
+                        : (.configuredOnly, "No outbound webhook is configured; replies are delivered by polling.")
+                }
                 return (.unavailable, "Custom HTTP configuration is missing.")
             }
             guard action == .diagnostics || customHTTP.actions[action.rawValue] != nil else {
@@ -1660,6 +1693,8 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             dispatch = imessageService.configuration().inboundDispatch
         case .whatsapp:
             dispatch = whatsappService.configuration().inboundDispatch
+        case .n8n:
+            dispatch = connection.n8n?.inboundDispatch
         case .customHTTP:
             dispatch = nil
         }

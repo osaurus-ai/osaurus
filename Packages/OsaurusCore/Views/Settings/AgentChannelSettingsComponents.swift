@@ -22,6 +22,7 @@ extension AgentChannelKind {
         case .telegram: "Telegram"
         case .imessage: "iMessage"
         case .whatsapp: "WhatsApp"
+        case .n8n: "n8n"
         case .customHTTP: "Custom HTTP"
         }
     }
@@ -33,6 +34,7 @@ extension AgentChannelKind {
         case .telegram: "paperplane.fill"
         case .imessage: "message.fill"
         case .whatsapp: "phone.bubble.fill"
+        case .n8n: "arrow.triangle.branch"
         case .customHTTP: "curlybraces"
         }
     }
@@ -46,6 +48,7 @@ extension AgentChannelKind {
         case .telegram: [Color(hex: "2AABEE"), Color(hex: "1E96C8")]
         case .imessage: [Color(hex: "34C759"), Color(hex: "248A3D")]
         case .whatsapp: [Color(hex: "25D366"), Color(hex: "128C7E")]
+        case .n8n: [Color(hex: "EA4B71"), Color(hex: "C2385A")]
         case .customHTTP: [Color(hex: "64748B"), Color(hex: "475569")]
         }
     }

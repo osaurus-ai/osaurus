@@ -36,6 +36,9 @@ struct AgentChannelAddChannelSheet: View {
                 IMessageSettingsView(onBack: goBack)
             case .whatsapp:
                 WhatsAppSettingsView(onBack: goBack)
+            case .n8n:
+                // Guided n8n setup sheet lands with the Connection Center UI stage.
+                EmptyView()
             case .customHTTP:
                 AgentChannelCustomConnectionSheet(
                     connection: nil,

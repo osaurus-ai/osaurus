@@ -13,6 +13,9 @@ enum AgentChannelConnectionManagerError: LocalizedError, Equatable, Sendable {
     case emptyName
     case missingSupportedActions(String)
     case missingCustomHTTPConfiguration(String)
+    case missingN8nConfiguration(String)
+    case invalidN8nOutboundURL(String)
+    case invalidN8nVerificationHeader(String)
     case invalidCustomHTTPBaseURL(String)
     case invalidCustomHTTPMethod(action: String, method: String)
     case invalidCustomHTTPPath(action: String, path: String)
@@ -38,6 +41,12 @@ enum AgentChannelConnectionManagerError: LocalizedError, Equatable, Sendable {
             return "Agent channel connection `\(id)` must support at least one standard action."
         case .missingCustomHTTPConfiguration(let id):
             return "Custom JSON channel `\(id)` requires a custom HTTP configuration."
+        case .missingN8nConfiguration(let id):
+            return "n8n channel `\(id)` requires an n8n configuration block."
+        case .invalidN8nOutboundURL(let url):
+            return "n8n outbound webhook URL `\(url)` must be an absolute http(s) URL."
+        case .invalidN8nVerificationHeader(let header):
+            return "n8n verification header `\(header)` is not a valid HTTP header name."
         case .invalidCustomHTTPBaseURL(let url):
             return "`\(url)` is not a valid HTTP or HTTPS base URL."
         case .invalidCustomHTTPMethod(let action, let method):
@@ -353,7 +362,41 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
         if normalized.kind == .customHTTP {
             try validateCustomHTTPConfiguration(for: normalized)
         }
+        if normalized.kind == .n8n {
+            try validateN8nConfiguration(for: normalized)
+            // The optional outbound push is stored as a regular custom HTTP
+            // action set so every runner gate applies unchanged; validate it
+            // exactly like a custom connection when present.
+            if normalized.customHTTP != nil {
+                try validateCustomHTTPConfiguration(for: normalized)
+            }
+        }
         return normalized
+    }
+
+    private func validateN8nConfiguration(
+        for connection: AgentChannelConnection
+    ) throws {
+        guard let n8n = connection.n8n else {
+            throw AgentChannelConnectionManagerError.missingN8nConfiguration(connection.id)
+        }
+        if let header = n8n.inboundVerification.headerName {
+            let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+            guard !header.isEmpty,
+                header.unicodeScalars.allSatisfy(allowed.contains)
+            else {
+                throw AgentChannelConnectionManagerError.invalidN8nVerificationHeader(header)
+            }
+        }
+        if let webhookURL = n8n.outbound.webhookURL {
+            guard let url = URL(string: webhookURL),
+                let scheme = url.scheme?.lowercased(),
+                scheme == "https" || scheme == "http",
+                let host = url.host, !host.isEmpty
+            else {
+                throw AgentChannelConnectionManagerError.invalidN8nOutboundURL(webhookURL)
+            }
+        }
     }
 
     private func validateSecretReferences(

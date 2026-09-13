@@ -13,6 +13,7 @@ enum AgentChannelKind: String, Codable, CaseIterable, Sendable {
     case telegram
     case imessage
     case whatsapp
+    case n8n
     case customHTTP = "custom_http"
 }
 
@@ -596,6 +597,8 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
     var secrets: [AgentChannelSecretReference]
     var customHTTP: AgentChannelCustomHTTPConfiguration?
     var inboundAuthorization: AgentChannelInboundAuthorizationPolicy
+    /// Present only for `kind == .n8n`.
+    var n8n: AgentChannelN8nConfiguration?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -611,6 +614,7 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
         case secrets
         case customHTTP
         case inboundAuthorization
+        case n8n
     }
 
     init(
@@ -626,7 +630,8 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
         defaultReadLimit: Int = 50,
         secrets: [AgentChannelSecretReference] = [],
         customHTTP: AgentChannelCustomHTTPConfiguration? = nil,
-        inboundAuthorization: AgentChannelInboundAuthorizationPolicy = AgentChannelInboundAuthorizationPolicy()
+        inboundAuthorization: AgentChannelInboundAuthorizationPolicy = AgentChannelInboundAuthorizationPolicy(),
+        n8n: AgentChannelN8nConfiguration? = nil
     ) {
         self.id = Self.normalizedId(id)
         self.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -641,6 +646,7 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
         self.secrets = secrets.map(\.normalized)
         self.customHTTP = customHTTP
         self.inboundAuthorization = inboundAuthorization.normalized
+        self.n8n = n8n?.normalized
     }
 
     init(from decoder: Decoder) throws {
@@ -667,7 +673,8 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
             inboundAuthorization: try container.decodeIfPresent(
                 AgentChannelInboundAuthorizationPolicy.self,
                 forKey: .inboundAuthorization
-            ) ?? AgentChannelInboundAuthorizationPolicy()
+            ) ?? AgentChannelInboundAuthorizationPolicy(),
+            n8n: try container.decodeIfPresent(AgentChannelN8nConfiguration.self, forKey: .n8n)
         )
     }
 
@@ -685,7 +692,8 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
             defaultReadLimit: defaultReadLimit,
             secrets: secrets,
             customHTTP: customHTTP?.normalized,
-            inboundAuthorization: inboundAuthorization
+            inboundAuthorization: inboundAuthorization,
+            n8n: n8n
         )
     }
 
