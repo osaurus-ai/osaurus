@@ -145,6 +145,20 @@ enum ChatSessionStore {
     }
 
     static func retryUnsaved() {
+        // A failed `open()` must be retried before re-issuing writes —
+        // otherwise Retry loops on `saveSessionAsync` against a nil
+        // connection (#2736). Off-main / tests open synchronously; the
+        // main-actor production path only kicks the background prewarm so
+        // we never park the UI on Keychain + migrations. Pending snapshots
+        // stay queued and `didOpenNotification` → `flushPendingSaves`.
+        if !didOpen {
+            if Thread.isMainThread, !RuntimeEnvironment.isUnderTests {
+                preloadInBackground()
+                return
+            }
+            ensureOpen()
+        }
+        guard didOpen else { return }
         for id in ChatPersistenceStatus.shared.unsaved {
             if let data = pendingSaves[id] {
                 saveAsync(data)
@@ -430,9 +444,15 @@ enum ChatSessionStore {
             return
         }
         StorageMutationGate.blockingAwaitNotMutating()
-        didOpen = true
         do {
+            #if DEBUG
+            if _forceNextOpenFailureForTesting {
+                _forceNextOpenFailureForTesting = false
+                throw ChatHistoryDatabaseError.failedToOpen("forced test failure")
+            }
+            #endif
             try ChatHistoryDatabase.shared.open()
+            didOpen = true
         } catch {
             print("[ChatSessionStore] Failed to open chat-history database: \(error)")
             return
@@ -499,8 +519,12 @@ enum ChatSessionStore {
     }
 
     #if DEBUG
+        static var _forceNextOpenFailureForTesting = false
+        static var _didOpenForTesting: Bool { didOpen }
+
         static func _resetForTesting() {
             didOpen = false
+            _forceNextOpenFailureForTesting = false
             retryTask?.cancel()
             retryTask = nil
             saveVersions.removeAll()
