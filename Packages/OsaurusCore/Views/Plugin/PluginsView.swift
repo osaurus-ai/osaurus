@@ -2870,6 +2870,9 @@ struct ClaudePluginsMarketplaceView: View {
     private var marketplaceContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                // Claude plugin installs and update checks go through the
+                // GitHub API, so surface token status here as well.
+                GitHubTokenCard()
                 if !claudeMarketplace.categories.isEmpty {
                     MarketplaceCategoryChips(
                         categories: claudeMarketplace.categories.map { category in
