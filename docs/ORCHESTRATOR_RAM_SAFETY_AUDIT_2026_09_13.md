@@ -2,7 +2,7 @@
 
 **Reporter reproduction remains unresolved.** This audit found a demonstrable
 measurement defect plus four reproducible cross-function policy defects. The
-implementation follow-up below supersedes the original source-only status. No new PR is merged,
+implementation follow-up below supersedes the original source-only status. [PR #2752](https://github.com/osaurus-ai/osaurus/pull/2752) is draft; no new PR is merged,
 and the original M4/16 GB acceptance rows are not claimed to pass.
 
 Base: Osaurus `a609acdb5`; engine pin
@@ -72,7 +72,8 @@ Verification of memory implementation `3224aefe7`:
   separate `AgentLoopBatchDisabled` fixture now sets Continuous Batching off
   explicitly. Its first run exercised width one and `[1,1]` subwaves, but the
   test expectation omitted the `continuousBatchingDisabled` diagnostic; that
-  failed run is preserved and the corrected fixture is rerun separately.
+  failed run is preserved. The corrected fixture passed **3/3**, including
+  exact child summaries, engine width one and `[1,1]` subwaves.
 - Full AgentLoop: **36 passed, 7 failed, 4 skipped / 47**. Full Frontier:
   **22 passed, 17 failed / 39**. The process exited 1. Failures include malformed
   tool calls, unperformed file work, compaction expectations, and unavailable
@@ -95,12 +96,39 @@ dates” and concrete example dates into every latest user message. Coordinator
 copied that text into Research's input and subsequently asked about an invented
 time-conversion task. The correction retains the timestamp and timezone as
 facts and removes that extra instruction/example. It does not change the
-user's prompt, bundle sampler, model template, or reasoning controls. The six focused time-context tests pass. Its new
-Release rerun is pending; this observation alone does not prove that all
-Coordinator task-expansion behavior has been eliminated.
+user's prompt, bundle sampler, model template, or reasoning controls. All six
+focused time-context tests pass. The final Release was rebuilt successfully
+from `1c04f615db52dbe4caf0ab937b4ed37d3b92d148` and tested after relaunch:
+
+- RAM on, handoff on, coexistence off and concurrency two persisted; batching
+  off persisted and actually produced `[1,1]` child subwaves. Active/pending
+  counts returned to zero. The corrected handoff description was inspected.
+- The unchanged batch prompt still failed semantically: Coordinator invented
+  `Find information about X` and `Generate marketing copy for Y`. Both children
+  ran successfully, but asked for context. Removing the date imperative does
+  not solve general task expansion; no prompt or sampler masking was added.
+- Restored the reporter's batching-on/concurrency-one settings through native
+  Settings. Two further fresh chats without restarting returned the exact
+  SysAdmin marker, child throughput **49.3/49.5 tok/s**.
+- Unchanged Research then Marketing prompt: parent first attempted an invalid
+  batch and malformed spawn calls, recovered, then both children admitted.
+  Research returned `RESEARCH-OK` (20.3 tok/s); Marketing returned
+  `Marketing-OK.` (25.8 tok/s), so exact workflow output still **fails**.
+- Final UI peak physical footprint: **2,823.97 MiB**, sampled every 250 ms.
+  Cache telemetry: **15 layers = 3 ordinary KV + 12 rotating KV**, fp16,
+  disk-backed restore required, paged RAM off, TurboQuant KV layers **0**.
+  Final counters: disk L2 17 hits / 337 misses / 46 stores; prefix hits/misses
+  zero; active and pending requests zero. Bundle temperature/top-p/top-k
+  remained 1/0.95/64 and `sampler_was_changed=false`.
 
 The handoff setting description now reflects both the feasibility check and
 the post-unload measurement/restoration path. No setting title changed.
+Cross-model handoff still uses the existing conservative raw-weight × 1.3
+plus reserve load estimate; this work removes hypothetical release credits,
+not all conservatism in mmap model-load pricing. The reporter uses the same
+model and does not traverse that unload leg. Cross-model, watcher/scheduled,
+and knowledge-heavy live workflows are not newly qualified here; their shared
+contract wiring and affected unit paths were audited/tested.
 
 Private evidence: `implementation-3224aefe7/` under the root above contains
 raw test logs, all full-eval JSON/failed transcripts, targeted reports, native

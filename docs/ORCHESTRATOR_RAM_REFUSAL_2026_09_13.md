@@ -2,9 +2,13 @@
 
 Status: **UNRESOLVED on the reporter's 16 GB machine**. The subsequent audit
 reproduced a kernel-statistics freshness defect and four additional policy
-defects. A local freshness correction passes 109 focused tests; it is not
-16 GB acceptance proof. See `ORCHESTRATOR_RAM_SAFETY_AUDIT_2026_09_13.md` for
-the findings, evidence, uncorrected defects, and merge limits.
+defects. Draft [PR #2752](https://github.com/osaurus-ai/osaurus/pull/2752)
+implements the follow-up, with 523 affected Core tests passing and new exact-
+bundle local runtime/Release UI evidence. Actual 16 GB acceptance and exact
+delegation output remain unqualified. See
+`ORCHESTRATOR_RAM_SAFETY_AUDIT_2026_09_13.md` for current fixes, raw failures,
+measurements, and merge limits. The investigation below is the initial
+pre-fix snapshot.
 
 HarrisMagnum4 reports that the isolated #2733 build on an M4 Mac mini with
 16 GB ran the first minimal child successfully (`RAM_FIRST_OK`), then refused
