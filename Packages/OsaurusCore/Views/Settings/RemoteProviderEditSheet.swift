@@ -396,13 +396,11 @@ private struct AddProviderFlow: View {
     private var providerSelectionStep: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // Subscription-backed sign-ins grouped under one header, then
+                // Subscription-backed sign-ins first, then
                 // a single "Use an API key" drill-in that holds every
                 // paste-a-key vendor and Ollama (local), and a direct row for
                 // the custom endpoint.
                 VStack(alignment: .leading, spacing: 10) {
-                    pickerSectionHeader("Subscriptions")
-
                     // Claude Code is not a `RemoteProvider` — it's a local
                     // service driving the user's own `claude` binary — so it
                     // gets a plain row and its own step rather than a catalog

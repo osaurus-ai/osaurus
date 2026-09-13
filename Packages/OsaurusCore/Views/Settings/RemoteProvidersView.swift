@@ -127,7 +127,7 @@ struct RemoteProvidersView: View {
                 showReorderSheet = true
             }
         }
-        HeaderPrimaryButton("Add Cloud Provider", icon: "plus") {
+        HeaderPrimaryButton("Add Provider", icon: "plus") {
             addSheetConfig = AddSheetConfig(preset: nil)
         }
     }
