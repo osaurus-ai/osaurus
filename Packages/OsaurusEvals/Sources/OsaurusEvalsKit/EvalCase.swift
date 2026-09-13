@@ -1885,6 +1885,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 public let ok: Bool?
                 public let model: String?
                 public let summaryContains: [String]?
+                public let summaryEquals: String?
 
                 public init(
                     id: String,
@@ -1892,7 +1893,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                     target: String? = nil,
                     ok: Bool? = nil,
                     model: String? = nil,
-                    summaryContains: [String]? = nil
+                    summaryContains: [String]? = nil,
+                    summaryEquals: String? = nil
                 ) {
                     self.id = id
                     self.targetType = targetType
@@ -1900,6 +1902,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                     self.ok = ok
                     self.model = model
                     self.summaryContains = summaryContains
+                    self.summaryEquals = summaryEquals
                 }
             }
 

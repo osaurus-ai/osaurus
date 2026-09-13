@@ -121,6 +121,25 @@ struct AgentLoopSpawnBatchEvalTests {
         )
     }
 
+    @MainActor
+    @Test func quotedMarkerInFailureExplanationDoesNotPassExactChildContract() throws {
+        let assertion = EvalCase.AgentLoopExpectations.SpawnBatchAssertion(
+            expectedRows: [
+                .init(id: "math", summaryEquals: "BATCH_ALPHA_42"),
+                .init(id: "writing", summaryEquals: "BATCH_BETA_BLUE")
+            ]
+        )
+        let good = try #require(AgentLoopTranscript.spawnBatchObservation(from: Self.batchEnvelope()))
+        #expect(EvalRunner.scoreSpawnBatch(assertion, transcript: Self.transcript(observation: good)).passed)
+        let badJSON = Self.batchEnvelope().replacingOccurrences(
+            of: "BATCH_ALPHA_42", with: "I cannot calculate BATCH_ALPHA_42 without more context"
+        )
+        let bad = try #require(AgentLoopTranscript.spawnBatchObservation(from: badJSON))
+        let scored = EvalRunner.scoreSpawnBatch(assertion, transcript: Self.transcript(observation: bad))
+        #expect(!scored.passed)
+        #expect(scored.note.contains("exact expected output"))
+    }
+
     @Test func parsesOrderedSettledRowsAndAggregateCounts() throws {
         let observation = try #require(
             AgentLoopTranscript.spawnBatchObservation(from: Self.batchEnvelope())

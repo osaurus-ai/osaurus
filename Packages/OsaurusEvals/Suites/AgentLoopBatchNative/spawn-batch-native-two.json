@@ -1,7 +1,7 @@
 {
   "id": "agent_loop.spawn-batch-native-two",
   "domain": "agent_loop",
-  "label": "agent loop • strict native two-sequence batch",
+  "label": "agent loop \u2022 strict native two-sequence batch",
   "query": "Fan out exactly two independent jobs in one spawn_batch call. Job id `math` must target allowed agent UUID `A11CE001-0000-4000-8000-000000000001` and return exactly BATCH_ALPHA_42. Job id `writing` must target allowed agent UUID `A11CE001-0000-4000-8000-000000000002` and return exactly BATCH_BETA_BLUE. Preserve order, then answer once with both tokens and stop.",
   "notes": "Strict native-parallel contract. Use only for a model architecture expected to support B=2. Requested width, uncapped architecture, effective width, observed slots, and subwave must all agree.",
   "fixtures": {
@@ -31,16 +31,29 @@
     "agentLoop": {
       "maxIterations": 6,
       "maxModelSteps": 4,
-      "mustCallTools": ["spawn_batch"],
-      "mustNotCallTools": ["spawn_agent", "spawn_model"],
+      "mustCallTools": [
+        "spawn_batch"
+      ],
+      "mustNotCallTools": [
+        "spawn_agent",
+        "spawn_model"
+      ],
       "maxToolCalls": 1,
       "noDuplicateExecutedCalls": true,
       "noToolErrors": true,
-      "allowedExits": ["finalResponse"],
-      "finalTextContains": ["BATCH_ALPHA_42", "BATCH_BETA_BLUE"],
+      "allowedExits": [
+        "finalResponse"
+      ],
+      "finalTextContains": [
+        "BATCH_ALPHA_42",
+        "BATCH_BETA_BLUE"
+      ],
       "spawnBatch": {
         "exactCallCount": 1,
-        "expectedJobIds": ["math", "writing"],
+        "expectedJobIds": [
+          "math",
+          "writing"
+        ],
         "expectedSucceeded": 2,
         "expectedFailed": 0,
         "expectedMaxParallel": 2,
@@ -56,12 +69,26 @@
             "requireUncappedArchitecture": true,
             "engineEffectiveMaximum": 2,
             "effectiveLocalSlots": 2,
-            "localSubwaves": [2],
+            "localSubwaves": [
+              2
+            ],
             "limitingFactors": []
           }
         ],
         "requireEveryExecutionWaveWellFormed": true,
-        "expectedCacheAvailable": true
+        "expectedCacheAvailable": true,
+        "expectedRows": [
+          {
+            "id": "math",
+            "ok": true,
+            "summaryEquals": "BATCH_ALPHA_42"
+          },
+          {
+            "id": "writing",
+            "ok": true,
+            "summaryEquals": "BATCH_BETA_BLUE"
+          }
+        ]
       }
     }
   }

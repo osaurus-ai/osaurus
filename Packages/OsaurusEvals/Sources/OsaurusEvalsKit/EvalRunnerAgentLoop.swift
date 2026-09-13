@@ -1553,6 +1553,9 @@ extension EvalRunner {
                             + "\(String(describing: observed.model)) != \(value)"
                     )
                 }
+                if let exact = expected.summaryEquals, observed.summary != exact {
+                    failures.append("child[\(index)].summary != exact expected output \(exact.debugDescription)")
+                }
                 if let needles = expected.summaryContains {
                     let summary = observed.summary ?? ""
                     for needle in needles where !summary.contains(needle) {
