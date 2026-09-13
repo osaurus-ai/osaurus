@@ -396,11 +396,6 @@ private struct AddProviderFlow: View {
     private var providerSelectionStep: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Choose a provider", bundle: .module)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    .padding(.horizontal, 4)
-
                 // Subscription-backed sign-ins grouped under one header, then
                 // a single "Use an API key" drill-in that holds every
                 // paste-a-key vendor and Ollama (local), and a direct row for
