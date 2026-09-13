@@ -69,7 +69,13 @@ final class WorkspaceRosterStore: ObservableObject {
     /// Address (lowercased) → last roster display name; survives unshare.
     private var verifiedAt: [String: Date] = [:]
     @Published private(set) var hostReachableAt: [String: Date] = [:]
-    nonisolated static let verificationLifetime: TimeInterval = 35
+    /// How long a `verified` / `snapshot` frame from `/workspaces/sync` keeps
+    /// a roster trusted. The router's steady-state tick is 15 s ± 20 % (up to
+    /// 18 s between frames; see osaurus-router `workspaces/sync.ts`), so the
+    /// lease must survive two consecutive late ticks: 40 s. This is also the
+    /// stream lease in `WorkspaceSyncService` — the two must agree, or the
+    /// client tears down a healthy stream and reconnects in a loop.
+    nonisolated static let verificationLifetime: TimeInterval = 40
     private var lastKnownNames: [String: String] = [:]
 
     /// Minimum spacing between activation-driven refreshes.
@@ -400,12 +406,28 @@ final class WorkspaceRosterStore: ObservableObject {
         lastRefreshedAt = now()
     }
 
+    /// A `verified` heartbeat from `/workspaces/sync`: the server re-confirmed
+    /// the snapshot we already hold. The lease bookkeeping updates silently;
+    /// observers are only notified when something they can see changed — a
+    /// workspace flipping from unverified (expired / never verified) back to
+    /// verified, or host-reachable evidence being superseded. The router
+    /// heartbeats every few seconds, and an unconditional publish here made
+    /// every roster observer re-render on each one.
     func renewVerification() {
         // The server has just verified its current snapshot; it supersedes
         // a successful response observed before this frame.
-        dropHostReachable(supersededBy: rosters)
-        verifiedAt = Dictionary(uniqueKeysWithValues: rosters.map { ($0.id, now()) })
-        objectWillChange.send()
+        // Dropping evidence reassigns the `@Published` map, which publishes
+        // on its own; only the (unpublished) lease flip needs an explicit send.
+        let droppedEvidence = dropHostReachable(supersededBy: rosters)
+        let current = now()
+        let previouslyVerified = Set(
+            verifiedAt.filter { current.timeIntervalSince($0.value) < Self.verificationLifetime }.map(\.key)
+        )
+        let nowVerified = Set(rosters.map(\.id))
+        if !droppedEvidence, previouslyVerified != nowVerified {
+            objectWillChange.send()
+        }
+        verifiedAt = Dictionary(uniqueKeysWithValues: rosters.map { ($0.id, current) })
     }
 
     /// Forget our own "the host answered" evidence only where the router's
@@ -413,15 +435,21 @@ final class WorkspaceRosterStore: ObservableObject {
     /// `online == nil` means the router has no presence for that agent; if
     /// it also wiped our evidence, presence would read `.unknown` forever
     /// and the composer would stay locked on "Checking access…" even though
-    /// the relay handshake just succeeded.
-    private func dropHostReachable(supersededBy rosters: [WorkspaceRoster]) {
-        guard !hostReachableAt.isEmpty else { return }
+    /// the relay handshake just succeeded. Returns whether anything was
+    /// dropped; the `@Published` map is only reassigned in that case so a
+    /// no-op heartbeat doesn't re-render observers.
+    @discardableResult
+    private func dropHostReachable(supersededBy rosters: [WorkspaceRoster]) -> Bool {
+        guard !hostReachableAt.isEmpty else { return false }
         let decided = Set(
             rosters.flatMap(\.agents)
                 .filter { $0.online != nil }
                 .map { $0.agentAddress.lowercased() }
         )
-        hostReachableAt = hostReachableAt.filter { !decided.contains($0.key) }
+        let remaining = hostReachableAt.filter { !decided.contains($0.key) }
+        guard remaining.count != hostReachableAt.count else { return false }
+        hostReachableAt = remaining
+        return true
     }
 
     func expireVerification() {

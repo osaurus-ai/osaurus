@@ -38,8 +38,26 @@ final class WorkspaceSyncService: ObservableObject {
     private var lastFallback = Date.distantPast
     var client: OsaurusRouterAPIClient = .shared
 
+    /// Whether the stream's last frame is recent enough to keep trusting it.
+    /// The router sends a `verified` heartbeat (or a `snapshot`) every second
+    /// for the first 5 s of a stream, then every 15 s ± 20 %. The lease is
+    /// shared with `WorkspaceRosterStore.verificationLifetime` so a healthy
+    /// stream is never torn down between two steady-state ticks (which is
+    /// exactly what a 3 s lease did after the router relaxed its tick).
+    nonisolated static let verificationLease: TimeInterval = WorkspaceRosterStore.verificationLifetime
+
     nonisolated static func verificationIsFresh(lastFrameAt: Date, now: Date = Date()) -> Bool {
-        now.timeIntervalSince(lastFrameAt) < 3
+        now.timeIntervalSince(lastFrameAt) < verificationLease
+    }
+
+    /// How long a fresh connection may go without its first frame. The router
+    /// sends the snapshot immediately on connect, so this stays short: a
+    /// stalled connect falls back to polling quickly instead of waiting out
+    /// the (much longer) steady-state lease.
+    nonisolated static let firstFrameDeadline: TimeInterval = 10
+
+    nonisolated static func connectionIsPending(startedAt: Date, now: Date = Date()) -> Bool {
+        now.timeIntervalSince(startedAt) < firstFrameDeadline
     }
 
     func start() {
@@ -49,8 +67,11 @@ final class WorkspaceSyncService: ObservableObject {
                 try? await Task.sleep(for: .seconds(1))
                 guard let self, !Task.isCancelled else { return }
                 WorkspaceRosterStore.shared.expireVerification()
-                let deadlineBase = self.isVerified ? self.lastFrameAt : self.connectionStartedAt
-                if !Self.verificationIsFresh(lastFrameAt: deadlineBase) || !OsaurusRouter.isEnabled {
+                let alive =
+                    self.isVerified
+                    ? Self.verificationIsFresh(lastFrameAt: self.lastFrameAt)
+                    : Self.connectionIsPending(startedAt: self.connectionStartedAt)
+                if !alive || !OsaurusRouter.isEnabled {
                     self.invalidateVerification()
                     self.connectionTask?.cancel()
                 }

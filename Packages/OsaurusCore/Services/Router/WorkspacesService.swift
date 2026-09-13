@@ -560,23 +560,28 @@ final class WorkspacesService: ObservableObject {
         }
     }
 
+    /// Install a `/workspaces/sync` snapshot. Every reconnect (and any server
+    /// re-read that finds a difference) delivers a full snapshot, so each
+    /// `@Published` field is only reassigned when its value actually changed:
+    /// an identical snapshot must not re-render the Workspaces tab.
     func applySyncSnapshot(_ snapshot: WorkspaceSyncSnapshot) {
         rootGeneration = UUID()
-        workspaces = snapshot.workspaces.map(\.workspace)
+        let nextWorkspaces = snapshot.workspaces.map(\.workspace)
+        if workspaces != nextWorkspaces { workspaces = nextWorkspaces }
         lastRootRefresh = Date()
         reconcileBillingPreferences(validWorkspaceIds: Set(workspaces.map(\.id)))
         guard let id = selectedWorkspaceId else { return }
         // Supersede any poll already in flight before publishing this snapshot.
         selectionGeneration = UUID()
-        isLoadingDetail = false
+        if isLoadingDetail { isLoadingDetail = false }
         guard let entry = snapshot.workspaces.first(where: { $0.workspace.id == id }) else {
             clearSelection()
             return
         }
-        detail = entry.detail
-        members = entry.members
-        workspaceAgents = entry.agents
-        workspaceInvites = entry.invites
+        if detail != entry.detail { detail = entry.detail }
+        if members != entry.members { members = entry.members }
+        if workspaceAgents != entry.agents { workspaceAgents = entry.agents }
+        if workspaceInvites != entry.invites { workspaceInvites = entry.invites }
         reconcileBillingPreferences(
             workspaceId: id,
             activeAgentAddresses: Set(entry.agents.map { $0.agentAddress.lowercased() })
@@ -1082,7 +1087,8 @@ final class WorkspacesService: ObservableObject {
         let generation = selectionGeneration
         guard let agents = try? await client.workspaceAgents(id: id) else { return }
         guard selectedWorkspaceId == id, generation == selectionGeneration else { return }
-        workspaceAgents = agents
+        // A presence poll that changes nothing must not re-render the detail.
+        if workspaceAgents != agents { workspaceAgents = agents }
         reconcileBillingPreferences(
             workspaceId: id,
             activeAgentAddresses: Set(agents.map { $0.agentAddress.lowercased() })

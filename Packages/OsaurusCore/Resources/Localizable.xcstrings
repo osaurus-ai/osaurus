@@ -262622,6 +262622,438 @@
         }
       }
     },
+    "@%@ is already taken": {
+      "comment": "Availability hint when the typed Osaurus ID handle is taken.",
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "@%@ ist bereits vergeben"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "@%@은(는) 이미 사용 중입니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "@%@ уже занято"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "@%@ 已被占用"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "@%@ 已被占用"
+          }
+        }
+      }
+    },
+    "@%@ is available": {
+      "comment": "Availability hint when the typed Osaurus ID handle can be claimed.",
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "@%@ ist verfügbar"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "@%@을(를) 사용할 수 있습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "@%@ свободно"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "@%@ 可用"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "@%@ 可使用"
+          }
+        }
+      }
+    },
+    "A claim is already in progress.": {
+      "comment": "Error when an Osaurus ID claim is already running.",
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ein Anspruch läuft bereits."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이미 등록이 진행 중입니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Заявка уже выполняется."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "认领已在进行中。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "認領已在進行中。"
+          }
+        }
+      }
+    },
+    "A save is already in progress.": {
+      "comment": "Error when an Osaurus ID profile save is already running.",
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ein Speichervorgang läuft bereits."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이미 저장이 진행 중입니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сохранение уже выполняется."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存已在进行中。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "儲存已在進行中。"
+          }
+        }
+      }
+    },
+    "Nothing to save.": {
+      "comment": "Error when an Osaurus ID profile update has no changed fields.",
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nichts zu speichern."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "저장할 내용이 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нечего сохранять."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有需要保存的内容。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "沒有需要儲存的內容。"
+          }
+        }
+      }
+    },
+    "OSAURUS ID": {
+      "comment": "Identity settings section title for the claimable @handle.",
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OSAURUS-ID"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OSAURUS ID"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OSAURUS ID"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OSAURUS 标识"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OSAURUS 識別"
+          }
+        }
+      }
+    },
+    "Osaurus ID refresh is already in progress.": {
+      "comment": "Error when an Osaurus ID profile refresh is already running.",
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Aktualisierung der Osaurus-ID läuft bereits."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus ID 새로고침이 이미 진행 중입니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Обновление Osaurus ID уже выполняется."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus ID 刷新已在进行中。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus ID 重新整理已在進行中。"
+          }
+        }
+      }
+    },
+    "Osaurus IDs are 3–20 characters: a–z, 0–9, and hyphens.": {
+      "comment": "Validation error for an invalid Osaurus ID handle.",
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus-IDs bestehen aus 3–20 Zeichen: a–z, 0–9 und Bindestrichen."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus ID는 3–20자이며 a–z, 0–9, 하이픈만 사용할 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus ID — от 3 до 20 символов: a–z, 0–9 и дефисы."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus ID 为 3–20 个字符：a–z、0–9 和连字符。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus ID 為 3–20 個字元：a–z、0–9 和連字號。"
+          }
+        }
+      }
+    },
+    "Osaurus Router or secure identity is unavailable.": {
+      "comment": "Error when Osaurus ID APIs cannot run because the router or master key is unavailable.",
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus Router oder sichere Identität ist nicht verfügbar."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus Router 또는 보안 신원에 연결할 수 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus Router или защищённая идентификация недоступны."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus Router 或安全身份不可用。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus Router 或安全身分不可用。"
+          }
+        }
+      }
+    },
+    "That name is reserved": {
+      "comment": "Availability hint when the typed Osaurus ID handle is reserved.",
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieser Name ist reserviert"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 이름은 예약되어 있습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Это имя зарезервировано"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "该名称已被保留"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "該名稱已被保留"
+          }
+        }
+      }
+    },
+    "That name isn't allowed": {
+      "comment": "Availability hint when the typed Osaurus ID handle is invalid.",
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieser Name ist nicht erlaubt"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 이름은 사용할 수 없습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Это имя недопустимо"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "该名称不允许使用"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "該名稱不允許使用"
+          }
+        }
+      }
+    },
+    "Turn on the Osaurus Router in Settings to claim an Osaurus ID.": {
+      "comment": "Error when claiming an Osaurus ID while the router is disabled.",
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Schalte den Osaurus Router in den Einstellungen ein, um eine Osaurus-ID zu beanspruchen."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus ID를 등록하려면 설정에서 Osaurus Router를 켜세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Включите Osaurus Router в настройках, чтобы получить Osaurus ID."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请在设置中开启 Osaurus Router 以认领 Osaurus ID。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請在設定中開啟 Osaurus Router 以認領 Osaurus ID。"
+          }
+        }
+      }
+    },
     "32+ random characters": {
       "localizations": {
         "de": {
