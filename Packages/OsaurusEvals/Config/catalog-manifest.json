@@ -79,6 +79,9 @@
       "agent_loop.write-new-file",
       "agent_loop.write-then-verify-with-shell"
     ],
+    "AgentLoopBatchDisabled": [
+      "agent_loop.spawn-batch-disabled-two"
+    ],
     "AgentLoopBatchNative": [
       "agent_loop.spawn-batch-native-two"
     ],

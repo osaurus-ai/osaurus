@@ -51,6 +51,14 @@ Verification of memory implementation `3224aefe7`:
   failing suites and the complete serialized matrix passed.
 - Eval harness: **346/346 in 42 suites**, including a new exact child-summary
   assertion. A parent's failure explanation echoing a marker cannot pass it.
+- CI caught the new batching-off case missing from the committed catalog;
+  the entry was added. A local full-harness rerun then reproduced 25 assertion
+  issues when scripted scenarios concurrently changed global delegation
+  settings. `SubagentEvalTests` now serializes scenarios; individual batch
+  tests retain concurrent child execution and overlap assertions. The final
+  full harness, with other suites still parallel, passed **346/346**. Both
+  failing logs are preserved. These are test-only corrections after the
+  final Release runtime; no model output or runtime rule was changed.
 - Exact Gemma tokenizer/runtime boundary: **2/2 over-budget calls refused
   before prefill**, 20,008 actual prompt tokens plus 2,048 output against an
   11,596-position contract. Both immediate follow-ups returned exact markers,

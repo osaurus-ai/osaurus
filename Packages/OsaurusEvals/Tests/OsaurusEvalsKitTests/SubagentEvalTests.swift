@@ -25,6 +25,11 @@ import Testing
 
 @testable import OsaurusEvalsKit
 
+// These scenarios snapshot and restore the process-wide delegation settings.
+// Running scenarios together can invalidate another scenario's authorization
+// between preparation and execution. Each batch test still runs its own
+// children concurrently and asserts their actual overlap.
+@Suite(.serialized)
 struct SubagentEvalTests {
 
     private typealias Sub = EvalCase.SubagentExpectations
