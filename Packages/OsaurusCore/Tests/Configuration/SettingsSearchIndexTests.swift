@@ -128,6 +128,11 @@ struct SettingsSearchIndexTests {
 
         let killSwitchHits = SettingsSearchIndex.search("kill switch")
         #expect(killSwitchHits.contains { $0.id == "agentChannels.globalWrites" && $0.tab == .agentChannels })
+
+        let n8nHits = SettingsSearchIndex.search("n8n")
+        #expect(n8nHits.contains { $0.id == "agentChannels.n8n" && $0.tab == .agentChannels })
+        let dockerHits = SettingsSearchIndex.search("host.docker.internal")
+        #expect(dockerHits.contains { $0.id == "agentChannels.n8n" })
     }
 
     /// Searching "sampler" returned ZERO results in the live app, even though

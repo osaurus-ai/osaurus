@@ -652,6 +652,17 @@ public enum SettingsSearchIndex {
             ]
         ),
         .init(
+            id: "agentChannels.n8n",
+            tab: .agentChannels,
+            section: "Native Integrations",
+            title: "n8n",
+            keywords: [
+                "n8n", "workflow automation", "webhook bridge", "channel secret",
+                "hmac signature", "shared secret header", "poll url", "task poll",
+                "host.docker.internal", "plaintext allowed", "secure channel required",
+            ]
+        ),
+        .init(
             id: "agentChannels.customJSON",
             tab: .agentChannels,
             section: "Custom JSON Connections",

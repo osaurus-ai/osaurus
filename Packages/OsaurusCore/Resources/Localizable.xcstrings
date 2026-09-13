@@ -262621,6 +262621,2358 @@
           }
         }
       }
+    },
+    "32+ random characters": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mindestens 32 zufällige Zeichen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "32 个以上的随机字符"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "32자 이상의 임의 문자"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не менее 32 случайных символов"
+          }
+        }
+      }
+    },
+    "Accept Bot Senders": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bot-Absender akzeptieren"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接受机器人发送者"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "봇 발신자 허용"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Принимать отправителей-ботов"
+          }
+        }
+      }
+    },
+    "Accept events whose sender.is_bot is true.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ereignisse akzeptieren, bei denen sender.is_bot auf true steht."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接受 sender.is_bot 为 true 的事件。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "sender.is_bot가 true인 이벤트를 허용합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Принимать события, у которых sender.is_bot равно true."
+          }
+        }
+      }
+    },
+    "Adds X-Osaurus-Channel-Signature: sha256=<HMAC of the body> using the channel secret so the workflow can verify Osaurus.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fügt X-Osaurus-Channel-Signature: sha256=<HMAC des Bodys> mit dem Kanalgeheimnis hinzu, damit der Workflow Osaurus verifizieren kann."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用频道密钥添加 X-Osaurus-Channel-Signature: sha256=<正文的 HMAC>，以便工作流验证 Osaurus。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "채널 시크릿으로 X-Osaurus-Channel-Signature: sha256=<본문의 HMAC> 헤더를 추가하여 워크플로가 Osaurus를 검증할 수 있게 합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавляет X-Osaurus-Channel-Signature: sha256=<HMAC тела> с секретом канала, чтобы рабочий процесс мог проверить Osaurus."
+          }
+        }
+      }
+    },
+    "Allow plaintext HTTP from non-loopback callers": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unverschlüsseltes HTTP von Nicht-Loopback-Aufrufern erlauben"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许非本地回环调用方使用明文 HTTP"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "루프백이 아닌 호출자의 평문 HTTP 허용"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить открытый HTTP от вызывающих не с loopback"
+          }
+        }
+      }
+    },
+    "Allowed Conversations": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Erlaubte Unterhaltungen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许的对话"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "허용된 대화"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешённые беседы"
+          }
+        }
+      }
+    },
+    "Authorization fails closed: an event is accepted only when its conversation_id and sender.id are both listed here.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Autorisierung ist standardmäßig geschlossen: Ein Ereignis wird nur akzeptiert, wenn sowohl conversation_id als auch sender.id hier aufgeführt sind."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "授权采用默认拒绝：只有当 conversation_id 和 sender.id 都在此列出时才接受事件。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "권한 부여는 기본 거부입니다. conversation_id와 sender.id가 모두 여기에 등록된 경우에만 이벤트를 허용합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Авторизация закрыта по умолчанию: событие принимается, только если и conversation_id, и sender.id указаны здесь."
+          }
+        }
+      }
+    },
+    "Authorize incoming events": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eingehende Ereignisse autorisieren"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "授权传入事件"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "수신 이벤트 승인"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Авторизация входящих событий"
+          }
+        }
+      }
+    },
+    "Channel Secret": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kanalgeheimnis"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "频道密钥"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "채널 시크릿"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Секрет канала"
+          }
+        }
+      }
+    },
+    "Channel secret removed — inbound requests will be refused until a new one is saved": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kanalgeheimnis entfernt – eingehende Anfragen werden abgelehnt, bis ein neues gespeichert ist"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已移除频道密钥——在保存新密钥之前将拒绝传入请求"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "채널 시크릿을 제거했습니다. 새 시크릿을 저장할 때까지 수신 요청이 거부됩니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Секрет канала удалён — входящие запросы будут отклоняться, пока не будет сохранён новый"
+          }
+        }
+      }
+    },
+    "Choose an agent to reply with, or turn off Reply with an Agent.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wähle einen Agenten zum Antworten oder deaktiviere „Mit einem Agenten antworten“."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请选择用于回复的智能体，或关闭“由智能体回复”。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "응답할 에이전트를 선택하거나 '에이전트로 응답'을 끄세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выберите агента для ответа или отключите «Отвечать агентом»."
+          }
+        }
+      }
+    },
+    "Choose which agent answers verified, allowlisted n8n events. Replies run in a private channel session per conversation; external-surface tool restrictions still apply.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wähle, welcher Agent verifizierte, freigegebene n8n-Ereignisse beantwortet. Antworten laufen pro Unterhaltung in einer privaten Kanalsitzung; die Werkzeugbeschränkungen für externe Oberflächen gelten weiterhin."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择由哪个智能体回答已验证且在允许列表内的 n8n 事件。回复在每个对话的私有频道会话中运行；外部界面的工具限制仍然适用。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "검증되고 허용 목록에 있는 n8n 이벤트에 응답할 에이전트를 선택합니다. 응답은 대화별 비공개 채널 세션에서 실행되며, 외부 표면 도구 제한이 계속 적용됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выберите, какой агент отвечает на проверенные события n8n из списка разрешённых. Ответы выполняются в приватной сессии канала для каждой беседы; ограничения инструментов для внешних поверхностей сохраняются."
+          }
+        }
+      }
+    },
+    "Confirm conversation_id and sender.id are both allowlisted in Conversations.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stelle sicher, dass conversation_id und sender.id beide unter „Unterhaltungen“ freigegeben sind."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请确认 conversation_id 和 sender.id 都已在“对话”中加入允许列表。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "conversation_id와 sender.id가 모두 '대화'의 허용 목록에 있는지 확인하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Убедитесь, что conversation_id и sender.id оба разрешены в разделе «Беседы»."
+          }
+        }
+      }
+    },
+    "Confirm the workflow posts to the inbound URL shown in Connect with the saved secret.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stelle sicher, dass der Workflow mit dem gespeicherten Geheimnis an die unter „Verbinden“ angezeigte Eingangs-URL sendet."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请确认工作流使用已保存的密钥向“连接”中显示的入站 URL 发送请求。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "워크플로가 저장된 시크릿으로 '연결'에 표시된 수신 URL에 요청을 보내는지 확인하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Убедитесь, что рабочий процесс отправляет запросы на входящий URL из раздела «Подключение» с сохранённым секретом."
+          }
+        }
+      }
+    },
+    "Could not store the channel secret in the Keychain.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Das Kanalgeheimnis konnte nicht im Schlüsselbund gespeichert werden."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法将频道密钥存储到钥匙串。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "채널 시크릿을 키체인에 저장할 수 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось сохранить секрет канала в Связке ключей."
+          }
+        }
+      }
+    },
+    "Disabled connections answer every inbound and poll request with 403 connection_disabled.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deaktivierte Verbindungen beantworten jede Eingangs- und Abfrageanfrage mit 403 connection_disabled."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已禁用的连接会对所有入站和轮询请求返回 403 connection_disabled。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "비활성화된 연결은 모든 수신 및 폴링 요청에 403 connection_disabled로 응답합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отключённые подключения отвечают на все входящие и опрашивающие запросы кодом 403 connection_disabled."
+          }
+        }
+      }
+    },
+    "Draft check found 1 issue": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entwurfsprüfung hat 1 Problem gefunden"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "草稿检查发现 1 个问题"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "초안 검사에서 문제 1개를 찾았습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверка черновика нашла 1 проблему"
+          }
+        }
+      }
+    },
+    "Draft configuration looks valid. Save to run live diagnostics.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Entwurfskonfiguration sieht gültig aus. Speichern, um die Live-Diagnose auszuführen."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "草稿配置看起来有效。保存后即可运行实时诊断。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "초안 구성이 유효해 보입니다. 저장하면 실시간 진단을 실행할 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Черновик конфигурации выглядит корректно. Сохраните, чтобы запустить живую диагностику."
+          }
+        }
+      }
+    },
+    "Enabled (poll replies)": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktiviert (Antworten abfragen)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已启用（轮询回复）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "활성화됨 (응답 폴링)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Включено (опрос ответов)"
+          }
+        }
+      }
+    },
+    "Enabled (push + poll)": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktiviert (Push + Abfrage)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已启用（推送 + 轮询）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "활성화됨 (푸시 + 폴링)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Включено (push + опрос)"
+          }
+        }
+      }
+    },
+    "Enter a connection id.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gib eine Verbindungs-ID ein."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请输入连接 ID。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "연결 ID를 입력하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Введите идентификатор подключения."
+          }
+        }
+      }
+    },
+    "Example copied": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beispiel kopiert"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已复制示例"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "예시를 복사했습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пример скопирован"
+          }
+        }
+      }
+    },
+    "Example inbound request (replace SECRET)": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beispiel für eine eingehende Anfrage (SECRET ersetzen)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "入站请求示例（替换 SECRET）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "수신 요청 예시 (SECRET을 교체하세요)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пример входящего запроса (замените SECRET)"
+          }
+        }
+      }
+    },
+    "Fill the field with a random 48-character secret": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Feld mit einem zufälligen Geheimnis aus 48 Zeichen füllen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用一个 48 个字符的随机密钥填充该字段"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "48자 임의 시크릿으로 필드를 채웁니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Заполнить поле случайным секретом из 48 символов"
+          }
+        }
+      }
+    },
+    "From Docker or the network, confirm plaintext is allowed or the call goes through Secure Channel.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aus Docker oder dem Netzwerk: Stelle sicher, dass Klartext erlaubt ist oder der Aufruf über Secure Channel läuft."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "来自 Docker 或网络时，请确认已允许明文，或者调用通过 Secure Channel 进行。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Docker나 네트워크에서 호출하는 경우 평문이 허용되어 있거나 Secure Channel을 통해 호출되는지 확인하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Из Docker или сети: убедитесь, что открытый текст разрешён или вызов идёт через Secure Channel."
+          }
+        }
+      }
+    },
+    "From n8n in Docker Desktop": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Von n8n in Docker Desktop"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "来自 Docker Desktop 中的 n8n"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Docker Desktop의 n8n에서"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Из n8n в Docker Desktop"
+          }
+        }
+      }
+    },
+    "From this Mac": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Von diesem Mac"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "来自这台 Mac"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 Mac에서"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "С этого Mac"
+          }
+        }
+      }
+    },
+    "From your network": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aus deinem Netzwerk"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "来自你的网络"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "네트워크에서"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Из вашей сети"
+          }
+        }
+      }
+    },
+    "Generate a long random value, paste it here, and store the same value in an n8n credential. Every inbound and poll request must prove it with the header below.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Erzeuge einen langen zufälligen Wert, füge ihn hier ein und speichere denselben Wert in einer n8n-Anmeldeinformation. Jede Eingangs- und Abfrageanfrage muss ihn mit dem unten stehenden Header nachweisen."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成一个较长的随机值，粘贴到此处，并将相同的值保存到 n8n 凭据中。每个入站和轮询请求都必须通过下面的标头证明该值。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "긴 임의 값을 생성해 여기에 붙여넣고 같은 값을 n8n 자격 증명에 저장하세요. 모든 수신 및 폴링 요청은 아래 헤더로 이를 증명해야 합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сгенерируйте длинное случайное значение, вставьте его сюда и сохраните то же значение в учётных данных n8n. Каждый входящий и опрашивающий запрос должен подтверждать его заголовком ниже."
+          }
+        }
+      }
+    },
+    "Generate an access key for Secure Channel": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zugriffsschlüssel für Secure Channel erzeugen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "为 Secure Channel 生成访问密钥"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Secure Channel용 액세스 키 생성"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Создать ключ доступа для Secure Channel"
+          }
+        }
+      }
+    },
+    "Guided setup — secret-verified webhook bridge for n8n workflows": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Geführte Einrichtung – geheimnisverifizierte Webhook-Brücke für n8n-Workflows"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "引导式设置——面向 n8n 工作流、经密钥验证的 Webhook 桥接"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "안내 설정 — n8n 워크플로용 시크릿 검증 웹훅 브리지"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пошаговая настройка — вебхук-мост с проверкой секрета для рабочих процессов n8n"
+          }
+        }
+      }
+    },
+    "HMAC-SHA256 signature": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HMAC-SHA256-Signatur"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HMAC-SHA256 签名"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HMAC-SHA256 서명"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Подпись HMAC-SHA256"
+          }
+        }
+      }
+    },
+    "Header Name": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Header-Name"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "标头名称"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "헤더 이름"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Имя заголовка"
+          }
+        }
+      }
+    },
+    "Inbound URL copied": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eingangs-URL kopiert"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已复制入站 URL"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "수신 URL을 복사했습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Входящий URL скопирован"
+          }
+        }
+      }
+    },
+    "Issue an agent-scoped osk-v1 key so remote n8n can call Osaurus end-to-end encrypted.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stelle einen agentenbezogenen osk-v1-Schlüssel aus, damit ein entferntes n8n Osaurus Ende-zu-Ende-verschlüsselt aufrufen kann."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "签发限定于智能体的 osk-v1 密钥，以便远程 n8n 以端到端加密方式调用 Osaurus。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "에이전트 범위의 osk-v1 키를 발급하여 원격 n8n이 Osaurus를 종단 간 암호화로 호출할 수 있게 합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выпустить ключ osk-v1 с областью агента, чтобы удалённый n8n мог вызывать Osaurus со сквозным шифрованием."
+          }
+        }
+      }
+    },
+    "Leave empty to keep replies poll-only.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leer lassen, damit Antworten nur per Abfrage verfügbar sind."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "留空则回复仅通过轮询获取。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "비워 두면 응답을 폴링으로만 받을 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Оставьте пустым, чтобы ответы были доступны только через опрос."
+          }
+        }
+      }
+    },
+    "New n8n Channel": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neuer n8n-Kanal"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新建 n8n 频道"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "새 n8n 채널"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Новый канал n8n"
+          }
+        }
+      }
+    },
+    "No allowed senders": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keine erlaubten Absender"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有允许的发送者"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "허용된 발신자 없음"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нет разрешённых отправителей"
+          }
+        }
+      }
+    },
+    "No incoming n8n events yet this session. Trigger the workflow and press “Verify incoming event”.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In dieser Sitzung sind noch keine n8n-Ereignisse eingegangen. Löse den Workflow aus und drücke „Eingehendes Ereignis prüfen“."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次会话尚未收到 n8n 事件。请触发工作流，然后点击“验证传入事件”。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이번 세션에 수신된 n8n 이벤트가 아직 없습니다. 워크플로를 실행한 뒤 '수신 이벤트 확인'을 누르세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В этой сессии ещё не было входящих событий n8n. Запустите рабочий процесс и нажмите «Проверить входящее событие»."
+          }
+        }
+      }
+    },
+    "No n8n event arrived within 90 seconds.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Innerhalb von 90 Sekunden ist kein n8n-Ereignis eingegangen."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "90 秒内没有收到 n8n 事件。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "90초 안에 n8n 이벤트가 도착하지 않았습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "За 90 секунд не поступило ни одного события n8n."
+          }
+        }
+      }
+    },
+    "No verified n8n event has arrived this session. Trigger the workflow with the saved secret to start it.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In dieser Sitzung ist noch kein verifiziertes n8n-Ereignis eingegangen. Löse den Workflow mit dem gespeicherten Geheimnis aus, um zu starten."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次会话尚未收到已验证的 n8n 事件。请使用已保存的密钥触发工作流以开始。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이번 세션에 검증된 n8n 이벤트가 아직 없습니다. 저장된 시크릿으로 워크플로를 실행해 시작하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В этой сессии ещё не поступало проверенных событий n8n. Запустите рабочий процесс с сохранённым секретом, чтобы начать."
+          }
+        }
+      }
+    },
+    "Off: callers that are not on this Mac must use Secure Channel (end-to-end encrypted) or they receive 426. On: the shared secret alone authenticates them — use only on trusted networks such as Docker Desktop on this Mac.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aus: Aufrufer, die nicht auf diesem Mac laufen, müssen Secure Channel (Ende-zu-Ende-verschlüsselt) verwenden, sonst erhalten sie 426. An: Das gemeinsame Geheimnis allein authentifiziert sie – nur in vertrauenswürdigen Netzwerken wie Docker Desktop auf diesem Mac verwenden."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭：不在这台 Mac 上的调用方必须使用 Secure Channel（端到端加密），否则会收到 426。开启：仅凭共享密钥即可认证——仅在可信网络（例如这台 Mac 上的 Docker Desktop）中使用。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "끔: 이 Mac 외부의 호출자는 Secure Channel(종단 간 암호화)을 사용해야 하며, 그렇지 않으면 426을 받습니다. 켬: 공유 시크릿만으로 인증합니다. 이 Mac의 Docker Desktop처럼 신뢰할 수 있는 네트워크에서만 사용하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выкл.: вызывающие не с этого Mac должны использовать Secure Channel (сквозное шифрование), иначе получат 426. Вкл.: их аутентифицирует только общий секрет — используйте лишь в доверенных сетях, например Docker Desktop на этом Mac."
+          }
+        }
+      }
+    },
+    "Outbound Webhook URL": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ausgehende Webhook-URL"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "出站 Webhook URL"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "발신 웹훅 URL"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "URL исходящего вебхука"
+          }
+        }
+      }
+    },
+    "Override the header n8n sends the secret or signature in. Leave empty for the default.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Überschreibt den Header, in dem n8n das Geheimnis oder die Signatur sendet. Leer lassen für den Standard."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "覆盖 n8n 用于发送密钥或签名的标头。留空则使用默认值。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n이 시크릿이나 서명을 보내는 헤더를 재정의합니다. 비워 두면 기본값을 사용합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Переопределяет заголовок, в котором n8n передаёт секрет или подпись. Оставьте пустым для значения по умолчанию."
+          }
+        }
+      }
+    },
+    "Paste or generate the channel secret before saving.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Füge das Kanalgeheimnis ein oder erzeuge es, bevor du speicherst."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存前请粘贴或生成频道密钥。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "저장하기 전에 채널 시크릿을 붙여넣거나 생성하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вставьте или сгенерируйте секрет канала перед сохранением."
+          }
+        }
+      }
+    },
+    "Pick a local agent in Agent Behavior to issue a Secure Channel access key from here.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wähle unter „Agentenverhalten“ einen lokalen Agenten, um von hier aus einen Secure-Channel-Zugriffsschlüssel auszustellen."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在“智能体行为”中选择一个本地智能体，即可在此签发 Secure Channel 访问密钥。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'에이전트 동작'에서 로컬 에이전트를 선택하면 여기에서 Secure Channel 액세스 키를 발급할 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выберите локального агента в разделе «Поведение агента», чтобы выпустить ключ доступа Secure Channel отсюда."
+          }
+        }
+      }
+    },
+    "Plaintext is allowed. Anyone who can reach this port and knows the secret can send events and read replies for this connection.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Klartext ist erlaubt. Jeder, der diesen Port erreicht und das Geheimnis kennt, kann für diese Verbindung Ereignisse senden und Antworten lesen."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已允许明文。任何能访问此端口并知道密钥的人都可以为此连接发送事件并读取回复。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "평문이 허용되어 있습니다. 이 포트에 접근할 수 있고 시크릿을 아는 사람은 누구나 이 연결로 이벤트를 보내고 응답을 읽을 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открытый текст разрешён. Любой, кто может достичь этого порта и знает секрет, может отправлять события и читать ответы для этого подключения."
+          }
+        }
+      }
+    },
+    "Point n8n at this URL": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n auf diese URL richten"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "让 n8n 指向此 URL"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n이 이 URL을 호출하도록 설정"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Направьте n8n на этот URL"
+          }
+        }
+      }
+    },
+    "Poll URL copied": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Abfrage-URL kopiert"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已复制轮询 URL"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "폴링 URL을 복사했습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "URL опроса скопирован"
+          }
+        }
+      }
+    },
+    "Poll for the reply (same header)": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Antwort abfragen (gleicher Header)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "轮询获取回复（相同标头）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "응답 폴링 (같은 헤더)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Опрос ответа (тот же заголовок)"
+          }
+        }
+      }
+    },
+    "Posts the agent's reply as a signed JSON envelope to an n8n Webhook trigger. Requires a public HTTPS URL — loopback, private ranges and plain HTTP are refused by the outbound host policy.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sendet die Antwort des Agenten als signierten JSON-Umschlag an einen n8n-Webhook-Trigger. Erfordert eine öffentliche HTTPS-URL – Loopback, private Bereiche und unverschlüsseltes HTTP werden von der Richtlinie für ausgehende Hosts abgelehnt."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将智能体的回复作为已签名的 JSON 信封发送到 n8n Webhook 触发器。需要公网 HTTPS URL——出站主机策略会拒绝本地回环、私有网段和明文 HTTP。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "에이전트의 응답을 서명된 JSON 봉투로 n8n 웹훅 트리거에 게시합니다. 공개 HTTPS URL이 필요하며, 루프백·사설 대역·평문 HTTP는 발신 호스트 정책에 의해 거부됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отправляет ответ агента в виде подписанного JSON-конверта на триггер Webhook в n8n. Требуется публичный HTTPS-URL — loopback, частные диапазоны и открытый HTTP отклоняются политикой исходящих хостов."
+          }
+        }
+      }
+    },
+    "Push replies to n8n (optional)": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Antworten an n8n pushen (optional)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将回复推送到 n8n（可选）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n으로 응답 푸시 (선택 사항)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отправлять ответы в n8n (необязательно)"
+          }
+        }
+      }
+    },
+    "Push the selected agent's sanitized reply as soon as it finishes. Global writes and the conversation allowlist still apply.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sendet die bereinigte Antwort des gewählten Agenten, sobald sie fertig ist. Globale Schreibrechte und die Unterhaltungs-Allowlist gelten weiterhin."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在所选智能体完成后立即推送其经过净化的回复。全局写入设置和对话允许列表仍然适用。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "선택한 에이전트의 정제된 응답을 완료 즉시 푸시합니다. 전역 쓰기 설정과 대화 허용 목록이 계속 적용됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отправлять очищенный ответ выбранного агента сразу по завершении. Глобальные записи и список разрешённых бесед по-прежнему действуют."
+          }
+        }
+      }
+    },
+    "Remote callers": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entfernte Aufrufer"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "远程调用方"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "원격 호출자"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалённые вызывающие"
+          }
+        }
+      }
+    },
+    "Replies are always available by polling the task URL. Turn on the push below to also post them to an n8n Webhook trigger.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Antworten sind immer per Abfrage der Aufgaben-URL verfügbar. Aktiviere unten den Push, um sie zusätzlich an einen n8n-Webhook-Trigger zu senden."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "始终可以通过轮询任务 URL 获取回复。开启下方的推送后，还会将回复发送到 n8n Webhook 触发器。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "응답은 항상 작업 URL을 폴링해 받을 수 있습니다. 아래 푸시를 켜면 n8n 웹훅 트리거에도 게시합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ответы всегда доступны через опрос URL задачи. Включите отправку ниже, чтобы дополнительно публиковать их на триггер Webhook в n8n."
+          }
+        }
+      }
+    },
+    "Reply to incoming events": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Auf eingehende Ereignisse antworten"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回复传入事件"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "수신 이벤트에 응답"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отвечать на входящие события"
+          }
+        }
+      }
+    },
+    "Requests from Docker or the network are not on loopback, so they must satisfy the transport policy below.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anfragen aus Docker oder dem Netzwerk kommen nicht über Loopback und müssen daher die unten stehende Transportrichtlinie erfüllen."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "来自 Docker 或网络的请求不走本地回环，因此必须满足下方的传输策略。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Docker나 네트워크에서 오는 요청은 루프백이 아니므로 아래 전송 정책을 충족해야 합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запросы из Docker или сети приходят не через loopback, поэтому должны соответствовать политике транспорта ниже."
+          }
+        }
+      }
+    },
+    "Save first, then trigger the n8n workflow (or POST an envelope with curl) and watch each stage appear here.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zuerst speichern, dann den n8n-Workflow auslösen (oder einen Umschlag per curl POSTen) und beobachten, wie hier jede Stufe erscheint."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "先保存，然后触发 n8n 工作流（或用 curl POST 一个信封），并在此观察每个阶段的出现。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "먼저 저장한 뒤 n8n 워크플로를 실행하거나 curl로 봉투를 POST하고, 각 단계가 여기에 나타나는지 확인하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сначала сохраните, затем запустите рабочий процесс n8n (или отправьте конверт через curl) и наблюдайте, как здесь появляется каждый этап."
+          }
+        }
+      }
+    },
+    "Saved. Trigger the workflow, then verify below.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gespeichert. Löse den Workflow aus und prüfe unten."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已保存。请触发工作流，然后在下方验证。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "저장했습니다. 워크플로를 실행한 뒤 아래에서 확인하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сохранено. Запустите рабочий процесс, затем проверьте ниже."
+          }
+        }
+      }
+    },
+    "Secret generated — copy it into n8n before saving": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Geheimnis erzeugt – kopiere es vor dem Speichern in n8n"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已生成密钥——保存前请将其复制到 n8n"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시크릿을 생성했습니다. 저장하기 전에 n8n에 복사하세요"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Секрет сгенерирован — скопируйте его в n8n перед сохранением"
+          }
+        }
+      }
+    },
+    "Secret-verified webhook bridge for n8n workflows": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Geheimnisverifizierte Webhook-Brücke für n8n-Workflows"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "面向 n8n 工作流、经密钥验证的 Webhook 桥接"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n 워크플로용 시크릿 검증 웹훅 브리지"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вебхук-мост с проверкой секрета для рабочих процессов n8n"
+          }
+        }
+      }
+    },
+    "Secret-verified webhook with pollable replies": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Geheimnisverifizierter Webhook mit abfragbaren Antworten"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "经密钥验证的 Webhook，回复可轮询"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "폴링 가능한 응답을 제공하는 시크릿 검증 웹훅"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вебхук с проверкой секрета и ответами через опрос"
+          }
+        }
+      }
+    },
+    "Shared secret": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gemeinsames Geheimnis"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "共享密钥"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "공유 시크릿"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Общий секрет"
+          }
+        }
+      }
+    },
+    "Shared secret header": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Header mit gemeinsamem Geheimnis"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "共享密钥标头"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "공유 시크릿 헤더"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Заголовок с общим секретом"
+          }
+        }
+      }
+    },
+    "Sign Outbound Bodies": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ausgehende Bodys signieren"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "签名出站正文"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "발신 본문 서명"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Подписывать исходящие тела"
+          }
+        }
+      }
+    },
+    "Stable id used in the webhook URL. Lowercase letters, digits and dashes.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stabile ID, die in der Webhook-URL verwendet wird. Kleinbuchstaben, Ziffern und Bindestriche."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用于 Webhook URL 的稳定 ID。仅限小写字母、数字和短横线。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "웹훅 URL에 사용되는 고정 ID입니다. 소문자, 숫자, 대시만 사용하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Стабильный идентификатор, используемый в URL вебхука. Строчные буквы, цифры и дефисы."
+          }
+        }
+      }
+    },
+    "The connection id is part of the inbound URL and how agent_channel tools refer to this channel.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Verbindungs-ID ist Teil der Eingangs-URL und die Bezeichnung, mit der agent_channel-Werkzeuge auf diesen Kanal verweisen."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接 ID 是入站 URL 的一部分，也是 agent_channel 工具引用此频道的方式。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "연결 ID는 수신 URL의 일부이며 agent_channel 도구가 이 채널을 참조하는 이름입니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Идентификатор подключения входит во входящий URL и используется инструментами agent_channel для ссылки на этот канал."
+          }
+        }
+      }
+    },
+    "The outbound webhook URL must be an absolute http(s) URL.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die ausgehende Webhook-URL muss eine absolute http(s)-URL sein."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "出站 Webhook URL 必须是绝对的 http(s) URL。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "발신 웹훅 URL은 절대 http(s) URL이어야 합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "URL исходящего вебхука должен быть абсолютным http(s) URL."
+          }
+        }
+      }
+    },
+    "This removes the \"%@\" n8n channel from the configuration file. The Keychain secret it references is not deleted.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dadurch wird der n8n-Kanal „%@“ aus der Konfigurationsdatei entfernt. Das referenzierte Schlüsselbund-Geheimnis wird nicht gelöscht."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这将从配置文件中移除“%@”n8n 频道。它引用的钥匙串密钥不会被删除。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "구성 파일에서 \"%@\" n8n 채널을 제거합니다. 이 채널이 참조하는 키체인 시크릿은 삭제되지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Это удалит канал n8n «%@» из файла конфигурации. Секрет из Связки ключей, на который он ссылается, не удаляется."
+          }
+        }
+      }
+    },
+    "Use an HTTP Request node: POST the envelope to the inbound URL, then GET the poll_url from the 202 response until status is completed.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verwende einen HTTP-Request-Knoten: POSTe den Umschlag an die Eingangs-URL und rufe dann die poll_url aus der 202-Antwort per GET ab, bis der Status „completed“ ist."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 HTTP Request 节点：将信封 POST 到入站 URL，然后对 202 响应中的 poll_url 执行 GET，直到 status 为 completed。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HTTP Request 노드를 사용하세요. 봉투를 수신 URL에 POST한 뒤, 202 응답의 poll_url을 status가 completed가 될 때까지 GET하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Используйте узел HTTP Request: отправьте конверт POST-запросом на входящий URL, затем выполняйте GET по poll_url из ответа 202, пока status не станет completed."
+          }
+        }
+      }
+    },
+    "Verification": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verifizierung"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "验证方式"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "검증"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверка"
+          }
+        }
+      }
+    },
+    "Verify an incoming event": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ein eingehendes Ereignis prüfen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "验证传入事件"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "수신 이벤트 확인"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверить входящее событие"
+          }
+        }
+      }
+    },
+    "Verify incoming event": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eingehendes Ereignis prüfen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "验证传入事件"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "수신 이벤트 확인"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверить входящее событие"
+          }
+        }
+      }
+    },
+    "Waiting for an n8n event. Trigger the workflow now with the saved secret and an allowlisted conversation and sender.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Warte auf ein n8n-Ereignis. Löse den Workflow jetzt mit dem gespeicherten Geheimnis sowie einer freigegebenen Unterhaltung und einem freigegebenen Absender aus."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在等待 n8n 事件。请立即使用已保存的密钥以及允许列表中的对话和发送者触发工作流。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n 이벤트를 기다리는 중입니다. 저장된 시크릿과 허용 목록에 있는 대화 및 발신자로 지금 워크플로를 실행하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ожидание события n8n. Запустите рабочий процесс сейчас с сохранённым секретом и разрешёнными беседой и отправителем."
+          }
+        }
+      }
+    },
+    "Waiting for an n8n event...": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Warte auf ein n8n-Ereignis …"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在等待 n8n 事件…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n 이벤트를 기다리는 중..."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ожидание события n8n…"
+          }
+        }
+      }
+    },
+    "conversation": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unterhaltung"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "对话"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "대화"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "беседа"
+          }
+        }
+      }
+    },
+    "conversation_id values the workflow may use. Each one maps to its own agent session.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "conversation_id-Werte, die der Workflow verwenden darf. Jeder wird auf eine eigene Agentensitzung abgebildet."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作流可使用的 conversation_id 值。每个值对应一个独立的智能体会话。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "워크플로가 사용할 수 있는 conversation_id 값입니다. 각 값은 별도의 에이전트 세션에 매핑됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Значения conversation_id, которые может использовать рабочий процесс. Каждое соответствует отдельной сессии агента."
+          }
+        }
+      }
+    },
+    "n8n calls Osaurus over HTTP with a shared secret. Osaurus accepts the event, runs the agent, and n8n polls for the reply — no public URL is needed on the Osaurus side.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n ruft Osaurus per HTTP mit einem gemeinsamen Geheimnis auf. Osaurus nimmt das Ereignis an, führt den Agenten aus, und n8n fragt die Antwort ab – auf Osaurus-Seite ist keine öffentliche URL nötig."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n 使用共享密钥通过 HTTP 调用 Osaurus。Osaurus 接受事件并运行智能体，n8n 轮询获取回复——Osaurus 一侧无需公网 URL。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n은 공유 시크릿으로 HTTP를 통해 Osaurus를 호출합니다. Osaurus가 이벤트를 받아 에이전트를 실행하고 n8n이 응답을 폴링하므로 Osaurus 쪽에 공개 URL이 필요 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n вызывает Osaurus по HTTP с общим секретом. Osaurus принимает событие, запускает агента, а n8n опрашивает ответ — публичный URL на стороне Osaurus не нужен."
+          }
+        }
+      }
+    },
+    "n8n channel saved": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n-Kanal gespeichert"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已保存 n8n 频道"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n 채널을 저장했습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Канал n8n сохранён"
+          }
+        }
+      }
+    },
+    "n8n sends %@: sha256=<hex HMAC-SHA256 of the exact request body>. Poll requests sign the empty body.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n sendet %@: sha256=<Hex-HMAC-SHA256 des exakten Anfrage-Bodys>. Abfrageanfragen signieren den leeren Body."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n 发送 %@: sha256=<请求正文原文的十六进制 HMAC-SHA256>。轮询请求对空正文签名。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n은 %@: sha256=<요청 본문 그대로의 16진수 HMAC-SHA256>을 보냅니다. 폴링 요청은 빈 본문에 서명합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n отправляет %@: sha256=<hex HMAC-SHA256 точного тела запроса>. Запросы опроса подписывают пустое тело."
+          }
+        }
+      }
+    },
+    "n8n sends the secret verbatim in %@. Simpler, but the secret travels with every request.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n sendet das Geheimnis unverändert in %@. Einfacher, aber das Geheimnis reist mit jeder Anfrage mit."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n 在 %@ 中原样发送密钥。更简单，但密钥会随每个请求传输。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n이 %@에 시크릿을 그대로 보냅니다. 더 간단하지만 모든 요청에 시크릿이 함께 전송됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n передаёт секрет как есть в %@. Проще, но секрет уходит с каждым запросом."
+          }
+        }
+      }
+    },
+    "n8n webhook ingress": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n-Webhook-Eingang"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n Webhook 入口"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n 웹훅 수신"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вход вебхука n8n"
+          }
+        }
+      }
+    },
+    "n8n-test — one per line": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n-test – eine pro Zeile"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n-test——每行一个"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n-test — 한 줄에 하나씩"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n-test — по одному в строке"
+          }
+        }
+      }
+    },
+    "sender.id values the workflow may send as. Empty denies everyone.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "sender.id-Werte, unter denen der Workflow senden darf. Leer lehnt alle ab."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作流可用作发送者的 sender.id 值。留空则拒绝所有人。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "워크플로가 발신자로 사용할 수 있는 sender.id 값입니다. 비워 두면 모두 거부합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Значения sender.id, от имени которых может отправлять рабочий процесс. Пустое значение запрещает всем."
+          }
+        }
+      }
     }
   },
   "version": "1.1"
