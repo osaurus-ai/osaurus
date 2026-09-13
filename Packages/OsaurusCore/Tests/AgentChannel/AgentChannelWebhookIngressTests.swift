@@ -762,6 +762,8 @@ struct AgentChannelWebhookIngressTests {
                 "http://localhost:5678/webhook/reply",
                 "https://127.0.0.1:5678/webhook/reply",
                 "https://10.0.0.7:5678/webhook/reply",
+                // Public host but plain HTTP: the push path is HTTPS-only.
+                "http://n8n.example.com/webhook/reply",
             ] {
                 var loopback = Self.connection()
                 loopback.n8n?.outbound = AgentChannelN8nOutboundConfiguration(webhookURL: blocked)

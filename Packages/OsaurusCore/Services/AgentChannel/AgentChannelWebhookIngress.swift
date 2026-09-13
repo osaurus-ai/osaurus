@@ -152,8 +152,6 @@ actor AgentChannelWebhookIngress {
     private let relaySubmit: RelaySubmit
     private let taskLookup: TaskLookup
     private let rateLimiter: PairingRateLimiter
-    /// Runner used for the optional outbound push (reply to n8n webhook).
-    private let outboundRunner: any AgentChannelCustomJSONRunning
     /// Test seam; when nil the n8n preset decides whether a push applies.
     private var replyHandlerFactory: ReplyHandlerFactory?
 
@@ -172,7 +170,6 @@ actor AgentChannelWebhookIngress {
         relaySubmit: RelaySubmit? = nil,
         taskLookup: TaskLookup? = nil,
         rateLimiter: PairingRateLimiter = PairingRateLimiter(window: 60, maxPerWindow: 120, denialCooldown: 10),
-        outboundRunner: (any AgentChannelCustomJSONRunning)? = nil,
         replyHandlerFactory: ReplyHandlerFactory? = nil
     ) {
         self.substrate = substrate
@@ -191,7 +188,6 @@ actor AgentChannelWebhookIngress {
             }
         self.taskLookup = taskLookup ?? Self.defaultTaskLookup
         self.rateLimiter = rateLimiter
-        self.outboundRunner = outboundRunner ?? AgentChannelCustomJSONRunner()
         self.replyHandlerFactory = replyHandlerFactory
     }
 
@@ -624,11 +620,19 @@ actor AgentChannelWebhookIngress {
         if let replyHandlerFactory {
             return replyHandlerFactory(connection, envelope)
         }
+        let service = authorizationService
         return AgentChannelN8nPreset.replyHandler(
             for: connection,
             envelope: envelope,
-            runner: outboundRunner,
-            ingress: self
+            ingress: self,
+            send: { connection, roomId, content in
+                _ = try await service.sendMessage(
+                    connectionId: connection.id,
+                    roomId: roomId,
+                    content: content,
+                    confirmSend: true
+                )
+            }
         )
     }
 

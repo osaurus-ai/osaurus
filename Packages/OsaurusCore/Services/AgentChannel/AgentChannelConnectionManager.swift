@@ -401,10 +401,12 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
                 throw AgentChannelConnectionManagerError.invalidN8nVerificationHeader(header)
             }
         }
+        // Outbound push is HTTPS-only (spec §6.3 / plan): the preset never
+        // opts into `allowInsecureHTTP`, so this is the same contract the
+        // runner enforces, surfaced at save time with the n8n-specific error.
         if let webhookURL = n8n.outbound.webhookURL {
             guard let url = URL(string: webhookURL),
-                let scheme = url.scheme?.lowercased(),
-                scheme == "https" || scheme == "http",
+                url.scheme?.lowercased() == "https",
                 let host = url.host, !host.isEmpty
             else {
                 throw AgentChannelConnectionManagerError.invalidN8nOutboundURL(webhookURL)

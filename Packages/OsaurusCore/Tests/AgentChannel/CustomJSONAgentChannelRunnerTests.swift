@@ -1186,15 +1186,42 @@ struct CustomJSONAgentChannelRunnerTests {
         )
         pollOnly = AgentChannelN8nPreset.applyingOutbound(to: pollOnly)
         #expect(
-            AgentChannelN8nPreset.replyHandler(for: pollOnly, envelope: envelope, runner: runner, ingress: ingress)
-                == nil
+            AgentChannelN8nPreset.replyHandler(
+                for: pollOnly,
+                envelope: envelope,
+                ingress: ingress,
+                send: { connection, roomId, content in
+                    _ = try await runner.sendMessage(
+                        connection: connection,
+                        roomId: roomId,
+                        content: content,
+                        confirmSend: true
+                    )
+                }
+            ) == nil
         )
 
         var pushed = pollOnly
         pushed.n8n?.outbound = AgentChannelN8nOutboundConfiguration(webhookURL: "https://n8n.example.com/webhook/r")
         pushed = AgentChannelN8nPreset.applyingOutbound(to: pushed)
+        let sendViaRunner: @Sendable (AgentChannelConnection, String, String) async throws -> Void = {
+            connection,
+            roomId,
+            content in
+            _ = try await runner.sendMessage(
+                connection: connection,
+                roomId: roomId,
+                content: content,
+                confirmSend: true
+            )
+        }
         let handler = try #require(
-            AgentChannelN8nPreset.replyHandler(for: pushed, envelope: envelope, runner: runner, ingress: ingress)
+            AgentChannelN8nPreset.replyHandler(
+                for: pushed,
+                envelope: envelope,
+                ingress: ingress,
+                send: sendViaRunner
+            )
         )
         try await handler("The answer is 42.")
         #expect(client.requestCount == 1)
@@ -1209,9 +1236,32 @@ struct CustomJSONAgentChannelRunnerTests {
         var autoReplyOff = pushed
         autoReplyOff.n8n?.inboundDispatch.autoReplyEnabled = false
         #expect(
-            AgentChannelN8nPreset.replyHandler(for: autoReplyOff, envelope: envelope, runner: runner, ingress: ingress)
-                == nil
+            AgentChannelN8nPreset.replyHandler(
+                for: autoReplyOff,
+                envelope: envelope,
+                ingress: ingress,
+                send: sendViaRunner
+            ) == nil
         )
+
+        let refuseWrites: @Sendable (AgentChannelConnection, String, String) async throws -> Void = { _, _, _ in
+            throw AgentChannelConnectionServiceError.globalWritesDisabled(generation: 7)
+        }
+        let killSwitchHandler = try #require(
+            AgentChannelN8nPreset.replyHandler(
+                for: pushed,
+                envelope: envelope,
+                ingress: ingress,
+                send: refuseWrites
+            )
+        )
+        await #expect(throws: AgentChannelConnectionServiceError.globalWritesDisabled(generation: 7)) {
+            try await killSwitchHandler("should not post")
+        }
+        #expect(client.requestCount == 1)
+        let failed = await ingress.healthSnapshot(connectionId: "n8n-main")
+        #expect(failed.outboundFailed == 1)
+        #expect(failed.outboundSent == 1)
     }
 }
 

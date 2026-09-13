@@ -5436,7 +5436,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             headers: headerMap,
             body: data,
             sourceAddress: remoteIP(context),
-            isLoopback: isLoopbackConnection(context),
+            // The remote-transport policy is about the physical transport, not
+            // the `trustLoopback` auth policy: the server flips `trustLoopback`
+            // off when it binds 0.0.0.0 (expose-to-network), which must NOT
+            // turn a same-Mac 127.0.0.1 caller into a "remote plaintext" peer.
+            // Relay-origin traffic is still excluded by this predicate.
+            isLoopback: isPhysicalLoopbackConnection(context),
             isSecureChannel: stateRef.value.isSecureChannel
         )
 

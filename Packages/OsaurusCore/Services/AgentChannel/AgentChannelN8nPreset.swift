@@ -75,7 +75,9 @@ enum AgentChannelN8nPreset {
         return AgentChannelCustomHTTPConfiguration(
             baseURL: parts.baseURL,
             allowedMethods: ["POST"],
-            allowInsecureHTTP: parts.baseURL.hasPrefix("http://"),
+            // HTTPS-only: a plain-http URL that slips past save-time
+            // validation is still refused by the runner's URL gate.
+            allowInsecureHTTP: false,
             actions: [
                 AgentChannelAction.sendMessage.rawValue: sendMessage,
                 AgentChannelAction.replyThread.rawValue: replyThread,
@@ -142,15 +144,16 @@ enum AgentChannelN8nPreset {
     }
 
     /// Reply handler installed on the webhook ingress: posts the agent's
-    /// reply to the connection's outbound webhook through the custom runner
-    /// (so C2, confirm_send, allowlists, kill switch and idempotency all
-    /// apply). `nil` when the connection has no outbound webhook or auto-reply
-    /// is off, in which case replies remain poll-only.
+    /// reply through the supplied `send` (production uses
+    /// `AgentChannelConnectionService.sendMessage` so the write kill switch,
+    /// connection enablement, C2 host policy, confirm_send, allowlists and
+    /// idempotency all apply). `nil` when the connection has no outbound
+    /// webhook or auto-reply is off, in which case replies remain poll-only.
     static func replyHandler(
         for connection: AgentChannelConnection,
         envelope: AgentChannelN8nEnvelope,
-        runner: any AgentChannelCustomJSONRunning,
-        ingress: AgentChannelWebhookIngress
+        ingress: AgentChannelWebhookIngress,
+        send: @escaping @Sendable (AgentChannelConnection, String, String) async throws -> Void
     ) -> AgentChannelInboundReplyHandler? {
         guard let n8n = connection.n8n,
             n8n.outbound.isConfigured,
@@ -161,12 +164,7 @@ enum AgentChannelN8nPreset {
         let connectionId = connection.id
         return { text in
             do {
-                _ = try await runner.sendMessage(
-                    connection: connection,
-                    roomId: conversationId,
-                    content: text,
-                    confirmSend: true
-                )
+                try await send(connection, conversationId, text)
                 await ingress.recordOutbound(connectionId: connectionId, succeeded: true)
             } catch {
                 await ingress.recordOutbound(connectionId: connectionId, succeeded: false)

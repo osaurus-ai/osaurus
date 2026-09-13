@@ -263294,30 +263294,30 @@
         }
       }
     },
-    "From Docker or the network, confirm plaintext is allowed or the call goes through Secure Channel.": {
+    "From another machine on the network, confirm plaintext is allowed or the call goes through Secure Channel.": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Aus Docker oder dem Netzwerk: Stelle sicher, dass Klartext erlaubt ist oder der Aufruf über Secure Channel läuft."
+            "value": "Von einem anderen Rechner im Netzwerk: Stelle sicher, dass Klartext erlaubt ist oder der Aufruf über Secure Channel läuft."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "来自 Docker 或网络时，请确认已允许明文，或者调用通过 Secure Channel 进行。"
+            "value": "从网络中的其他机器调用时，请确认已允许明文，或者调用通过 Secure Channel 进行。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "Docker나 네트워크에서 호출하는 경우 평문이 허용되어 있거나 Secure Channel을 통해 호출되는지 확인하세요."
+            "value": "네트워크의 다른 컴퓨터에서 호출하는 경우 평문이 허용되어 있거나 Secure Channel을 통해 호출되는지 확인하세요."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Из Docker или сети: убедитесь, что открытый текст разрешён или вызов идёт через Secure Channel."
+            "value": "С другого компьютера в сети: убедитесь, что открытый текст разрешён или вызов идёт через Secure Channel."
           }
         }
       }
@@ -263770,30 +263770,30 @@
         }
       }
     },
-    "Off: callers that are not on this Mac must use Secure Channel (end-to-end encrypted) or they receive 426. On: the shared secret alone authenticates them — use only on trusted networks such as Docker Desktop on this Mac.": {
+    "Off: callers that are not on this Mac must use Secure Channel (end-to-end encrypted) or they receive 426. On: the shared secret alone authenticates them — use only on trusted networks such as a LAN n8n host.": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Aus: Aufrufer, die nicht auf diesem Mac laufen, müssen Secure Channel (Ende-zu-Ende-verschlüsselt) verwenden, sonst erhalten sie 426. An: Das gemeinsame Geheimnis allein authentifiziert sie – nur in vertrauenswürdigen Netzwerken wie Docker Desktop auf diesem Mac verwenden."
+            "value": "Aus: Aufrufer, die nicht auf diesem Mac laufen, müssen Secure Channel (Ende-zu-Ende-verschlüsselt) verwenden, sonst erhalten sie 426. An: Das gemeinsame Geheimnis allein authentifiziert sie – nur in vertrauenswürdigen Netzwerken wie einem n8n-Host im LAN verwenden."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "关闭：不在这台 Mac 上的调用方必须使用 Secure Channel（端到端加密），否则会收到 426。开启：仅凭共享密钥即可认证——仅在可信网络（例如这台 Mac 上的 Docker Desktop）中使用。"
+            "value": "关闭：不在这台 Mac 上的调用方必须使用 Secure Channel（端到端加密），否则会收到 426。开启：仅凭共享密钥即可认证——仅在可信网络（例如局域网中的 n8n 主机）中使用。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "끔: 이 Mac 외부의 호출자는 Secure Channel(종단 간 암호화)을 사용해야 하며, 그렇지 않으면 426을 받습니다. 켬: 공유 시크릿만으로 인증합니다. 이 Mac의 Docker Desktop처럼 신뢰할 수 있는 네트워크에서만 사용하세요."
+            "value": "끔: 이 Mac 외부의 호출자는 Secure Channel(종단 간 암호화)을 사용해야 하며, 그렇지 않으면 426을 받습니다. 켬: 공유 시크릿만으로 인증합니다. LAN의 n8n 호스트처럼 신뢰할 수 있는 네트워크에서만 사용하세요."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Выкл.: вызывающие не с этого Mac должны использовать Secure Channel (сквозное шифрование), иначе получат 426. Вкл.: их аутентифицирует только общий секрет — используйте лишь в доверенных сетях, например Docker Desktop на этом Mac."
+            "value": "Выкл.: вызывающие не с этого Mac должны использовать Secure Channel (сквозное шифрование), иначе получат 426. Вкл.: их аутентифицирует только общий секрет — используйте лишь в доверенных сетях, например для хоста n8n в локальной сети."
           }
         }
       }
@@ -264190,30 +264190,30 @@
         }
       }
     },
-    "Requests from Docker or the network are not on loopback, so they must satisfy the transport policy below.": {
+    "Callers from your network must satisfy the transport policy below. Docker Desktop on this Mac forwards host.docker.internal over loopback, so it counts as a same-Mac caller.": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Anfragen aus Docker oder dem Netzwerk kommen nicht über Loopback und müssen daher die unten stehende Transportrichtlinie erfüllen."
+            "value": "Aufrufer aus deinem Netzwerk müssen die unten stehende Transportrichtlinie erfüllen. Docker Desktop auf diesem Mac leitet host.docker.internal über Loopback weiter und zählt daher als Aufrufer vom selben Mac."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "来自 Docker 或网络的请求不走本地回环，因此必须满足下方的传输策略。"
+            "value": "来自你网络的调用方必须满足下方的传输策略。这台 Mac 上的 Docker Desktop 会通过本地回环转发 host.docker.internal，因此被视为同一台 Mac 的调用方。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "Docker나 네트워크에서 오는 요청은 루프백이 아니므로 아래 전송 정책을 충족해야 합니다."
+            "value": "네트워크의 호출자는 아래 전송 정책을 충족해야 합니다. 이 Mac의 Docker Desktop은 host.docker.internal을 루프백으로 전달하므로 같은 Mac의 호출자로 간주됩니다."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Запросы из Docker или сети приходят не через loopback, поэтому должны соответствовать политике транспорта ниже."
+            "value": "Вызовы из вашей сети должны соответствовать политике транспорта ниже. Docker Desktop на этом Mac пробрасывает host.docker.internal через loopback, поэтому считается вызовом с этого же Mac."
           }
         }
       }
@@ -264498,30 +264498,30 @@
         }
       }
     },
-    "The outbound webhook URL must be an absolute http(s) URL.": {
+    "The outbound webhook URL must be an absolute https:// URL.": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Die ausgehende Webhook-URL muss eine absolute http(s)-URL sein."
+            "value": "Die ausgehende Webhook-URL muss eine absolute https://-URL sein."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "出站 Webhook URL 必须是绝对的 http(s) URL。"
+            "value": "出站 Webhook URL 必须是绝对的 https:// URL。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "발신 웹훅 URL은 절대 http(s) URL이어야 합니다."
+            "value": "발신 웹훅 URL은 절대 https:// URL이어야 합니다."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "URL исходящего вебхука должен быть абсолютным http(s) URL."
+            "value": "URL исходящего вебхука должен быть абсолютным https:// URL."
           }
         }
       }

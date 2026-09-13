@@ -36,12 +36,15 @@ starting; they decide which transport rows apply:
 | --- | --- | --- |
 | n8n version and container | `docker ps` | `n8n-n8n-1`, 2.x |
 | n8n can reach Osaurus | `docker exec n8n-n8n-1 wget -qO- http://host.docker.internal:1337/health` | `200` |
-| Docker is **not** loopback-trusted | `docker exec n8n-n8n-1 wget -qSO- http://host.docker.internal:1337/models` | `401` |
+| Docker Desktop delivers `host.docker.internal` over loopback (macOS) | Send a verified envelope from the container while the policy is `secure_channel_required` | `202` (not `426`) — the host forwarder connects from `127.0.0.1` |
+| Mac LAN IP is a genuine non-loopback origin | `ipconfig getifaddr en0`, then call `http://<lan-ip>:1337/...` from the Mac with *Expose to Network* on | `426` under `secure_channel_required` |
 
-Because the container is not loopback, the connection must use
-`remoteTransportPolicy: plaintext_allowed` (or route via Secure Channel) for
-the Docker rows. Plain `curl` from the Mac is loopback and is used to prove the
-loopback exemption separately.
+On macOS the Docker container is therefore a same-Mac caller for the transport
+policy; the `426`/`plaintext_allowed` rows are proven by addressing Osaurus on
+its LAN IP (which requires *Expose to Network* so the server binds `0.0.0.0`).
+Plain `curl` to `127.0.0.1` is used to prove the loopback exemption — and it
+must keep passing with *Expose to Network* on, because the policy keys off the
+physical transport, not the `trustLoopback` auth flag.
 
 ## Setup (once)
 
@@ -52,7 +55,8 @@ loopback exemption separately.
    - id `n8n-local`, name of your choice;
    - paste a fresh random secret (stored to Keychain by the sheet);
    - verification `hmac_sha256` (repeat later with `shared_secret_header`);
-   - remote transport policy `plaintext_allowed`;
+   - remote transport policy `secure_channel_required` (default; Docker
+     Desktop on macOS is a loopback caller — see Live Topology);
    - dispatch target: a disposable custom agent with a loaded local model,
      auto-reply **off** (pull mode);
    - allowed conversations `["n8n-test"]`, allowed senders `["tpae"]`.
@@ -87,16 +91,17 @@ reported as proven / partial / failed; a source-wired control is not proof.
 | Rate limit | 5+ rapid wrong-secret attempts | `429 rate_limited` and cooldown; `rate_limited` increments. |
 | Fail-closed sender | `sender.id: "mallory"` | `202 {"status":"rejected","reason":"sender_not_allowlisted"}`, no dispatch, audit row present. |
 | Fail-closed conversation | `conversation_id: "other-room"` | `202 rejected`, `reason: room_not_allowlisted`, no dispatch. |
-| Remote policy (426) | Flip to `secure_channel_required`, save, re-run the workflow from Docker | `426 secure_channel_required`; flip back and the workflow succeeds again. |
-| Loopback exemption | Same payload via `curl` from the Mac while policy is `secure_channel_required` | `202 accepted`. |
+| Remote policy (426) | With *Expose to Network* on and policy `secure_channel_required`, POST the envelope to `http://<lan-ip>:1337/channels/n8n/n8n-local/inbound` and GET the poll URL on the LAN IP | Both `426 secure_channel_required`. Toggle **Allow plaintext HTTP from non-loopback callers** on, save → same calls return `202`/`200`; toggle off, save → `426` again. |
+| Loopback exemption | Same payload via `curl` to `127.0.0.1` while policy is `secure_channel_required` **and** *Expose to Network* is on | `202 accepted` (physical loopback is exempt even though `trustLoopback` is off). |
+| Docker origin | Same payload from inside `n8n-n8n-1` via `host.docker.internal` while policy is `secure_channel_required` | `202 accepted` on macOS (host forwarder is loopback); record the observed status. |
 | Envelope version | `v: 2` | `400 unsupported_envelope_version`. |
 | Envelope shape | missing `content` | `400 invalid_payload`. |
 | Poll ownership | Poll a `task_id` from another connection/session | `404 task_not_found`. |
 | Shared-secret mode | Switch verification to `shared_secret_header`, save, repeat happy path with `X-Osaurus-Channel-Secret` | `202 accepted` and completed poll. |
-| Outbound C2 refusal | Enter `http://localhost:5678/webhook/...` as the outbound URL and save | Save is refused with the blocked-host message. |
-| Outbound push | Public HTTPS webhook URL (tunnel) with auto-reply on | n8n Webhook trigger receives the signed envelope; signature verifies in a Code node. **PARTIAL** when no public URL is available. |
+| Outbound C2 refusal | Enter `http://localhost:5678/webhook/...` as the outbound URL and save | Save is refused inline with the HTTPS/public-host message; `agent-channels.json` is unchanged. |
+| Outbound push | Public HTTPS webhook URL (e.g. `ngrok http 5678`) with auto-reply on, pointing at a sink workflow that recomputes the HMAC | n8n Webhook trigger receives the signed envelope; the sink's signature check passes and responds `200 {"id": …}`; Osaurus Outbox / `outbound_sent` reflect it. **PARTIAL** when no public URL is available. |
 | Disable | Toggle the connection `enabled` off | `403 connection_disabled`; toggle back on restores. |
-| Kill switch | Global channel write switch off | Pull mode unaffected (poll still returns output); outbound push (if configured) denied. |
+| Kill switch | Global channel write switch off | Pull mode unaffected (poll still returns output); outbound push (if configured) denied. Covered in-unit by `n8nReplyHandlerIsOnlyInstalledWhenOutboundAndAutoReplyAreConfigured` (`globalWritesDisabled` → `outbound_failed`, no HTTP). Live UI re-proof of the fixed binary is deferred. |
 
 ## App-Surface Proof Checklist
 

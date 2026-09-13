@@ -188,15 +188,25 @@ session.
 | Caller location | Loopback? | Default policy result | Recommended setting |
 | --- | --- | --- | --- |
 | n8n on the same Mac (native process) | yes | accepted | `secure_channel_required` (loopback bypasses it) |
-| n8n in Docker on the same Mac (`host.docker.internal`) | **no** — traffic arrives from the bridge network | `426` | `plaintext_allowed`; the secret still authenticates every request |
-| n8n on the LAN | no | `426` | Secure Channel via the Osaurus relay, or `plaintext_allowed` behind a trusted network |
+| n8n in Docker Desktop on the same Mac (`host.docker.internal`) | **yes** on macOS — Docker Desktop's host forwarder delivers the connection from `127.0.0.1` | accepted | `secure_channel_required`; the secret still authenticates every request |
+| n8n on the LAN (or any request that reaches Osaurus on its LAN IP) | no | `426` | Secure Channel via the Osaurus relay, or `plaintext_allowed` behind a trusted network |
 | n8n anywhere via Osaurus relay + Secure Channel (`/secure/call`) | n/a | accepted | default; requires an agent-scoped `osk-v1` key from the Share Agent flow |
 
-Docker is the important row: the Osaurus server does **not** treat
-`host.docker.internal` as loopback, so authenticated routes such as `/models`
-return `401` from inside the container, and the channel route returns `426`
-until the connection opts into `plaintext_allowed`. The setup sheet surfaces
-the Docker URL and this toggle.
+Two facts about "loopback" matter here:
+
+- The policy keys off the **physical** transport
+  (`HTTPHandler.isPhysicalLoopbackConnection`), not the server's
+  `trustLoopback` auth flag. Turning on *Expose to Network* (bind `0.0.0.0`)
+  flips `trustLoopback` off so `/models` etc. become key-gated for everyone,
+  but a `127.0.0.1` caller is still the same Mac and is never `426`'d.
+  Relay-tunnelled traffic arrives over loopback yet is treated as remote.
+- Docker Desktop on macOS (verified with 2.38.7 in `n8n-n8n-1`) proxies
+  `host.docker.internal` through its host forwarder, so Osaurus sees the
+  connection from `127.0.0.1` whether it binds `127.0.0.1` or `0.0.0.0`; the
+  container therefore never triggers the `426`. Docker on Linux (bridge
+  network, no forwarder) is a genuine non-loopback caller and needs
+  `plaintext_allowed` or Secure Channel. The setup sheet surfaces the Docker
+  URL and the toggle either way.
 
 ## Outbound Push (optional)
 
@@ -228,12 +238,17 @@ The relay reply handler pushes the agent's reply automatically only when
 `outbound.webhookURL` is set **and** `inboundDispatch.autoReplyEnabled` is on;
 otherwise replies stay poll-only.
 
-**C2 note:** the custom runner's blocked-host policy applies unchanged.
-`http://localhost:5678/...`, `127.0.0.1`, RFC1918 and `host.docker.internal`
-targets are refused at save time with the blocked-host message. Outbound push
-to a local n8n therefore requires a public HTTPS URL (e.g. a tunnel). Pull
-mode has no such constraint because n8n is the caller. The channel write kill
-switch gates the push path only; polling is read-only and unaffected.
+**C2 note:** the custom runner's blocked-host policy applies unchanged and the
+push path is **HTTPS-only** (the preset never opts into `allowInsecureHTTP`,
+and `validateN8nConfiguration` rejects non-`https` schemes at save time).
+`http://localhost:5678/...`, `127.0.0.1`, RFC1918 literals and any plain-http
+URL are refused with `invalidN8nOutboundURL`. Outbound push to a local n8n
+therefore requires a public HTTPS URL (e.g. an ngrok/cloudflared tunnel in
+front of `localhost:5678`). Pull mode has no such constraint because n8n is
+the caller. The channel write kill switch is enforced by
+`AgentChannelConnectionService.sendMessage` on the push path only; polling
+is read-only and unaffected. The inbound reply handler must go through that
+service — posting through the custom runner alone skips the kill switch.
 
 ## n8n Workflow Recipe (stock nodes)
 

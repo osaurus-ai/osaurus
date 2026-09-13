@@ -389,7 +389,7 @@ struct N8nSettingsView: View {
             )
 
             Text(
-                "Requests from Docker or the network are not on loopback, so they must satisfy the transport policy below.",
+                "Callers from your network must satisfy the transport policy below. Docker Desktop on this Mac forwards host.docker.internal over loopback, so it counts as a same-Mac caller.",
                 bundle: .module
             )
             .font(.system(size: 11))
@@ -405,7 +405,7 @@ struct N8nSettingsView: View {
             SettingsToggle(
                 title: L("Allow plaintext HTTP from non-loopback callers"),
                 description: L(
-                    "Off: callers that are not on this Mac must use Secure Channel (end-to-end encrypted) or they receive 426. On: the shared secret alone authenticates them — use only on trusted networks such as Docker Desktop on this Mac."
+                    "Off: callers that are not on this Mac must use Secure Channel (end-to-end encrypted) or they receive 426. On: the shared secret alone authenticates them — use only on trusted networks such as a LAN n8n host."
                 ),
                 isOn: $draft.plaintextAllowed
             )
@@ -739,8 +739,10 @@ struct N8nSettingsView: View {
             return (L("Choose an agent to reply with, or turn off Reply with an Agent."), .behavior)
         }
         let outbound = draft.outboundWebhookURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !outbound.isEmpty, AgentChannelN8nPreset.splitWebhookURL(outbound) == nil {
-            return (L("The outbound webhook URL must be an absolute http(s) URL."), .behavior)
+        if !outbound.isEmpty,
+            AgentChannelN8nPreset.splitWebhookURL(outbound)?.baseURL.hasPrefix("https://") != true
+        {
+            return (L("The outbound webhook URL must be an absolute https:// URL."), .behavior)
         }
         return nil
     }
@@ -884,7 +886,7 @@ struct N8nSettingsView: View {
                             L("Confirm the workflow posts to the inbound URL shown in Connect with the saved secret."),
                             L("Confirm conversation_id and sender.id are both allowlisted in Conversations."),
                             L(
-                                "From Docker or the network, confirm plaintext is allowed or the call goes through Secure Channel."
+                                "From another machine on the network, confirm plaintext is allowed or the call goes through Secure Channel."
                             ),
                         ],
                         isError: true

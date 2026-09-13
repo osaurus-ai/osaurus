@@ -5,9 +5,10 @@
 //  End-to-end coverage for the Agent Channel webhook routes on the real NIO
 //  server: `POST /channels/{kind}/{id}/inbound` and
 //  `GET /channels/{kind}/{id}/tasks/{task_id}`. The server is booted with
-//  `trustLoopback: false` so 127.0.0.1 is treated like any remote caller,
-//  proving the routes are bearer-exempt while every other protected route
-//  still hits the access-key gate.
+//  `trustLoopback: false` (what expose-to-network does) so 127.0.0.1 is
+//  auth-gated like any remote caller, proving the routes are bearer-exempt
+//  while every other protected route still hits the access-key gate — and
+//  that the remote-transport policy still recognises physical loopback.
 //
 
 import Foundation
@@ -197,12 +198,30 @@ struct HTTPChannelInboundRouteTests {
             #expect(unknown == 404)
             #expect(Self.errorCode(unknownJSON) == "connection_not_found")
 
-            // Non-loopback plaintext against the default policy: 426.
-            let (secure, secureJSON) = try await send(
+            // The transport policy keys off the *physical* transport, not the
+            // `trustLoopback` auth flag: this server runs with
+            // `trustLoopback: false` (what expose-to-network does), yet a real
+            // 127.0.0.1 caller is still the same Mac and must not be 426'd.
+            let (localPlain, localJSON) = try await send(
                 server,
                 method: "POST",
                 path: "/channels/n8n/n8n-secure/inbound",
                 headers: ["X-Osaurus-Channel-Secret": Self.secret],
+                body: Self.envelope(eventId: "route-4-local")
+            )
+            #expect(localPlain == 202)
+            #expect(localJSON["status"] as? String == "accepted")
+
+            // Relay-tunnelled traffic arrives over loopback but is remote in
+            // origin; plaintext against the default policy: 426.
+            let (secure, secureJSON) = try await send(
+                server,
+                method: "POST",
+                path: "/channels/n8n/n8n-secure/inbound",
+                headers: [
+                    "X-Osaurus-Channel-Secret": Self.secret,
+                    HTTPHandler.relayOriginHeaderName: "1",
+                ],
                 body: Self.envelope(eventId: "route-4")
             )
             #expect(secure == 426)
