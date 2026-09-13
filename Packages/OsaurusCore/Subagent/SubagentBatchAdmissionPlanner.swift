@@ -30,23 +30,15 @@ enum SubagentBatchLimitingFactor: String, Sendable, Hashable {
     case memoryEstimateUnavailable
 }
 
-/// What a specific delegation will actually ask the child to hold: the
-/// seed/input size and the configured output ceiling. Used to price the
-/// child's incremental KV/SSM state from the BOUNDED request instead of the
-/// model-wide retention cap. Characters are converted at the repo-standard
-/// chars/4 estimate with a 1.5× safety factor plus a 1024-token margin for
-/// the child's system prompt and template overhead — conservative, but not
-/// "the whole 64K window".
+/// A priced child context contract. Text execution forwards the same position
+/// ceiling to the prepared-token boundary, where the complete rendered prompt
+/// plus output allowance must fit. Heuristics choose a contract; they do not
+/// prove the actual token count.
 public struct SubagentChildRequestEstimate: Sendable, Equatable {
     public let seedCharacters: Int?
     public let maxOutputTokens: Int?
-    /// A position ceiling the child's execution path ENFORCES outright —
-    /// for a delegated chat session, the target agent's resolved context
-    /// window (`AgentLoopBudget.resolveContextWindow`: bundle window ∩ the
-    /// user's context-length cap), which the loop's budget manager trims
-    /// history to on every request. Unlike seed/output, this bound holds
-    /// even when tool results grow the transcript, because trimming applies
-    /// to the whole outbound context.
+    /// Checked by AdmissionPositionLimit after template rendering/tokenization,
+    /// including tools, memory and all prior child turns.
     public let enforcedPositionCeiling: Int?
 
     public init(
@@ -66,7 +58,7 @@ public struct SubagentChildRequestEstimate: Sendable, Equatable {
     /// seed + output (requires BOTH — a seed without an output ceiling, or
     /// vice versa, is an incomplete contract, not a bound) and the
     /// execution-enforced position ceiling.
-    func boundedPositionBudget(policyCap: Int?) -> Int? {
+    func boundedPositionBudget() -> Int? {
         var candidates: [Int] = []
         if let seedCharacters, let maxOutputTokens,
             seedCharacters >= 0, maxOutputTokens > 0
@@ -86,26 +78,21 @@ public struct SubagentChildRequestEstimate: Sendable, Equatable {
                 }
             }
         }
-        // The 4096 floor applies ONLY to the seed+output candidate: that
-        // form measures nothing about the child's wrapper/system/template
-        // context, so the floor absorbs it. An enforced position ceiling is
-        // fully MEASURED (dispatched prompt + composed system prompt +
-        // composer tool reservation) and enforced verbatim by the session's
-        // window clamp, so it prices as-is — no hidden floor.
+        // A seed-only estimate carries a minimum composition allowance. It
+        // becomes a safety bound only because execution checks it exactly.
+        // An explicit delegated contract is already the complete ceiling.
         var floored = candidates.map { max(4096, $0) }
         if let enforcedPositionCeiling, enforcedPositionCeiling > 0 {
             floored.append(enforcedPositionCeiling)
         }
         guard let tightest = floored.min() else { return nil }
-        if let policyCap, policyCap > 0 {
-            return min(tightest, policyCap)
-        }
+        // defaultMaxKVSize is conditional on prompt length in vMLX. It is
+        // not a hard retention bound and cannot reduce an admission contract.
         return tightest
     }
 
     /// Conservative wave envelope for a batch: each job's safe position
-    /// budget is resolved INDEPENDENTLY (uncapped — the policy cap clamps
-    /// later, and clamping commutes with max), and the wave is priced at
+    /// budget is resolved independently, and the wave is priced at
     /// the MAXIMUM per-child bound, carried as a pure position ceiling.
     ///
     /// Never combine heterogeneous jobs field-by-field: an estimate built
@@ -122,7 +109,7 @@ public struct SubagentChildRequestEstimate: Sendable, Equatable {
         guard !estimates.isEmpty else { return nil }
         var perJobBudgets: [Int] = []
         for estimate in estimates {
-            guard let budget = estimate?.boundedPositionBudget(policyCap: nil) else {
+            guard let budget = estimate?.boundedPositionBudget() else {
                 return nil
             }
             perJobBudgets.append(budget)
@@ -146,17 +133,9 @@ struct SubagentBatchMemoryFacts: Sendable, Equatable {
     let targetAlreadyResident: Bool
     let targetLoadFootprintBytes: UInt64?
     let perActiveChildHeadroomBytes: UInt64?
-    /// Request-bounded per-child active-state price: the same KV/SSM
-    /// estimator as `perActiveChildHeadroomBytes` but clamped to what THIS
-    /// delegation can actually allocate (seed/input tokens + the child's
-    /// configured max output, with margin) instead of the model-wide KV
-    /// retention cap. A 2K-output child must not be priced as though it
-    /// immediately materializes a 64K-retention cache — on a 16 GB Mac
-    /// that difference alone turns an affordable single same-resident-model
-    /// child into `ramSlots == 0` (#2221 owns the math; #2498 made the
-    /// path common). nil = no request estimate was available; admission
-    /// then falls back to the conservative cap-priced value (fail closed,
-    /// never cheaper than the physics).
+    /// Price of the complete enforced child contract. Unknown contracts use
+    /// the model context envelope. A soft runtime cache default is not a hard
+    /// ceiling and cannot discount either price.
     let requestBoundedChildHeadroomBytes: UInt64?
     let reclaimableBytes: UInt64?
     let releasableParentBytes: UInt64
@@ -185,19 +164,12 @@ struct SubagentBatchMemoryFacts: Sendable, Equatable {
         self.osHeadroomBytes = osHeadroomBytes
     }
 
-    /// The per-child price admission actually uses: the request-bounded
-    /// estimate when one exists, never above the conservative cap-priced
-    /// estimate (a request estimate can only SHRINK the charge; if a
-    /// caller ever supplies a larger one, the conservative value wins so
-    /// the estimate cannot inflate past the model-wide envelope).
+    /// Price the enforced request when known. A soft cache default or a
+    /// declared model window must not discount a larger enforced request.
     var effectiveChildHeadroomBytes: UInt64? {
-        switch (requestBoundedChildHeadroomBytes, perActiveChildHeadroomBytes) {
-        case (let bounded?, let cap?): return min(bounded, cap)
-        case (let bounded?, nil): return bounded
-        case (nil, let cap?): return cap
-        case (nil, nil): return nil
-        }
+        requestBoundedChildHeadroomBytes ?? perActiveChildHeadroomBytes
     }
+
 }
 
 struct SubagentBatchAdmissionInput: Sendable, Equatable {
@@ -216,6 +188,8 @@ struct SubagentBatchAdmissionInput: Sendable, Equatable {
     /// Continuous Batching toggle so a stale or contradictory caller cannot
     /// accidentally admit concurrent local work while batching is disabled.
     let engineParallelLimit: Int
+    /// New submissions allowed by the current engine snapshot, distinct from its total ceiling.
+    var engineSubmissionLimit: Int? = nil
     let continuousBatchingEnabled: Bool
     let ramSafetyEnabled: Bool
     let failClosedWhenEstimateUnknown: Bool
@@ -445,7 +419,7 @@ enum SubagentBatchAdmissionPlanner {
                 limitingFactors: limitingFactors.union([.memoryCapacity])
             )
         }
-        let localSlots = min(localJobs, localCapacity)
+        let localSlots = min(localJobs, localCapacity, max(1, input.engineSubmissionLimit ?? engineSlots))
 
         let perChild = input.memory?.effectiveChildHeadroomBytes
         let incrementalWeight = input.memory.flatMap { facts -> UInt64? in

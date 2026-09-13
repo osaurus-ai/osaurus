@@ -208,19 +208,22 @@ struct ResidencyHandoff: SubagentHandoff {
     let unload: Unload
     let restore: Restore
     let releaseDelegate: ReleaseDelegate?
+    let postUnloadPreflight: Preflight?
 
     init(
         plan: @escaping PlanProvider,
         preflight: @escaping Preflight,
         unload: @escaping Unload,
         restore: @escaping Restore,
-        releaseDelegate: ReleaseDelegate? = nil
+        releaseDelegate: ReleaseDelegate? = nil,
+        postUnloadPreflight: Preflight? = nil
     ) {
         self.plan = plan
         self.preflight = preflight
         self.unload = unload
         self.restore = restore
         self.releaseDelegate = releaseDelegate
+        self.postUnloadPreflight = postUnloadPreflight
     }
 
     /// Production wiring: the injectable operations call `ChatResidencyHandoff`.
@@ -237,6 +240,7 @@ struct ResidencyHandoff: SubagentHandoff {
                 try await ChatResidencyHandoff.memoryPreflight(
                     requiredBytes: requiredBytes,
                     enabled: enabled,
+                    physicalCapacityOnly: true,
                     onPhase: onPhase
                 )
             },
@@ -253,6 +257,14 @@ struct ResidencyHandoff: SubagentHandoff {
             },
             releaseDelegate: { lease, onPhase in
                 try await ChatResidencyHandoff.releaseOwnedChildModels(lease, onPhase: onPhase)
+            },
+            postUnloadPreflight: { requiredBytes, enabled, onPhase in
+                guard enabled else { return }
+                _ = await ModelRuntime.shared.reclaimMemoryForSubagentAdmission()
+                try await Task.sleep(for: .milliseconds(1_100))
+                try await ChatResidencyHandoff.memoryPreflight(
+                    requiredBytes: requiredBytes, enabled: enabled, onPhase: onPhase
+                )
             }
         )
     }
@@ -274,7 +286,8 @@ struct ResidencyHandoff: SubagentHandoff {
         try await preflight(plan.requiredBytes, plan.ramSafetyEnabled, emit)
 
         guard plan.shouldUnload else {
-            // No residency change (cloud orchestrator / keep-loaded policy).
+            // No release means current host capacity is the authority.
+            try await postUnloadPreflight?(plan.requiredBytes, plan.ramSafetyEnabled, emit)
             return try await body()
         }
 
@@ -298,6 +311,7 @@ struct ResidencyHandoff: SubagentHandoff {
         )
         var result: SubagentResult
         do {
+            try await postUnloadPreflight?(plan.requiredBytes, plan.ramSafetyEnabled, emit)
             result = try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(
                 lease.childOwnershipToken
             ) {

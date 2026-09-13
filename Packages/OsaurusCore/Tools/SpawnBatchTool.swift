@@ -1847,7 +1847,8 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             localJobCount: localJobs.count,
             remoteJobCount: remoteJobCount,
             maxParallel: maxParallel,
-            engineParallelLimit: engineWindow.parallelLimit,
+            engineParallelLimit: min(configuredEngineSlots, engineOccupancy?.configuredMaximum ?? configuredEngineSlots),
+            engineSubmissionLimit: engineWindow.parallelLimit,
             continuousBatchingEnabled: runtime.concurrency.continuousBatching,
             residencyPlan: residencyPlan,
             memoryFacts: memoryFacts,
@@ -1900,6 +1901,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         remoteJobCount: Int,
         maxParallel: Int,
         engineParallelLimit: Int,
+        engineSubmissionLimit: Int? = nil,
         continuousBatchingEnabled: Bool,
         residencyPlan: ResidencyPlan?,
         memoryFacts: SubagentBatchMemoryFacts?,
@@ -1911,6 +1913,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 remoteJobCount: remoteJobCount,
                 agentParallelLimit: maxParallel,
                 engineParallelLimit: engineParallelLimit,
+                engineSubmissionLimit: engineSubmissionLimit,
                 continuousBatchingEnabled: continuousBatchingEnabled,
                 ramSafetyEnabled: residencyPlan?.ramSafetyEnabled ?? false,
                 failClosedWhenEstimateUnknown: failClosedWhenEstimateUnknown,
@@ -2355,6 +2358,11 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             )
         }
         guard case .admitted = initialPlan.verdict else {
+            // A host sample already includes running siblings' allocations.
+            // Without per-request materialized-byte accounting, do not refund
+            // their reservations. Drain under the existing exclusive lane and
+            // remeasure before declaring this a stable memory refusal.
+            if await admissionController.snapshot().inPlace > 0 { return nil }
             return await rejectedLocalGroupResults(
                 initialGroup,
                 plan: initialPlan,
@@ -2496,6 +2504,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 modelKey: first.run.admissionModelKey,
                 slots: grantedSlots
             )
+            if await admissionController.snapshot().inPlace > 0 { return nil }
             return await rejectedLocalGroupResults(
                 ResolvedLocalGroup(
                     jobs: groupJobs,
@@ -2517,41 +2526,12 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             slotCapacity: livePlan.localCapacity
         )
         guard effectiveSlots > 0 else {
-            await diagnostics?.append(
-                BatchWaveDiagnostic(
-                    wave: waveIndex,
-                    jobs: groupJobs.count + remoteJobCount,
-                    remoteJobs: remoteJobCount,
-                    localJobs: groupJobs.count,
-                    localModelKey: first.run.admissionModelKey,
-                    effectiveLocalSlots: 0,
-                    engineSlots: livePlan.engineSlots,
-                    ramSlots: livePlan.ramSlots,
-                    localSubwaveSizes: [],
-                    limitingFactors:
-                        livePlan.limitingFactors.map(\.rawValue).sorted(),
-                    verdict: "rejected:capacity_changed",
-                    admissionWaitSeconds: admissionWaitSeconds,
-                    residencyMode: residencyMode(liveResidency),
-                    engineOccupancy: livePlan.engineOccupancy,
-                    engineQueuedAtAdmission: livePlan.engineQueuedAtAdmission
-                )
-            )
-            return groupJobs.map {
-                RawJobResult(
-                    job: $0.job,
-                    envelope: ToolEnvelope.failure(
-                        kind: .unavailable,
-                        message:
-                            "Local batch capacity changed while \(tool) was waiting; "
-                            + "this batch did not start. Retry with the current "
-                            + "Server and RAM-safety settings.",
-                        tool: tool,
-                        retryable: true
-                    )
-                )
-            }
+            // resize released this caller's slots. The aggregate exclusive
+            // path waits for siblings, then resolves authority/residency/RAM
+            // again, without inventing credit for pending allocations.
+            return nil
         }
+
         let liveGroup = ResolvedLocalGroup(
             jobs: groupJobs,
             initialResidencyPlan: liveResidency

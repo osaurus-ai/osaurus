@@ -1,8 +1,8 @@
 # RAM admission audit after the actual 16 GB failure of #2733
 
 **Reporter reproduction remains unresolved.** This audit found a demonstrable
-measurement defect plus four reproducible cross-function policy defects. Only
-the measurement-window correction is implemented locally. No new PR is merged,
+measurement defect plus four reproducible cross-function policy defects. The
+implementation follow-up below supersedes the original source-only status. No new PR is merged,
 and the original M4/16 GB acceptance rows are not claimed to pass.
 
 Base: Osaurus `a609acdb5`; engine pin
@@ -16,6 +16,48 @@ Local machine: macOS 26.4 / 25E246, Darwin 25.4.0, 128 GiB. The reporter's
 machine is M4/16 GB and a different OS version. No new model generation or
 Release UI campaign was performed for this audit; tokenization and a 64 MiB
 anonymous-allocation probe are not model-runtime acceptance tests.
+
+## Implementation follow-up (local, not yet merged)
+
+The user authorized implementing the audit findings and testing locally. The
+working branch now additionally separates total engine capacity from new
+submission width; drains siblings and replans when aggregate reservations
+cannot safely be reconciled with current host headroom; enforces the exact
+prepared prompt plus effective output-token allowance before BatchEngine
+submission; removes the soft KV default as a hard pricing ceiling; counts
+Gemma E2B's actual KV owners and global head dimensions; preserves unknown
+host samples; cancels parked memory recovery from child-card Stop; and removes
+hypothetical disk-size credit from handoffs.
+
+The handoff has two checks: physical feasibility before unloading, followed by
+actual host headroom after releasing the exact parent. Failure at the latter
+check runs the existing parent restoration path. Optional volatile paged/SSM
+cache tiers are released only after the exclusive GPU gate drains, preserving
+model weights and persistent disk entries. Admission still resamples rather
+than adding a guessed byte credit.
+
+Host-reservation accounting remains deliberately conservative: we do not have
+per-request materialized allocation telemetry. The correction waits under the
+existing exclusive lane and measures again instead of pretending that every
+reserved byte is already allocated. This may serialize tight-memory overlaps;
+it preserves normal batching when the full reservation fits.
+
+Intermediate verification: 109/109 focused tests, then 181/181 expanded tests,
+then 299/299 tests in 16 suites. The last score predates the final volatile-cache
+reclaim and effective-output guard placement; the broader final matrix is in
+progress. New regressions cover exact-token rejection, integer overflow,
+soft-cap underpricing, aggregate engine slots, parked-gate cancellation,
+sibling drain/recheck, Gemma cache topology, and parent restoration on a
+post-release memory refusal. The original four failing audit probes are
+preserved in the evidence directory; tests now exercise the corrected paths.
+
+A fresh isolated Release build is in progress. No new live-model or native UI
+row is claimed yet. The actual M4/16 GB failure remains unqualified until its
+failed decision inputs or a reporter rerun confirm the outcome. Requested:
+complete failed spawn JSON including memory_decision, Memory Safety slider,
+and TurboQuant KV setting. No answer has arrived yet.
+
+The ranked findings below describe the pre-fix audit and its original evidence.
 
 ## Confirmed defects, ranked
 

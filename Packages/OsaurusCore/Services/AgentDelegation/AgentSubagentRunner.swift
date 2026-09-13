@@ -148,6 +148,7 @@ enum AgentSubagentRunner {
         modelName: String,
         seedMessages: [ChatMessage],
         maxTokens: Int?,
+        admissionPositionLimit: Int? = nil,
         maxIterations: Int,
         deadline: Date,
         sessionId: String,
@@ -233,6 +234,7 @@ enum AgentSubagentRunner {
                 // Same posture as the main chat surface: a per-agent
                 // temperature override rides along, everything else stays on
                 // the model bundle's own generation defaults.
+                request.admissionPositionLimit = admissionPositionLimit ?? contextWindow
                 request.samplingParametersAreImplicit = true
                 request.isAgentRequest = isAgentRequest
                 request.enable_thinking = enableThinking
