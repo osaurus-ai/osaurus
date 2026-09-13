@@ -29,6 +29,10 @@ struct SkillsView: View {
     @State private var pendingOverwriteImportURL: URL?
     @State private var pendingOverwriteSkillName = ""
     @State private var showOverwriteConfirmation = false
+    @State private var showGitHubImport = false
+    /// Bumped after a GitHub plugin install so the Claude Plugins marketplace
+    /// re-reads installed state.
+    @State private var claudePluginInstallGeneration = 0
 
     /// Base skill set for a tab, sliced by source: shipped with Osaurus,
     /// created/imported by the user, or installed as part of a plugin.
@@ -81,7 +85,10 @@ struct SkillsView: View {
             // Content
             ZStack {
                 if selectedTab == .claudePlugins {
-                    ClaudePluginsMarketplaceView(searchText: searchText)
+                    ClaudePluginsMarketplaceView(
+                        searchText: searchText,
+                        installGeneration: claudePluginInstallGeneration
+                    )
                         .opacity(hasAppeared ? 1 : 0)
                 } else if skillManager.skills.isEmpty && !skillManager.isRefreshing {
                     SettingsEmptyState(
@@ -198,6 +205,31 @@ struct SkillsView: View {
                 },
                 onCancel: {
                     editingSkill = nil
+                }
+            )
+        }
+        .sheet(isPresented: $showGitHubImport) {
+            GitHubImportSheet(
+                onImport: { skills in
+                    Task { @MainActor in
+                        _ = await skillManager.importSkillsFromMarkdown(skills)
+                        showGitHubImport = false
+                        claudePluginInstallGeneration += 1
+                        showToast(skills.count == 1 ? L("Imported 1 item") : L("Imported \(skills.count) items"))
+                    }
+                },
+                onCancel: { showGitHubImport = false },
+                onPluginInstallComplete: { report in
+                    Task { @MainActor in
+                        await skillManager.refresh()
+                        claudePluginInstallGeneration += 1
+                        let total =
+                            report.totalImportedSkills + report.totalImportedAgents
+                            + report.totalImportedCommands + report.totalImportedMCPProviders
+                        if total > 0 {
+                            showToast(total == 1 ? L("Installed 1 item") : L("Installed \(total) items"))
+                        }
+                    }
                 }
             )
         }
@@ -434,6 +466,11 @@ struct SkillsView: View {
 
             HeaderIconButton("square.and.arrow.down", help: "Import skill") {
                 importSkill()
+            }
+            .disabled(isProcessing || skillManager.isRefreshing)
+
+            HeaderIconButton("link.badge.plus", help: "Import Claude plugin from GitHub") {
+                showGitHubImport = true
             }
             .disabled(isProcessing || skillManager.isRefreshing)
 

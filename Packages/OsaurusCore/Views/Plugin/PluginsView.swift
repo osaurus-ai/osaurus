@@ -2878,6 +2878,10 @@ struct ClaudePluginsMarketplaceView: View {
     /// Shared header search query from the hosting view.
     let searchText: String
 
+    /// Incremented by the host after an out-of-band install (e.g. the GitHub
+    /// import sheet) so installed state is re-read.
+    var installGeneration: Int = 0
+
     @State private var hasAppeared = false
     @State private var selectedCategory: String?
     @State private var filteredMarketplaceEntries: [MarketplacePlugin] = []
@@ -2917,6 +2921,10 @@ struct ClaudePluginsMarketplaceView: View {
             await updateFilteredEntries()
         }
         .onChange(of: selectedCategory) { _, _ in Task { await updateFilteredEntries() } }
+        .onChange(of: installGeneration) { _, _ in
+            claudeAggregator.refresh()
+            Task { await claudeAggregator.checkForUpdates() }
+        }
         .onReceive(claudeMarketplace.$entries) { _ in Task { await updateFilteredEntries() } }
         .onReceive(claudeAggregator.$plugins) { _ in Task { await updateFilteredEntries() } }
         .sheet(isPresented: $showUserConfigSheet) {
