@@ -348,9 +348,11 @@ struct AgentChannelConnectionCenterView: View {
                             icon: connection.kind.icon,
                             gradient: connection.kind.brandGradient,
                             title: connection.name.isEmpty ? connection.id : connection.name,
-                            subtitle: connection.id,
-                            subtitleIsMonospaced: true,
-                            badge: Self.customBadge(for: connection),
+                            subtitle: connection.kind == .n8n
+                                ? L("n8n HTTP Request in, poll or webhook out")
+                                : connection.id,
+                            subtitleIsMonospaced: connection.kind != .n8n,
+                            badge: Self.customBadge(for: connection, writesEnabled: globalWritesEnabled),
                             anchorId: connection.kind == .n8n ? "agentChannels.n8n" : nil
                         ) {
                             activeSheet = connection.kind == .n8n ? .editN8n(connection) : .editCustom(connection)
@@ -676,7 +678,7 @@ struct AgentChannelConnectionCenterView: View {
         case .telegram: return L("Bot access to allowlisted chats and groups")
         case .imessage: return L("This Mac's Messages app, allowlisted chats only")
         case .whatsapp: return L("QR-linked WhatsApp Web bridge, allowlisted chats only")
-        case .n8n: return L("Secret-verified webhook bridge for n8n workflows")
+        case .n8n: return L("n8n HTTP Request in, poll or webhook out")
         case .customHTTP: return L("JSON-defined HTTP channel")
         }
     }
@@ -834,12 +836,15 @@ struct AgentChannelConnectionCenterView: View {
 
     /// Honest custom-channel badge: enabled alone is not usable — a custom
     /// channel needs defined HTTP actions before agents can do anything.
-    static func customBadge(for connection: AgentChannelConnection) -> AgentChannelStatusPresentation {
+    static func customBadge(
+        for connection: AgentChannelConnection,
+        writesEnabled: Bool = true
+    ) -> AgentChannelStatusPresentation {
         guard connection.enabled else {
             return AgentChannelStatusPresentation(label: L("Disabled"), tone: .neutral)
         }
         if connection.kind == .n8n {
-            return n8nBadge(for: connection)
+            return n8nBadge(for: connection, writesEnabled: writesEnabled)
         }
         let actionCount = connection.customHTTP?.actions.count ?? 0
         guard actionCount > 0 else {
@@ -853,7 +858,10 @@ struct AgentChannelConnectionCenterView: View {
 
     /// n8n rows are inbound-first: usable once a dispatch target exists and
     /// authorization can admit something (both allowlists are fail-closed).
-    static func n8nBadge(for connection: AgentChannelConnection) -> AgentChannelStatusPresentation {
+    static func n8nBadge(
+        for connection: AgentChannelConnection,
+        writesEnabled: Bool = true
+    ) -> AgentChannelStatusPresentation {
         let authorization = connection.inboundAuthorization
         guard !authorization.senderAllowlist.isEmpty, !authorization.roomAllowlist.isEmpty else {
             return AgentChannelStatusPresentation(label: L("No allowed senders"), tone: .warning)
@@ -861,10 +869,27 @@ struct AgentChannelConnectionCenterView: View {
         guard connection.n8n?.inboundDispatch.isConfigured == true else {
             return AgentChannelStatusPresentation(label: L("No agent assigned"), tone: .warning)
         }
-        if connection.n8n?.outbound.isConfigured == true {
-            return AgentChannelStatusPresentation(label: L("Enabled (push + poll)"), tone: .success)
+        let mode = N8nSetupRecipe.verifyModeChip(
+            for: connection.n8n?.inboundVerification.method ?? .hmacSHA256
+        )
+        let wantsPush = connection.n8n?.outbound.isConfigured == true
+            || connection.writeEnabled
+        if wantsPush && !writesEnabled {
+            return AgentChannelStatusPresentation(
+                label: "\(mode) · \(L("Push blocked"))",
+                tone: .warning
+            )
         }
-        return AgentChannelStatusPresentation(label: L("Enabled (poll replies)"), tone: .success)
+        if wantsPush {
+            return AgentChannelStatusPresentation(
+                label: "\(mode) · \(L("Enabled (push + poll)"))",
+                tone: .success
+            )
+        }
+        return AgentChannelStatusPresentation(
+            label: "\(mode) · \(L("Enabled (poll replies)"))",
+            tone: .success
+        )
     }
 
     /// A saved token must not read as "Configured" while a receive transport

@@ -157,7 +157,7 @@ enum AgentChannelAddCatalog {
         case .telegram: return L("Guided setup — bot access to allowlisted chats and groups")
         case .imessage: return L("Guided setup — this Mac's Messages app, allowlisted chats only")
         case .whatsapp: return L("Guided setup — QR-linked WhatsApp Web bridge, allowlisted chats only")
-        case .n8n: return L("Guided setup — secret-verified webhook bridge for n8n workflows")
+        case .n8n: return L("Guided setup — n8n HTTP Request in, poll or webhook out")
         case .customHTTP: return L("Advanced — define your own HTTP JSON channel")
         }
     }

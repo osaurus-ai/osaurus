@@ -660,6 +660,7 @@ public enum SettingsSearchIndex {
                 "n8n", "workflow automation", "webhook bridge", "channel secret",
                 "hmac signature", "shared secret header", "poll url", "task poll",
                 "host.docker.internal", "plaintext allowed", "secure channel required",
+                "http request", "conversation_id", "topology", "docker desktop",
             ]
         ),
         .init(

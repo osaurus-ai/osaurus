@@ -41,12 +41,14 @@ struct N8nSettingsView: View {
     @State private var showShareSheet = false
     @State private var healthRefreshToken = 0
     @State private var activityRefreshToken = 0
-    @State private var selectedSectionId: String = AgentChannelProviderSetupSection.connect.rawValue
+    @State private var selectedSectionId: String = N8nSetupSection.whereIsN8n.rawValue
     @State private var attentionSectionId: String?
     @State private var verifySucceeded = false
     /// Snapshot of the server binding used for the URL card, read on appear.
     @State private var serverPort = ServerConfiguration.default.port
     @State private var serverExposedToNetwork = false
+    /// Master write toggle from Connection Center; push fails while this is off.
+    @State private var globalWritesEnabled = true
 
     private let manager = AgentChannelConnectionManager.shared
     private let service = AgentChannelConnectionService.shared
@@ -58,22 +60,24 @@ struct N8nSettingsView: View {
             icon: AgentChannelKind.n8n.icon,
             gradient: AgentChannelKind.n8n.brandGradient,
             title: draft.isNew ? L("New n8n Channel") : (draft.name.isEmpty ? draft.id : draft.name),
-            subtitle: L("Secret-verified webhook with pollable replies"),
-            sections: AgentChannelProviderSetupSection.sections,
+            subtitle: L("n8n HTTP Request in, poll or webhook out"),
+            sections: N8nSetupSection.sections,
             selection: $selectedSectionId,
             sectionStatus: sectionStatus(for:),
             onBack: onBack
         ) { sectionId in
             VStack(alignment: .leading, spacing: 20) {
-                switch AgentChannelProviderSetupSection(rawValue: sectionId) {
-                case .connect:
-                    connectSectionContent
-                case .access:
-                    accessSectionContent
-                case .behavior:
-                    behaviorSectionContent
-                case .verify, nil:
-                    verifySectionContent
+                switch N8nSetupSection(rawValue: sectionId) {
+                case .whereIsN8n:
+                    whereSectionContent
+                case .howN8nCalls:
+                    callSectionContent
+                case .whoMaySpeak:
+                    whoSectionContent
+                case .howOsaurusReplies:
+                    replySectionContent
+                case .liveCheck, nil:
+                    liveSectionContent
                 }
             }
         } statusBar: {
@@ -169,28 +173,46 @@ struct N8nSettingsView: View {
     }
 
     private var inboundURL: String {
-        "\(loopbackOrigin)/channels/n8n/\(displayId)/inbound"
+        N8nSetupRecipe.inboundURL(
+            connectionId: displayId,
+            port: serverPort,
+            topology: draft.topology
+        )
     }
 
     private var pollURLTemplate: String {
-        "\(loopbackOrigin)/channels/n8n/\(displayId)/tasks/{task_id}"
-    }
-
-    private var dockerInboundURL: String {
-        "http://host.docker.internal:\(serverPort)/channels/n8n/\(displayId)/inbound"
-    }
-
-    private var loopbackOrigin: String {
-        "http://127.0.0.1:\(serverPort)"
-    }
-
-    private var lanOrigin: String? {
-        guard serverExposedToNetwork else { return nil }
-        return "http://<this-mac-ip>:\(serverPort)"
+        N8nSetupRecipe.pollURL(
+            connectionId: displayId,
+            port: serverPort,
+            topology: draft.topology
+        )
     }
 
     private var displayId: String {
         trimmedDraftId.isEmpty ? "<connection-id>" : trimmedDraftId
+    }
+
+    private var sampleEnvelope: String {
+        N8nSetupRecipe.sampleEnvelope(
+            conversationId: allowedConversations.first ?? "n8n-test",
+            senderId: allowedSenders.first ?? "workflow"
+        )
+    }
+
+    private var httpRequestRecipe: String {
+        N8nSetupRecipe.httpRequestRecipe(
+            inboundURL: inboundURL,
+            headerName: effectiveHeaderName,
+            method: draft.verificationMethod
+        )
+    }
+
+    private var wantsOutboundPush: Bool {
+        !draft.outboundWebhookURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var pushBlockedByKillSwitch: Bool {
+        wantsOutboundPush && draft.inboundAutoReplyEnabled && !globalWritesEnabled
     }
 
     private var effectiveHeaderName: String {
@@ -200,14 +222,16 @@ struct N8nSettingsView: View {
     // MARK: - Section state
 
     private func sectionCompleted(_ sectionId: String) -> Bool {
-        switch AgentChannelProviderSetupSection(rawValue: sectionId) {
-        case .connect:
-            return !trimmedDraftId.isEmpty && hasSecret
-        case .access:
+        switch N8nSetupSection(rawValue: sectionId) {
+        case .whereIsN8n:
+            return !trimmedDraftId.isEmpty
+        case .howN8nCalls:
+            return hasSecret
+        case .whoMaySpeak:
             return !allowedConversations.isEmpty && !allowedSenders.isEmpty
-        case .behavior:
+        case .howOsaurusReplies:
             return draft.inboundDispatchEnabled && (draft.inboundTarget != nil || !draft.inboundRoutes.isEmpty)
-        case .verify:
+        case .liveCheck:
             return verifySucceeded
         case nil:
             return false
@@ -219,12 +243,12 @@ struct N8nSettingsView: View {
         return sectionCompleted(sectionId) ? .complete : .pending
     }
 
-    // MARK: - Connect
+    // MARK: - 1. Where is n8n?
 
-    private var connectSectionContent: some View {
+    private var whereSectionContent: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text(
-                "n8n calls Osaurus over HTTP with a shared secret. Osaurus accepts the event, runs the agent, and n8n polls for the reply — no public URL is needed on the Osaurus side.",
+                "Pick where n8n runs so the inbound URL matches how it reaches this Mac.",
                 bundle: .module
             )
             .font(.system(size: 12))
@@ -233,11 +257,60 @@ struct N8nSettingsView: View {
 
             identitySection
             SettingsDivider()
-            secretSection
+            topologySection
             SettingsDivider()
             inboundURLSection
-            SettingsDivider()
-            transportPolicySection
+            if draft.topology.revealsPlaintextToggle {
+                SettingsDivider()
+                transportPolicySection
+            }
+            if draft.topology.revealsSecureChannel {
+                SettingsDivider()
+                secureChannelSection
+            }
+        }
+    }
+
+    private var topologySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AgentChannelSectionHeading(
+                L("Where is n8n?"),
+                detail: L("Only the matching inbound URL is shown below.")
+            )
+
+            Picker(selection: $draft.topology) {
+                ForEach(N8nTopology.allCases, id: \.self) { topology in
+                    Text(topology.title).tag(topology)
+                }
+            } label: {
+                EmptyView()
+            }
+            .labelsHidden()
+            .pickerStyle(.radioGroup)
+
+            Text(topologyHelp)
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var topologyHelp: String {
+        switch draft.topology {
+        case .thisMac:
+            return L("n8n on this Mac calls 127.0.0.1. No public URL is needed.")
+        case .dockerDesktop:
+            return L(
+                "Docker Desktop on this Mac forwards host.docker.internal over loopback, so it counts as a same-Mac caller."
+            )
+        case .lan:
+            return L(
+                "A machine on your LAN must reach this Mac's address. Expose the server to the network, then choose whether plaintext HTTP is allowed."
+            )
+        case .remote:
+            return L(
+                "Remote n8n should wrap /agents/.../run through Secure Channel. The inbound webhook is still secret-verified and bearer-exempt — an osk-v1 key is not that secret."
+            )
         }
     }
 
@@ -361,40 +434,30 @@ struct N8nSettingsView: View {
             AgentChannelSectionHeading(
                 L("Point n8n at this URL"),
                 detail: L(
-                    "Use an HTTP Request node: POST the envelope to the inbound URL, then GET the poll_url from the 202 response until status is completed."
+                    "Use an HTTP Request node: POST the envelope to this inbound URL, then GET the poll_url from the 202 response until status is completed."
                 )
             )
 
             AgentChannelCopyableCommand(
                 command: "POST \(inboundURL)",
-                caption: L("From this Mac"),
+                caption: draft.topology.title,
                 onCopied: { showStatus(L("Inbound URL copied"), isError: false) }
             )
-            AgentChannelCopyableCommand(
-                command: "POST \(dockerInboundURL)",
-                caption: L("From n8n in Docker Desktop"),
-                onCopied: { showStatus(L("Inbound URL copied"), isError: false) }
-            )
-            if let lanOrigin {
-                AgentChannelCopyableCommand(
-                    command: "POST \(lanOrigin)/channels/n8n/\(displayId)/inbound",
-                    caption: L("From your network"),
-                    onCopied: { showStatus(L("Inbound URL copied"), isError: false) }
-                )
-            }
             AgentChannelCopyableCommand(
                 command: "GET \(pollURLTemplate)",
                 caption: L("Poll for the reply (same header)"),
                 onCopied: { showStatus(L("Poll URL copied"), isError: false) }
             )
 
-            Text(
-                "Callers from your network must satisfy the transport policy below. Docker Desktop on this Mac forwards host.docker.internal over loopback, so it counts as a same-Mac caller.",
-                bundle: .module
-            )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
-            .fixedSize(horizontal: false, vertical: true)
+            if draft.topology == .lan || draft.topology == .remote, !serverExposedToNetwork {
+                Text(
+                    "Expose the server to the network in Server settings before a LAN or remote host can reach this address.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -431,6 +494,17 @@ struct N8nSettingsView: View {
                         .fill(theme.warningColor.opacity(0.08))
                 )
             }
+        }
+    }
+
+    private var secureChannelSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            AgentChannelSectionHeading(
+                L("Secure Channel access key"),
+                detail: L(
+                    "An osk-v1 key wraps /secure/call around /agents/.../run or dispatch. It is not the inbound webhook secret — inbound stays bearer-exempt and secret-verified."
+                )
+            )
 
             if shareableAgent != nil {
                 Button {
@@ -448,7 +522,7 @@ struct N8nSettingsView: View {
                 .help(L("Issue an agent-scoped osk-v1 key so remote n8n can call Osaurus end-to-end encrypted."))
             } else {
                 Text(
-                    "Pick a local agent in Agent Behavior to issue a Secure Channel access key from here.",
+                    "Pick a local agent in How Osaurus replies to issue a Secure Channel access key from here.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
@@ -458,30 +532,91 @@ struct N8nSettingsView: View {
         }
     }
 
-    // MARK: - Conversations
+    // MARK: - 2. How n8n calls Osaurus
 
-    private var accessSectionContent: some View {
+    private var callSectionContent: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            secretSection
+            SettingsDivider()
+            recipeSection
+        }
+    }
+
+    private var recipeSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AgentChannelSectionHeading(
+                L("HTTP Request recipe"),
+                detail: L(
+                    "Paste this into an n8n HTTP Request node. conversation_id and sender.id must match a line in Who may speak."
+                )
+            )
+
+            AgentChannelCopyableCommand(
+                command: sampleEnvelope,
+                caption: L("Sample envelope"),
+                lineLimit: 4,
+                onCopied: { showStatus(L("Sample envelope copied"), isError: false) }
+            )
+            AgentChannelCopyableCommand(
+                command: httpRequestRecipe,
+                caption: L("HTTP Request"),
+                lineLimit: 4,
+                onCopied: { showStatus(L("HTTP Request recipe copied"), isError: false) }
+            )
+
+            if draft.verificationMethod == .hmacSHA256 {
+                AgentChannelCopyableCommand(
+                    command: N8nSetupRecipe.hmacCodeSnippet(),
+                    caption: L("HMAC Code node"),
+                    lineLimit: 5,
+                    onCopied: { showStatus(L("HMAC snippet copied"), isError: false) }
+                )
+            }
+
+            Text(
+                "Attachments in the envelope are metadata-only; Osaurus does not fetch the file bytes.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: - 3. Who may speak
+
+    private var whoSectionContent: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 12) {
                 AgentChannelSectionHeading(
                     L("Authorize incoming events"),
                     detail: L(
-                        "Authorization fails closed: an event is accepted only when its conversation_id and sender.id are both listed here."
+                        "These are workflow-declared IDs (Teams thread, mailbox, widget tenant), not chat rooms. Fail-closed: conversation_id and sender.id in the HTTP Request body must both match a line here."
                     )
                 )
+
+                Text(
+                    "Example: conversation_id: \"n8n-test\" must equal an allowlisted line.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
 
                 HStack(alignment: .top, spacing: 12) {
                     AgentChannelMultilineSettingsField(
                         title: L("Allowed Conversations"),
                         text: $draft.conversationAllowlistText,
                         placeholder: L("n8n-test — one per line"),
-                        help: L("conversation_id values the workflow may use. Each one maps to its own agent session.")
+                        help: L(
+                            "conversation_id values the workflow declares. Each one maps to its own agent session."
+                        )
                     )
                     AgentChannelMultilineSettingsField(
                         title: L("Allowed Senders"),
                         text: $draft.senderAllowlistText,
                         placeholder: L("sender-id — one per line"),
-                        help: L("sender.id values the workflow may send as. Empty denies everyone.")
+                        help: L("sender.id values the workflow declares. Empty denies everyone.")
                     )
                 }
 
@@ -494,9 +629,9 @@ struct N8nSettingsView: View {
         }
     }
 
-    // MARK: - Agent Behavior
+    // MARK: - 4. How Osaurus replies
 
-    private var behaviorSectionContent: some View {
+    private var replySectionContent: some View {
         VStack(alignment: .leading, spacing: 20) {
             dispatchSection
             SettingsDivider()
@@ -526,7 +661,7 @@ struct N8nSettingsView: View {
                 AgentChannelPluginPreloadOverflowNotice(agentId: draft.inboundTarget?.localId)
 
                 Text(
-                    "Replies are always available by polling the task URL. Turn on the push below to also post them to an n8n Webhook trigger.",
+                    "Default: n8n Wait + GET the poll_url from the 202. Optional push below posts to an n8n Webhook trigger.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
@@ -538,10 +673,32 @@ struct N8nSettingsView: View {
 
     private var outboundSection: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if pushBlockedByKillSwitch {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.warningColor)
+                        .padding(.top, 1)
+                    Text(
+                        "Push will fail until Allow Agents to Send Messages is on in Connection Center. Poll still returns the reply.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.warningColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.warningColor.opacity(0.08))
+                )
+            }
+
             AgentChannelSectionHeading(
                 L("Push replies to n8n (optional)"),
                 detail: L(
-                    "Posts the agent's reply as a signed JSON envelope to an n8n Webhook trigger. Requires a public HTTPS URL — loopback, private ranges and plain HTTP are refused by the outbound host policy."
+                    "Posts the agent's reply as a signed JSON envelope to an n8n Webhook trigger. Requires a public HTTPS URL — loopback, private ranges and plain HTTP are refused (C2). Use poll for local n8n."
                 )
             )
 
@@ -574,9 +731,9 @@ struct N8nSettingsView: View {
         }
     }
 
-    // MARK: - Test
+    // MARK: - 5. Live check
 
-    private var verifySectionContent: some View {
+    private var liveSectionContent: some View {
         VStack(alignment: .leading, spacing: 12) {
             AgentChannelSectionHeading(L("Verify an incoming event"))
 
@@ -644,7 +801,8 @@ struct N8nSettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     AgentChannelCopyableCommand(
                         command: curlExample,
-                        caption: L("Example inbound request (replace SECRET)"),
+                        caption: L("Copy curl (matches topology and verify mode)"),
+                        lineLimit: 4,
                         onCopied: { showStatus(L("Example copied"), isError: false) }
                     )
                     Button(action: revealConfigurationFile) {
@@ -664,18 +822,13 @@ struct N8nSettingsView: View {
     }
 
     private var curlExample: String {
-        let conversation = allowedConversations.first ?? "n8n-test"
-        let sender = allowedSenders.first ?? "workflow"
-        let body =
-            #"{"v":1,"event_id":"evt-1","conversation_id":"\#(conversation)","sender":{"id":"\#(sender)"},"content":"Reply with the single word PONG"}"#
-        switch draft.verificationMethod {
-        case .hmacSHA256:
-            return
-                "BODY='\(body)'; SIG=$(printf '%s' \"$BODY\" | openssl dgst -sha256 -hmac \"SECRET\" | awk '{print $NF}'); curl -sS -X POST \(inboundURL) -H 'Content-Type: application/json' -H \"\(effectiveHeaderName): sha256=$SIG\" --data \"$BODY\""
-        case .sharedSecretHeader, .none:
-            return
-                "curl -sS -X POST \(inboundURL) -H 'Content-Type: application/json' -H '\(effectiveHeaderName): SECRET' --data '\(body)'"
-        }
+        N8nSetupRecipe.curlExample(
+            inboundURL: inboundURL,
+            headerName: effectiveHeaderName,
+            method: draft.verificationMethod,
+            conversationId: allowedConversations.first ?? "n8n-test",
+            senderId: allowedSenders.first ?? "workflow"
+        )
     }
 
     // MARK: - Actions
@@ -684,6 +837,7 @@ struct N8nSettingsView: View {
         let configuration = ServerConfigurationStore.load() ?? ServerConfiguration.default
         serverPort = configuration.port
         serverExposedToNetwork = configuration.exposeToNetwork
+        globalWritesEnabled = ChannelWriteKillSwitch.shared.snapshot().writeEnabled
         if let connection {
             draft = N8nConnectionDraft(connection: connection)
             let pluginId = draft.keychainPluginId
@@ -694,10 +848,10 @@ struct N8nSettingsView: View {
             }
         }
         selectedSectionId = AgentChannelSetupFlow.initialSection(
-            in: AgentChannelProviderSetupSection.sections,
-            required: AgentChannelProviderSetupSection.requiredSectionIds,
+            in: N8nSetupSection.sections,
+            required: N8nSetupSection.requiredSectionIds,
             isComplete: { sectionCompleted($0) },
-            fallback: AgentChannelProviderSetupSection.verify.rawValue
+            fallback: N8nSetupSection.fallbackSectionId
         )
     }
 
@@ -728,21 +882,21 @@ struct N8nSettingsView: View {
 
     /// First cross-field problem the save would reject, or nil when the
     /// draft is persistable.
-    private func validationFailure() -> (message: String, section: AgentChannelProviderSetupSection)? {
+    private func validationFailure() -> (message: String, section: N8nSetupSection)? {
         if trimmedDraftId.isEmpty {
-            return (L("Enter a connection id."), .connect)
+            return (L("Enter a connection id."), .whereIsN8n)
         }
         if !hasSecret {
-            return (L("Paste or generate the channel secret before saving."), .connect)
+            return (L("Paste or generate the channel secret before saving."), .howN8nCalls)
         }
         if draft.inboundDispatchEnabled, draft.inboundTarget == nil, draft.inboundRoutes.isEmpty {
-            return (L("Choose an agent to reply with, or turn off Reply with an Agent."), .behavior)
+            return (L("Choose an agent to reply with, or turn off Reply with an Agent."), .howOsaurusReplies)
         }
         let outbound = draft.outboundWebhookURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if !outbound.isEmpty,
             AgentChannelN8nPreset.splitWebhookURL(outbound)?.baseURL.hasPrefix("https://") != true
         {
-            return (L("The outbound webhook URL must be an absolute https:// URL."), .behavior)
+            return (L("The outbound webhook URL must be an absolute https:// URL."), .howOsaurusReplies)
         }
         return nil
     }
@@ -772,7 +926,7 @@ struct N8nSettingsView: View {
             await MainActor.run {
                 isSaving = false
                 guard secretStored else {
-                    attentionSectionId = AgentChannelProviderSetupSection.connect.rawValue
+                    attentionSectionId = N8nSetupSection.howN8nCalls.rawValue
                     showStatus(L("Could not store the channel secret in the Keychain."), isError: true)
                     return
                 }
@@ -790,14 +944,14 @@ struct N8nSettingsView: View {
                     onDidChange()
                     showStatus(L("Saved. Trigger the workflow, then verify below."), isError: false)
                     withAnimation(.easeOut(duration: 0.15)) {
-                        selectedSectionId = AgentChannelProviderSetupSection.verify.rawValue
+                        selectedSectionId = N8nSetupSection.liveCheck.rawValue
                     }
                 } catch {
-                    let section: AgentChannelProviderSetupSection
+                    let section: N8nSetupSection
                     if case AgentChannelConnectionManagerError.invalidN8nOutboundURL = error {
-                        section = .behavior
+                        section = .howOsaurusReplies
                     } else {
-                        section = .connect
+                        section = .whereIsN8n
                     }
                     attentionSectionId = section.rawValue
                     withAnimation(.easeOut(duration: 0.15)) {
@@ -822,7 +976,7 @@ struct N8nSettingsView: View {
 
     private func diagnose() {
         withAnimation(.easeOut(duration: 0.15)) {
-            selectedSectionId = AgentChannelProviderSetupSection.verify.rawValue
+            selectedSectionId = N8nSetupSection.liveCheck.rawValue
         }
         guard canRunLiveDiagnostics else {
             if let failure = validationFailure() {
@@ -883,8 +1037,8 @@ struct N8nSettingsView: View {
                     showStatus(
                         L("No n8n event arrived within 90 seconds."),
                         details: [
-                            L("Confirm the workflow posts to the inbound URL shown in Connect with the saved secret."),
-                            L("Confirm conversation_id and sender.id are both allowlisted in Conversations."),
+                            L("Confirm the workflow posts to the inbound URL shown in Where is n8n? with the saved secret."),
+                            L("Confirm conversation_id and sender.id are both allowlisted in Who may speak."),
                             L(
                                 "From another machine on the network, confirm plaintext is allowed or the call goes through Secure Channel."
                             ),
@@ -982,6 +1136,8 @@ struct N8nConnectionDraft: Equatable {
     var inboundAutoReplyEnabled = false
     var outboundWebhookURL = ""
     var outboundSignBodies = true
+    /// UI-only: which inbound URL the sheet shows. Not persisted.
+    var topology: N8nTopology = .thisMac
 
     init() {}
 
@@ -998,6 +1154,7 @@ struct N8nConnectionDraft: Equatable {
         verificationHeaderName = n8n.inboundVerification.headerName ?? ""
         secretName = n8n.secretName
         plaintextAllowed = n8n.remoteTransportPolicy == .plaintextAllowed
+        topology = N8nTopology.inferred(plaintextAllowed: plaintextAllowed)
         inboundDispatchEnabled = n8n.inboundDispatch.enabled
         inboundTarget = n8n.inboundDispatch.target
         inboundRoutes = n8n.inboundDispatch.routes

@@ -60,6 +60,7 @@ struct N8nConnectionDraftTests {
         #expect(draft.verificationMethod == .sharedSecretHeader)
         #expect(draft.verificationHeaderName == "X-Custom-Secret")
         #expect(draft.plaintextAllowed)
+        #expect(draft.topology == .lan)
         #expect(draft.conversationAllowlistText == "n8n-test")
         #expect(draft.senderAllowlistText == "tpae\nworkflow")
         #expect(draft.allowBotMessages)
@@ -114,12 +115,14 @@ struct N8nConnectionDraftTests {
     @Test func connectionCenterBadgeReflectsAuthorizationDispatchAndPush() {
         var connection = Self.connection()
         #expect(
-            AgentChannelConnectionCenterView.customBadge(for: connection).label == L("Enabled (push + poll)")
+            AgentChannelConnectionCenterView.customBadge(for: connection).label
+                == "\(L("Header")) · \(L("Enabled (push + poll)"))"
         )
 
         connection.n8n?.outbound = AgentChannelN8nOutboundConfiguration()
         #expect(
-            AgentChannelConnectionCenterView.customBadge(for: connection).label == L("Enabled (poll replies)")
+            AgentChannelConnectionCenterView.customBadge(for: connection).label
+                == "\(L("Header")) · \(L("Enabled (poll replies)"))"
         )
 
         connection.n8n?.inboundDispatch = AgentChannelInboundDispatchConfiguration()
@@ -134,5 +137,92 @@ struct N8nConnectionDraftTests {
 
         connection.enabled = false
         #expect(AgentChannelConnectionCenterView.customBadge(for: connection).label == L("Disabled"))
+    }
+
+    @Test func connectionCenterBadgeIncludesVerifyModeAndKillSwitch() {
+        var hmac = Self.connection()
+        hmac.n8n?.inboundVerification = AgentChannelN8nInboundVerification(method: .hmacSHA256)
+        #expect(
+            AgentChannelConnectionCenterView.n8nBadge(for: hmac, writesEnabled: true).label
+                == "\(L("HMAC")) · \(L("Enabled (push + poll)"))"
+        )
+
+        let blocked = AgentChannelConnectionCenterView.n8nBadge(for: hmac, writesEnabled: false)
+        #expect(blocked.label == "\(L("HMAC")) · \(L("Push blocked"))")
+        #expect(blocked.tone == .warning)
+
+        hmac.n8n?.outbound = AgentChannelN8nOutboundConfiguration()
+        hmac.writeEnabled = false
+        #expect(
+            AgentChannelConnectionCenterView.n8nBadge(for: hmac, writesEnabled: false).label
+                == "\(L("HMAC")) · \(L("Enabled (poll replies)"))"
+        )
+    }
+
+    @Test func setupRailIsN8nShapedAndDoesNotReuseDiscordCaptions() {
+        let ids = N8nSetupSection.sections.map(\.id)
+        #expect(ids == ["where", "call", "who", "reply", "live"])
+        #expect(N8nSetupSection.requiredSectionIds == ["where", "call", "who"])
+        #expect(N8nSetupSection.fallbackSectionId == "live")
+        #expect(N8nSetupSection.whereIsN8n.title == L("Where is n8n?"))
+        #expect(N8nSetupSection.howN8nCalls.caption == L("Webhook"))
+        #expect(N8nSetupSection.whoMaySpeak.caption == L("Allowlists"))
+        #expect(N8nSetupSection.howOsaurusReplies.caption == L("Poll or push"))
+        #expect(N8nSetupSection.liveCheck.caption == L("Verify"))
+        // Discord/Telegram captions must not appear on the n8n rail.
+        for section in N8nSetupSection.sections {
+            #expect(section.caption != L("Bot and tokens"))
+            #expect(section.caption != L("Rooms and people"))
+        }
+    }
+
+    @Test func recipeMatchesTopologyAndAllowlists() {
+        let envelope = N8nSetupRecipe.sampleEnvelope(conversationId: "n8n-test", senderId: "tpae")
+        #expect(envelope.contains("\"conversation_id\":\"n8n-test\""))
+        #expect(envelope.contains("\"sender\":{\"id\":\"tpae\"}"))
+
+        let docker = N8nSetupRecipe.inboundURL(
+            connectionId: "n8n-local",
+            port: 1337,
+            topology: .dockerDesktop
+        )
+        #expect(docker == "http://host.docker.internal:1337/channels/n8n/n8n-local/inbound")
+
+        let lan = N8nSetupRecipe.inboundURL(
+            connectionId: "n8n-local",
+            port: 1337,
+            topology: .lan
+        )
+        #expect(lan == "http://<this-mac-ip>:1337/channels/n8n/n8n-local/inbound")
+
+        let hmac = N8nSetupRecipe.httpRequestRecipe(
+            inboundURL: docker,
+            headerName: "X-Osaurus-Channel-Signature",
+            method: .hmacSHA256
+        )
+        #expect(hmac.contains("POST \(docker)"))
+        #expect(hmac.contains("Content-Type: application/json"))
+        #expect(hmac.contains("X-Osaurus-Channel-Signature: sha256="))
+
+        let snippet = N8nSetupRecipe.hmacCodeSnippet()
+        #expect(snippet.contains("createHmac('sha256'"))
+        #expect(snippet.contains(".update('')"))
+
+        let curl = N8nSetupRecipe.curlExample(
+            inboundURL: docker,
+            headerName: "X-Osaurus-Channel-Signature",
+            method: .hmacSHA256,
+            conversationId: "n8n-test",
+            senderId: "tpae"
+        )
+        #expect(curl.contains(docker))
+        #expect(curl.contains("openssl dgst -sha256 -hmac"))
+    }
+
+    @Test func catalogTaglineIsN8nShaped() {
+        #expect(
+            AgentChannelAddCatalog.tagline(for: .n8n)
+                == L("Guided setup — n8n HTTP Request in, poll or webhook out")
+        )
     }
 }
