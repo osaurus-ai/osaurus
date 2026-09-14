@@ -217,12 +217,16 @@ Private raw artifacts:
 - `construction-pin-history.json`: first app pin carrying the #359 change.
 - `reporter-urls.txt`: the supplied attachment URLs.
 
-Run from this worktree:
+Historical detector reproduction (extract the audited source; the current implementation has additional module dependencies):
 
 ```sh
+probe_dir=$(mktemp -d /tmp/osaurus-old-vision.XXXXXX)
+for source in ModelFamilyNames ModelMediaCapabilities; do
+  git show 7842b471310b631d19996f6fe5b73cb34deda70f:Packages/OsaurusCore/Models/Configuration/$source.swift > "$probe_dir/$source.swift"
+done
 swiftc \
-  Packages/OsaurusCore/Models/Configuration/ModelFamilyNames.swift \
-  Packages/OsaurusCore/Models/Configuration/ModelMediaCapabilities.swift \
+  "$probe_dir/ModelFamilyNames.swift" \
+  "$probe_dir/ModelMediaCapabilities.swift" \
   scripts/diagnostics/qwen-vision-capability-probe.swift \
   -o /tmp/osaurus-qwen-vision-capability-probe
 /tmp/osaurus-qwen-vision-capability-probe /path/to/installed/bundle

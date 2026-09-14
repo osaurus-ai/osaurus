@@ -1127,12 +1127,9 @@ final class ChatSession: ObservableObject {
                 self.loadActiveModelOptions(for: model)
                 self.applyImageModelDefaults(for: model)
 
-                // Clear pending image attachments when switching to a non-VLM
-                // model. Computed against the NEW model id, since `@Published`
-                // emits before `selectedModel` updates.
-                if !Self.modelSupportsImages(modelId: model, pickerItems: self.pickerItems) {
-                    self.pendingAttachments = []
-                }
+                // Keep the user's draft attachments across model changes.
+                // Send validates their modalities against the new model and
+                // reports incompatibility instead of silently deleting files.
 
                 // Selection only records the choice (and re-evaluates the
                 // residency dot). Loading, eviction and prefill happen on

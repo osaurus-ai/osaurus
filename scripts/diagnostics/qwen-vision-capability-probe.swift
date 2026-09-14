@@ -1,4 +1,6 @@
-// Run with the production ModelFamilyNames.swift and ModelMediaCapabilities.swift.
+// Historical audit probe: compile with the unchanged source at 7842b471310b.
+// See docs/QWEN_VISION_REGRESSION_2026_09_13.md for source extraction.
+// Current bundle checks run through InstalledVisionEvidenceProbeTests.
 // This records detector behavior only. It never loads a model or proves inference.
 import Foundation
 
