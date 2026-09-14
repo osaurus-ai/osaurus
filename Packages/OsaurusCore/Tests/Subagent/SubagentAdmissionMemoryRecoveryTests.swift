@@ -5,6 +5,66 @@ import Testing
 
 @Suite("Admission freed-buffer recovery")
 struct SubagentAdmissionMemoryRecoveryTests {
+    /// Decision-time numbers transcribed from the reporter's 0.25.2 screenshot
+    /// (2026-09-14). This replays policy, not the missing M4 host measurement.
+    private func reporterFacts(reclaimable: UInt64 = 2_442_035_200) -> SubagentBatchMemoryFacts {
+        SubagentBatchMemoryFacts(
+            canonicalModelKey: "gemma-4-e2b-it-8bit",
+            targetAlreadyResident: true,
+            targetLoadFootprintBytes: 5_899_232_198,
+            perActiveChildHeadroomBytes: 6_055_526_640,
+            requestBoundedChildHeadroomBytes: 536_870_912,
+            reclaimableBytes: reclaimable,
+            releasableParentBytes: 0,
+            resolvedLoadBudgetBytes: 12_025_908_428,
+            osHeadroomBytes: 3_221_225_472
+        )
+    }
+
+    @Test("0.25.2 reporter: three released children do not grant a fourth below the OS reserve")
+    func reporterRepeatedChildrenThenLowHostMemory() async {
+        let admission = SubagentAdmission(pollNanoseconds: 1_000_000)
+        let oneChildThreshold: UInt64 = 3_758_096_384
+        for _ in 0..<3 {
+            let capacity = plan(reporterFacts(reclaimable: oneChildThreshold)).localCapacity
+            #expect(capacity == 1)
+            #expect(await admission.reserveLocalInPlace(
+                modelKey: "gemma-4-e2b-it-8bit", requestedSlots: 1, slotCapacity: capacity
+            ) == .admitted(slots: 1))
+            await admission.releaseLocalInPlace(modelKey: "gemma-4-e2b-it-8bit", slots: 1)
+            #expect(await admission.snapshot().inPlace == 0)
+        }
+        let refused = plan(reporterFacts())
+        #expect(refused.localCapacity == 0)
+        #expect(refused.incrementalWeightChargeBytes == 0)
+        #expect(refused.limitingFactors == [.memoryCapacity])
+        #expect(await admission.snapshot().inPlace == 0)
+        // Exactly the OS reserve plus the bounded child cost is required.
+        #expect(plan(reporterFacts(reclaimable: oneChildThreshold - 1)).localCapacity == 0)
+        #expect(plan(reporterFacts(reclaimable: oneChildThreshold)).localCapacity == 1)
+    }
+
+    @Test("reporter facts stay refused after recovery unless measured host headroom actually rises")
+    func reporterPostReclaimBoundary() async {
+        for freshBytes: UInt64 in [2_442_035_200, 3_758_096_383, 3_758_096_384] {
+            var samples = 0
+            var trims = 0
+            let result = await SubagentBatchAdmissionPlanner.memoryFactsAfterReclaimingIfNeeded(
+                ramSafetyEnabled: true,
+                sample: {
+                    samples += 1
+                    return samples == 1 ? reporterFacts() : reporterFacts(reclaimable: freshBytes)
+                },
+                reclaim: { trims += 1; return true },
+                waitForPostReclaimSample: {} // The real delayed-sample contract is tested below.
+            )
+            #expect(samples == 2)
+            #expect(trims == 1)
+            #expect(plan(result).localCapacity == (freshBytes >= 3_758_096_384 ? 1 : 0))
+            #expect(result?.reclaimableBytes == freshBytes)
+        }
+    }
+
     @Test("post-reclaim admission must outlive the kernel host-statistics cache window")
     func recoveryDoesNotReuseKernelCachedPreReleaseFacts() async throws {
         let before = facts(availableMiB: 3_328)

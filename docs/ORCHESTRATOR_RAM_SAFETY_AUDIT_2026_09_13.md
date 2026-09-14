@@ -18,6 +18,63 @@ now includes real exact-bundle generation and a native Release UI campaign
 on the local 128 GiB host. These are separate from the controlled 16 GiB
 policy regressions and do not qualify the actual reporter machine.
 
+## 2026-09-14 official 0.25.2 reporter update
+
+The reporter completed three minimal SysAdmin spawns in fresh chats without a
+restart, then the first SysAdmin of a sequential SysAdmin → Writer request was
+refused. Writer did not run. This is **0.25.2 / #2733**, not the still-draft
+#2752 implementation documented below.
+
+The full decision is visible in the supplied screenshot, preserved privately at
+`/Users/eric/vmlx-private-evidence/ram-admission-2026-09-14/reporter-0.25.2.webp`:
+
+| Decision field | Bytes / value |
+| --- | ---: |
+| target_already_resident | true |
+| target_load_bytes | 5,899,232,198 |
+| reclaimable_bytes | 2,442,035,200 |
+| releasable_parent_bytes | 0 |
+| os_reserve_bytes | 3,221,225,472 |
+| per_child_bytes | 536,870,912 |
+| load_budget_bytes | 12,025,908,428 |
+| engine_slots | 1 |
+| ram_slots / refreshed_capacity | 0 / 0 |
+| limited_by | memoryCapacity |
+
+The physical constraint computes `max(0, 2442035200 - 3221225472) / 536870912 = 0`.
+Resident weights contribute **zero incremental weight charge**. One child needs
+3,758,096,384 reclaimable bytes, a shortfall of 1,316,061,184 bytes (1.226 GiB).
+The separate total-model budget leaves 6,126,676,230 bytes after its weight
+estimate, so that budget does not explain this refusal. Zero parent credit is
+correct for reuse: the shared parent/child weights were not unloaded.
+
+This establishes the immediate policy cutoff, not why measured headroom fell.
+The screenshot cannot distinguish actual retained anonymous/compressed memory,
+other applications' pressure, and kernel-cached pre-reclaim statistics. The old
+`memory_pressure` output lacks the anonymous/internal page count needed to replay
+the host estimator, and its 59% summary is not this estimator's reclaimable byte
+measurement. Historical swap occupancy alone does not enter this planner.
+
+New deterministic cases in `SubagentAdmissionMemoryRecoveryTests` replay these
+numbers after three completed/released reservations, check the exact one-byte
+admission boundary, and require refusal when post-reclaim measurements remain
+below it. They must not be presented as a physical 16GB reproduction or an
+assumption that cleanup will recover the missing 1.226 GiB. #2752 still needs the
+same actual-machine sequence with decision-time and post-reclaim evidence. The
+fixed reserve has not been lowered and no fictitious resident-weight credit has
+been added to force this row to admit.
+
+The current local kernel probe again observed **5/5 stale immediate samples**
+after a measured physical-footprint release, with raw records in
+`/Users/eric/vmlx-private-evidence/ram-admission-2026-09-14/host-memory-freshness.jsonl`.
+This is a real measurement-path reproduction on the 128 GiB host, not an
+M4 child-admission result. The first new test build used Command Line Tools
+without Xcode preview macros and failed before execution; its log is retained
+as `reporter-replay-clt-build-failure.log`. The Xcode-toolchain rerun passed
+**10/10 tests in one suite**, including the two new reporter replays, in 2.213
+seconds (`reporter-replay.log`). These changes are tests and documentation only;
+the runtime is unchanged from `c1bd1d25a`.
+
 ## Implementation follow-up (local, not yet merged)
 
 The user authorized implementing the audit findings and testing locally. The
@@ -142,8 +199,9 @@ Private evidence: `implementation-3224aefe7/` under the root above contains
 raw test logs, all full-eval JSON/failed transcripts, targeted reports, native
 chat database exports, cache snapshots, and a 250 ms `proc_pid_rusage`
 physical-footprint stream. The actual M4/16 GB failure remains unqualified.
-Requested: complete failed spawn JSON including `memory_decision`, Memory
-Safety slider, and TurboQuant KV setting. No answer has arrived yet.
+The 2026-09-14 reporter update above supplies the failed #2733 decision.
+A #2752 actual-device rerun with post-reclaim counters remains outstanding;
+the Memory Safety slider and TurboQuant KV settings also remain unconfirmed.
 
 The ranked findings below describe the pre-fix audit and its original evidence.
 
