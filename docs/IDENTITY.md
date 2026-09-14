@@ -136,7 +136,15 @@ replace the master but keep the device ID.
 
 The master key is stored in iCloud Keychain with `kSecAttrAccessibleWhenUnlocked`. iCloud sync is attempted first; if unavailable, the key is stored device-only with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`.
 
-**Shared Keychain access group.** The master and the recovery phrase are written into the access group `<TeamID>.ai.osaurus.identity` (entitlement `keychain-access-groups` in [`osaurus.entitlements`](../App/osaurus/osaurus.entitlements); the expanded value is read at runtime from the `OsaurusKeychainAccessGroup` Info.plist key by [`OsaurusKeychainGroup`](../Packages/OsaurusCore/Identity/OsaurusKeychainGroup.swift)). iCloud Keychain only hands a synced item to another app in the same group, so this is what lets a same-team iOS client receive the master without the phrase. Items written before the group existed are migrated on the first successful read (`MasterKey.migrateGenericPassword`: add a grouped copy → verify → delete the old item only). Builds without the entitlement (SwiftPM tests, the CLI, ad-hoc dev signing) resolve no group and keep using the default per-app group; a write that fails with `errSecMissingEntitlement` falls back the same way. Read and delete queries never name the group, so they match both layouts.
+**Shared Keychain access group.** The master and the recovery phrase are *also* written into the access group `<TeamID>.ai.osaurus.identity` (entitlement `keychain-access-groups` in [`osaurus.entitlements`](../App/osaurus/osaurus.entitlements); the expanded value is read at runtime from the `OsaurusKeychainAccessGroup` Info.plist key by [`OsaurusKeychainGroup`](../Packages/OsaurusCore/Identity/OsaurusKeychainGroup.swift)). iCloud Keychain only hands a synced item to another app in the same group, so this is what lets a same-team iOS client receive the master without the phrase.
+
+The layout is deliberately **two copies of the same bytes, never one**:
+
+- **Dual-write** (`MasterKey.addGenericPassword`, order pinned by `OsaurusKeychainGroup.writeAttemptGroups`): the app's default per-app group is written first and unconditionally — sync, then device-only — because that is the only group a Mac still on a build *without* the entitlement can read. The shared group is then written as an additional copy. `errSecMissingEntitlement` on the shared group (dev signing, SwiftPM tests, the CLI) just leaves that copy out.
+- **Add-only mirror** (`MasterKey.mirrorGenericPassword`, decision in `OsaurusKeychainGroup.mirrorPlan`): once per process after a successful read, list every item for the `(service, account)`; if a synced copy exists but none in the shared group, add one there; if every copy is in the shared group (minted by a client that only wrote there), add one in the default group. Each added copy is read back through a group-precise query and removed again on mismatch. **Nothing pre-existing is ever deleted.** An iCloud Keychain delete propagates to every device, so a "move" would make a second Mac on the previous build watch its only visible master disappear, report "no identity", and mint a second master on *Create* — two masters, one account. A device-only master (data-protection default group or the file-based login keychain, which has no access groups) is left where it is: it was never going to reach another device.
+- Read and delete queries never name a group and use `kSecAttrSynchronizableAny`, so a read matches either copy (same bytes, so order does not matter) and *Reset Identity* / *Recover from phrase* clear both before re-writing both.
+
+Consequence for a mixed-version fleet: a Mac on this build and a Mac on the previous build keep unlocking the same master, and a Reset or Recover on either is seen by the other. Dropping the default-group copy would require every device to be on an entitled build, which a client cannot observe; the duplicate costs nothing, so there is no plan to remove it.
 
 ### Agent Key
 
@@ -377,6 +385,21 @@ A standard BIP39 24-word mnemonic encoding the 32-byte master key. This is the o
 - **Memory hygiene:** The 32-byte seed is held only on the stack of `OsaurusIdentity.setup()` long enough to compute the mnemonic, then wiped via `Data.zeroOut()` (which calls `memset` over the underlying buffer).
 - **Acknowledgement:** A `masterMnemonicAcknowledged` UserDefaults flag (canonicalised in `IdentityDefaultsKey`) is set when the user confirms "I've saved it". On subsequent launches the Identity view shows a yellow "Master key backup not confirmed" banner whenever the flag is missing.
 
+**What the phrase does and does not recover.** The phrase rebuilds the **master** only. Agent addresses are re-derived from the master plus each agent's stored key path, and the two layouts differ in what that path needs:
+
+| Layout | Path | Recoverable from the phrase **alone**? | Recoverable from the phrase **plus the Agent record**? |
+|---|---|---|---|
+| v1 (legacy) | `index` | Effectively yes — the index space is tiny, so a known address can be matched by scanning | Yes |
+| v2 (device-scoped) | `(deviceScope, index)` | **No.** The scope is an opaque 8-hex device ID that exists only on the `Agent` record; there is no way to rediscover it from the phrase or from the address | Yes — `agentDeviceScope` is a field on `Agent` |
+
+Where the `(deviceScope, index)` path lives, and therefore what counts as a backup of a v2 agent address:
+
+- The `Agent` JSON on disk (`~/.osaurus/agents/<id>.json`) and anything that copies it — Time Machine, `AgentStore` backups.
+- An `.osaurus-agent` bundle: `agent.json` is the full `Agent` encoding, so the scope travels with the export.
+- **Not** the Workspaces roster: `OsaurusRouterWorkspaceShareAgentBody` / the roster row carry `agent_address`, display name, description and proof — no scope and no index. Knowing an address from the router (or from a teammate's pairing) is not enough to re-derive it.
+
+So a wiped Mac restored from the phrase gets its identity back and can prove ownership of any address it later learns the path for, but it cannot reconstitute a v2 agent's address without a copy of that agent's record. This is a regression relative to v1's scan-the-indices fallback and is the price of collision-free addresses across devices; keep agent exports or a `~/.osaurus` backup alongside the phrase. `RecoverFromMnemonicSheet` handles both layouts because it confirms the candidate master against each agent's stored `agentKeyPath`, not against a bare index.
+
 ### One-time recovery code (server-side claim)
 
 ```
@@ -583,7 +606,7 @@ The address-based design naturally extends to agent-to-agent communication acros
 | `MasterKey.swift` | Generate (`generate(allowReplace:)`), install a caller-supplied seed (`install(seed:allowReplace:)`), read, sign, and delete the secp256k1 master key in iCloud Keychain |
 | `MasterKeyMnemonic.swift` | BIP39 24-word encode/decode of the 32-byte master, backed by the bundled English wordlist |
 | `MasterMnemonicStore.swift` | iCloud Keychain item for the 24-word phrase, same service / access group as the master |
-| `OsaurusKeychainGroup.swift` | Resolves the shared Keychain access group from Info.plist (nil in builds without the entitlement) |
+| `OsaurusKeychainGroup.swift` | Resolves the shared Keychain access group from Info.plist (nil in builds without the entitlement); pure dual-write order (`writeAttemptGroups`) and add-only mirror decision (`mirrorPlan`) |
 | `IdentityHealthCheck.swift` | Pure helper that classifies persisted derivatives as healthy / mismatched / recoverable-scope against the current master |
 | `AgentKey.swift` | Deterministic child key derivation (HMAC-SHA512, v1 master-global and v2 device-scoped), `AgentKeyPath`, and signing for per-agent identities |
 | `DeviceKey.swift` | App Attest key generation, attestation, assertion, and software fallback |

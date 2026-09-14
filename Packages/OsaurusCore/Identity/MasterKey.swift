@@ -71,7 +71,7 @@ public struct MasterKey: Sendable {
             delete()
         }
 
-        guard addPreferringSharedGroup(keyData: keyData) else {
+        guard addGenericPassword(service: service, account: account, label: label, data: keyData) else {
             throw OsaurusIdentityError.keychainWriteFailed
         }
 
@@ -79,31 +79,58 @@ public struct MasterKey: Sendable {
         return osaurusId
     }
 
-    /// Write order: shared access group + iCloud sync, then shared group
-    /// device-only, then the default group (sync, then device-only). A build
-    /// whose entitlements lack the group gets `errSecMissingEntitlement` on
-    /// the first two and lands where it always did.
-    private static func addPreferringSharedGroup(keyData: Data) -> Bool {
-        let attempts: [(group: String?, synchronizable: Bool)] =
-            (OsaurusKeychainGroup.shared.map { [($0, true), ($0, false)] } ?? [])
-            + [(nil, true), (nil, false)]
-        for attempt in attempts {
-            let status = addToKeychain(
-                keyData: keyData, synchronizable: attempt.synchronizable, accessGroup: attempt.group
-            )
-            if status == errSecSuccess { return true }
+    static let label = "Osaurus Master Key"
+
+    // MARK: - Dual-write (shared with `MasterMnemonicStore`)
+
+    /// Write the same bytes into every group this build can reach, per
+    /// `OsaurusKeychainGroup.writeAttemptGroups`: the default group first
+    /// (what every shipped build reads — a Mac still on an older build has
+    /// no entitlement for the shared group and must keep seeing the master),
+    /// then a copy in the shared group when it resolves. Within a group the
+    /// first successful attempt wins (iCloud sync, then device-only);
+    /// `errSecMissingEntitlement` on the shared group is expected for dev
+    /// signing and simply leaves that copy out. Succeeds when at least one
+    /// group took the item.
+    ///
+    /// `delete()` queries carry no group, so a Reset removes every copy.
+    static func addGenericPassword(service: String, account: String, label: String, data: Data) -> Bool {
+        var wroteAny = false
+        for attempts in OsaurusKeychainGroup.writeAttemptGroups(sharedGroup: OsaurusKeychainGroup.shared) {
+            for target in attempts {
+                let status = addToKeychain(
+                    service: service,
+                    account: account,
+                    label: label,
+                    data: data,
+                    synchronizable: target.synchronizable,
+                    accessGroup: target.accessGroup
+                )
+                if status == errSecSuccess {
+                    wroteAny = true
+                    break
+                }
+                if status == OsaurusKeychainGroup.missingEntitlementStatus { break }
+            }
         }
-        return false
+        return wroteAny
     }
 
     // The Master Key is a synchronizable iCloud Keychain item.
-    private static func addToKeychain(keyData: Data, synchronizable: Bool, accessGroup: String?) -> OSStatus {
+    private static func addToKeychain(
+        service: String,
+        account: String,
+        label: String,
+        data: Data,
+        synchronizable: Bool,
+        accessGroup: String?
+    ) -> OSStatus {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecValueData as String: keyData,
-            kSecAttrLabel as String: "Osaurus Master Key",
+            kSecValueData as String: data,
+            kSecAttrLabel as String: label,
         ]
         if let accessGroup {
             // Access groups only exist in the data-protection keychain on
@@ -122,13 +149,14 @@ public struct MasterKey: Sendable {
         return SecItemAdd(query as CFDictionary, nil)
     }
 
-    // MARK: - Shared-group migration
+    // MARK: - Shared-group mirror
 
-    /// Once per process: if the build declares the shared access group and
-    /// the master currently lives only in the default (per-app) group, copy
-    /// it into the shared group and drop the old item. Runs after a
-    /// successful read so no extra prompt is ever raised. Any failure leaves
-    /// the original item untouched — reads without a group match both.
+    /// Once per process, after a successful read (so no extra prompt is
+    /// ever raised): make sure a synced master exists in BOTH the default
+    /// group and the shared group. This only ever adds a copy. It never
+    /// deletes — an iCloud delete propagates, and a Mac still on a build
+    /// without the entitlement would watch its only visible master vanish,
+    /// report "no identity", and mint a second one on "Create".
     private static let migrationLock = NSLock()
     private nonisolated(unsafe) static var migrationAttempted = false
 
@@ -139,91 +167,106 @@ public struct MasterKey: Sendable {
         migrationAttempted = true
         migrationLock.unlock()
         guard !alreadyTried else { return }
-        Self.migrateGenericPassword(
-            service: service, account: account, label: "Osaurus Master Key",
-            data: keyData, toGroup: group
+        Self.mirrorGenericPassword(
+            service: service,
+            account: account,
+            label: label,
+            data: keyData,
+            sharedGroup: group
         )
     }
 
-    /// Shared with `MasterMnemonicStore`. Steps: (1) is there already an
-    /// item in `group`? done. (2) Find the current item's access group.
-    /// (3) Add a copy in `group` (sync, then device-only). (4) Verify it
-    /// reads back. (5) Delete the item in the OLD group only — never a
-    /// blanket delete, which would take the new copy with it.
-    static func migrateGenericPassword(
-        service: String, account: String, label: String, data: Data, toGroup group: String
+    /// Shared with `MasterMnemonicStore`. Lists every item for the
+    /// `(service, account)` the process can see, asks
+    /// `OsaurusKeychainGroup.mirrorPlan` which copies are missing, and adds
+    /// them as **synced** items (a device-only copy would not reach another
+    /// device, which is the whole point). Each added copy is read back and
+    /// removed again if it does not match; the pre-existing items are never
+    /// touched. A device-only master (including one in the file-based login
+    /// keychain, which has no access groups) is left exactly where it is.
+    static func mirrorGenericPassword(
+        service: String,
+        account: String,
+        label: String,
+        data: Data,
+        sharedGroup: String
     ) {
-        let inGroup: [String: Any] = [
+        let listQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
-            kSecAttrAccessGroup as String: group,
-            kSecReturnData as String: false,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-        ]
-        let probe = SecItemCopyMatching(inGroup as CFDictionary, nil)
-        if probe == errSecSuccess || probe == OsaurusKeychainGroup.missingEntitlementStatus { return }
-
-        // Which group does the existing item live in?
-        let attrsQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
+            kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
-        var attrsResult: AnyObject?
-        guard SecItemCopyMatching(attrsQuery as CFDictionary, &attrsResult) == errSecSuccess,
-            let attrs = attrsResult as? [String: Any],
-            let oldGroup = attrs[kSecAttrAccessGroup as String] as? String,
-            oldGroup != group
-        else { return }
-        let wasSynchronizable = (attrs[kSecAttrSynchronizable as String] as? Bool) ?? false
+        var listResult: AnyObject?
+        let listStatus = SecItemCopyMatching(listQuery as CFDictionary, &listResult)
+        guard listStatus == errSecSuccess, let rows = listResult as? [[String: Any]] else { return }
+        let existing = rows.map {
+            OsaurusKeychainGroup.ExistingItem(
+                accessGroup: $0[kSecAttrAccessGroup as String] as? String,
+                synchronizable: ($0[kSecAttrSynchronizable as String] as? Bool) ?? false
+            )
+        }
+        let plan = OsaurusKeychainGroup.mirrorPlan(existing: existing, sharedGroup: sharedGroup)
 
-        var add: [String: Any] = [
+        if plan.addShared {
+            addVerifiedSyncedCopy(
+                service: service,
+                account: account,
+                label: label,
+                data: data,
+                accessGroup: sharedGroup
+            )
+        }
+        if plan.addDefault {
+            addVerifiedSyncedCopy(service: service, account: account, label: label, data: data, accessGroup: nil)
+        }
+    }
+
+    /// Add one synced copy in `accessGroup` (nil = default group) and read
+    /// it back through a group-precise query; on mismatch delete only that
+    /// copy. `errSecMissingEntitlement` (dev signing) is a silent no-op.
+    private static func addVerifiedSyncedCopy(
+        service: String,
+        account: String,
+        label: String,
+        data: Data,
+        accessGroup: String?
+    ) {
+        let status = addToKeychain(
+            service: service,
+            account: account,
+            label: label,
+            data: data,
+            synchronizable: true,
+            accessGroup: accessGroup
+        )
+        guard status == errSecSuccess else { return }
+        // Only a grouped copy can be verified precisely; the default-group
+        // query has no distinguishing attribute, and `SecItemAdd` success is
+        // the whole contract there.
+        guard let accessGroup else { return }
+        let verify: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecValueData as String: data,
-            kSecAttrLabel as String: label,
-            kSecAttrAccessGroup as String: group,
-            kSecUseDataProtectionKeychain as String: true,
+            kSecAttrSynchronizable as String: true,
+            kSecAttrAccessGroup as String: accessGroup,
+            kSecReturnData as String: true,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
-        if wasSynchronizable {
-            add[kSecAttrSynchronizable as String] = true
-            add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
-        } else {
-            add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        }
-        var added = SecItemAdd(add as CFDictionary, nil)
-        if added != errSecSuccess, wasSynchronizable {
-            add[kSecAttrSynchronizable as String] = nil
-            add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-            added = SecItemAdd(add as CFDictionary, nil)
-        }
-        guard added == errSecSuccess else { return }
-
-        // Verify before deleting anything.
         var verifyResult: AnyObject?
-        var verify = inGroup
-        verify[kSecReturnData as String] = true
-        guard SecItemCopyMatching(verify as CFDictionary, &verifyResult) == errSecSuccess,
+        if SecItemCopyMatching(verify as CFDictionary, &verifyResult) == errSecSuccess,
             let copied = verifyResult as? Data, copied == data
-        else {
-            SecItemDelete(inGroup as CFDictionary)
+        {
             return
         }
-
-        let deleteOld: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
-            kSecAttrAccessGroup as String: oldGroup,
-        ]
-        SecItemDelete(deleteOld as CFDictionary)
+        var deleteCopy = verify
+        deleteCopy.removeValue(forKey: kSecReturnData as String)
+        deleteCopy.removeValue(forKey: kSecUseAuthenticationUI as String)
+        SecItemDelete(deleteCopy as CFDictionary)
     }
 
     // MARK: - Existence Check

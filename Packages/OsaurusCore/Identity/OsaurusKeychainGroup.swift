@@ -61,10 +61,68 @@ public enum OsaurusKeychainGroup {
     /// Add `kSecAttrAccessGroup` to a Keychain *write* query when the
     /// group resolves. Read/delete queries deliberately omit the group so
     /// they match items in every group the app can see — that is what lets
-    /// an item written before this change keep working and be migrated.
+    /// an item written before this change keep working and be mirrored.
     static func apply(to query: inout [String: Any]) {
         if let group = shared {
             query[kSecAttrAccessGroup as String] = group
         }
+    }
+
+    // MARK: - Dual-write / mirror policy (pure)
+
+    /// One `SecItemAdd` attempt: which access group (nil = the app's
+    /// default group, i.e. the layout every shipped build reads) and
+    /// whether to ask for iCloud sync.
+    public struct WriteTarget: Equatable, Sendable {
+        public let accessGroup: String?
+        public let synchronizable: Bool
+    }
+
+    /// Where a new identity item is written. Returns one list of attempts
+    /// **per group**; within a group the caller stops at the first success
+    /// (sync, then device-only), and the write counts as successful when at
+    /// least one group took the item.
+    ///
+    /// The default group comes first and is always present. A Mac that is
+    /// still on a build without the `keychain-access-groups` entitlement can
+    /// only see that group, so writing there keeps a mixed-version fleet on
+    /// one master. The shared group is an *additional* copy of the same
+    /// bytes for same-team clients (iOS); it is never the only copy.
+    static func writeAttemptGroups(sharedGroup: String?) -> [[WriteTarget]] {
+        var groups: [[WriteTarget]] = [
+            [WriteTarget(accessGroup: nil, synchronizable: true), WriteTarget(accessGroup: nil, synchronizable: false)]
+        ]
+        if let sharedGroup, !sharedGroup.isEmpty {
+            groups.append([
+                WriteTarget(accessGroup: sharedGroup, synchronizable: true),
+                WriteTarget(accessGroup: sharedGroup, synchronizable: false),
+            ])
+        }
+        return groups
+    }
+
+    /// What the Keychain already holds for one `(service, account)`: the
+    /// item's access group (nil for the file-based login keychain, which has
+    /// no groups) and whether it is an iCloud-synced item.
+    public struct ExistingItem: Equatable, Sendable {
+        public let accessGroup: String?
+        public let synchronizable: Bool
+    }
+
+    /// Which copies are missing. Only ever *adds*; nothing is deleted, so a
+    /// device on an older build never loses the item it can see.
+    ///
+    /// - A device-only item (nothing synced) is left alone: it was never
+    ///   going to reach another device, so a grouped copy buys nothing.
+    /// - `addShared`: a synced item exists but none in the shared group —
+    ///   the pre-entitlement layout; copy it in so a same-team client sees it.
+    /// - `addDefault`: every item is in the shared group (e.g. minted by a
+    ///   client that only wrote there) — copy it to the default group so
+    ///   builds without the entitlement can still read it.
+    static func mirrorPlan(existing: [ExistingItem], sharedGroup: String) -> (addShared: Bool, addDefault: Bool) {
+        guard !existing.isEmpty, existing.contains(where: \.synchronizable) else { return (false, false) }
+        let hasShared = existing.contains { $0.accessGroup == sharedGroup }
+        let hasDefault = existing.contains { $0.accessGroup != sharedGroup }
+        return (addShared: !hasShared, addDefault: !hasDefault)
     }
 }

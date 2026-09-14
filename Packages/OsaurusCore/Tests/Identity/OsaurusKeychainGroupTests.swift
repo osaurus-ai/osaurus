@@ -3,11 +3,12 @@
 //  OsaurusCoreTests
 //
 //  The shared Keychain access group is what lets a same-team iOS client see
-//  the iCloud-synced master. These tests pin the resolution rule and the
-//  attribute-building contract; the live migration (default group → shared
-//  group on first unlock, and the `errSecMissingEntitlement` fallback) is a
-//  Release-app proof row — see docs/IDENTITY.md — because SwiftPM tests run
-//  without the entitlement and with the Keychain disabled.
+//  the iCloud-synced master. These tests pin the resolution rule, the
+//  dual-write order, and the add-only mirror plan; the live Keychain rows
+//  (grouped copy appears on first unlock, an older build on a second Mac
+//  keeps unlocking, `errSecMissingEntitlement` fallback) are Release-app
+//  proof rows — see docs/IDENTITY.md — because SwiftPM tests run without the
+//  entitlement and with the Keychain disabled.
 //
 
 import Foundation
@@ -68,6 +69,108 @@ struct OsaurusKeychainGroupTests {
 
     @Test func missingEntitlementStatus_isErrSecMissingEntitlement() {
         #expect(OsaurusKeychainGroup.missingEntitlementStatus == errSecMissingEntitlement)
+    }
+
+    // MARK: dual-write order
+
+    private typealias Target = OsaurusKeychainGroup.WriteTarget
+    private let group = "4W8QF9VR2F.ai.osaurus.identity"
+
+    /// The default group is written first and unconditionally: a Mac still
+    /// on a build without the entitlement can only read that group, so it
+    /// is the copy that keeps a mixed-version fleet on one master. The
+    /// shared group is an additional copy, never the only one.
+    @Test func writeAttempts_defaultGroupFirstAndAlways_sharedGroupAsExtraCopy() {
+        let plan = OsaurusKeychainGroup.writeAttemptGroups(sharedGroup: group)
+        #expect(
+            plan == [
+                [Target(accessGroup: nil, synchronizable: true), Target(accessGroup: nil, synchronizable: false)],
+                [Target(accessGroup: group, synchronizable: true), Target(accessGroup: group, synchronizable: false)],
+            ]
+        )
+    }
+
+    @Test func writeAttempts_withoutGroup_isExactlyThePreviousLayout() {
+        for sharedGroup in [nil, ""] as [String?] {
+            #expect(
+                OsaurusKeychainGroup.writeAttemptGroups(sharedGroup: sharedGroup) == [
+                    [Target(accessGroup: nil, synchronizable: true), Target(accessGroup: nil, synchronizable: false)]
+                ]
+            )
+        }
+    }
+
+    // MARK: mirror plan (add-only)
+
+    private typealias Item = OsaurusKeychainGroup.ExistingItem
+
+    /// Pre-entitlement layout: one synced item in the app's default group.
+    /// Copy it into the shared group; the original stays (no delete).
+    @Test func mirror_preEntitlementSyncedItem_addsSharedCopyOnly() {
+        let plan = OsaurusKeychainGroup.mirrorPlan(
+            existing: [Item(accessGroup: "4W8QF9VR2F.ai.osaurus", synchronizable: true)],
+            sharedGroup: group
+        )
+        #expect(plan.addShared)
+        #expect(!plan.addDefault)
+    }
+
+    /// Both copies present (already mirrored, or written by a dual-write
+    /// build): nothing to do — the mirror must be idempotent.
+    @Test func mirror_bothCopiesPresent_isNoop() {
+        let plan = OsaurusKeychainGroup.mirrorPlan(
+            existing: [
+                Item(accessGroup: "4W8QF9VR2F.ai.osaurus", synchronizable: true),
+                Item(accessGroup: group, synchronizable: true),
+            ],
+            sharedGroup: group
+        )
+        #expect(!plan.addShared)
+        #expect(!plan.addDefault)
+    }
+
+    /// Only a shared-group copy (e.g. minted by a client that wrote just
+    /// there): mirror it back to the default group so builds without the
+    /// entitlement can still unlock.
+    @Test func mirror_onlySharedCopy_addsDefaultCopy() {
+        let plan = OsaurusKeychainGroup.mirrorPlan(
+            existing: [Item(accessGroup: group, synchronizable: true)],
+            sharedGroup: group
+        )
+        #expect(!plan.addShared)
+        #expect(plan.addDefault)
+    }
+
+    /// A device-only master — in the data-protection default group or in
+    /// the file-based login keychain (no access group at all) — is left
+    /// exactly where it is. It was never going to reach another device, so
+    /// a grouped copy would buy nothing.
+    @Test func mirror_deviceOnlyItem_isLeftAlone() {
+        for existing in [
+            [Item(accessGroup: "4W8QF9VR2F.ai.osaurus", synchronizable: false)],
+            [Item(accessGroup: nil, synchronizable: false)],
+        ] {
+            let plan = OsaurusKeychainGroup.mirrorPlan(existing: existing, sharedGroup: group)
+            #expect(!plan.addShared)
+            #expect(!plan.addDefault)
+        }
+    }
+
+    @Test func mirror_nothingStored_isNoop() {
+        let plan = OsaurusKeychainGroup.mirrorPlan(existing: [], sharedGroup: group)
+        #expect(!plan.addShared)
+        #expect(!plan.addDefault)
+    }
+
+    /// Login-keychain items report no access group; that still counts as
+    /// "a default-layout copy exists", so only the shared copy is added.
+    @Test func mirror_ungroupedSyncedItem_countsAsDefaultCopy() {
+        let plan = OsaurusKeychainGroup.mirrorPlan(
+            existing: [Item(accessGroup: nil, synchronizable: true)],
+            sharedGroup: group
+        )
+        #expect(plan.addShared)
+        #expect(!plan.addDefault)
     }
 
     /// Keychain-disabled harness: install/store must still refuse to write

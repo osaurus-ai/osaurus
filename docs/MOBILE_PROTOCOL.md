@@ -72,14 +72,20 @@ UTF-8, space-separated.
 **Shared access group.** iCloud Keychain only delivers a synced item to
 another app if both apps are in the same keychain access group. The Mac app
 declares `keychain-access-groups: [$(AppIdentifierPrefix)ai.osaurus.identity]`
-([`osaurus.entitlements`](../App/osaurus/osaurus.entitlements)) and writes new
-items into that group; items written by older builds are migrated into the
-group on the first successful read
-(`MasterKey.migrateGenericPassword`). An iOS client **MUST** declare the same
-group and query with `kSecAttrSynchronizable = kSecAttrSynchronizableAny`; it
-**SHOULD** omit `kSecAttrAccessGroup` from read queries so it also matches
-items the Mac has not migrated yet (a read without the group matches every
-group the app can see). Resolution rule for the group string is in
+([`osaurus.entitlements`](../App/osaurus/osaurus.entitlements)) and writes
+every new item **twice**: once in its default per-app group (the only group a
+Mac on an older build can read) and once in the shared group
+(`MasterKey.addGenericPassword`). Items written by older builds gain a shared-
+group copy on the Mac's first successful read (`MasterKey.mirrorGenericPassword`);
+the original is never deleted, so a mixed-version fleet stays on one master.
+An iOS client **MUST** declare the same group and query with
+`kSecAttrSynchronizable = kSecAttrSynchronizableAny`. An iOS client that
+*creates* the identity **MUST** write into the shared group (its own default
+group is invisible to the Mac); the Mac mirrors that item into its default
+group on first read so older Mac builds can still unlock it. Until at least
+one Mac on this build has read the item, a master written only by an older
+Mac build is **not visible** on the phone — the phrase is the fallback. The
+resolution rule for the group string is in
 [`OsaurusKeychainGroup.swift`](../Packages/OsaurusCore/Identity/OsaurusKeychainGroup.swift).
 
 ### 2.2 Master key via recovery phrase (fallback)
