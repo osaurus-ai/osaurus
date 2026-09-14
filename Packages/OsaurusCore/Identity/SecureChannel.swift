@@ -326,7 +326,9 @@ public enum SecureChannel {
         return Data(canonical.utf8)
     }
 
-    private static func deriveKeys(
+    /// Internal (not private) so the parity-vector tests can pin the key
+    /// schedule byte-for-byte against the TypeScript client.
+    static func deriveKeys(
         sharedSecret: SharedSecret,
         transcript: Data
     ) -> (clientToServer: SymmetricKey, serverToClient: SymmetricKey) {
