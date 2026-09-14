@@ -3,7 +3,7 @@
   "domain": "agent_loop",
   "label": "same-model RAM admission: single-child",
   "query": "Delegate only to RAM Admission Research. Ask it to return exactly RAM_FIRST_OK. Do not give it additional tasks or context. Return its result.",
-  "notes": "Run with RAM-Safety ON, Handoff ON, Coexistence OFF and --repeat 3 to exercise fresh agent loops against the same resident model. Worker model and samplers inherit the selected bundle. Deterministic outcome assertions; no rubric judge. This does not emulate a 16 GiB host or inject memory availability.",
+  "notes": "Four fresh parent chats in one process, strict all-trials threshold. RAM ON, handoff ON, coexistence OFF, same-model and batch ceiling 1; exact executed child digests required. Bundle sampling defaults remain unchanged.",
   "fixtures": {
     "agentCapabilities": {
       "spawnAgents": [
@@ -13,11 +13,23 @@
           "systemPrompt": ""
         }
       ],
-      "maxParallelSpawns": 1
+      "maxParallelSpawns": 1,
+      "childBudgets": {
+        "maxDelegateTokens": 2048,
+        "maxDelegateTurns": 2,
+        "maxToolCalls": 0,
+        "maxElapsedSeconds": 120,
+        "maxParallelSpawns": 1
+      }
     },
     "runtimeConcurrency": {
       "continuousBatching": true,
       "maxConcurrentSequences": 1
+    },
+    "delegationSettings": {
+      "ramSafety": true,
+      "handoff": true,
+      "coexistence": false
     }
   },
   "expect": {
@@ -47,7 +59,12 @@
           "maxCalls": 1,
           "maxErrors": 0
         }
+      ],
+      "spawnSummaries": [
+        "RAM_FIRST_OK"
       ]
     }
-  }
+  },
+  "trials": 4,
+  "passThreshold": 1
 }

@@ -41,19 +41,22 @@ public struct EvalCaseTranscript: Codable, Sendable {
         public let resultPreview: String?
         public let wasDeduped: Bool?
         public let wasError: Bool?
+        public let spawnSummary: String?
 
         public init(
             name: String,
             arguments: String,
             resultPreview: String? = nil,
             wasDeduped: Bool? = nil,
-            wasError: Bool? = nil
+            wasError: Bool? = nil,
+            spawnSummary: String? = nil
         ) {
             self.name = name
             self.arguments = arguments
             self.resultPreview = resultPreview
             self.wasDeduped = wasDeduped
             self.wasError = wasError
+            self.spawnSummary = spawnSummary
         }
     }
 

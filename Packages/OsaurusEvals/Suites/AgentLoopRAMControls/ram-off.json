@@ -1,9 +1,9 @@
 {
-  "id": "agent_loop.ram-admission-sequential-children",
+  "id": "agent_loop.ram-control-ram-off",
   "domain": "agent_loop",
-  "label": "same-model RAM admission: sequential-children",
+  "label": "Same-model sequential control: ram-off",
   "query": "Use spawn_agent to ask RAM Admission Research to return exactly RAM_FIRST_OK. After that child has completed successfully, use spawn_agent to ask RAM Admission Marketing to return exactly RAM_SECOND_OK. Give neither child additional tasks or context. After both have completed, return both results. Do not combine these into spawn_batch.",
-  "notes": "Four fresh parent chats in one process, strict all-trials threshold. RAM ON, handoff ON, coexistence OFF, same-model and batch ceiling 1; exact executed child digests required. Bundle sampling defaults remain unchanged.",
+  "notes": "Live same-model sequential control. Exact executed child results required; only the named global control differs from the reporter baseline. This does not claim different-model coexistence or unload/restore proof.",
   "fixtures": {
     "agentCapabilities": {
       "spawnAgents": [
@@ -32,7 +32,7 @@
       "maxConcurrentSequences": 1
     },
     "delegationSettings": {
-      "ramSafety": true,
+      "ramSafety": false,
       "handoff": true,
       "coexistence": false
     }
@@ -72,6 +72,6 @@
       ]
     }
   },
-  "trials": 4,
+  "trials": 1,
   "passThreshold": 1
 }

@@ -174,6 +174,8 @@ public struct AgentLoopTranscript: Sendable, Codable {
         public let wasError: Bool
         /// Parsed only for successful `spawn_batch` results.
         public let spawnBatch: SpawnBatchObservation?
+        /// Complete child digest, extracted before the forensic preview is truncated.
+        public let spawnSummary: String?
 
         public init(
             name: String,
@@ -181,7 +183,8 @@ public struct AgentLoopTranscript: Sendable, Codable {
             resultPreview: String,
             wasDeduped: Bool,
             wasError: Bool = false,
-            spawnBatch: SpawnBatchObservation? = nil
+            spawnBatch: SpawnBatchObservation? = nil,
+            spawnSummary: String? = nil
         ) {
             self.name = name
             self.arguments = arguments
@@ -189,6 +192,7 @@ public struct AgentLoopTranscript: Sendable, Codable {
             self.wasDeduped = wasDeduped
             self.wasError = wasError
             self.spawnBatch = spawnBatch
+            self.spawnSummary = spawnSummary
         }
     }
 
@@ -364,6 +368,16 @@ public struct AgentLoopTranscript: Sendable, Codable {
             mtpAdaptiveFallbackReason = try container.decodeIfPresent(
                 String.self, forKey: .mtpAdaptiveFallbackReason)
         }
+    }
+
+    /// Extract an exact successful single-child digest for behavioral scoring.
+    public static func spawnSummary(from envelope: String, tool: String) -> String? {
+        guard ["spawn_agent", "spawn_model"].contains(tool),
+            ToolEnvelope.isSuccess(envelope),
+            let result = ToolEnvelope.resultPayload(envelope) as? [String: Any],
+            result["kind"] as? String == "spawn_result"
+        else { return nil }
+        return result["summary"] as? String
     }
 
     /// Parse the stable aggregate fields and ordered child rows from a
@@ -1183,7 +1197,8 @@ public enum AgentLoopEvaluator {
                     resultPreview: String(result.prefix(300)),
                     wasDeduped: false,
                     wasError: isError,
-                    spawnBatch: AgentLoopTranscript.spawnBatchObservation(from: result)
+                    spawnBatch: AgentLoopTranscript.spawnBatchObservation(from: result),
+                    spawnSummary: AgentLoopTranscript.spawnSummary(from: result, tool: inv.toolName)
                 )
             )
             // Agent-loop intercepts, mirroring the chat surface: a
@@ -1611,7 +1626,8 @@ public enum AgentLoopEvaluator {
                         arguments: inv.jsonArguments,
                         resultPreview: String(held.prefix(300)),
                         wasDeduped: true,
-                        spawnBatch: AgentLoopTranscript.spawnBatchObservation(from: held)
+                        spawnBatch: AgentLoopTranscript.spawnBatchObservation(from: held),
+                        spawnSummary: AgentLoopTranscript.spawnSummary(from: held, tool: inv.toolName)
                     )
                 )
             },

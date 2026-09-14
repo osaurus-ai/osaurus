@@ -25,6 +25,11 @@
     "runtimeConcurrency": {
       "continuousBatching": true,
       "maxConcurrentSequences": 2
+    },
+    "delegationSettings": {
+      "ramSafety": true,
+      "handoff": true,
+      "coexistence": false
     }
   },
   "expect": {

@@ -22,6 +22,18 @@ extension EvalRunner {
         _ testCase: EvalCase,
         modelId: String
     ) async -> EvalCaseReport {
+        if let settings = testCase.fixtures.delegationSettings {
+            return await SubagentJobEvaluator.withDelegationSettings(settings) {
+                await runAgentLoopCaseWithSettings(testCase, modelId: modelId)
+            }
+        }
+        return await runAgentLoopCaseWithSettings(testCase, modelId: modelId)
+    }
+
+    private static func runAgentLoopCaseWithSettings(
+        _ testCase: EvalCase,
+        modelId: String
+    ) async -> EvalCaseReport {
         let label = testCase.label ?? testCase.id
 
         guard let exp = testCase.expect.agentLoop else {
@@ -426,8 +438,9 @@ extension EvalRunner {
 
         let judgeModel = EvalJudgeModel.resolveAndWarnOnce(runModelId: modelId)
         let started = Date()
-        let transcript = await AgentLoopEvaluator.run(
-            task: resolvedQuery,
+        func runFreshChat(_ query: String) async -> AgentLoopTranscript {
+            await AgentLoopEvaluator.run(
+            task: query,
             workspace: workspace,
             agentId: evalAgentId,
             maxIterations: exp.maxIterations ?? 10,
@@ -439,6 +452,26 @@ extension EvalRunner {
             useHostFolder: testCase.fixtures.useHostFolder ?? true,
             cancelAfterToolCalls: exp.cancelAfterToolCalls
         )
+        }
+        var warmupResults: [(Bool, String)] = []
+        for (index, warmup) in (exp.freshChatWarmups ?? []).enumerated() {
+            let prior = await runFreshChat(warmup.query)
+            let childScore = scoreSpawnSummaries(warmup.spawnSummaries, transcript: prior)
+            let reservations = await SubagentAdmission.shared.snapshot()
+            let settled = reservations.inPlace == 0 && reservations.exclusive == 0 && reservations.remote == 0
+            let passed = childScore.passed && prior.exit == "finalResponse"
+                && prior.toolCalls.count == warmup.spawnSummaries.count
+                && prior.error == nil && settled
+            let note = "fresh chat \(index + 1): exit=\(prior.exit), reservations=\(reservations), \(childScore.note)"
+            warmupResults.append((passed, note))
+            _ = persistAgentLoopTranscript(prior, for: EvalCaseReport(
+                id: "\(testCase.id).fresh-chat-\(index + 1)", label: label,
+                domain: testCase.domain, query: warmup.query,
+                outcome: passed ? .passed : .failed, notes: [note], modelId: modelId,
+                latencyMs: prior.loopDurationMs, toolUsage: toolUsageStats(prior), telemetry: telemetry(from: prior)
+            ), query: warmup.query)
+        }
+        let transcript = await runFreshChat(resolvedQuery)
         if let enabledCapabilityRestore, let evalAgentId {
             await restoreToolGrant(enabledCapabilityRestore, agentId: evalAgentId)
         }
@@ -511,6 +544,10 @@ extension EvalRunner {
         }
 
         var score = AgentLoopScore()
+        for (passed, note) in warmupResults { score.record(passed, note: note) }
+        if let settings = testCase.fixtures.delegationSettings {
+            score.notes.append("delegation fixture: RAM=\(settings.ramSafety), handoff=\(settings.handoff), coexistence=\(settings.coexistence)")
+        }
         if let runtimeConcurrencyNote {
             score.notes.append(runtimeConcurrencyNote)
         }
@@ -527,6 +564,13 @@ extension EvalRunner {
         if let artifact = exp.artifactShared {
             let result = scoreArtifactShared(artifact, transcript: transcript)
             score.record(result.passed, note: result.note)
+        }
+        if let expected = exp.spawnSummaries {
+            let result = scoreSpawnSummaries(expected, transcript: transcript)
+            score.record(result.passed, note: result.note)
+            let reservations = await SubagentAdmission.shared.snapshot()
+            score.record(reservations.inPlace == 0 && reservations.exclusive == 0 && reservations.remote == 0,
+                note: "post-chat reservations=\(reservations)")
         }
         if let assertion = exp.spawnBatch {
             let result = scoreSpawnBatch(assertion, transcript: transcript)
@@ -753,7 +797,8 @@ extension EvalRunner {
                         arguments: $0.arguments,
                         resultPreview: $0.resultPreview,
                         wasDeduped: $0.wasDeduped,
-                        wasError: $0.wasError
+                        wasError: $0.wasError,
+                        spawnSummary: $0.spawnSummary
                     )
                 },
                 finalText: transcript.finalText,
@@ -894,10 +939,11 @@ extension EvalRunner {
                 spawnDelegationEnabled: !(caps?.spawnAgents?.isEmpty ?? true),
                 appleScriptEnabled: caps?.appleScriptEnabled ?? false,
                 spawnableAgentIDs: spawnableAgentIDs,
-                subagentBudgets: SubagentBudgets(
-                    maxParallelSpawns: caps?.maxParallelSpawns
-                        ?? SubagentBudgets().maxParallelSpawns
-                ).normalized
+                subagentBudgets: {
+                    var budgets = caps?.childBudgets ?? SubagentBudgets()
+                    if let maximum = caps?.maxParallelSpawns { budgets.maxParallelSpawns = maximum }
+                    return budgets.normalized
+                }()
             )
         )
         AgentStore.save(agent)
@@ -1217,6 +1263,17 @@ extension EvalRunner {
 
     /// Deterministic transcript assertions (exit shape, tool-call sets,
     /// duplicate discipline, dedupe replays, notices, compaction).
+    static func scoreSpawnSummaries(
+        _ expected: [String], transcript: AgentLoopTranscript
+    ) -> (passed: Bool, note: String) {
+        let calls = transcript.toolCalls.filter { ["spawn_agent", "spawn_model"].contains($0.name) }
+        let observed = calls.map(\.spawnSummary)
+        let passed = calls.count == expected.count
+            && !calls.contains { $0.wasError || $0.wasDeduped }
+            && observed == expected.map(Optional.some)
+        return (passed, "child digests: expected=\(expected), observed=\(observed)")
+    }
+
     private static func scoreTranscriptAssertions(
         _ exp: EvalCase.AgentLoopExpectations,
         transcript: AgentLoopTranscript,

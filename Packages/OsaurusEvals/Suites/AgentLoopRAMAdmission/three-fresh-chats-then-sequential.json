@@ -1,9 +1,9 @@
 {
-  "id": "agent_loop.ram-admission-sequential-children",
+  "id": "agent_loop.ram-three-fresh-chats-then-sequential",
   "domain": "agent_loop",
-  "label": "same-model RAM admission: sequential-children",
+  "label": "RAM: three fresh single-child chats then sequential pair, no restart",
   "query": "Use spawn_agent to ask RAM Admission Research to return exactly RAM_FIRST_OK. After that child has completed successfully, use spawn_agent to ask RAM Admission Marketing to return exactly RAM_SECOND_OK. Give neither child additional tasks or context. After both have completed, return both results. Do not combine these into spawn_batch.",
-  "notes": "Four fresh parent chats in one process, strict all-trials threshold. RAM ON, handoff ON, coexistence OFF, same-model and batch ceiling 1; exact executed child digests required. Bundle sampling defaults remain unchanged.",
+  "notes": "Reporter 0.25.2 order: three fresh single-child conversations followed by a fresh sequential pair. Same workers, model runtime, caches and reservation actor remain alive throughout. Every child digest and every warmup are scored; no restarts or cache resets.",
   "fixtures": {
     "agentCapabilities": {
       "spawnAgents": [
@@ -69,9 +69,29 @@
       "spawnSummaries": [
         "RAM_FIRST_OK",
         "RAM_SECOND_OK"
+      ],
+      "freshChatWarmups": [
+        {
+          "query": "Delegate only to RAM Admission Research. Ask it to return exactly RAM_FIRST_OK. Do not give it additional tasks or context. Return its result.",
+          "spawnSummaries": [
+            "RAM_FIRST_OK"
+          ]
+        },
+        {
+          "query": "Delegate only to RAM Admission Research. Ask it to return exactly RAM_FIRST_OK. Do not give it additional tasks or context. Return its result.",
+          "spawnSummaries": [
+            "RAM_FIRST_OK"
+          ]
+        },
+        {
+          "query": "Delegate only to RAM Admission Research. Ask it to return exactly RAM_FIRST_OK. Do not give it additional tasks or context. Return its result.",
+          "spawnSummaries": [
+            "RAM_FIRST_OK"
+          ]
+        }
       ]
     }
   },
-  "trials": 4,
+  "trials": 1,
   "passThreshold": 1
 }
