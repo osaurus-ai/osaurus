@@ -9,6 +9,35 @@
 import AppKit
 import SwiftUI
 
+/// Decides whether a theme font-family name means "use the system font".
+///
+/// `font(size:weight:)` and `monoFont(size:weight:)` used to lowercase the
+/// family name and substring-scan it on every call. Fonts are resolved many
+/// times per render across every view, so those per-call allocations added up
+/// on the main thread and appeared in hang samples under body getters. The
+/// answer depends only on the name, and theme font families come from a small
+/// fixed set, so it is memoized for the life of the process.
+enum ThemeFontNameClassifier {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var memo: [String: Bool] = [:]
+
+    /// True when `name` is empty or names the given system family.
+    static func isSystemFamily(_ name: String, matching needle: String) -> Bool {
+        if name.isEmpty { return true }
+        let key = "\(needle)\u{0}\(name)"
+        lock.lock()
+        let cached = memo[key]
+        lock.unlock()
+        if let cached { return cached }
+
+        let result = name.lowercased().contains(needle)
+        lock.lock()
+        memo[key] = result
+        lock.unlock()
+        return result
+    }
+}
+
 // MARK: - Theme Protocol
 
 protocol ThemeProtocol {
@@ -186,7 +215,7 @@ extension ThemeProtocol {
 
     /// Creates a font using the theme's primary font family
     func font(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        if primaryFontName.lowercased().contains("sf pro") || primaryFontName.isEmpty {
+        if ThemeFontNameClassifier.isSystemFamily(primaryFontName, matching: "sf pro") {
             return .system(size: size, weight: weight)
         }
         // Use Font.custom with family name - SwiftUI handles weight variants
@@ -195,7 +224,7 @@ extension ThemeProtocol {
 
     /// Creates a monospace font using the theme's mono font family
     func monoFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        if monoFontName.lowercased().contains("sf mono") || monoFontName.isEmpty {
+        if ThemeFontNameClassifier.isSystemFamily(monoFontName, matching: "sf mono") {
             return .system(size: size, weight: weight, design: .monospaced)
         }
         // Use Font.custom with family name - SwiftUI handles weight variants
