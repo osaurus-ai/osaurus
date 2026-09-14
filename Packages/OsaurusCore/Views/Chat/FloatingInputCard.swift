@@ -3742,8 +3742,8 @@ extension FloatingInputCard {
         }
     }
 
-    /// Recent folders listed under the + menu.s Add Folder row. `dismiss`
-    /// closes the menu before the pick runs, like any other row.
+    /// Recent folder chips shown under the + menu's rows. `dismiss` closes
+    /// the menu before the pick runs, like any row.
     private func recentFoldersList(dismiss: @escaping () -> Void) -> AnyView {
         AnyView(
             RecentFoldersList(
@@ -6282,6 +6282,9 @@ extension FloatingInputCard {
             icon: "plus",
             help: "Add folder or attach files",
             items: [
+                .init(icon: "paperclip", title: Text("Attach Files", bundle: .module)) {
+                    pickAttachment()
+                },
                 // Mode 2 (remote agent run): the turn executes on the host's
                 // machine and no local system prompt or tools are sent, so a
                 // folder picked here would never reach the agent. Keep the row
@@ -6292,20 +6295,17 @@ extension FloatingInputCard {
                     title: Text("Add Folder", bundle: .module),
                     disabledReason: isRemoteAgentRun
                         ? Text("Shared agents can't use folders on this Mac.", bundle: .module)
-                        : nil,
-                    // Recently attached folders, one click each, right under
-                    // the row that opens the picker. Hidden for remote runs
-                    // (same reason as the row) and when there are none yet.
-                    detail: isRemoteAgentRun || recentFolders.entries.isEmpty
-                        ? nil
-                        : { dismiss in recentFoldersList(dismiss: dismiss) }
+                        : nil
                 ) {
                     selectFolder()
                 },
-                .init(icon: "paperclip", title: Text("Attach Files", bundle: .module)) {
-                    pickAttachment()
-                },
-            ]
+            ],
+            // Recently attached folders as one-click chips below a divider.
+            // Hidden for remote runs (same reason as Add Folder) and when
+            // there are none yet.
+            footer: isRemoteAgentRun || recentFolders.entries.isEmpty
+                ? nil
+                : { dismiss in recentFoldersList(dismiss: dismiss) }
         )
     }
 
@@ -8427,22 +8427,17 @@ private struct InputActionMenuButton: View {
         /// When non-nil the row is shown dimmed and inert, with a trailing
         /// info icon whose tooltip explains why the action is unavailable.
         let disabledReason: Text?
-        /// Optional content rendered directly beneath the row (e.g. recent
-        /// folders under Add Folder). Receives a closure that closes the menu.
-        let detail: ((@escaping () -> Void) -> AnyView)?
         let action: () -> Void
 
         init(
             icon: String,
             title: Text,
             disabledReason: Text? = nil,
-            detail: ((@escaping () -> Void) -> AnyView)? = nil,
             action: @escaping () -> Void
         ) {
             self.icon = icon
             self.title = title
             self.disabledReason = disabledReason
-            self.detail = detail
             self.action = action
         }
     }
@@ -8450,6 +8445,9 @@ private struct InputActionMenuButton: View {
     let icon: String
     let help: String
     let items: [Item]
+    /// Optional content shown under a divider after the rows (recent folder
+    /// chips). Receives a closure that closes the menu.
+    var footer: ((@escaping () -> Void) -> AnyView)? = nil
 
     @State private var isHovered = false
     @State private var showPopover = false
@@ -8503,14 +8501,17 @@ private struct InputActionMenuButton: View {
                         showPopover = false
                         item.action()
                     }
-                    if let detail = item.detail {
-                        detail({ showPopover = false })
-                    }
+                }
+                if let footer {
+                    Divider()
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                    footer({ showPopover = false })
                 }
             }
             .padding(.vertical, 6)
-            // Wider when a row carries detail content so folder names have room.
-            .frame(width: items.contains { $0.detail != nil } ? 240 : 180)
+            // Wider with a footer so folder chips have room to wrap.
+            .frame(width: footer != nil ? 240 : 180)
             .background(theme.primaryBackground)
             .environment(\.theme, theme)
         }
