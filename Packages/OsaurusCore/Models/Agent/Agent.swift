@@ -367,7 +367,6 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     /// Absolute URL of the custom avatar image, if one is set and the file
     /// exists on disk. Returns nil when no custom avatar is configured or
     /// the file has been removed out from under us.
-    /// Resolved avatar file, or nil when the file is missing.
     ///
     /// Read from SwiftUI body getters — once per chat tab, sidebar row and
     /// picker entry, on every render — and the existence probe is a `stat`.
