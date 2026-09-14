@@ -37,6 +37,21 @@ struct OsaurusGuideTests {
     }
 
     @Test
+    func settingsTopic_namesServerCacheContextCap() throws {
+        let body = try #require(OsaurusGuide.topic(id: "settings")?.body)
+        #expect(body.contains("Context Window Cap"))
+        #expect(body.contains("Server → Settings → Cache") || body.contains("Server → Settings → Cache → Context"))
+        #expect(!body.contains("Chat behavior: core model for background jobs, context length"))
+        #expect(!body.contains("Warm Models on Load"))
+    }
+
+    @Test
+    func localModelsTopic_doesNotPointAtRetiredWarmModels() throws {
+        let body = try #require(OsaurusGuide.topic(id: "local-models")?.body)
+        #expect(!body.contains("Warm Models on Load"))
+    }
+
+    @Test
     func topics_coverTheCoreFeatureAreas() {
         let ids = Set(OsaurusGuide.topics.map { $0.id })
         // The prompt and onboarding rely on these existing. Adding topics is
@@ -166,6 +181,36 @@ struct OsaurusHelpToolTests {
         let dict = try parse(envelope)
         #expect(dict["ok"] as? Bool == false)
         #expect(dict["field"] as? String == "topic")
+    }
+
+    @Test
+    func find_returnsContextWindowCapBreadcrumb() async throws {
+        let tool = OsaurusHelpTool()
+        let envelope = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+            try await tool.execute(
+                argumentsJSON: #"{"action": "find", "query": "context window"}"#)
+        }
+        let dict = try parse(envelope)
+        #expect(dict["ok"] as? Bool == true)
+        let result = try #require(dict["result"] as? [String: Any])
+        let matches = try #require(result["matches"] as? [[String: Any]])
+        #expect(matches.contains { $0["id"] as? String == "settings.chat.contextLength" })
+        let cap = try #require(matches.first { $0["id"] as? String == "settings.chat.contextLength" })
+        let path = try #require(cap["path"] as? String)
+        #expect(path.contains("Server"))
+        #expect(path.contains("Context Window Cap"))
+        #expect(cap["settings_ui_only"] as? Bool == true)
+    }
+
+    @Test
+    func find_missingQueryFailsTyped() async throws {
+        let tool = OsaurusHelpTool()
+        let envelope = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+            try await tool.execute(argumentsJSON: #"{"action": "find"}"#)
+        }
+        let dict = try parse(envelope)
+        #expect(dict["ok"] as? Bool == false)
+        #expect(dict["field"] as? String == "query")
     }
 
     @Test

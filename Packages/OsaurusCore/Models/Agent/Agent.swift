@@ -22,12 +22,22 @@ public struct AgentQuickAction: Codable, Identifiable, Sendable, Equatable {
         self.prompt = prompt
     }
 
-    /// Built-in chat quick actions. Localized at access time (Option A):
-    /// defaults only appear in the UI as a read-only fallback when an agent
-    /// has `chatQuickActions == nil`; they are never persisted unless the
-    /// user explicitly customizes them. A new UUID is generated on each
-    /// access, matching the previous `static let` semantics for consumers.
+    /// Built-in chat quick actions. Localized at access time: defaults only
+    /// appear in the UI as a read-only fallback when an agent has
+    /// `chatQuickActions == nil`; they are never persisted unless the user
+    /// explicitly customizes them.
+    ///
+    /// Built once and reused. This used to mint a fresh `UUID` per element on
+    /// every access, and the chat empty state feeds it straight into a
+    /// `ForEach` keyed on `id` — so every render gave every pill a new
+    /// identity, tearing down and rebuilding each button (fresh `@State`) and
+    /// re-measuring the whole wrapping layout. Stable ids make the diff a
+    /// no-op, which is also what the original `static let` gave consumers.
     public static var defaultChatQuickActions: [AgentQuickAction] {
+        QuickActionDefaults.shared.chat
+    }
+
+    fileprivate static func buildDefaultChatQuickActions() -> [AgentQuickAction] {
         [
             AgentQuickAction(icon: "lightbulb", text: L("Explain a concept"), prompt: L("Explain ")),
             AgentQuickAction(icon: "doc.text", text: L("Summarize text"), prompt: L("Summarize the following: ")),
@@ -43,8 +53,13 @@ public struct AgentQuickAction: Codable, Identifiable, Sendable, Equatable {
     /// Setup-oriented quick actions for the built-in Osaurus configuration
     /// agent (`Agent.defaultId`). These nudge the user toward the two flows
     /// unique to this agent — configuring Osaurus and asking how it works —
-    /// instead of the generic chat prompts.
+    /// instead of the generic chat prompts. Built once and reused, for the
+    /// same identity-stability reason as `defaultChatQuickActions`.
     public static var defaultConfigurationQuickActions: [AgentQuickAction] {
+        QuickActionDefaults.shared.configuration
+    }
+
+    fileprivate static func buildDefaultConfigurationQuickActions() -> [AgentQuickAction] {
         [
             AgentQuickAction(
                 icon: "questionmark.circle",
@@ -79,6 +94,94 @@ public struct AgentQuickAction: Codable, Identifiable, Sendable, Equatable {
         ]
     }
 
+}
+
+/// Short-lived cache for avatar-file existence probes.
+///
+/// The probe is a `stat` issued from SwiftUI body getters, once per row per
+/// render. Entries expire after `ttl` so a file appearing or vanishing behind
+/// the app's back is picked up without any explicit signal, and
+/// `invalidateAll()` clears them immediately when the agent list changes —
+/// the path by which avatars are actually added and removed.
+public final class AvatarExistenceCache: @unchecked Sendable {
+    public static let shared = AvatarExistenceCache()
+
+    private let lock = NSLock()
+    private var entries: [String: (exists: Bool, checkedAt: Date)] = [:]
+    private let ttl: TimeInterval = 10
+
+    private init() {}
+
+    func exists(atPath path: String) -> Bool {
+        let now = Date()
+        lock.lock()
+        if let entry = entries[path], now.timeIntervalSince(entry.checkedAt) < ttl {
+            lock.unlock()
+            return entry.exists
+        }
+        lock.unlock()
+
+        let result = FileManager.default.fileExists(atPath: path)
+        lock.lock()
+        entries[path] = (result, now)
+        lock.unlock()
+        return result
+    }
+
+    /// Drop every entry. Called when the agent list changes.
+    public func invalidateAll() {
+        lock.lock()
+        entries.removeAll()
+        lock.unlock()
+    }
+}
+
+/// Holds the built-in quick-action defaults so their element ids stay stable
+/// for the lifetime of the process.
+///
+/// Identity stability is the point: the chat empty state renders these through
+/// a `ForEach` keyed on `id`, so regenerating ids per access made SwiftUI
+/// rebuild and re-measure every suggestion pill on every render. The localized
+/// text is rebuilt only when the user changes system locale, which is the only
+/// thing that can change it.
+private final class QuickActionDefaults: @unchecked Sendable {
+    static let shared = QuickActionDefaults()
+
+    private let lock = NSLock()
+    private var cachedChat: [AgentQuickAction]?
+    private var cachedConfiguration: [AgentQuickAction]?
+
+    private init() {
+        NotificationCenter.default.addObserver(
+            forName: NSLocale.currentLocaleDidChangeNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.lock.lock()
+            self.cachedChat = nil
+            self.cachedConfiguration = nil
+            self.lock.unlock()
+        }
+    }
+
+    var chat: [AgentQuickAction] {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cachedChat { return cachedChat }
+        let built = AgentQuickAction.buildDefaultChatQuickActions()
+        cachedChat = built
+        return built
+    }
+
+    var configuration: [AgentQuickAction] {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cachedConfiguration { return cachedConfiguration }
+        let built = AgentQuickAction.buildDefaultConfigurationQuickActions()
+        cachedConfiguration = built
+        return built
+    }
 }
 
 /// Controls whether tools are selected automatically via RAG or manually by the user
@@ -264,12 +367,20 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     /// Absolute URL of the custom avatar image, if one is set and the file
     /// exists on disk. Returns nil when no custom avatar is configured or
     /// the file has been removed out from under us.
+    ///
+    /// Read from SwiftUI body getters — once per chat tab, sidebar row and
+    /// picker entry, on every render — and the existence probe is a `stat`.
+    /// On a slow or networked models volume that per-row syscall was enough to
+    /// trip the hang watchdog, so the answer is cached. `AvatarExistenceCache`
+    /// holds it briefly and is cleared whenever the agent list changes, which
+    /// is when an avatar is added or removed, so a newly set avatar still
+    /// appears immediately.
     public var customAvatarURL: URL? {
         guard let name = customAvatarFilename, !name.isEmpty else { return nil }
         let url = OsaurusPaths.agents()
             .appendingPathComponent("avatars", isDirectory: true)
             .appendingPathComponent(name)
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        return AvatarExistenceCache.shared.exists(atPath: url.path) ? url : nil
     }
 
     // MARK: - Localized Display Helpers
@@ -278,14 +389,17 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     /// Default agent) resolve their English `name` through the localization
     /// catalog so the sidebar, pickers, menus, etc. render in the user's
     /// language. User-created agents always render their stored name verbatim.
+    /// Read from SwiftUI body getters once per tab, row and picker entry, so
+    /// the catalog lookup is memoized. Built-in names are a fixed set, which
+    /// is what makes caching them safe.
     public var displayName: String {
-        isBuiltIn ? L(String.LocalizationValue(name)) : name
+        isBuiltIn ? LCached(name) : name
     }
 
     /// Display description for UI rendering. Same rules as `displayName`.
     public var displayDescription: String {
         guard isBuiltIn, !description.isEmpty else { return description }
-        return L(String.LocalizationValue(description))
+        return LCached(description)
     }
 
     // MARK: - Built-in Agents

@@ -367,6 +367,8 @@ enum AgentChannelLiveProofReadiness {
             return "iMessage"
         case .whatsapp:
             return "WhatsApp"
+        case .n8n:
+            return "n8n"
         case .customHTTP:
             return "Custom HTTP"
         }

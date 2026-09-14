@@ -30,6 +30,7 @@ On macOS 26+, the sandbox toggle on the input bar runs shell/code work inside an
 - `/skill-name` force-loads a skill for one message.
 - Voice: the mic button dictates locally (see the Voice topic); the speaker button reads replies aloud when TTS is enabled.
 - Clipboard monitoring (Settings → Chat) offers recently copied text as context.
+- Context window cap (how much history fits) is Management → Server → Settings → Cache → Context Window Cap, not the Chat tab. The composer Context Budget popover is read-only.
 
 ## Tips
 

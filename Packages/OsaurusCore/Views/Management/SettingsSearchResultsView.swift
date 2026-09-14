@@ -107,6 +107,12 @@ struct SettingsSearchResultsView: View {
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
                     }
+                    if let note = entry.disambiguation {
+                        Text(LocalizedStringKey(note), bundle: .module)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.right")

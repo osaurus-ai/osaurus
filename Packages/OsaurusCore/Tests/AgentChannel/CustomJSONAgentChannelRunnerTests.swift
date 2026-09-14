@@ -933,6 +933,336 @@ struct CustomJSONAgentChannelRunnerTests {
             Issue.record("Expected AgentChannelCustomJSONRunnerError, got \(error)")
         }
     }
+
+    // MARK: - Body signature (n8n outbound)
+
+    @Test func bodySignatureHeaderIsHMACSHA256OverTheRenderedBodyBytes() async throws {
+        // Known answer: python3 -c "import hmac,hashlib;print(hmac.new(b'n8n-outbound-secret-0123456789',
+        //   b'{\"content\":\"hello n8n\"}', hashlib.sha256).hexdigest())"
+        let secret = "n8n-outbound-secret-0123456789"
+        let expectedHex = "443fd1daf84b1ab9f3c22c2a1bf0fc26c4d0359d8496407a60288833422eb0ef"
+        let client = RecordingAgentChannelHTTPClient { request in
+            jsonResponse(for: request, body: #"{"id":"n8n-1"}"#)
+        }
+        let runner = makeRunner(client: client, secrets: ["webhook": secret])
+        let connection = makeConnection(
+            secrets: [AgentChannelSecretReference(name: "webhook", keychainId: "webhook")],
+            customHTTP: makeConfiguration(
+                actions: [
+                    .sendMessage: AgentChannelCustomHTTPAction(
+                        method: "POST",
+                        path: "/webhook/osaurus",
+                        headers: ["Content-Type": "application/json"],
+                        bodyTemplate: #"{"content":{{input.content}}}"#,
+                        bodySignature: AgentChannelCustomHTTPBodySignature(secretName: "webhook")
+                    ),
+                ]
+            )
+        )
+
+        let result = try await runner.sendMessage(
+            connection: connection,
+            roomId: "room-1",
+            content: "hello n8n",
+            confirmSend: true
+        )
+        #expect(result["delivery_status"] as? String == "confirmed")
+
+        let request = try #require(client.requests.first)
+        #expect(request.httpBody == Data(#"{"content":"hello n8n"}"#.utf8))
+        #expect(request.value(forHTTPHeaderField: "X-Osaurus-Channel-Signature") == "sha256=\(expectedHex)")
+        // The receiver-side verifier in the substrate accepts exactly this header.
+        let verification = AgentChannelAsyncSubstrate.shared.verifyWebhookSource(
+            request: AgentChannelWebhookVerificationRequest(
+                headers: ["X-Osaurus-Channel-Signature": "sha256=\(expectedHex)"],
+                body: request.httpBody ?? Data()
+            ),
+            policy: AgentChannelSourceVerificationPolicy(method: .hmacSHA256, secret: secret)
+        )
+        #expect(verification.status == .verified)
+        // The signing secret is never rendered into the request.
+        #expect(!(String(decoding: request.httpBody ?? Data(), as: UTF8.self)).contains(secret))
+        for (_, value) in request.allHTTPHeaderFields ?? [:] {
+            #expect(!value.contains(secret))
+        }
+    }
+
+    @Test func bodySignatureWithoutResolvableSecretFailsBeforeHTTP() async {
+        let client = RecordingAgentChannelHTTPClient { request in
+            Issue.record("HTTP should not be dispatched: \(request)")
+            return jsonResponse(for: request, body: "{}")
+        }
+        let runner = makeRunner(client: client, secrets: [:])
+        let connection = makeConnection(
+            secrets: [AgentChannelSecretReference(name: "webhook", keychainId: "webhook")],
+            customHTTP: makeConfiguration(
+                actions: [
+                    .sendMessage: AgentChannelCustomHTTPAction(
+                        method: "POST",
+                        path: "/webhook/osaurus",
+                        bodyTemplate: #"{"content":{{input.content}}}"#,
+                        bodySignature: AgentChannelCustomHTTPBodySignature(secretName: "webhook")
+                    ),
+                ]
+            )
+        )
+        let error = await expectCustomJSONError {
+            try await runner.sendMessage(connection: connection, roomId: "room-1", content: "x", confirmSend: true)
+        }
+        guard case .missingSecret(let name)? = error else {
+            Issue.record("Expected missingSecret, got \(String(describing: error))")
+            return
+        }
+        #expect(name == "webhook")
+        #expect(client.requestCount == 0)
+    }
+
+    // MARK: - n8n outbound preset
+
+    @Test func n8nPresetBuildsSignedIdempotentEnvelopeActions() async throws {
+        let secret = "n8n-outbound-secret-0123456789"
+        let configuration = try #require(
+            AgentChannelN8nPreset.customHTTPConfiguration(
+                webhookURL: "https://n8n.example.com/webhook/osaurus-reply?source=osaurus",
+                secretName: "webhook",
+                signBodies: true
+            )
+        )
+        #expect(configuration.baseURL == "https://n8n.example.com")
+        #expect(configuration.allowedMethods == ["POST"])
+        #expect(!configuration.allowInsecureHTTP)
+        let send = try #require(configuration.actions[AgentChannelAction.sendMessage.rawValue])
+        #expect(send.path == "/webhook/osaurus-reply")
+        #expect(send.query == ["source": "osaurus"])
+        #expect(send.idempotency?.header == "Idempotency-Key")
+        #expect(send.bodySignature?.header == "X-Osaurus-Channel-Signature")
+        #expect(send.bodySignature?.secretName == "webhook")
+        #expect(configuration.actions[AgentChannelAction.replyThread.rawValue]?.bodyTemplate?.contains("thread_id") == true)
+
+        let client = RecordingAgentChannelHTTPClient { request in
+            jsonResponse(for: request, body: #"{"id":"n8n-exec-1"}"#)
+        }
+        let runner = makeRunner(client: client, secrets: ["webhook": secret])
+        var connection = makeConnection(
+            id: "n8n-main",
+            spaceAllowlist: [AgentChannelN8nConfiguration.spaceId],
+            readRooms: [],
+            writeRooms: ["conv-1"],
+            secrets: [AgentChannelSecretReference(name: "webhook", keychainId: "webhook")],
+            customHTTP: configuration
+        )
+        connection.kind = .n8n
+        _ = try await runner.sendMessage(
+            connection: connection,
+            roomId: "conv-1",
+            content: "Reply with \"quotes\" and a\nnewline",
+            confirmSend: true
+        )
+        let request = try #require(client.requests.first)
+        #expect(request.url?.absoluteString == "https://n8n.example.com/webhook/osaurus-reply?source=osaurus")
+        #expect(request.httpMethod == "POST")
+        let body = try #require(request.httpBody)
+        let envelope = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(envelope["v"] as? Int == 1)
+        #expect(envelope["connection_id"] as? String == "n8n-main")
+        #expect(envelope["conversation_id"] as? String == "conv-1")
+        #expect(envelope["content"] as? String == "Reply with \"quotes\" and a\nnewline")
+        #expect((envelope["sender"] as? [String: Any])?["is_bot"] as? Bool == true)
+        let eventId = try #require(envelope["event_id"] as? String)
+        #expect(eventId.hasPrefix("n8n-main:send_message:conv-1:"))
+        #expect(request.value(forHTTPHeaderField: "Idempotency-Key") == eventId)
+        #expect(request.value(forHTTPHeaderField: "X-Osaurus-Channel-Kind") == "n8n")
+        #expect(request.value(forHTTPHeaderField: "X-Osaurus-Connection-Id") == "n8n-main")
+        let signature = try #require(request.value(forHTTPHeaderField: "X-Osaurus-Channel-Signature"))
+        #expect(signature == "sha256=" + AgentChannelAsyncSubstrate.hmacSHA256Hex(body: body, secret: secret))
+    }
+
+    @Test func n8nPresetAppliesOutboundProjectionOntoTheConnection() throws {
+        let base = AgentChannelConnection(
+            id: "n8n-main",
+            name: "n8n",
+            kind: .n8n,
+            supportedActions: [.diagnostics],
+            inboundAuthorization: AgentChannelInboundAuthorizationPolicy(
+                senderAllowlist: ["user-1"],
+                roomAllowlist: ["conv-1", "conv-2"]
+            ),
+            n8n: AgentChannelN8nConfiguration(
+                outbound: AgentChannelN8nOutboundConfiguration(
+                    webhookURL: "https://n8n.example.com/webhook/reply",
+                    signBodies: false
+                )
+            )
+        )
+        let projected = AgentChannelN8nPreset.applyingOutbound(to: base)
+        #expect(projected.customHTTP?.baseURL == "https://n8n.example.com")
+        #expect(projected.customHTTP?.actions[AgentChannelAction.sendMessage.rawValue]?.bodySignature == nil)
+        #expect(projected.supportedActions.contains(.sendMessage))
+        #expect(projected.supportedActions.contains(.replyThread))
+        #expect(projected.writeEnabled)
+        #expect(projected.writeRoomAllowlist == ["conv-1", "conv-2"])
+        #expect(projected.spaceAllowlist == ["n8n"])
+        #expect(projected.secrets == [AgentChannelSecretReference(name: "webhook", keychainId: "webhook")])
+
+        var pollOnly = base
+        pollOnly.n8n?.outbound = AgentChannelN8nOutboundConfiguration()
+        let cleared = AgentChannelN8nPreset.applyingOutbound(to: pollOnly)
+        #expect(cleared.customHTTP == nil)
+        #expect(!cleared.writeEnabled)
+        #expect(!cleared.supportedActions.contains(.sendMessage))
+        #expect(cleared.supportedActions.contains(.diagnostics))
+    }
+
+    @Test func n8nPresetStillRefusesLoopbackAndPrivateWebhookTargets() async {
+        // C2 is a literal-host policy: loopback names and private IPv4/IPv6
+        // literals are refused before any HTTP. A local Docker n8n therefore
+        // cannot be a push target; replies stay poll-only for that topology.
+        for webhookURL in [
+            "http://localhost:5678/webhook/reply",
+            "https://localhost:5678/webhook/reply",
+            "https://127.0.0.1:5678/webhook/reply",
+            "https://[::1]:5678/webhook/reply",
+            "https://192.168.1.20:5678/webhook/reply",
+            "https://10.0.0.7:5678/webhook/reply",
+        ] {
+            guard let configuration = AgentChannelN8nPreset.customHTTPConfiguration(
+                webhookURL: webhookURL,
+                secretName: "webhook",
+                signBodies: true
+            ) else {
+                Issue.record("Preset should parse \(webhookURL)")
+                continue
+            }
+            let client = RecordingAgentChannelHTTPClient { request in
+                Issue.record("HTTP should not be dispatched for \(webhookURL): \(request)")
+                return jsonResponse(for: request, body: "{}")
+            }
+            let runner = makeRunner(client: client, secrets: ["webhook": "n8n-outbound-secret-0123456789"])
+            let connection = makeConnection(
+                writeRooms: ["conv-1"],
+                secrets: [AgentChannelSecretReference(name: "webhook", keychainId: "webhook")],
+                customHTTP: configuration
+            )
+            let error = await expectCustomJSONError {
+                try await runner.sendMessage(connection: connection, roomId: "conv-1", content: "hi", confirmSend: true)
+            }
+            guard case .blockedURL? = error else {
+                Issue.record("Expected blockedURL for \(webhookURL), got \(String(describing: error))")
+                continue
+            }
+            #expect(client.requestCount == 0)
+        }
+    }
+
+    @Test func n8nReplyHandlerIsOnlyInstalledWhenOutboundAndAutoReplyAreConfigured() async throws {
+        let envelope = try AgentChannelN8nEnvelope.parse(
+            Data(
+                #"{"v":1,"event_id":"e1","conversation_id":"conv-1","sender":{"id":"user-1"},"content":"hi"}"#.utf8
+            )
+        )
+        let client = RecordingAgentChannelHTTPClient { request in
+            jsonResponse(for: request, body: #"{"id":"n8n-exec-9"}"#)
+        }
+        let runner = makeRunner(client: client, secrets: ["webhook": "n8n-outbound-secret-0123456789"])
+        let ingress = AgentChannelWebhookIngress(
+            messageStore: AgentChannelMessageStore(),
+            activityCenter: AgentChannelInboundActivityCenter(),
+            transportHealth: AgentChannelTransportHealthCenter(),
+            relaySubmit: { _ in .suppressed("test") }
+        )
+
+        var pollOnly = AgentChannelConnection(
+            id: "n8n-main",
+            name: "n8n",
+            kind: .n8n,
+            supportedActions: [.diagnostics],
+            inboundAuthorization: AgentChannelInboundAuthorizationPolicy(
+                senderAllowlist: ["user-1"],
+                roomAllowlist: ["conv-1"]
+            ),
+            n8n: AgentChannelN8nConfiguration(
+                inboundDispatch: AgentChannelInboundDispatchConfiguration(enabled: true, autoReplyEnabled: true)
+            )
+        )
+        pollOnly = AgentChannelN8nPreset.applyingOutbound(to: pollOnly)
+        #expect(
+            AgentChannelN8nPreset.replyHandler(
+                for: pollOnly,
+                envelope: envelope,
+                ingress: ingress,
+                send: { connection, roomId, content in
+                    _ = try await runner.sendMessage(
+                        connection: connection,
+                        roomId: roomId,
+                        content: content,
+                        confirmSend: true
+                    )
+                }
+            ) == nil
+        )
+
+        var pushed = pollOnly
+        pushed.n8n?.outbound = AgentChannelN8nOutboundConfiguration(webhookURL: "https://n8n.example.com/webhook/r")
+        pushed = AgentChannelN8nPreset.applyingOutbound(to: pushed)
+        let sendViaRunner: @Sendable (AgentChannelConnection, String, String) async throws -> Void = {
+            connection,
+            roomId,
+            content in
+            _ = try await runner.sendMessage(
+                connection: connection,
+                roomId: roomId,
+                content: content,
+                confirmSend: true
+            )
+        }
+        let handler = try #require(
+            AgentChannelN8nPreset.replyHandler(
+                for: pushed,
+                envelope: envelope,
+                ingress: ingress,
+                send: sendViaRunner
+            )
+        )
+        try await handler("The answer is 42.")
+        #expect(client.requestCount == 1)
+        let posted = try #require(client.requests.first?.httpBody)
+        let body = try #require(try JSONSerialization.jsonObject(with: posted) as? [String: Any])
+        #expect(body["conversation_id"] as? String == "conv-1")
+        #expect(body["content"] as? String == "The answer is 42.")
+        let health = await ingress.healthSnapshot(connectionId: "n8n-main")
+        #expect(health.outboundSent == 1)
+        #expect(health.lastOutboundAt != nil)
+
+        var autoReplyOff = pushed
+        autoReplyOff.n8n?.inboundDispatch.autoReplyEnabled = false
+        #expect(
+            AgentChannelN8nPreset.replyHandler(
+                for: autoReplyOff,
+                envelope: envelope,
+                ingress: ingress,
+                send: sendViaRunner
+            ) == nil
+        )
+
+        let refuseWrites: @Sendable (AgentChannelConnection, String, String) async throws -> Void = { _, _, _ in
+            throw AgentChannelConnectionServiceError.globalWritesDisabled(generation: 7)
+        }
+        let killSwitchHandler = try #require(
+            AgentChannelN8nPreset.replyHandler(
+                for: pushed,
+                envelope: envelope,
+                ingress: ingress,
+                send: refuseWrites
+            )
+        )
+        await #expect(throws: AgentChannelConnectionServiceError.globalWritesDisabled(generation: 7)) {
+            try await killSwitchHandler("should not post")
+        }
+        #expect(client.requestCount == 1)
+        let failed = await ingress.healthSnapshot(connectionId: "n8n-main")
+        #expect(failed.outboundFailed == 1)
+        #expect(failed.outboundSent == 1)
+    }
 }
 
 private func makeRunner(

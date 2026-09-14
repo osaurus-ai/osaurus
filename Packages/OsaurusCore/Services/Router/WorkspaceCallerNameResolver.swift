@@ -100,8 +100,11 @@ actor WorkspaceCallerNameResolver {
             var byAccount: [String: String] = [:]
             var byWallet: [String: String] = [:]
             for member in list {
-                guard let name = member.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
-                    !name.isEmpty
+                // Display name first; the claimed `@handle` when there is
+                // none. A member with neither keeps the short-wallet fallback.
+                let trimmed = member.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard let name = (trimmed?.isEmpty == false ? trimmed : nil)
+                    ?? OsaurusRouterWorkspacePerson.handle(member.osaurusId)
                 else { continue }
                 byAccount[member.accountId] = name
                 if let wallet = member.walletAddress {

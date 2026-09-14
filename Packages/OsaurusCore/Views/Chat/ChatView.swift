@@ -171,6 +171,11 @@ final class ChatSession: ObservableObject {
     /// gate keys on `isStreaming`, which still waits for the real end.
     @Published var outputComplete: Bool = false
 
+    /// True while a hibernated tab's transcript is being read from disk
+    /// (`ChatWindowState.wake`). The chat surface shows a loading state
+    /// instead of the empty-chat greeting for the gap.
+    @Published var isHydratingTranscript: Bool = false
+
     @Published var isStreaming: Bool = false {
         didSet {
             guard isStreaming != oldValue else { return }
@@ -1122,12 +1127,9 @@ final class ChatSession: ObservableObject {
                 self.loadActiveModelOptions(for: model)
                 self.applyImageModelDefaults(for: model)
 
-                // Clear pending image attachments when switching to a non-VLM
-                // model. Computed against the NEW model id, since `@Published`
-                // emits before `selectedModel` updates.
-                if !Self.modelSupportsImages(modelId: model, pickerItems: self.pickerItems) {
-                    self.pendingAttachments = []
-                }
+                // Keep the user's draft attachments across model changes.
+                // Send validates their modalities against the new model and
+                // reports incompatibility instead of silently deleting files.
 
                 // Selection only records the choice (and re-evaluates the
                 // residency dot). Loading, eviction and prefill happen on
@@ -1683,7 +1685,9 @@ final class ChatSession: ObservableObject {
     /// model rejects the image part with a visible provider error.
     static func modelSupportsImages(modelId: String, pickerItems: [ModelPickerItem]) -> Bool {
         if modelId.lowercased() == "foundation" { return false }
-        if ModelMediaCapabilities.from(modelId: modelId).supportsImage { return true }
+        if let local = ModelManager.findInstalledMLXModelFromCache(named: modelId) {
+            return local.mediaCapabilities.supportsImage
+        }
         guard let option = pickerItems.first(where: { $0.id == modelId }) else { return false }
         // Image-edit models accept image input (osaurus image-edit feature).
         if option.imageCapabilities?.imageEdit == true { return true }
@@ -1724,7 +1728,8 @@ final class ChatSession: ObservableObject {
             modelId: model,
             fallbackSupportsImages: selectedModelSupportsImages,
             localModelType: localModel?.modelType,
-            localHasAudioTensors: localModel?.hasAudioTensors ?? false
+            localHasAudioTensors: localModel?.hasAudioTensors ?? false,
+            localCapabilities: localModel?.mediaCapabilities
         )
     }
 
@@ -6634,6 +6639,13 @@ final class ChatSession: ObservableObject {
                             .clampedResponseTokens(agentConfigured: effectiveMaxTokensForAgent)
                     }
 
+                    // Validate the NEW payload before history filtering. A stale
+                    // capability must produce a visible failure, never a text-only
+                    // request that silently loses the user's attachment.
+                    try ModelMediaCapabilities.validateAttachments(attachments, capabilities: .init(
+                        supportsImage: turnSupportsImages, supportsVideo: turnSupportsVideo,
+                        supportsAudio: turnSupportsAudio))
+
                     // KV-cache-aware history compaction: shared window
                     // resolution + reservations via `AgentLoopBudget` (parity
                     // with the plugin host's budget manager). Trimming only
@@ -9487,10 +9499,24 @@ struct ChatView: View {
                             onSelectAgent: { newAgentId in
                                 windowState.switchAgent(to: newAgentId)
                             },
+                            onNewChatWithAgent: { newAgentId in
+                                windowState.startNewChat(with: newAgentId)
+                                isPinnedToBottom = true
+                            },
                             workspaceAgentAddress: windowState.workspaceAgentAddress,
                             workspaceAgentWorkspaceId: observedSession.workspaceContext?.workspaceId,
                             onSelectWorkspaceAgent: { address, workspaceId in
                                 windowState.switchToWorkspaceAgent(address: address, workspaceId: workspaceId)
+                            },
+                            discoveredAgents: windowState.discoveredAgents,
+                            activeDiscoveredAgentId: windowState.selectedDiscoveredAgent?.id,
+                            // Same pairing/connect flow the removed toolbar
+                            // agent pill drove through the
+                            // .chatToolbarSelectDiscoveredAgent notification;
+                            // the sidebar lives inside this view, so it can
+                            // call the handler directly.
+                            onSelectDiscoveredAgent: { agent in
+                                selectDiscoveredAgent(agent)
                             }
                         )
                     }
@@ -9518,7 +9544,16 @@ struct ChatView: View {
                         // Content area (show immediately, model discovery is async)
                         if session.hasAnyModel || session.isDiscoveringModels {
                             if !session.hasVisibleThreadMessages {
-                                emptyStateView
+                                if session.isHydratingTranscript {
+                                    // A hibernated tab being woken: its
+                                    // transcript is on its way, so don't
+                                    // flash the new-chat greeting.
+                                    ProgressView()
+                                        .controlSize(.small)
+                                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                } else {
+                                    emptyStateView
+                                }
                             } else {
                                 // Message thread. While a prompt
                                 // overlay is mounted, blur the thread

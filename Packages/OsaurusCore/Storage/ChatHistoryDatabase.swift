@@ -195,53 +195,27 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// minimum-compatible-version gate rather than rely on this constant.
     ///
     /// Every step must also stay **idempotent** (`addColumnIfMissing`,
-    /// `CREATE … IF NOT EXISTS`): a version-ahead open replays the whole
-    /// ladder to pick up columns a sibling build's same-numbered step never
-    /// added (see `reconcileAdditiveSchema`).
+    /// `CREATE … IF NOT EXISTS`): every open replays the whole ladder to
+    /// pick up columns a sibling build's same-numbered step never added
+    /// (see `reconcileAdditiveSchema`).
     static let migrationsAreAdditiveOnly = true
 
     private func runMigrations() throws {
         let current = try getSchemaVersion()
-        // Forward-compatible open: a DB stamped by a newer build carries only
-        // additive columns (see `migrationsAreAdditiveOnly`), so never refuse
-        // it — refusing is indistinguishable from data loss to the user.
-        //
-        // But "stamped ahead" does not mean "has every column this build
-        // writes". Version numbers are claimed independently on parallel
-        // branches, so a store stamped 17 by one build may lack a column
-        // another build's v16 adds (field report: `user_version = 17`,
-        // `sessions` without `workspace_context`, every save failing with
-        // `failedToPrepare`). Every step is idempotent, so reconcile by
-        // running the whole ladder and then restoring the higher stamp, so
-        // the newer build still recognizes its own schema and re-applies its
-        // own (idempotent) steps in turn.
-        if current >= Self.latestSchemaVersion {
-            try reconcileAdditiveSchema(preservingVersion: current)
-            return
-        }
-        // Each step runs in its own transaction: a crash/error mid-migration
-        // rolls back to the prior version instead of leaving a half-applied
-        // schema (the `setSchemaVersion` bump is part of the same commit).
-        if current < 1 { try runMigrationStep(1, migrateToV1) }
-        if current < 2 { try runMigrationStep(2, migrateToV2) }
-        if current < 3 { try runMigrationStep(3, migrateToV3) }
-        if current < 4 { try runMigrationStep(4, migrateToV4) }
-        if current < 5 { try runMigrationStep(5, migrateToV5) }
-        if current < 6 { try runMigrationStep(6, migrateToV6) }
-        if current < 7 { try runMigrationStep(7, migrateToV7) }
-        if current < 8 { try runMigrationStep(8, migrateToV8) }
-        if current < 9 { try runMigrationStep(9, migrateToV9) }
-        if current < 10 { try runMigrationStep(10, migrateToV10) }
-        if current < 11 { try runMigrationStep(11, migrateToV11) }
-        if current < 12 { try runMigrationStep(12, migrateToV12) }
-        if current < 13 { try runMigrationStep(13, migrateToV13) }
-        if current < 14 { try runMigrationStep(14, migrateToV14) }
-        if current < 15 { try runMigrationStep(15, migrateToV15) }
-        if current < 16 { try runMigrationStep(16, migrateToV16) }
+        // Always replay the idempotent ladder. Version numbers are claimed
+        // independently on parallel branches, so a store stamped 15 *or* 17
+        // may still lack a column this build's INSERT names. The old
+        // version-gated path skipped earlier steps once the stamp was past
+        // them — field report / #2736: `user_version = 15` with `project_id`
+        // but no `shared_artifacts`, every save throwing `failedToPrepare`.
+        // Stamp `max(on-disk, latest)` so a sibling v17 stamp is preserved
+        // and a lagging store advances to this build's schema.
+        try reconcileAdditiveSchema(preservingVersion: max(current, Self.latestSchemaVersion))
+        try assertWritableSchema()
     }
 
-    /// Every migration body in ladder order. `runMigrations` gates these by
-    /// version; `reconcileAdditiveSchema` replays all of them.
+    /// Every migration body in ladder order. `reconcileAdditiveSchema`
+    /// replays all of them on every open.
     private var migrationLadder: [() throws -> Void] {
         [
             migrateToV1, migrateToV2, migrateToV3, migrateToV4, migrateToV5, migrateToV6,
@@ -250,18 +224,19 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         ]
     }
 
-    /// Re-run every (idempotent) migration body against a store whose stamp
-    /// says it is already at or past this build's schema, then put the stamp
-    /// back. Cheap when nothing is missing — each step is a `PRAGMA
+    /// Re-run every (idempotent) migration body, then put `version` on the
+    /// stamp. Cheap when nothing is missing — each step is a `PRAGMA
     /// table_info` scan or `IF NOT EXISTS` — and it repairs a store that
-    /// another build stamped ahead without carrying this build's columns.
-    /// One transaction: a failure leaves the store exactly as found.
+    /// another build stamped at or ahead of this one without carrying this
+    /// build's columns. One transaction: a failure leaves the store exactly
+    /// as found.
     private func reconcileAdditiveSchema(preservingVersion version: Int) throws {
         try executeRaw("BEGIN TRANSACTION")
         do {
             for step in migrationLadder { try step() }
-            // Each body stamps its own version; restore the (higher) one we
-            // were handed so the build that owns it still recognizes it.
+            // Each body stamps its own version; restore the (possibly
+            // higher) one we were handed so the build that owns it still
+            // recognizes it, or advance a lagging store to `latest`.
             try setSchemaVersion(version)
             try executeRaw("COMMIT")
         } catch {
@@ -271,17 +246,38 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         }
     }
 
-    /// Run one migration body atomically. Called only from `runMigrations`,
-    /// which already holds the database queue, so it uses raw
-    /// `BEGIN/COMMIT/ROLLBACK` (no nested `queue.sync`).
-    private func runMigrationStep(_ version: Int, _ body: () throws -> Void) throws {
-        try executeRaw("BEGIN TRANSACTION")
-        do {
-            try body()
-            try executeRaw("COMMIT")
-        } catch {
-            try? executeRaw("ROLLBACK")
-            throw ChatHistoryDatabaseError.migrationFailed("v\(version): \(error.localizedDescription)")
+    /// Columns named by `upsertSessionSQL` / `insertTurnSQL` (and the
+    /// matching SELECTs). If a future write adds a column without a
+    /// matching `addColumnIfMissing` step, `open()` fails closed instead
+    /// of succeeding and then dropping every save.
+    private static let requiredSessionColumns = [
+        "id", "title", "created_at", "updated_at", "selected_model", "agent_id",
+        "source", "source_plugin_id", "external_session_key", "dispatch_task_id",
+        "archived", "capabilities", "folder_bookmark", "folder_path", "pinned",
+        "project_id", "workspace_context", "remote_agent_address",
+    ]
+    private static let requiredTurnColumns = [
+        "id", "session_id", "seq", "role", "content", "attachments", "shared_artifacts",
+        "tool_calls", "tool_call_id", "tool_results", "thinking", "content_hash",
+        "created_at", "completed_at", "generation_token_count", "time_to_first_token",
+        "tool_call_durations", "thinking_duration", "router_billing",
+        "terminal_stop_reason", "model_context_excluded",
+    ]
+
+    private func assertWritableSchema() throws {
+        let missingSessions = Self.requiredSessionColumns.filter { !tableHasColumn("sessions", $0) }
+        let missingTurns = Self.requiredTurnColumns.filter { !tableHasColumn("turns", $0) }
+        guard missingSessions.isEmpty, missingTurns.isEmpty else {
+            var parts: [String] = []
+            if !missingSessions.isEmpty {
+                parts.append("sessions missing \(missingSessions.joined(separator: ", "))")
+            }
+            if !missingTurns.isEmpty {
+                parts.append("turns missing \(missingTurns.joined(separator: ", "))")
+            }
+            throw ChatHistoryDatabaseError.migrationFailed(
+                "writable schema incomplete: \(parts.joined(separator: "; "))"
+            )
         }
     }
 
@@ -837,6 +833,35 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// Load metadata filtered by agent and/or source. nil ⇒ no constraint.
     public func loadMetadata(forAgent agentId: UUID?, source: SessionSource?) -> [ChatSessionData] {
         loadMetadataInternal(filter: (agentId: agentId, source: source))
+    }
+
+    /// Session rows (no turns) for the given ids, in one statement. Ids
+    /// without a row are simply absent from the result; order is not
+    /// guaranteed. Used to build hibernated tab stand-ins without reading
+    /// whole transcripts.
+    public func loadMetadata(ids: [UUID]) -> [ChatSessionData] {
+        guard !ids.isEmpty else { return [] }
+        var sessions: [ChatSessionData] = []
+        let placeholders = (1...ids.count).map { "?\($0)" }.joined(separator: ",")
+        let sql = Self.baseSessionSelectSQL + " WHERE id IN (\(placeholders))"
+        do {
+            try prepareAndExecute(
+                sql,
+                bind: { stmt in
+                    for (offset, id) in ids.enumerated() {
+                        Self.bindText(stmt, index: offset + 1, value: id.uuidString)
+                    }
+                },
+                process: { stmt in
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        sessions.append(Self.readSession(stmt, turns: []))
+                    }
+                }
+            )
+        } catch {
+            print("[ChatHistoryDatabase] loadMetadata(ids:) failed: \(error)")
+        }
+        return sessions
     }
 
     /// Aggregated turn counts keyed by session id.

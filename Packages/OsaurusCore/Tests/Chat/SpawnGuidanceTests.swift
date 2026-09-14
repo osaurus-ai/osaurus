@@ -294,6 +294,17 @@ struct SpawnGuidanceTests {
         #expect(text.contains("never ask a worker to paste full file contents"))
     }
 
+    @Test("settings lookup is orchestrator work, not a Computer Use spawn")
+    func settingsLookupIsNotAWorkerJob() {
+        let text = SystemPromptTemplates.spawnGuidance(
+            agents: [agent("helper")],
+            models: []
+        )
+        #expect(text.contains("osaurus_help"))
+        #expect(text.contains("Computer Use"))
+        #expect(text.contains("Management") || text.contains("Settings"))
+    }
+
     @Test("a note is only rendered when present (no dangling em-dash for note-less models)")
     func noteOnlyRendersWhenPresent() {
         let text = SystemPromptTemplates.spawnGuidance(

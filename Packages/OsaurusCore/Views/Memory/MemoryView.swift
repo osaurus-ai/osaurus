@@ -897,6 +897,7 @@ struct MemoryView: View {
                     description: "Build identity and long-term memories from your chats",
                     isOn: $config.enabled
                 )
+                .settingsLandingAnchor("memory.settings.enabled")
                 .onChange(of: config.enabled) { _, _ in
                     MemoryConfigurationStore.save(config)
                 }
@@ -955,7 +956,8 @@ struct MemoryView: View {
                         text: $tempConsolidationInterval,
                         range: 1 ... 168,
                         step: 1,
-                        defaultValue: 24
+                        defaultValue: 24,
+                        anchorId: "memory.settings.consolidation"
                     )
                     .onChange(of: tempConsolidationInterval) { _, newValue in
                         applyConfigEdit(newValue, range: 1 ... 168, keyPath: \.consolidationIntervalHours)

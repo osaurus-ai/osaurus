@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Testing
 
@@ -52,6 +53,46 @@ struct WorkspacesWireTypeTests {
         #expect(future.typedSource == nil)
         #expect(future.source == "sponsored")
         #expect(future.isActive)
+    }
+
+    /// Every person DTO carries the router's `osaurus_id` decoration (the
+    /// claimed `@handle`). It names a person when no display name is set,
+    /// ahead of the shortened wallet; `dino_id` stays ignored.
+    @Test func personAndMemberDecodeOsaurusIDAndPreferItOverWallet() throws {
+        let person = try decoder.decode(
+            OsaurusRouterWorkspacePerson.self,
+            from: Data(
+                #"{"account_id":"acct-1","wallet_address":"0xAbC1234567890abcdef1234567890ABCDEF12345","osaurus_id":"rex-42","dino_id":null,"display_name":null}"#
+                    .utf8
+            )
+        )
+        #expect(person.osaurusId == "rex-42")
+        #expect(person.friendlyName == "@rex-42")
+
+        let named = try decoder.decode(
+            OsaurusRouterWorkspacePerson.self,
+            from: Data(#"{"account_id":"acct-1","osaurus_id":"rex-42","display_name":"Rexy"}"#.utf8)
+        )
+        #expect(named.friendlyName == "Rexy")
+
+        let bare = try decoder.decode(
+            OsaurusRouterWorkspacePerson.self,
+            from: Data(#"{"account_id":"acct-1","wallet_address":"0xAbC1234567890abcdef1234567890ABCDEF12345"}"#.utf8)
+        )
+        #expect(bare.osaurusId == nil)
+        #expect(bare.friendlyName == "0xAbC1…2345")
+
+        let member = try decoder.decode(
+            OsaurusRouterWorkspaceMember.self,
+            from: Data(
+                #"{"account_id":"acct-2","wallet_address":"0x0000000000000000000000000000000000000002","osaurus_id":"trice","display_name":"","role":"member"}"#
+                    .utf8
+            )
+        )
+        #expect(member.osaurusId == "trice")
+        #expect(member.friendlyName == "@trice")
+        #expect(OsaurusRouterWorkspacePerson.handle("  ") == nil)
+        #expect(OsaurusRouterWorkspacePerson.handle(nil) == nil)
     }
 
     @Test func workspaceDetailDecodesEntitlementAndPool() throws {
@@ -1714,6 +1755,79 @@ struct WorkspacesServiceTests {
             service.clearSelection()
             #expect(service.poolBalance == nil)
             #expect(service.autoReload == nil)
+        }
+    }
+
+    /// Every `/workspaces/sync` reconnect delivers a full snapshot. One that
+    /// matches what the service already holds must not republish the list,
+    /// detail, members, agents, or invites — that republish (on a reconnect
+    /// loop) was the Workspaces tab's "constant refresh".
+    @Test func applySyncSnapshot_identicalSnapshotDoesNotRepublish() async throws {
+        try await withService(handler: { request in
+            switch (request.httpMethod, request.url?.path) {
+            case ("GET", "/workspaces/team-1"):
+                return json(liveDetail(balanceMicro: "30000000"))
+            case ("GET", "/workspaces/team-1/credits/balance"):
+                return json(#"{"balance_micro":"30000000","expiring_micro":"0","purchased_micro":"0","frozen":false}"#)
+            case ("GET", "/workspaces/team-1/members"):
+                return json(#"{"data":[{"account_id":"acct-1","wallet_address":"0xabc","osaurus_id":"rex-42","role":"owner"}]}"#)
+            case ("GET", "/workspaces/team-1/invites"), ("GET", "/workspaces/team-1/agents"):
+                return json(#"{"data":[]}"#)
+            default:
+                throw URLError(.badURL)
+            }
+        }) { service, _ in
+            await service.selectWorkspace(id: "team-1")
+            let detail = try #require(service.detail)
+            let snapshot = WorkspaceSyncSnapshot(workspaces: [
+                .init(
+                    workspace: try JSONDecoder().decode(
+                        OsaurusRouterWorkspaceSummary.self,
+                        from: Data(#"{"id":"team-1","name":"Dino Devs","role":"owner","source":"subscription","active":true}"#.utf8)
+                    ),
+                    detail: detail,
+                    members: service.members,
+                    agents: service.workspaceAgents,
+                    invites: service.workspaceInvites
+                )
+            ])
+
+            var publishes: [String] = []
+            var subscriptions: [AnyCancellable] = []
+            subscriptions.append(service.$workspaces.dropFirst().sink { _ in publishes.append("workspaces") })
+            subscriptions.append(service.$detail.dropFirst().sink { _ in publishes.append("detail") })
+            subscriptions.append(service.$members.dropFirst().sink { _ in publishes.append("members") })
+            subscriptions.append(service.$workspaceAgents.dropFirst().sink { _ in publishes.append("agents") })
+            subscriptions.append(service.$workspaceInvites.dropFirst().sink { _ in publishes.append("invites") })
+            subscriptions.append(service.$isLoadingDetail.dropFirst().sink { _ in publishes.append("loading") })
+            defer { subscriptions.forEach { $0.cancel() } }
+
+            // First snapshot: the list was empty until now, so it publishes once.
+            service.applySyncSnapshot(snapshot)
+            #expect(publishes == ["workspaces"])
+            #expect(service.members.first?.friendlyName == "@rex-42")
+
+            // Identical snapshot (a reconnect): nothing visible changed, nothing publishes.
+            publishes.removeAll()
+            service.applySyncSnapshot(snapshot)
+            #expect(publishes.isEmpty, "identical snapshot republished: \(publishes)")
+
+            // A real change still lands.
+            let renamed = WorkspaceSyncSnapshot(workspaces: [
+                .init(
+                    workspace: try JSONDecoder().decode(
+                        OsaurusRouterWorkspaceSummary.self,
+                        from: Data(#"{"id":"team-1","name":"Renamed","role":"owner","source":"subscription","active":true}"#.utf8)
+                    ),
+                    detail: detail,
+                    members: [],
+                    agents: service.workspaceAgents,
+                    invites: service.workspaceInvites
+                )
+            ])
+            service.applySyncSnapshot(renamed)
+            #expect(publishes == ["workspaces", "members"])
+            #expect(service.members.isEmpty)
         }
     }
 

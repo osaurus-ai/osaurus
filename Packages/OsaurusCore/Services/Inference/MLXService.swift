@@ -499,39 +499,6 @@ actor MLXService: ToolCapableService {
         modelId: String,
         modelDirectory: URL? = nil
     ) -> ModelMediaCapabilities.Descriptor {
-        if isKnownMediaTextOnlyJANGRuntimeFamily(modelId: modelId) {
-            // MiMo JANG/JANGTQ text/tool rows are supported through the vMLX
-            // text runtime. The bundle carries visual/audio weights, but vMLX
-            // has no MiMo VLM/omni factory yet and the text loader drops those
-            // weights. Keep media disabled until that real path exists.
-            return ModelMediaCapabilities.Descriptor(
-                modelId: modelId,
-                capabilities: .textOnly,
-                image: .init(
-                    modality: .image,
-                    status: .unsupported,
-                    reason: "Image input is not advertised for this text/tool runtime family."
-                ),
-                video: .init(
-                    modality: .video,
-                    status: .unsupported,
-                    reason: "Video input is not advertised for this text/tool runtime family."
-                ),
-                audio: .init(
-                    modality: .audio,
-                    status: .unsupported,
-                    reason: "Audio input is not advertised for this text/tool runtime family."
-                )
-            )
-        }
-        if ModelFamilyNames.isStepFamily(modelId) {
-            // Step 3.7 currently runs through vMLX's Step text runtime in
-            // Osaurus. Some source bundles carry vision metadata, but the
-            // Step VLM path is not wired or proven here; keep request gating
-            // text-only and avoid blocking runtime preflight on large
-            // external-bundle metadata reads.
-            return ModelMediaCapabilities.descriptor(modelId: modelId)
-        }
         let localDirectory =
             modelDirectory
             // A model discovered in the HF cache, LM Studio, or a custom model
@@ -550,7 +517,7 @@ actor MLXService: ToolCapableService {
                 $0.appendingPathComponent($1, isDirectory: true)
             }
         if FileManager.default.fileExists(atPath: localDirectory.path) {
-            return ModelMediaCapabilities.descriptor(directory: localDirectory, modelId: modelId)
+            return ModelMediaCapabilities.descriptor(directory: localDirectory, modelId: modelId, refresh: true)
         }
         return ModelMediaCapabilities.descriptor(modelId: modelId)
     }

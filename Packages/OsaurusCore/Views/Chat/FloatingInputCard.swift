@@ -621,7 +621,8 @@ struct FloatingInputCard: View {
         // The chip still goes red, which is the advisory. A ceiling the user
         // chose must never refuse; if the request really cannot run, the
         // engine fails loudly and that is strictly better than a dead button.
-        guard !isContextHardOverflow || contextWindowIsUserCapped else { return false }
+        let budget = contextBudget
+        guard !budget.hardOverflow || budget.isUserCapped else { return false }
 
         // Configuration gate: the Default agent needs the configure tool
         // schema to do its job, but a too-small context window (e.g.
@@ -646,11 +647,6 @@ struct FloatingInputCard: View {
         localText.isEmpty && pendingAttachments.isEmpty && !isComposing
     }
 
-    /// Context tokens including what's currently being typed (localText may differ from text binding)
-    private var displayContextTokens: Int {
-        displayContextBreakdown.total
-    }
-
     /// Breakdown augmented with real-time typing tokens
     private var displayContextBreakdown: ContextBreakdown {
         var bd = contextBreakdown
@@ -667,74 +663,95 @@ struct FloatingInputCard: View {
         return bd
     }
 
-    /// Max context length for the selected model — the SAME resolution the
-    /// runtime loop uses (`AgentLoopBudget`), so the chip's denominator and
-    /// the trim budget never diverge.
-    private var contextWindowResolution: AgentLoopBudget.ContextWindowResolution? {
-        guard let model = selectedModel else { return nil }
-        return AgentLoopBudget.resolveContextWindowResolutionSync(modelId: model)
-    }
-
-    private var maxContextTokens: Int? {
-        contextWindowResolution?.tokens
-    }
-
-    /// The denominator the compactor and overflow gate actually use. The
-    /// model maximum remains visible in the popover, but showing it as the
-    /// chip denominator made an 85%-budget warning look early and made the
-    /// Chat metadata fallback look like a competing cap.
-    private var usableContextTokens: Int? {
-        maxContextTokens.map {
-            ContextBudgetManager(contextLength: $0).effectiveBudget
-        }
-    }
-
     // MARK: - Context budget gating
 
-    /// Shared UI/runtime budget math (`AgentLoopBudget.assess`): ratio and
-    /// thresholds are computed against the EFFECTIVE budget (window ×
-    /// safety margin) the runtime trims against, the hard gate excludes
-    /// compactable history, and the response reservation is included.
-    private var budgetAssessment: AgentLoopBudget.Assessment {
-        guard let maxCtx = maxContextTokens else { return .empty }
+    /// One pass over the context-budget chain.
+    ///
+    /// Everything here derives from the same two costly inputs: the context
+    /// window resolution and the typing-augmented breakdown. These used to be
+    /// separate computed properties that called each other, and SwiftUI
+    /// re-evaluates a computed property on every single access — so one
+    /// render of the context chip resolved the context window six times,
+    /// rebuilt the breakdown four times (running the token estimator over the
+    /// composer text on each rebuild) and ran the assessment three times,
+    /// with a per-agent `effectiveMaxTokens` lookup each time. That fan-out
+    /// is what put this chain in the hang reports on every keystroke.
+    ///
+    /// Callers must bind this to a local once and read fields off it; reading
+    /// `contextBudget` repeatedly reintroduces the same fan-out one level up.
+    private struct ContextBudgetSnapshot {
+        var resolution: AgentLoopBudget.ContextWindowResolution?
+        /// Breakdown including what is currently being typed.
+        var breakdown: ContextBreakdown
+        var assessment: AgentLoopBudget.Assessment
+
+        /// Max context length for the selected model — the SAME resolution
+        /// the runtime loop uses (`AgentLoopBudget`), so the chip's
+        /// denominator and the trim budget never diverge.
+        var maxTokens: Int? { resolution?.tokens }
+
+        /// Context tokens including what is currently being typed.
+        var displayTokens: Int { breakdown.total }
+
+        /// The denominator the compactor and overflow gate actually use. The
+        /// model maximum remains visible in the popover, but showing it as
+        /// the chip denominator made an 85%-budget warning look early and
+        /// made the Chat metadata fallback look like a competing cap.
+        var usableTokens: Int? {
+            maxTokens.map { ContextBudgetManager(contextLength: $0).effectiveBudget }
+        }
+
+        /// Whether the window in force came from the user's
+        /// `contextLengthCap` rather than from the model. The resolver
+        /// records this as `.userCap` precisely so surfaces can say WHY the
+        /// window is smaller than the bundle advertises; the send gate reads
+        /// it to keep a preference from behaving like a hardware limit.
+        var isUserCapped: Bool { resolution?.source == .userCap }
+
+        /// Estimated fraction of the effective budget the next send occupies
+        /// (typing included). nil when the window is unknown.
+        var usageRatio: Double? { assessment.usageRatio }
+
+        /// Soft warning threshold: at ≥85% of the effective budget the
+        /// context chip turns amber. Sends still go through — mid-run
+        /// compaction is the overflow handler — but the user should know
+        /// quality may degrade.
+        var nearLimit: Bool { assessment.nearLimit }
+
+        /// Hard overflow: the non-compactable prefix alone — everything
+        /// EXCEPT the conversation history (system prompt, tools, memory,
+        /// input) — plus the response reservation exceeds the effective
+        /// budget. History can be compacted mid-run; this can't, so the send
+        /// is blocked with a clear signal instead of a guaranteed model
+        /// failure.
+        var hardOverflow: Bool { assessment.hardOverflow }
+    }
+
+    /// Resolve the window, build the breakdown and run the shared UI/runtime
+    /// budget math (`AgentLoopBudget.assess`) exactly once. Ratio and
+    /// thresholds are computed against the EFFECTIVE budget (window × safety
+    /// margin) the runtime trims against, the hard gate excludes compactable
+    /// history, and the response reservation is included.
+    private var contextBudget: ContextBudgetSnapshot {
+        let resolution = selectedModel.map {
+            AgentLoopBudget.resolveContextWindowResolutionSync(modelId: $0)
+        }
+        let breakdown = displayContextBreakdown
         // Real per-agent max_tokens (not the 4096 default) so the chip's
         // hard-overflow gate reserves exactly what the runtime loop will.
-        return AgentLoopBudget.assess(
-            breakdown: displayContextBreakdown,
-            contextWindow: maxCtx,
-            maxResponseTokens: agentManager.effectiveMaxTokens(for: effectiveAgentId)
+        let assessment =
+            resolution.map {
+                AgentLoopBudget.assess(
+                    breakdown: breakdown,
+                    contextWindow: $0.tokens,
+                    maxResponseTokens: agentManager.effectiveMaxTokens(for: effectiveAgentId)
+                )
+            } ?? .empty
+        return ContextBudgetSnapshot(
+            resolution: resolution,
+            breakdown: breakdown,
+            assessment: assessment
         )
-    }
-
-    /// Estimated fraction of the effective budget the next send occupies
-    /// (typing included). nil when the window is unknown.
-    private var contextUsageRatio: Double? {
-        budgetAssessment.usageRatio
-    }
-
-    /// Soft warning threshold: at ≥85% of the effective budget the context
-    /// chip turns amber. Sends still go through — mid-run compaction is the
-    /// overflow handler — but the user should know quality may degrade.
-    private var isContextNearLimit: Bool {
-        budgetAssessment.nearLimit
-    }
-
-    /// Hard overflow: the non-compactable prefix alone — everything
-    /// EXCEPT the conversation history (system prompt, tools, memory,
-    /// input) — plus the response reservation exceeds the effective
-    /// budget. History can be compacted mid-run; this can't, so the send
-    /// is blocked with a clear signal instead of a guaranteed model failure.
-    private var isContextHardOverflow: Bool {
-        budgetAssessment.hardOverflow
-    }
-
-    /// Whether the window in force came from the user's `contextLengthCap`
-    /// rather than from the model. The resolver already records this as
-    /// `.userCap` precisely so surfaces can say WHY the window is smaller
-    /// than the bundle advertises; the send gate reads it to keep a
-    /// preference from behaving like a hardware limit.
-    private var contextWindowIsUserCapped: Bool {
-        contextWindowResolution?.source == .userCap
     }
 
     private var isVoiceConfigured: Bool {
@@ -771,7 +788,7 @@ struct FloatingInputCard: View {
         guard !remoteConnectionPending, composerLock == nil else { return false }
         return pickerItems.count > 1
             || isModelPinned
-            || (displayContextTokens > 0 && !isRemoteAgentRun)
+            || (contextBudget.displayTokens > 0 && !isRemoteAgentRun)
             || isSandboxAvailable
             || isDefaultConfigAgent
             || (appConfig.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent)
@@ -963,8 +980,15 @@ struct FloatingInputCard: View {
                 configContextErrorOverlay
             }
             .overlay(alignment: .top) {
+                // Cache-only lookup: this is a view body, and the blocking
+                // `findInstalledModel(named:)` parks on the cold-cache disk
+                // scan for up to ~10s, beachballing the app on launch. A miss
+                // just hides the preparation overlay until the scan lands and
+                // the next render picks it up.
                 if let progress = alignmentPreparation.progress(
-                    modelID: selectedModel.flatMap { ModelManager.findInstalledModel(named: $0)?.id },
+                    modelID: selectedModel.flatMap {
+                        ModelManager.findInstalledModelFromCache(named: $0)?.id
+                    },
                     sessionID: inputHistoryKey)
                 {
                     VStack(alignment: .leading, spacing: 8) {
@@ -1198,7 +1222,13 @@ struct FloatingInputCard: View {
                         string:
                             "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
                     ) {
-                        NSWorkspace.shared.open(url)
+                        // Completion-handler form: the plain `open(_:)` blocks
+                        // the main thread on the LaunchServices round-trip.
+                        NSWorkspace.shared.open(
+                            url,
+                            configuration: NSWorkspace.OpenConfiguration(),
+                            completionHandler: nil
+                        )
                     }
                 },
                 secondaryButton: .cancel("Cancel")
@@ -2940,18 +2970,21 @@ extension FloatingInputCard {
     /// agent's budget.
     @ViewBuilder
     private var contextBudgetRing: some View {
-        if displayContextTokens > 0 && !isRemoteAgentRun {
+        // Bound once: every field below comes from this single pass, so the
+        // chip costs one window resolution and one breakdown per render.
+        let budget = contextBudget
+        if budget.displayTokens > 0 && !isRemoteAgentRun {
             FloatingContextChip(
-                displayTokens: displayContextTokens,
-                usableTokens: usableContextTokens,
-                modelMaxTokens: maxContextTokens,
-                windowResolution: contextWindowResolution,
+                displayTokens: budget.displayTokens,
+                usableTokens: budget.usableTokens,
+                modelMaxTokens: budget.maxTokens,
+                windowResolution: budget.resolution,
                 isStreaming: isStreaming,
-                isNearLimit: isContextNearLimit,
-                isHardOverflow: isContextHardOverflow,
-                usageRatio: contextUsageRatio,
+                isNearLimit: budget.nearLimit,
+                isHardOverflow: budget.hardOverflow,
+                usageRatio: budget.usageRatio,
                 formatTokenCount: formatTokenCount,
-                breakdown: { displayContextBreakdown },
+                breakdown: { budget.breakdown },
                 compactionState: compactionState,
                 canCompact: canCompactConversation && !isStreaming,
                 onCompact: onCompactConversation
@@ -4582,9 +4615,18 @@ extension FloatingInputCard {
                     // host-wide condition, so the user gets the tool that
                     // shows the whole host.
                     swapTextButton(String(localized: "Activity Monitor", bundle: .module)) {
-                        NSWorkspace.shared.open(
-                            URL(fileURLWithPath:
-                                "/System/Applications/Utilities/Activity Monitor.app"))
+                        // `open(_:)` blocks the caller on the LaunchServices
+                        // XPC round-trip, and this fires from a button action
+                        // on the main thread while the host is already under
+                        // memory pressure — exactly when that round-trip is
+                        // slowest. The completion-handler form returns
+                        // immediately and launches in the background.
+                        NSWorkspace.shared.openApplication(
+                            at: URL(fileURLWithPath:
+                                "/System/Applications/Utilities/Activity Monitor.app"),
+                            configuration: NSWorkspace.OpenConfiguration(),
+                            completionHandler: nil
+                        )
                     }
                 }
             }
@@ -5165,7 +5207,8 @@ extension FloatingInputCard {
             modelId: selectedModel,
             fallbackSupportsImages: supportsImages,
             localModelType: localModel?.modelType,
-            localHasAudioTensors: localModel?.hasAudioTensors ?? false
+            localHasAudioTensors: localModel?.hasAudioTensors ?? false,
+            localCapabilities: localModel?.mediaCapabilities
         )
     }
 
@@ -7077,7 +7120,34 @@ private struct ContextBreakdownPopover: View {
                 divider
                 compactionSection
             }
+
+            divider
+            contextWindowCapLink
         }
+    }
+
+    private var contextWindowCapLink: some View {
+        Button {
+            ManagementStateManager.shared.serverSectionRequest = "cache"
+            SettingsHighlightCoordinator.shared.request("settings.chat.contextLength")
+            AppDelegate.shared?.showManagementWindow(initialTab: .server)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("Open Context Window Cap", bundle: .module)
+                    .font(.system(size: 11, weight: .medium))
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .foregroundColor(theme.accentColor)
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .localizedHelp("Open Management → Server → Cache → Context Window Cap")
     }
 
     // MARK: - Disk cache

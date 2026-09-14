@@ -1106,7 +1106,9 @@ public enum SystemPromptTemplates {
             "- You can hand a bounded, self-contained subtask to a worker and get back ONLY a "
                 + "compact result digest — the worker's transcript never enters this conversation, "
                 + "so delegating context-heavy work costs you a digest instead of everything the "
-                + "worker read and produced."
+                + "worker read and produced. Locating or changing Osaurus Settings is NOT a "
+                + "worker job — use `osaurus_help` find/read yourself; never spawn Computer Use "
+                + "to click through Management."
         )
         lines.append(
             "- Offload work that would bloat this context: bulk reading + summarization, research "

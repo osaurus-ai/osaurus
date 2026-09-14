@@ -22,6 +22,7 @@ extension AgentChannelKind {
         case .telegram: "Telegram"
         case .imessage: "iMessage"
         case .whatsapp: "WhatsApp"
+        case .n8n: "n8n"
         case .customHTTP: "Custom HTTP"
         }
     }
@@ -33,6 +34,7 @@ extension AgentChannelKind {
         case .telegram: "paperplane.fill"
         case .imessage: "message.fill"
         case .whatsapp: "phone.bubble.fill"
+        case .n8n: "arrow.triangle.branch"
         case .customHTTP: "curlybraces"
         }
     }
@@ -46,6 +48,7 @@ extension AgentChannelKind {
         case .telegram: [Color(hex: "2AABEE"), Color(hex: "1E96C8")]
         case .imessage: [Color(hex: "34C759"), Color(hex: "248A3D")]
         case .whatsapp: [Color(hex: "25D366"), Color(hex: "128C7E")]
+        case .n8n: [Color(hex: "EA4B71"), Color(hex: "C2385A")]
         case .customHTTP: [Color(hex: "64748B"), Color(hex: "475569")]
         }
     }
@@ -746,48 +749,61 @@ struct AgentChannelCopyableCommand: View {
     let command: String
     /// Optional short explanation rendered next to the command.
     var caption: String?
+    /// 1 (default) keeps a single truncated line; higher values wrap a recipe.
+    var lineLimit: Int = 1
     /// Called after the command is copied, e.g. to show a status toast.
     var onCopied: (() -> Void)?
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text(command)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6).stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
-            Button {
-                #if os(macOS)
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(command, forType: .string)
-                #endif
-                onCopied?()
-            } label: {
-                Image(systemName: "doc.on.doc")
-                    .font(.system(size: 10, weight: .medium))
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(theme.accentColor)
-            .help(Text("Copy", bundle: .module))
-
-            if let caption {
+        VStack(alignment: .leading, spacing: 4) {
+            if let caption, lineLimit > 1 {
                 Text(LocalizedStringKey(caption), bundle: .module)
                     .font(.system(size: 10))
                     .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 0)
+            HStack(alignment: lineLimit > 1 ? .top : .center, spacing: 8) {
+                Text(command)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(lineLimit)
+                    .truncationMode(lineLimit > 1 ? .tail : .middle)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .frame(maxWidth: lineLimit > 1 ? .infinity : nil, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.inputBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6).stroke(theme.inputBorder, lineWidth: 1)
+                            )
+                    )
+                Button {
+                    #if os(macOS)
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(command, forType: .string)
+                    #endif
+                    onCopied?()
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(theme.accentColor)
+                .help(Text("Copy", bundle: .module))
+
+                if let caption, lineLimit == 1 {
+                    Text(LocalizedStringKey(caption), bundle: .module)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if lineLimit == 1 {
+                    Spacer(minLength: 0)
+                }
+            }
         }
     }
 }

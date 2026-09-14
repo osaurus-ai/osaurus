@@ -63,6 +63,9 @@ struct ChatSessionSidebar: View {
     /// replaces the removed agent-selector pill; same effect as picking an
     /// agent from it).
     var onSelectAgent: ((UUID) -> Void)? = nil
+    /// Start a fresh chat with a local agent straight from its row (hover
+    /// "+" / context menu), without selecting the agent first.
+    var onNewChatWithAgent: ((UUID) -> Void)? = nil
     /// Lowercased address of the workspace teammate's agent the window's
     /// active tab is chatting with, or nil for a local chat. While set, the
     /// matching team-agent row is the selected one (no local row is).
@@ -75,6 +78,17 @@ struct ChatSessionSidebar: View {
     /// Select a workspace teammate's shared agent (by address) for this
     /// window — same effect as picking a local agent.
     var onSelectWorkspaceAgent: ((String, String) -> Void)? = nil
+    /// LAN-discovered peers (Bonjour). Rendered under "On This Network" when
+    /// a selection handler is wired — restoring the reach the removed toolbar
+    /// agent pill's section provided.
+    var discoveredAgents: [DiscoveredAgent] = []
+    /// Id of the discovered agent the window's active tab is chatting with,
+    /// or nil for a local/relay chat. While set, the matching network row is
+    /// the selected one (no local row is).
+    var activeDiscoveredAgentId: UUID? = nil
+    /// Select a LAN-discovered agent: runs the pairing sheet on first pick,
+    /// then connects — the same flow the removed agent pill drove.
+    var onSelectDiscoveredAgent: ((DiscoveredAgent) -> Void)? = nil
 
     enum ExportFormat {
         case markdown
@@ -1088,13 +1102,16 @@ struct ChatSessionSidebar: View {
                     let activity = activityStatus(for: agent)
                     AgentSidebarRow(
                         agent: agent,
-                        // A team-agent tab owns the selection: no local row
-                        // is highlighted while one is active.
-                        isSelected: agent.id == agentId && workspaceAgentAddress == nil,
+                        // A team-agent or network-agent tab owns the
+                        // selection: no local row is highlighted while one
+                        // is active.
+                        isSelected: agent.id == agentId && workspaceAgentAddress == nil
+                            && activeDiscoveredAgentId == nil,
                         // The selected agent's row reflects the session the
                         // window is showing (the active tab's chat), so the
                         // sidebar always answers "which chat is this?".
                         currentSessionTitle: agent.id == agentId && workspaceAgentAddress == nil
+                            && activeDiscoveredAgentId == nil
                             ? sessions.first(where: { $0.id == currentSessionId })?.title
                             : nil,
                         activityStatus: activity,
@@ -1113,6 +1130,12 @@ struct ChatSessionSidebar: View {
                         onSelect: {
                             newAgentHighlight.markSeen(localAgentId: agent.id)
                             onSelectAgent?(agent.id)
+                        },
+                        onNewChat: onNewChatWithAgent.map { start in
+                            {
+                                newAgentHighlight.markSeen(localAgentId: agent.id)
+                                start(agent.id)
+                            }
                         },
                         onStop: activity == nil ? nil : { stopActivity(for: agent) },
                         isReorderable: !agent.isBuiltIn,
@@ -1146,6 +1169,14 @@ struct ChatSessionSidebar: View {
                 if !directlySharedAgents.isEmpty {
                     sharedAgentsSection(directlySharedAgents)
                 }
+
+                // Peers discovered over Bonjour that aren't already paired
+                // (paired ones render under their workspace / "Shared with
+                // you" row instead). Selecting one hands off to ChatView's
+                // pairing/connect flow.
+                if !visibleDiscoveredAgents.isEmpty {
+                    discoveredAgentsSection(visibleDiscoveredAgents)
+                }
             }
             .padding(.vertical, 8)
             .padding(.horizontal, 8)
@@ -1154,6 +1185,7 @@ struct ChatSessionSidebar: View {
             .animation(theme.animationQuick(), value: displayedAgents.map(\.id))
             .animation(theme.animationQuick(), value: rosterStore.rosters.map(\.id))
             .animation(theme.animationQuick(), value: directlySharedAgents.map(\.id))
+            .animation(theme.animationQuick(), value: visibleDiscoveredAgents.map(\.id))
         }
         .scrollIndicators(.hidden)
     }
@@ -1212,6 +1244,55 @@ struct ChatSessionSidebar: View {
                         onSelectWorkspaceAgent?(address, "")
                     },
                     onRemove: { removeDirectShare(remote) }
+                )
+            }
+        }
+    }
+
+    // MARK: On This Network
+
+    /// LAN-discovered peers that still need a sidebar row: the browser
+    /// already excludes this device's own agents, so only peers with an
+    /// existing pairing row (workspace roster or "Shared with you") drop
+    /// out here.
+    private var visibleDiscoveredAgents: [DiscoveredAgent] {
+        guard onSelectDiscoveredAgent != nil else { return [] }
+        let pairedAddresses = Set(
+            remoteAgentManager.remoteAgents.map { $0.agentAddress.lowercased() }
+        )
+        return discoveredAgents
+            .filter { Self.isVisibleDiscovered($0, pairedAddresses: pairedAddresses) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// Pure partition rule (testable): a discovered peer renders under
+    /// "On This Network" unless a pairing for its address already owns a
+    /// row in another section. Addressless peers (pre-Secure-Channel) have
+    /// nothing to match a pairing on, so they always render.
+    nonisolated static func isVisibleDiscovered(
+        _ agent: DiscoveredAgent, pairedAddresses: Set<String>
+    ) -> Bool {
+        guard let address = agent.address?.lowercased(), !address.isEmpty else { return true }
+        return !pairedAddresses.contains(address)
+    }
+
+    @ViewBuilder
+    private func discoveredAgentsSection(_ agents: [DiscoveredAgent]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            sidebarSectionHeader(
+                icon: "antenna.radiowaves.left.and.right",
+                title: L("On This Network"),
+                help: L("Osaurus agents discovered on your local network")
+            )
+
+            ForEach(agents) { agent in
+                DiscoveredAgentSidebarRow(
+                    agent: agent,
+                    isSelected: activeDiscoveredAgentId == agent.id,
+                    currentSessionTitle: activeDiscoveredAgentId == agent.id
+                        ? sessions.first(where: { $0.id == currentSessionId })?.title
+                        : nil,
+                    onSelect: { onSelectDiscoveredAgent?(agent) }
                 )
             }
         }
@@ -1860,6 +1941,10 @@ private struct AgentSidebarRow: View {
     /// Appeared during this app run and not opened yet: accent ring + pill.
     var isNew: Bool = false
     let onSelect: () -> Void
+    /// Start a fresh chat with this agent. Shown as a hover "+" so the user
+    /// can open a new chat without first selecting the agent and then
+    /// reaching for the "+" in the tab strip.
+    var onNewChat: (() -> Void)? = nil
     /// Stop every live run on this agent. Shown on hover while
     /// `activityStatus` is non-nil.
     var onStop: (() -> Void)? = nil
@@ -1957,16 +2042,30 @@ private struct AgentSidebarRow: View {
             // there). The selected row is already signalled by its
             // background, so no checkmark.
             else if isHovered {
-                Button(action: openAgentSettings) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
-                        .contentShape(Rectangle())
+                HStack(spacing: 2) {
+                    if let onNewChat {
+                        Button(action: onNewChat) {
+                            Image(systemName: "plus.bubble")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(theme.secondaryText)
+                                .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .pointingHandCursor()
+                        .localizedHelp("New Chat")
+                    }
+                    Button(action: openAgentSettings) {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(theme.secondaryText)
+                            .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .pointingHandCursor()
+                    .localizedHelp(agent.isBuiltIn ? LocalizedStringKey("Orchestrator Settings") : LocalizedStringKey("Agent Settings"))
                 }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-                .localizedHelp(agent.isBuiltIn ? LocalizedStringKey("Orchestrator Settings") : LocalizedStringKey("Agent Settings"))
                 .transition(.opacity)
             }
         }
@@ -2020,6 +2119,11 @@ private struct AgentSidebarRow: View {
     /// share/unshare actions that otherwise live only in Settings.
     @ViewBuilder
     private var agentContextMenu: some View {
+        if let onNewChat {
+            Button(action: onNewChat) {
+                Label(L("New Chat"), systemImage: "plus.bubble")
+            }
+        }
         Button(action: openAgentSettings) {
             Label(L("Open Settings"), systemImage: "gearshape")
         }
@@ -2564,6 +2668,134 @@ private struct RemoteAgentSidebarRow: View {
         let description = agent.description.trimmingCharacters(in: .whitespacesAndNewlines)
         if !description.isEmpty { lines.append(description) }
         lines.append(agent.shortAddress)
+        return lines.joined(separator: "\n")
+    }
+}
+
+// MARK: - Discovered Agent Row
+
+/// Row for an unpaired LAN peer under "On This Network". Same shape as
+/// `RemoteAgentSidebarRow` (avatar, name, subtitle) with a network badge on
+/// the avatar; a Bonjour advertisement carries no mascot, so the avatar is
+/// always a monogram. Tapping runs ChatView's pairing/connect flow — the
+/// same handoff the removed toolbar agent pill made.
+private struct DiscoveredAgentSidebarRow: View {
+    let agent: DiscoveredAgent
+    let isSelected: Bool
+    var currentSessionTitle: String? = nil
+    let onSelect: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            AgentAvatarView(
+                mascotId: nil,
+                name: agent.name,
+                tint: agentColorFor(agent.name),
+                diameter: 26,
+                customImageURL: nil,
+                monogramFontSize: 12,
+                borderWidth: 0
+            )
+            .overlay(alignment: .bottomTrailing) {
+                Image(systemName: "network")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(1.5)
+                    .background(Circle().fill(theme.sidebarBackground))
+                    .offset(x: 2, y: 2)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(agent.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                    if agent.supportsSecureChannel {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundColor(theme.successColor)
+                            .help(L("End-to-end encrypted"))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if !agent.supportsSecureChannel {
+                    // Old peer: agent traffic hard-requires E2E, so chat will
+                    // be refused until it upgrades. Say so up front.
+                    Text("Needs upgrade for encrypted chat", bundle: .module)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.warningColor)
+                        .lineLimit(1)
+                } else if let currentSessionTitle {
+                    Text(currentSessionTitle)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.accentColor.opacity(0.9))
+                        .lineLimit(1)
+                } else if let subtitleLabel {
+                    Text(verbatim: subtitleLabel)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.secondaryText.opacity(0.85))
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
+        .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        .onTapGesture(perform: onSelect)
+        .contextMenu {
+            Button(action: onSelect) { Label(L("Chat"), systemImage: "bubble.left") }
+            if let address = agent.address, !address.isEmpty {
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(address, forType: .string)
+                } label: {
+                    Label(L("Copy Address"), systemImage: "doc.on.doc")
+                }
+            }
+        }
+        .onHover { hovering in
+            withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
+                isHovered = hovering
+            }
+        }
+        .animation(theme.springAnimation(responseMultiplier: 0.8), value: isSelected)
+        .help(helpText)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(verbatim: "\(agent.name), \(L("On This Network"))"))
+    }
+
+    /// "host · description", either alone, or nil when neither is known —
+    /// the same composition the agent pill's network row used.
+    private var subtitleLabel: String? {
+        var parts: [String] = []
+        if let host = agent.host, !host.isEmpty {
+            // "device.local." → "device", as the agent pill rendered it.
+            parts.append(
+                host
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+                    .replacingOccurrences(of: "\\.local$", with: "", options: .regularExpression)
+            )
+        }
+        if !agent.agentDescription.isEmpty {
+            parts.append(agent.agentDescription)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private var helpText: String {
+        var lines: [String] = [agent.name]
+        if !agent.agentDescription.isEmpty { lines.append(agent.agentDescription) }
+        // The fingerprint lets the user verify the cryptographic identity,
+        // not just the attacker-controllable display name.
+        if let fingerprint = agent.addressFingerprint { lines.append(fingerprint) }
         return lines.joined(separator: "\n")
     }
 }

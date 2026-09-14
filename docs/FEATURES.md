@@ -664,7 +664,7 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 - `Storage/AgentChannelMessageStore.swift` — inbound messages + outbound intents
 - `Views/Settings/AgentChannelConnectionCenterView.swift`, `Views/Settings/AgentChannelDestinationViews.swift` — Channels center, Channel Posting cards, Customize sheet, outbox review
 
-**Documentation:** [AGENT_CHANNELS.md](AGENT_CHANNELS.md) (architecture and flows), [AGENT_CHANNEL_SECURITY.md](AGENT_CHANNEL_SECURITY.md) (security model), [AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md](AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md) (setup guide)
+**Documentation:** [AGENT_CHANNELS.md](AGENT_CHANNELS.md) (architecture and flows), [AGENT_CHANNEL_SECURITY.md](AGENT_CHANNEL_SECURITY.md) (security model), [AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md](AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md) (setup guide), [AGENT_CHANNELS_N8N.md](AGENT_CHANNELS_N8N.md) (n8n webhook channel)
 
 **Storage:** `~/.osaurus/config/agent-channels.json` (connections + bindings), Agent Channel message store (messages + outbound intents)
 

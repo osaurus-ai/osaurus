@@ -3,6 +3,40 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.2</title>
+            <pubDate>Sun, 13 Sep 2026 20:56:39 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.2</sparkle:version>
+            <sparkle:shortVersionString>0.25.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.2/Osaurus-0.25.2.dmg" length="77215165" type="application/octet-stream" sparkle:edSignature="lB2JobR031HHo/mLO5HJB9IETLG3D5mejYJKlHbW34frJiZXOIsggiP35PC4/1dUriOExGt6x2YLBG6ZDnBGBw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Add first-party n8n agent channel with secret-verified webhook ingress (#2748) by @tpae
+- Add Osaurus ID in Identity and fix Workspaces constant refresh (#2749) by @tpae
+- Show execution surface (sandbox VM vs native Mac) on tool approval cards (#2734) by @tpae
+- Computer Use audit: telemetry funnel, readiness gate, verified done, loop evals (#2731) by @tpae
+- Chat sidebar QoL: per-agent drafts, new-agent highlight, badge counts, subagent language, spell check (#2727) by @tpae
+
+## 🚀 Features
+
+- added right click context menu to chat tabs (#2721) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Make settings discoverable to the Orchestrator and Management search (#2750) by @tpae
+- Repin vMLX for the Qwen AR scheduling checkpoint (#2741) by @jjang-ai
+- restore import claude plugin from github after tools and plugins refactor (#2737) by @RaajeevChandran
+- Fix Orchestrator row selection and fit the chat window to small screens (#2730) by @tpae
+- Recover freed GPU buffers before final local child RAM refusal (#2733) by @jjang-ai
+- Pin isolated Qwen Flash AR checkpoint and display authoritative final rates (#2726) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.1...0.25.2
+]]></description>
+        </item>
+        <item>
             <title>0.25.1</title>
             <pubDate>Sat, 12 Sep 2026 05:12:44 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

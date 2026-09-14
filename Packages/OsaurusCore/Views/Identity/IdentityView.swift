@@ -15,6 +15,7 @@ import SwiftUI
 struct IdentityView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var osaurusID = OsaurusIDService.shared
     @EnvironmentObject private var server: ServerController
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -143,6 +144,10 @@ struct IdentityView: View {
             actionResultBanner(lastActionResult)
         }
 
+        // The human-facing identity first; the cryptographic material below.
+        OsaurusIDSection()
+            .settingsLandingAnchor("identity.osaurusId")
+
         MasterAddressSection(
             osaurusId: osaurusId,
             isLoadingPhrase: isLoadingRecoveryPhrase,
@@ -178,7 +183,11 @@ struct IdentityView: View {
         case .noIdentity:
             return "Set up your Osaurus Identity"
         case .ready:
-            return drift?.hasDrift == true ? "Identity drift detected" : "Your identity is active"
+            if drift?.hasDrift == true { return "Identity drift detected" }
+            if let handle = osaurusID.claimedHandle {
+                return "@\(handle) · Your identity is active"
+            }
+            return "Your identity is active"
         }
     }
 
@@ -1377,7 +1386,9 @@ private struct DeviceSection: View {
 
 // MARK: - Reusable Section Container
 
-private struct IdentitySection<Content: View>: View {
+/// Card chrome shared by every Identity section (`OsaurusIDSection`, master
+/// address, agent addresses, devices, danger zone).
+struct IdentitySection<Content: View>: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     private var theme: ThemeProtocol { themeManager.currentTheme }
 

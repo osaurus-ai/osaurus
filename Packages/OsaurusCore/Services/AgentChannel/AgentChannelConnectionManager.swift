@@ -13,6 +13,9 @@ enum AgentChannelConnectionManagerError: LocalizedError, Equatable, Sendable {
     case emptyName
     case missingSupportedActions(String)
     case missingCustomHTTPConfiguration(String)
+    case missingN8nConfiguration(String)
+    case invalidN8nOutboundURL(String)
+    case invalidN8nVerificationHeader(String)
     case invalidCustomHTTPBaseURL(String)
     case invalidCustomHTTPMethod(action: String, method: String)
     case invalidCustomHTTPPath(action: String, path: String)
@@ -38,6 +41,13 @@ enum AgentChannelConnectionManagerError: LocalizedError, Equatable, Sendable {
             return "Agent channel connection `\(id)` must support at least one standard action."
         case .missingCustomHTTPConfiguration(let id):
             return "Custom JSON channel `\(id)` requires a custom HTTP configuration."
+        case .missingN8nConfiguration(let id):
+            return "n8n channel `\(id)` requires an n8n configuration block."
+        case .invalidN8nOutboundURL(let url):
+            return
+                "n8n outbound webhook URL `\(url)` must be an absolute HTTPS URL to a public host. Loopback, private-network, and plain-HTTP targets are refused by the outbound host policy; use pull-based replies for local n8n."
+        case .invalidN8nVerificationHeader(let header):
+            return "n8n verification header `\(header)` is not a valid HTTP header name."
         case .invalidCustomHTTPBaseURL(let url):
             return "`\(url)` is not a valid HTTP or HTTPS base URL."
         case .invalidCustomHTTPMethod(let action, let method):
@@ -336,7 +346,10 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
     private func validatedConnection(
         _ connection: AgentChannelConnection
     ) throws -> AgentChannelConnection {
-        let normalized = connection.normalized
+        // n8n: project the optional outbound webhook onto the generic custom
+        // HTTP fields the runner reads (secret reference, actions, write
+        // allowlists) before validation so the stored row is self-consistent.
+        let normalized = AgentChannelN8nPreset.applyingOutbound(to: connection).normalized
         guard !normalized.id.isEmpty else {
             throw AgentChannelConnectionManagerError.emptyConnectionId
         }
@@ -353,7 +366,52 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
         if normalized.kind == .customHTTP {
             try validateCustomHTTPConfiguration(for: normalized)
         }
+        if normalized.kind == .n8n {
+            try validateN8nConfiguration(for: normalized)
+            // The optional outbound push is stored as a regular custom HTTP
+            // action set so every runner gate applies unchanged; validate it
+            // exactly like a custom connection when present.
+            if normalized.customHTTP != nil {
+                do {
+                    try validateCustomHTTPConfiguration(for: normalized)
+                } catch AgentChannelConnectionManagerError.invalidCustomHTTPBaseURL {
+                    // The runner's host policy (C2) refused the outbound target
+                    // (loopback / private ranges / plain HTTP). Name the n8n
+                    // field the operator actually edited.
+                    throw AgentChannelConnectionManagerError.invalidN8nOutboundURL(
+                        normalized.n8n?.outbound.webhookURL ?? normalized.customHTTP?.baseURL ?? ""
+                    )
+                }
+            }
+        }
         return normalized
+    }
+
+    private func validateN8nConfiguration(
+        for connection: AgentChannelConnection
+    ) throws {
+        guard let n8n = connection.n8n else {
+            throw AgentChannelConnectionManagerError.missingN8nConfiguration(connection.id)
+        }
+        if let header = n8n.inboundVerification.headerName {
+            let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+            guard !header.isEmpty,
+                header.unicodeScalars.allSatisfy(allowed.contains)
+            else {
+                throw AgentChannelConnectionManagerError.invalidN8nVerificationHeader(header)
+            }
+        }
+        // Outbound push is HTTPS-only (spec §6.3 / plan): the preset never
+        // opts into `allowInsecureHTTP`, so this is the same contract the
+        // runner enforces, surfaced at save time with the n8n-specific error.
+        if let webhookURL = n8n.outbound.webhookURL {
+            guard let url = URL(string: webhookURL),
+                url.scheme?.lowercased() == "https",
+                let host = url.host, !host.isEmpty
+            else {
+                throw AgentChannelConnectionManagerError.invalidN8nOutboundURL(webhookURL)
+            }
+        }
     }
 
     private func validateSecretReferences(

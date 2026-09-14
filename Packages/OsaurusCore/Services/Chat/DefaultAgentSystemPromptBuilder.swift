@@ -132,13 +132,15 @@ public enum DefaultAgentSystemPromptBuilder {
                     + "Look things up any time, directly (no loading "
                     + "step): `osaurus_inspect` ({action: 'status' | 'list' | 'describe'}) "
                     + "for the current configuration; `osaurus_help` ({action: 'topics' | "
-                    + "'read', topic: ...}) for how Osaurus and its features work — for "
-                    + "ANY question about Osaurus or a feature, ALWAYS call `osaurus_help` "
-                    + "first and answer from its text, never from memory: read the "
-                    + "matching topic, or list `topics` when no single topic fits (a "
-                    + "broad \"what can Osaurus do?\" tour). Web tools (`web_search`, "
-                    + "`search_and_extract`) are for the outside world only — never for "
-                    + "Osaurus features, configuration, models, or plugins."
+                    + "'read' | 'find', topic/query: ...}) for how Osaurus and its features "
+                    + "work — for ANY question about Osaurus or a feature, ALWAYS call "
+                    + "`osaurus_help` first and answer from its text, never from memory: "
+                    + "read the matching topic, `find` a setting by name, or list `topics` "
+                    + "when no single topic fits (a broad \"what can Osaurus do?\" tour). "
+                    + "Where a setting lives is `find` — quote the breadcrumb; never "
+                    + "`spawn_agent` or Computer Use to hunt Osaurus Settings. Web tools "
+                    + "(`web_search`, `search_and_extract`) are for the outside world only "
+                    + "— never for Osaurus features, configuration, models, or plugins."
             )
             lines.append("")
             if writeToolLines.isEmpty {
@@ -183,9 +185,10 @@ public enum DefaultAgentSystemPromptBuilder {
                         + "not keep inspecting. `osaurus_config` is for changes only — to look "
                         + "anything up (schedules, MCP, plugins, providers, models, agents) call "
                         + "`osaurus_inspect` or `osaurus_help` directly. Server runtime, chat "
-                        + "behavior, and app settings (port, caches, login item, dock icon) are "
-                        + "changed in the Settings UI, not here — point the user there and "
-                        + "never claim to have changed them."
+                        + "behavior, and app settings (port, caches, context window cap, login "
+                        + "item, dock icon) are changed in the Settings UI, not here — call "
+                        + "`osaurus_help` {action: 'find'} and quote the breadcrumb; never "
+                        + "claim to have changed them."
                 )
             }
             lines.append("")
@@ -228,7 +231,8 @@ public enum DefaultAgentSystemPromptBuilder {
                     + "models, providers, MCP, plugins, schedules, settings — IS your job, "
                     + "even when the request mentions web or downloads: use the tools above. "
                     + "A question about Osaurus or its features starts with an `osaurus_help` "
-                    + "read — never answer one from memory."
+                    + "read or find — never answer one from memory, and never spawn a "
+                    + "specialist or Computer Use agent to click through Settings."
             )
             lines.append("")
             return lines.joined(separator: "\n")
@@ -247,7 +251,8 @@ public enum DefaultAgentSystemPromptBuilder {
                 + "({action: 'status' | 'list' | 'describe'}). For questions about what Osaurus is or how "
                 + "a feature works (models, providers, agents, skills, plugins, MCP, schedules, "
                 + "memory, server/API, voice, and more), call `osaurus_help` — list `topics`, `read` "
-                + "the matching one, and answer from its text rather than from memory; web tools "
+                + "the matching one, or `find` a setting by name, and answer from its text "
+                + "rather than from memory; web tools "
                 + "are for the outside world only, never for Osaurus itself. Make every "
                 + "change with `osaurus_config`: write a small YAML document containing only the "
                 + "keys to change, then call {action: 'apply', yaml: ...} — {action: 'schema'} "
@@ -270,7 +275,8 @@ public enum DefaultAgentSystemPromptBuilder {
                 + "A plan is a dry run: a change is only done when an apply result says "
                 + "applied — never report a planned change as done. Server runtime, chat "
                 + "behavior, and app settings are changed in the Settings UI, not here — "
-                + "point the user there and never claim to have changed them."
+                + "call `osaurus_help` {action: 'find'} and quote the breadcrumb; never "
+                + "claim to have changed them, and never spawn Computer Use to hunt Settings."
         )
         lines.append("")
         if writeTools.isEmpty {
@@ -325,7 +331,7 @@ public enum DefaultAgentSystemPromptBuilder {
                 + "`active_agent` only sets which agent NEW chats use — apply it when the "
                 + "user explicitly asks; it is not how work gets done here. "
                 + "Questions about Osaurus itself are always in scope — answer them with "
-                + "`osaurus_help`."
+                + "`osaurus_help` (read or find). Never spawn an agent to click Settings."
         )
         lines.append("")
         return lines.joined(separator: "\n")

@@ -151,8 +151,19 @@ final class ChatWindowState: ObservableObject {
     /// tabs keep their sessions alive in memory (streams keep running); only
     /// closing a tab tears its session down or hands it to the background
     /// registry.
-    @Published private(set) var tabs: [ChatTab] = []
-    @Published private(set) var activeTabId: UUID = UUID()
+    @Published private(set) var tabs: [ChatTab] = [] {
+        didSet { onTabLayoutChanged?() }
+    }
+    @Published private(set) var activeTabId: UUID = UUID() {
+        didSet { onTabLayoutChanged?() }
+    }
+
+    /// Fired whenever the set of tabs or the active tab changes (and on
+    /// session refreshes, which is when a blank tab gets its first saved
+    /// turn). `ChatWindowManager` uses it to remember the open tabs across
+    /// window close and relaunch (`ChatTabLayoutStore`). Not `@Published`:
+    /// purely imperative, no view re-renders.
+    var onTabLayoutChanged: (() -> Void)?
 
     /// The agent whose tabs the strip currently shows: the workspace agent
     /// the window's remote mode is bound to, else the window's local agent.
@@ -598,6 +609,22 @@ final class ChatWindowState: ObservableObject {
             refreshSandboxChanges()
             return
         }
+        newTab(agentId: newAgentId)
+    }
+
+    /// Start a fresh chat with `newAgentId` from its sidebar row (hover "+").
+    /// Unlike `switchAgent`, this never lands on one of the agent's existing
+    /// tabs: if the active tab already belongs to that agent it behaves like
+    /// New Chat there (a blank tab is reused), otherwise a new tab opens for
+    /// the agent.
+    func startNewChat(with newAgentId: UUID) {
+        openProjectId = nil
+        enteredChatFromProjectPage = false
+        if ChatTabScope.local(newAgentId) == activeScope {
+            startNewChat()
+            return
+        }
+        TTSService.shared.stop()
         newTab(agentId: newAgentId)
     }
 
@@ -1057,7 +1084,7 @@ final class ChatWindowState: ObservableObject {
     /// ⌘N: ALWAYS open a new tab (like ⌘T), staying in the current project
     /// context: the current chat's project, if any, is stamped on the new
     /// tab along with the project folder, the same way `startNewChat(in:)`
-    /// does. Unlike `startNewChat`, a blank active tab is not reused.
+    /// does. An untouched blank active tab is reused (see `newTab`).
     func newTabInCurrentProject() {
         let project = ProjectManager.shared.project(for: openProjectId ?? session.projectId)
         openProjectId = nil
@@ -1227,6 +1254,22 @@ final class ChatWindowState: ObservableObject {
     /// outgoing tab keeps its session untouched (no detach — the tab still
     /// owns it).
     func newTab(agentId newAgentId: UUID? = nil, startsConversation: Bool = true, restoresDraft: Bool = true) {
+        // An untouched blank tab (no turns, nothing typed, no project) is
+        // reused in place rather than joined by a second identical blank:
+        // repeated ⌘T / ⌘N / + presses otherwise litter the strip with
+        // "New Chat" tabs that nothing ever prunes.
+        if let idx = tabs.firstIndex(where: { $0.id == activeTabId }),
+            newAgentId == nil || newAgentId == agentId,
+            !tabs[idx].isHibernated, isBlank(session),
+            session.unsentComposerText.isEmpty, session.projectId == nil
+        {
+            tabs[idx].lastActivatedAt = Date()
+            refreshSessions()
+            if startsConversation {
+                FeatureTelemetry.chatSessionStarted()
+            }
+            return
+        }
         persistActiveSessionForTabSwitch()
         // A new tab from a team-agent tab stays with that agent, same as
         // sidebar New Chat (`startNewChat`). Without the carried context the
@@ -1369,6 +1412,20 @@ final class ChatWindowState: ObservableObject {
         teardownTabSession(closing.session)
     }
 
+    /// ⌘W: close the active tab when there is something to close — another
+    /// tab of the same agent, or a conversation in the lone tab (which is
+    /// then replaced by a blank chat so the window stays up; the closed
+    /// chat is still in History and ⇧⌘T). Returns false for a lone blank
+    /// tab, the only case where ⌘W falls through to closing the window.
+    @discardableResult
+    func closeActiveTabIfPossible() -> Bool {
+        guard let active = tabs.first(where: { $0.id == activeTabId }) else { return false }
+        let hasSiblings = scopedTabs.count > 1
+        guard hasSiblings || active.isHibernated || !isBlank(active.session) else { return false }
+        closeTab(id: activeTabId)
+        return true
+    }
+
     /// Open a persisted conversation in a new tab (or focus the tab that
     /// already shows it).
     func openSessionInNewTab(_ sessionData: ChatSessionData) {
@@ -1386,6 +1443,65 @@ final class ChatWindowState: ObservableObject {
             newTab(startsConversation: false)
         }
         loadSession(sessionData)
+    }
+
+    // MARK: Remembered tabs (relaunch / window reopen)
+
+    /// The persisted conversations this window has open, for
+    /// `ChatTabLayoutStore`. Blank tabs are skipped (nothing to reopen);
+    /// so are registry-owned runs and registry-shared sessions, which the
+    /// `BackgroundTaskManager` retains and re-attaches on its own.
+    func tabLayoutSnapshot() -> ChatTabLayoutRecord {
+        let entries = tabs.compactMap { tab -> ChatTabLayoutRecord.Tab? in
+            guard let sessionId = tab.session.sessionId,
+                tab.isHibernated || !tab.session.turns.isEmpty,
+                !LiveChatSessionRegistry.shared.isShared(tab.session),
+                BackgroundTaskManager.shared.task(owning: tab.session) == nil
+            else { return nil }
+            return ChatTabLayoutRecord.Tab(sessionId: sessionId, lastActivatedAt: tab.lastActivatedAt)
+        }
+        let activeSessionId = tabs.first { $0.id == activeTabId }?.session.sessionId
+        return ChatTabLayoutRecord(
+            tabs: entries,
+            activeSessionId: entries.contains { $0.sessionId == activeSessionId } ? activeSessionId : nil,
+            savedAt: Date()
+        )
+    }
+
+    /// Bring remembered tabs back as hibernated tabs (metadata only; the
+    /// transcript loads when a tab is selected). Conversations deleted
+    /// since, already open here, or now owned by a registry run are
+    /// skipped. When `record.activeSessionId` came back and this window is
+    /// still on its initial blank tab, that tab is selected and the blank
+    /// dropped, so the window reopens on the chat the user was reading.
+    /// Returns how many tabs were restored.
+    @discardableResult
+    func restoreTabs(from record: ChatTabLayoutRecord) -> Int {
+        var restored = 0
+        let candidates = record.tabs.filter { entry in
+            !tabs.contains { $0.session.sessionId == entry.sessionId }
+                && BackgroundTaskManager.shared.taskState(for: entry.sessionId) == nil
+        }
+        let stubs = transcriptStubs(for: candidates.map(\.sessionId))
+        for entry in candidates {
+            guard let snapshot = stubs[entry.sessionId] else { continue }
+            let cold = makeFreshSession(agentId: snapshot.agentId ?? agentId, loading: snapshot)
+            var tab = ChatTab(id: UUID(), session: cold)
+            tab.isHibernated = true
+            tab.lastActivatedAt = entry.lastActivatedAt
+            tabs.append(tab)
+            restored += 1
+        }
+        guard restored > 0 else { return 0 }
+        if let activeSessionId = record.activeSessionId,
+            let target = tabs.first(where: { $0.session.sessionId == activeSessionId }),
+            let initial = tabs.first(where: { $0.id == activeTabId }),
+            !initial.isHibernated, isBlank(initial.session), initial.session.unsentComposerText.isEmpty
+        {
+            selectTab(id: target.id)
+            dropTab(initial)
+        }
+        return restored
     }
 
     // MARK: Background runs as tabs
@@ -1423,8 +1539,7 @@ final class ChatWindowState: ObservableObject {
     func attachRetainedTab(for task: BackgroundTaskState) -> Bool {
         guard !task.isSubagentMirror, task.chatSession == nil, !task.status.isActive else { return false }
         guard !tabs.contains(where: { $0.session.sessionId == task.id }) else { return false }
-        guard var snapshot = ChatSessionStore.load(id: task.id) else { return false }
-        snapshot.turns = []
+        guard let snapshot = transcriptStubs(for: [task.id])[task.id] else { return false }
         let cold = makeFreshSession(agentId: snapshot.agentId ?? task.agentId, loading: snapshot)
         var tab = ChatTab(id: UUID(), session: cold)
         tab.isHibernated = true
@@ -1628,13 +1743,71 @@ final class ChatWindowState: ObservableObject {
         tabs[idx].isHibernated = true
     }
 
-    /// Reload a hibernated tab's transcript from disk in place.
+    /// Metadata-only session snapshots (turns empty) for hibernated tab
+    /// stand-ins. The sessions manager already holds every chat's row for
+    /// the sidebar, so most ids cost no disk read at all; the rest come
+    /// from one batched metadata query. Never a full transcript load: with
+    /// dozens of remembered tabs those reads, on the main thread at window
+    /// creation, were the dominant cost of opening a window.
+    private func transcriptStubs(for ids: [UUID]) -> [UUID: ChatSessionData] {
+        var stubs: [UUID: ChatSessionData] = [:]
+        var missing: [UUID] = []
+        for id in ids {
+            if var cached = ChatSessionsManager.shared.session(for: id) {
+                cached.turns = []
+                stubs[id] = cached
+            } else {
+                missing.append(id)
+            }
+        }
+        for var row in ChatSessionStore.loadMetadata(ids: missing) {
+            row.turns = []
+            stubs[row.id] = row
+        }
+        return stubs
+    }
+
+    /// Reload a hibernated tab's transcript in place, off the main thread.
+    /// The tab stays `isHibernated` (title from the stand-in, no transcript)
+    /// and its session reports `isHydratingTranscript` so the chat surface
+    /// shows a loading state rather than the empty-chat greeting; both clear
+    /// when the transcript lands. The completion is dropped if the tab was
+    /// closed or its session replaced meanwhile (the stand-in is no longer
+    /// in `tabs`), and a second select while a load is in flight does not
+    /// start another.
     private func wake(tabAt idx: Int) {
         let cold = tabs[idx].session
-        if let sid = cold.sessionId, let full = ChatSessionStore.load(id: sid) {
-            cold.load(from: full)
+        guard let sid = cold.sessionId else {
+            tabs[idx].isHibernated = false
+            return
         }
-        tabs[idx].isHibernated = false
+        guard !cold.isHydratingTranscript else { return }
+        cold.isHydratingTranscript = true
+        let task = Task { @MainActor [weak self] in
+            let full = await ChatSessionStore.loadAsync(id: sid)
+            guard let self else { return }
+            defer { self.hydrationTasks.removeValue(forKey: ObjectIdentifier(cold)) }
+            cold.isHydratingTranscript = false
+            guard let liveIdx = self.tabs.firstIndex(where: { $0.session === cold && $0.isHibernated }),
+                cold.sessionId == sid
+            else { return }
+            if let full {
+                cold.load(from: full)
+            }
+            self.tabs[liveIdx].isHibernated = false
+        }
+        hydrationTasks[ObjectIdentifier(cold)] = task
+    }
+
+    /// In-flight transcript loads keyed by the stand-in session, so tests
+    /// (and any caller that needs a hydrated transcript) can wait for them.
+    private var hydrationTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
+
+    /// Wait for every in-flight tab wake to finish.
+    func awaitTranscriptHydration() async {
+        while let task = hydrationTasks.values.first {
+            await task.value
+        }
     }
 
     /// Sessions that are actually hydrated in this window (excludes
@@ -1836,6 +2009,7 @@ final class ChatWindowState: ObservableObject {
     }
 
     func refreshSessions() {
+        onTabLayoutChanged?()
         // A team-agent tab lists that agent's history (keyed by address);
         // everything else lists the local agent's.
         if let context = session.workspaceContext, !context.isServedForTeammate {

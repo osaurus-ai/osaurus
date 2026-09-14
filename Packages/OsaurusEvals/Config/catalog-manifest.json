@@ -3,6 +3,7 @@
   "suites": {
     "AgentChannels": [
       "agent_channels.external-mcp-denial",
+      "agent_channels.n8n-inbound-contract",
       "agent_channels.no-unapproved-send",
       "agent_channels.proactive-publish-policy",
       "agent_channels.unauthorized-room-read",
@@ -339,6 +340,7 @@
       "default_agent.schedule-reassign-agent",
       "default_agent.schedule-update",
       "default_agent.search-provider-ranking",
+      "default_agent.settings-context-window",
       "default_agent.settings-default-agent-model",
       "default_agent.settings-delegation-budgets",
       "default_agent.settings-memory-disable",
