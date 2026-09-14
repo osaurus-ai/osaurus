@@ -140,6 +140,20 @@ struct AgentLoopSpawnBatchEvalTests {
         #expect(scored.note.contains("exact expected output"))
     }
 
+    @Test func exportedTranscriptKeepsChildRowsBeyondPreview() throws {
+        let observation = try #require(
+            AgentLoopTranscript.spawnBatchObservation(from: Self.batchEnvelope())
+        )
+        let event = EvalCaseTranscript.ToolEvent(
+            name: "spawn_batch", arguments: "{}", resultPreview: "truncated before children",
+            spawnBatch: observation
+        )
+        let decoded = try JSONDecoder().decode(EvalCaseTranscript.ToolEvent.self,
+            from: JSONEncoder().encode(event))
+        #expect(decoded.spawnBatch == observation)
+        #expect(decoded.spawnBatch?.childRows.map(\.summary) == ["BATCH_ALPHA_42", "BATCH_BETA_BLUE"])
+    }
+
     @Test func parsesOrderedSettledRowsAndAggregateCounts() throws {
         let observation = try #require(
             AgentLoopTranscript.spawnBatchObservation(from: Self.batchEnvelope())

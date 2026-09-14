@@ -61,6 +61,43 @@ struct RAMAdmissionEvalTests {
         }
     }
 
+    @Test func exactDigestsFromTheWrongWorkerDoNotPass() throws {
+        let first = UUID(), second = UUID()
+        let workers: [EvalCase.AgentCapabilitiesFixture.SpawnAgentFixture] = [
+            .init(id: first, name: "Research"), .init(id: second, name: "Marketing")
+        ]
+        func call(_ name: String) throws -> AgentLoopTranscript.ToolInvocation {
+            let data = try JSONSerialization.data(withJSONObject: ["agent": name, "input": "return token"])
+            return .init(name: "spawn_agent", arguments: String(decoding: data, as: UTF8.self),
+                resultPreview: "", wasDeduped: false)
+        }
+        #expect(EvalRunner.scoreSpawnTargets([first, second],
+            transcript: transcript(try [call("Research"), call(second.uuidString)]), workers: workers).passed)
+        #expect(!EvalRunner.scoreSpawnTargets([first, second],
+            transcript: transcript(try [call("Research"), call("Research")]), workers: workers).passed)
+        #expect(!EvalRunner.scoreSpawnTargets([first, second],
+            transcript: transcript(try [call("Marketing"), call("Research")]), workers: workers).passed)
+    }
+
+    @Test func successfulRAMTranscriptsAreRetainedOnlyWhenRequested() throws {
+        let previous = EvalTranscriptStore.directory
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {
+            EvalTranscriptStore.configure(directory: previous)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        EvalTranscriptStore.configure(directory: directory)
+        let record = EvalCaseTranscript(caseId: "ram.fresh-chat", domain: "agent_loop",
+            modelId: "injected", outcome: "passed", query: "bounded", finalText: "RAM_FIRST_OK")
+        EvalTranscriptStore.persistIfEnabled(record)
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+        EvalTranscriptStore.persistIfEnabled(record, includeSuccessful: true)
+        let decoded = try JSONDecoder().decode(EvalCaseTranscript.self,
+            from: Data(contentsOf: directory.appendingPathComponent("ram.fresh-chat.json")))
+        #expect(decoded.finalText == "RAM_FIRST_OK")
+        #expect(EvalTranscriptStore.writtenCount == 1)
+    }
+
     @Test func completeDigestIsParsedBeforePreviewTruncation() {
         let digest = String(repeating: "x", count: 400) + "RAM_FIRST_OK"
         let envelope = ToolEnvelope.success(tool: "spawn_agent", result: ["kind": "spawn_result", "summary": digest])

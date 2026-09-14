@@ -75,20 +75,33 @@
           "query": "Delegate only to RAM Admission Research. Ask it to return exactly RAM_FIRST_OK. Do not give it additional tasks or context. Return its result.",
           "spawnSummaries": [
             "RAM_FIRST_OK"
+          ],
+          "spawnAgentIDs": [
+            "A11CE912-0000-4000-8000-000000000101"
           ]
         },
         {
           "query": "Delegate only to RAM Admission Research. Ask it to return exactly RAM_FIRST_OK. Do not give it additional tasks or context. Return its result.",
           "spawnSummaries": [
             "RAM_FIRST_OK"
+          ],
+          "spawnAgentIDs": [
+            "A11CE912-0000-4000-8000-000000000101"
           ]
         },
         {
           "query": "Delegate only to RAM Admission Research. Ask it to return exactly RAM_FIRST_OK. Do not give it additional tasks or context. Return its result.",
           "spawnSummaries": [
             "RAM_FIRST_OK"
+          ],
+          "spawnAgentIDs": [
+            "A11CE912-0000-4000-8000-000000000101"
           ]
         }
+      ],
+      "spawnAgentIDs": [
+        "A11CE912-0000-4000-8000-000000000101",
+        "A11CE912-0000-4000-8000-000000000102"
       ]
     }
   },

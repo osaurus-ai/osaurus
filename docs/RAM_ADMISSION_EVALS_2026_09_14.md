@@ -47,15 +47,37 @@ substitutes for the counters used by the admission estimator.
 Private artifacts: `/Users/eric/vmlx-private-evidence/ram-evals-2026-09-14/`.
 No screenshots or model artifacts are committed to the repository.
 
-- Full eval harness after reservation-settlement assertions: 350/350 tests,
-  43 suites (`evals-tests-final.log`). The new policy fixture runner covers all
+- Full eval harness after target and transcript assertions: 353/353 tests,
+  43 suites (`evals-complete-tests.log`). The new policy fixture runner covers all
   12 committed memory scenarios. Scorer adversarial tests reject parent-only
   echoes, failed/deduped children, wrong order and truncated/missing evidence.
 - `scripts/live-proof/assert-eval-floors-makefile-sync.sh`: 11 suite directories
   agree with floors; RAMAdmission is included.
-- Affected Core matrix: running (`core-tests.log`).
-- Fresh isolated Release and current-head live cases: in progress
-  (`release-build.log`). Prior branch live evidence is recorded separately in
+- Affected Core matrix: 660/660 tests in 84 suites (`core-tests-retry.log`).
+  The initial attempt is retained: one test compared `/private/tmp` to its
+  `/tmp` canonical path, then the SwiftPM helper could not locate its Metal
+  library. Retried without source changes using `/tmp` and the matching Cmlx
+  bundle in the test bundle's Resources.
+- Fresh isolated Release: build succeeded (`release-build.log`), binary SHA-256
+  `9d42ed9dd5190296bed7f3acd5c464c590d54e760ecd031d3145862888d17148`,
+  bundle `com.dinoki.osaurus.ramevals20260914`. Native UI campaign pending.
+- First live targeted run on Core/eval source `cd93bfcf2`: 7/8 aggregate cases
+  passed. Four single trials, four sequential trials and the reporter-order
+  scenario passed, as did all three same-model setting controls and batching
+  disabled. All 27 children were admitted and settled. Native width two
+  admitted both children in `[2]`, but one exact digest failed after the parent
+  changed its task to “Calculate the result BATCH_ALPHA_42.” The parent's final
+  claimed the expected marker, demonstrating why parent-only grading is unsafe.
+  The failed row is preserved, not retried into a reported pass. Physical
+  footprint collector peak: 1,831.89 MiB. Parent final-step throughput is
+  recorded per case; tool-call-step throughput is explicitly unavailable in
+  this harness, and complete per-child speed qualification is not established.
+- Follow-up transcript-only changes preserve full batch observations, validate
+  ordered worker selectors and retain successful RAM/batch traces when
+  `--transcripts` is enabled. These do not change the built Core runtime.
+  The stricter live matrix is pending and will retain both attempts.
+- Full AgentLoop/AgentLoopFrontier current-runtime campaign: running.
+  Prior branch live evidence is recorded separately in
   `ORCHESTRATOR_RAM_SAFETY_AUDIT_2026_09_13.md` and is not relabeled current proof.
 - Reporter hardware qualification: absent. Required before claiming the
   recurring M4 16 GB failure resolved. Preserve measured refusals and capture

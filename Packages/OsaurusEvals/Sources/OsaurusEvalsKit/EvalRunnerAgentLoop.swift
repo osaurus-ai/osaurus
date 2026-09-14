@@ -457,19 +457,21 @@ extension EvalRunner {
         for (index, warmup) in (exp.freshChatWarmups ?? []).enumerated() {
             let prior = await runFreshChat(warmup.query)
             let childScore = scoreSpawnSummaries(warmup.spawnSummaries, transcript: prior)
+            let targetScore = scoreSpawnTargets(warmup.spawnAgentIDs, transcript: prior,
+                workers: testCase.fixtures.agentCapabilities?.spawnAgents ?? [])
             let reservations = await SubagentAdmission.shared.snapshot()
             let settled = reservations.inPlace == 0 && reservations.exclusive == 0 && reservations.remote == 0
             let passed = childScore.passed && prior.exit == "finalResponse"
                 && prior.toolCalls.count == warmup.spawnSummaries.count
-                && prior.error == nil && settled
-            let note = "fresh chat \(index + 1): exit=\(prior.exit), reservations=\(reservations), \(childScore.note)"
+                && prior.error == nil && settled && targetScore.passed
+            let note = "fresh chat \(index + 1): exit=\(prior.exit), reservations=\(reservations), \(targetScore.note), \(childScore.note)"
             warmupResults.append((passed, note))
             _ = persistAgentLoopTranscript(prior, for: EvalCaseReport(
                 id: "\(testCase.id).fresh-chat-\(index + 1)", label: label,
                 domain: testCase.domain, query: warmup.query,
                 outcome: passed ? .passed : .failed, notes: [note], modelId: modelId,
                 latencyMs: prior.loopDurationMs, toolUsage: toolUsageStats(prior), telemetry: telemetry(from: prior)
-            ), query: warmup.query)
+            ), query: warmup.query, includeSuccessful: true)
         }
         let transcript = await runFreshChat(resolvedQuery)
         if let enabledCapabilityRestore, let evalAgentId {
@@ -566,6 +568,9 @@ extension EvalRunner {
             score.record(result.passed, note: result.note)
         }
         if let expected = exp.spawnSummaries {
+            let targets = scoreSpawnTargets(exp.spawnAgentIDs, transcript: transcript,
+                workers: testCase.fixtures.agentCapabilities?.spawnAgents ?? [])
+            score.record(targets.passed, note: targets.note)
             let result = scoreSpawnSummaries(expected, transcript: transcript)
             score.record(result.passed, note: result.note)
             let reservations = await SubagentAdmission.shared.snapshot()
@@ -769,18 +774,20 @@ extension EvalRunner {
                 judge: judgeAudit,
                 context: transcript.contextAttribution
             ),
-            query: resolvedQuery
+            query: resolvedQuery,
+            includeSuccessful: exp.spawnSummaries != nil || exp.spawnBatch != nil
         )
     }
 
     /// Hand the full loop transcript to the transcript store (a no-op
-    /// unless `--transcripts` configured it, and it only keeps
-    /// failed/errored rows). Returns the report unchanged so call sites
+    /// unless `--transcripts` configured it). RAM/batch proof callers retain
+    /// successful rows too. Returns the report unchanged so call sites
     /// stay single-expression returns.
     private static func persistAgentLoopTranscript(
         _ transcript: AgentLoopTranscript,
         for report: EvalCaseReport,
-        query: String
+        query: String,
+        includeSuccessful: Bool = false
     ) -> EvalCaseReport {
         EvalTranscriptStore.persistIfEnabled(
             EvalCaseTranscript(
@@ -798,7 +805,8 @@ extension EvalRunner {
                         resultPreview: $0.resultPreview,
                         wasDeduped: $0.wasDeduped,
                         wasError: $0.wasError,
-                        spawnSummary: $0.spawnSummary
+                        spawnSummary: $0.spawnSummary,
+                        spawnBatch: $0.spawnBatch
                     )
                 },
                 finalText: transcript.finalText,
@@ -825,7 +833,7 @@ extension EvalRunner {
                     )
                 },
                 error: transcript.error
-            )
+            ), includeSuccessful: includeSuccessful
         )
         return report
     }
@@ -1263,6 +1271,26 @@ extension EvalRunner {
 
     /// Deterministic transcript assertions (exit shape, tool-call sets,
     /// duplicate discipline, dedupe replays, notices, compaction).
+    static func scoreSpawnTargets(
+        _ expected: [UUID]?, transcript: AgentLoopTranscript,
+        workers: [EvalCase.AgentCapabilitiesFixture.SpawnAgentFixture]
+    ) -> (passed: Bool, note: String) {
+        guard let expected else { return (true, "spawn targets: no explicit assertion") }
+        let calls = transcript.toolCalls.filter { ["spawn_agent", "spawn_model"].contains($0.name) }
+        let selected: [UUID?] = calls.map { call in
+            guard call.name == "spawn_agent", let data = call.arguments.data(using: .utf8),
+                let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let raw = object["agent"] as? String
+            else { return nil }
+            let target = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let id = UUID(uuidString: target) { return id }
+            let matches = workers.filter { $0.name.caseInsensitiveCompare(target) == .orderedSame }
+            return matches.count == 1 ? matches[0].id : nil
+        }
+        return (selected == expected.map(Optional.some),
+            "spawn target selectors: expected=\(expected), selected=\(selected)")
+    }
+
     static func scoreSpawnSummaries(
         _ expected: [String], transcript: AgentLoopTranscript
     ) -> (passed: Bool, note: String) {
@@ -1611,7 +1639,7 @@ extension EvalRunner {
                     )
                 }
                 if let exact = expected.summaryEquals, observed.summary != exact {
-                    failures.append("child[\(index)].summary != exact expected output \(exact.debugDescription)")
+                    failures.append("child[\(index)].summary \(String(describing: observed.summary)) != exact expected output \(exact.debugDescription)")
                 }
                 if let needles = expected.summaryContains {
                     let summary = observed.summary ?? ""

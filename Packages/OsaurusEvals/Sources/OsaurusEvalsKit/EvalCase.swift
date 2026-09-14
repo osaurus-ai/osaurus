@@ -1769,6 +1769,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Exact digests from executed single-child calls, in order. Parent
         /// prose, deduped calls and previews cannot satisfy this assertion.
         public let spawnSummaries: [String]?
+        public let spawnAgentIDs: [UUID]?
         /// Fresh parent conversations in the same process before the scored
         /// main query. Workers/model/cache/admission are deliberately retained.
         public let freshChatWarmups: [FreshChatWarmup]?
@@ -1776,6 +1777,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public struct FreshChatWarmup: Sendable, Codable {
             public let query: String
             public let spawnSummaries: [String]
+            public let spawnAgentIDs: [UUID]?
         }
 
         public init(
@@ -1813,6 +1815,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             cancelAfterToolCalls: Int? = nil,
             spawnBatch: SpawnBatchAssertion? = nil,
             spawnSummaries: [String]? = nil,
+            spawnAgentIDs: [UUID]? = nil,
             freshChatWarmups: [FreshChatWarmup]? = nil
         ) {
             self.maxIterations = maxIterations
@@ -1849,6 +1852,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.cancelAfterToolCalls = cancelAfterToolCalls
             self.spawnBatch = spawnBatch
             self.spawnSummaries = spawnSummaries
+            self.spawnAgentIDs = spawnAgentIDs
             self.freshChatWarmups = freshChatWarmups
         }
 
