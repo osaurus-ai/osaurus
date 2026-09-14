@@ -9956,10 +9956,17 @@ struct ChatView: View {
                     // have no other trigger this session unless the user
                     // deactivates/reactivates, so chain them here — the same
                     // hand-off onboarding completion and the import prompt do.
-                    // Delayed so the sheet has detached before the
-                    // `attachedSheet` guard re-checks.
+                    // Setting `pendingWhatsNew = nil` above only STARTS the
+                    // sheet's detach animation, so wait for the condition the
+                    // presenters' guard actually checks rather than a fixed
+                    // delay. Bounded so a wedged sheet can't loop forever; on
+                    // timeout the guard just defers without consuming
+                    // eligibility (the pre-fix behavior).
                     Task { @MainActor in
-                        try? await Task.sleep(for: .seconds(0.5))
+                        for _ in 0..<8 {
+                            try? await Task.sleep(for: .seconds(0.25))
+                            if !NSApp.windows.contains(where: { $0.attachedSheet != nil }) { break }
+                        }
                         AppDelegate.shared?.presentProductHuntLaunchDialogIfEligible()
                         AppDelegate.shared?.presentWorkspacesIntroDialogIfEligible()
                     }
