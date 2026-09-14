@@ -3742,7 +3742,7 @@ extension FloatingInputCard {
         }
     }
 
-    /// Recent folder chips shown under the + menu's rows. `dismiss` closes
+    /// Recent folders listed under the + menu's rows. `dismiss` closes
     /// the menu before the pick runs, like any row.
     private func recentFoldersList(dismiss: @escaping () -> Void) -> AnyView {
         AnyView(
@@ -6302,7 +6302,7 @@ extension FloatingInputCard {
                     selectFolder()
                 },
             ],
-            // Recently attached folders as one-click chips below a divider.
+            // Recently attached folders as a one-click list below a divider.
             // Hidden for remote runs (same reason as Add Folder) and when
             // there are none yet.
             footer: isRemoteAgentRun || recentFolders.entries.isEmpty
@@ -8512,7 +8512,7 @@ private struct InputActionMenuButton: View {
                 }
             }
             .padding(.vertical, 6)
-            // Wider with a footer so folder chips have room to wrap.
+            // Wider with a footer so recent folder names have room.
             .frame(width: footer != nil ? 240 : 180)
             .background(theme.primaryBackground)
             .environment(\.theme, theme)

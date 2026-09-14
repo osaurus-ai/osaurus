@@ -5641,7 +5641,7 @@ struct AgentDetailView: View {
                 }
             }
             if !recentFolders.entries.isEmpty {
-                RecentFoldersRows(activePath: workingFolderPath) { entry in
+                RecentFoldersList(activePath: workingFolderPath, showsPath: true, horizontalInset: 0) { entry in
                     applyRecentWorkingFolder(entry)
                 }
                 .environment(\.theme, theme)
