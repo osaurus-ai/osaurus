@@ -110,3 +110,96 @@ struct RecentFoldersList: View {
         }
     }
 }
+
+// MARK: - List variant
+
+/// Recent folders as plain rows (folder name, dimmed path, remove on hover)
+/// for settings surfaces such as the agent editor's Working Folder row,
+/// where a vertical list reads better than chips.
+struct RecentFoldersRows: View {
+    @ObservedObject private var store = RecentFoldersStore.shared
+    @Environment(\.theme) private var theme
+
+    /// Path currently applied by the host surface, shown with a check.
+    var activePath: String? = nil
+    let onPick: (RecentFoldersStore.Entry) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Recent Folders", bundle: .module)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(theme.tertiaryText)
+                .textCase(.uppercase)
+                .padding(.bottom, 2)
+            ForEach(store.entries) { entry in
+                RecentFolderRow(
+                    entry: entry,
+                    isActive: entry.path == activePath,
+                    onPick: { onPick(entry) },
+                    onRemove: { store.remove(path: entry.path) }
+                )
+            }
+        }
+        .onAppear { store.pruneMissing() }
+    }
+
+    private struct RecentFolderRow: View {
+        let entry: RecentFoldersStore.Entry
+        let isActive: Bool
+        let onPick: () -> Void
+        let onRemove: () -> Void
+        @Environment(\.theme) private var theme
+        @State private var isHovering = false
+
+        var body: some View {
+            HStack(spacing: 8) {
+                Button(action: onPick) {
+                    HStack(spacing: 8) {
+                        Image(systemName: isActive ? "checkmark" : "folder")
+                            .font(.system(size: 10, weight: .medium))
+                            .frame(width: 12)
+                            .foregroundColor(isActive ? theme.accentColor : theme.tertiaryText)
+                        Text(verbatim: entry.name)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+                            .lineLimit(1)
+                        Text(verbatim: entry.path)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(entry.path)
+                .accessibilityLabel(Text(verbatim: entry.name))
+                .accessibilityValue(Text(verbatim: entry.path))
+
+                if isHovering {
+                    Button(action: onRemove) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(theme.tertiaryText)
+                            .frame(width: 16, height: 16)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .localizedHelp("Remove from recent folders")
+                    .accessibilityLabel(Text("Remove from recent folders", bundle: .module))
+                    .transition(.opacity)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isHovering ? theme.secondaryBackground.opacity(0.7) : Color.clear)
+            )
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.12)) { isHovering = hovering }
+            }
+        }
+    }
+}

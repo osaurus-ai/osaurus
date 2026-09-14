@@ -1100,6 +1100,7 @@ struct AgentDetailView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var recentFolders = RecentFoldersStore.shared
     private let scheduleManager = ScheduleManager.shared
     private let watcherManager = WatcherManager.shared
     /// Reference held for the "Enable Relay" alert callback only.
@@ -5639,6 +5640,13 @@ struct AgentDetailView: View {
                     .accessibilityIdentifier("agentEditor.clearWorkingFolder")
                 }
             }
+            if !recentFolders.entries.isEmpty {
+                RecentFoldersRows(activePath: workingFolderPath) { entry in
+                    applyRecentWorkingFolder(entry)
+                }
+                .environment(\.theme, theme)
+                .padding(.top, 4)
+            }
         }
     }
 
@@ -5665,6 +5673,31 @@ struct AgentDetailView: View {
             agentManager.updateWorkingFolder(for: agent.id, bookmark: bookmark, path: path)
             RecentFoldersStore.shared.record(path: path, bookmark: bookmark)
             workingFolderPath = path
+        }
+    }
+
+    /// Apply a remembered folder as the agent's working folder. Resolves the
+    /// entry off the main actor and mints a fresh bookmark, then persists it
+    /// exactly as a panel pick does. A folder that no longer resolves is
+    /// dropped from the list and reported.
+    private func applyRecentWorkingFolder(_ entry: RecentFoldersStore.Entry) {
+        Task { @MainActor in
+            guard let url = await RecentFoldersStore.resolveURL(for: entry) else {
+                recentFolders.remove(path: entry.path)
+                ToastManager.shared.error(L("Folder no longer available"), message: entry.path)
+                return
+            }
+            let bookmark = await Task.detached(priority: .userInitiated) {
+                FolderContextService.makeSecurityScopedBookmark(for: url)
+            }.value
+            guard let bookmark else {
+                ToastManager.shared.error(L("Failed to grant folder access"))
+                return
+            }
+            let path = url.standardizedFileURL.path
+            agentManager.updateWorkingFolder(for: agent.id, bookmark: bookmark, path: path)
+            workingFolderPath = path
+            recentFolders.record(path: path, bookmark: bookmark)
         }
     }
 
