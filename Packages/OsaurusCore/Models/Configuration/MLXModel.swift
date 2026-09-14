@@ -407,18 +407,29 @@ struct MLXModel: Identifiable, Codable {
     /// `FileManager.fileExists` calls plus an enumerator open per model
     /// — the dominant cost of the Models tab badge and grid recomputes.
     var isDownloaded: Bool {
-        // Bypass the id-keyed cache for pinned (`rootDirectory`) and
-        // external (`bundleDirectory`) bundles so a same-id Osaurus entry
-        // can't shadow their on-disk state.
-        let usesSharedCache = rootDirectory == nil && bundleDirectory == nil
-        if usesSharedCache, let cached = MLXModelDownloadCache.value(for: id) {
-            return cached
-        }
+        let key = downloadCacheKey
+        if let cached = MLXModelDownloadCache.value(for: key) { return cached }
         let value = computeIsDownloadedFromDisk()
-        if usesSharedCache {
-            MLXModelDownloadCache.set(value, for: id)
-        }
+        MLXModelDownloadCache.set(value, for: key)
         return value
+    }
+
+    /// Cache key for the on-disk probes.
+    ///
+    /// Pinned (`rootDirectory`) and external (`bundleDirectory`) bundles used
+    /// to skip the cache entirely, so that a same-id Osaurus entry could not
+    /// shadow their on-disk state. The cost was that every read of
+    /// `isDownloaded` for those models re-enumerated the bundle directory —
+    /// from SwiftUI body getters, on the main thread, which is what put this
+    /// probe in the hang reports for users with external model folders.
+    ///
+    /// Keying those bundles by their absolute directory instead keeps them
+    /// from colliding with anything (a path identifies exactly one bundle)
+    /// while letting them share the cache. Osaurus-managed models keep the
+    /// plain id as their key, so their entries are unchanged.
+    var downloadCacheKey: String {
+        if rootDirectory == nil && bundleDirectory == nil { return id }
+        return "dir:\(localDirectory.path)"
     }
 
     /// Direct disk check used by `isDownloaded`. Kept exposed so callers
@@ -481,18 +492,14 @@ struct MLXModel: Identifiable, Codable {
     /// underlying `resourceValues` stat is enough to trip the main-thread hang
     /// watchdog on a cold or slow disk when the Models grid renders many rows.
     var downloadedAt: Date? {
-        // Bypass the shared cache for pinned (`rootDirectory`) and external
-        // (`bundleDirectory`) bundles so a same-id Osaurus entry can't shadow
-        // their on-disk timestamp — mirrors `isDownloaded`.
-        let usesSharedCache = rootDirectory == nil && bundleDirectory == nil
-        if usesSharedCache {
-            let cached = MLXModelDownloadCache.cachedDate(for: id)
-            if cached.hit { return cached.value }
-        }
+        // Keyed by `downloadCacheKey`, so pinned and external bundles are
+        // cached under their directory instead of skipping the cache and
+        // re-stating the bundle on every read — mirrors `isDownloaded`.
+        let key = downloadCacheKey
+        let cached = MLXModelDownloadCache.cachedDate(for: key)
+        if cached.hit { return cached.value }
         let value = computeDownloadedAtFromDisk()
-        if usesSharedCache {
-            MLXModelDownloadCache.setDate(value, for: id)
-        }
+        MLXModelDownloadCache.setDate(value, for: key)
         return value
     }
 
@@ -517,17 +524,12 @@ struct MLXModel: Identifiable, Codable {
     var isVLM: Bool {
         // Memoize: the `isDownloaded` branch below reads `config.json` off
         // disk, which trips the main-thread hang watchdog when the grid
-        // evaluates this per row. Bypass the shared cache for pinned
-        // (`rootDirectory`) and external (`bundleDirectory`) bundles, matching
-        // `isDownloaded`, so a same-id Osaurus entry can't shadow their state.
-        let usesSharedCache = rootDirectory == nil && bundleDirectory == nil
-        if usesSharedCache, let cached = MLXModelDownloadCache.cachedVLM(for: id) {
-            return cached
-        }
+        // evaluates this per row. Keyed by `downloadCacheKey` so pinned and
+        // external bundles are cached too, matching `isDownloaded`.
+        let key = downloadCacheKey
+        if let cached = MLXModelDownloadCache.cachedVLM(for: key) { return cached }
         let value = computeIsVLM()
-        if usesSharedCache {
-            MLXModelDownloadCache.setVLM(value, for: id)
-        }
+        MLXModelDownloadCache.setVLM(value, for: key)
         return value
     }
 
@@ -545,14 +547,11 @@ struct MLXModel: Identifiable, Codable {
     /// Memoized like `isVLM` because the probe reads the index off disk and
     /// the composer asks from a SwiftUI body getter.
     var hasAudioTensors: Bool {
-        let usesSharedCache = rootDirectory == nil && bundleDirectory == nil
-        if usesSharedCache, let cached = MLXModelDownloadCache.cachedAudio(for: id) {
-            return cached
-        }
-        let value = isDownloaded && ModelMediaCapabilities.bundleCarriesAudio(directory: localDirectory)
-        if usesSharedCache {
-            MLXModelDownloadCache.setAudio(value, for: id)
-        }
+        let key = downloadCacheKey
+        if let cached = MLXModelDownloadCache.cachedAudio(for: key) { return cached }
+        let value =
+            isDownloaded && ModelMediaCapabilities.bundleCarriesAudio(directory: localDirectory)
+        MLXModelDownloadCache.setAudio(value, for: key)
         return value
     }
 
