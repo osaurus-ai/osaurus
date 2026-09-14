@@ -16,6 +16,16 @@
 //  tests, the eval CLI, ad-hoc dev builds — resolve to `nil` and keep using
 //  the default (per-app) group exactly as before this file existed.
 //
+//  NOT SHIPPED YET. `keychain-access-groups` is a profile-managed entitlement
+//  on macOS; the Developer ID release build carries no provisioning profile,
+//  and adding the key made AMFI refuse to spawn 0.19.3 (#1288 → #1296, which
+//  also added `RuntimePolicySourceTests` to keep it out). Neither the
+//  entitlement nor the Info.plist key is present in `App/osaurus`, so `shared`
+//  is `nil` in every shipped build and the dual-write / mirror paths below
+//  are no-ops. Turning the group on means embedding a provisioning profile in
+//  the release pipeline (or choosing a different sharing mechanism); the
+//  code here is ready for either, gated on the Info.plist key alone.
+//
 
 import Foundation
 import Security

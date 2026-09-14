@@ -4,8 +4,6 @@
 <dict>
 	<key>AptabaseAppKey</key>
 	<string>$(APTABASE_APP_KEY)</string>
-	<key>OsaurusKeychainAccessGroup</key>
-	<string>$(AppIdentifierPrefix)ai.osaurus.identity</string>
 	<key>ModelsProxyBaseURL</key>
 	<string>$(MODELS_PROXY_BASE_URL)</string>
 	<key>SentryDSN</key>

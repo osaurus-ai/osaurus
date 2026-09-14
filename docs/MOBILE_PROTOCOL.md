@@ -50,7 +50,7 @@ Rules that follow from the current host implementation:
 
 The client must end up with the 32-byte master seed and a stable device ID.
 
-### 2.1 Master key via iCloud Keychain (preferred)
+### 2.1 Master key via iCloud Keychain (**BLOCKED** — not available to a phone today)
 
 The host stores the master as a synchronizable generic-password item
 ([`MasterKey.swift`](../Packages/OsaurusCore/Identity/MasterKey.swift)):
@@ -62,31 +62,45 @@ The host stores the master as a synchronizable generic-password item
 | `kSecAttrAccount` | `master-key` |
 | `kSecAttrSynchronizable` | `true` (falls back to device-only if iCloud Keychain is off) |
 | `kSecAttrAccessible` | `kSecAttrAccessibleWhenUnlocked` |
-| `kSecAttrAccessGroup` | `<TeamID>.ai.osaurus.identity` (see below) |
+| `kSecAttrAccessGroup` | the Mac app's **default** per-app group today; `<TeamID>.ai.osaurus.identity` once the shared group ships (see below) |
 | `kSecValueData` | 32 raw bytes (secp256k1 private scalar) |
 
 The 24-word phrase lives beside it under `kSecAttrAccount = master-mnemonic`
 ([`MasterMnemonicStore.swift`](../Packages/OsaurusCore/Identity/MasterMnemonicStore.swift)),
 UTF-8, space-separated.
 
-**Shared access group.** iCloud Keychain only delivers a synced item to
-another app if both apps are in the same keychain access group. The Mac app
-declares `keychain-access-groups: [$(AppIdentifierPrefix)ai.osaurus.identity]`
-([`osaurus.entitlements`](../App/osaurus/osaurus.entitlements)) and writes
-every new item **twice**: once in its default per-app group (the only group a
-Mac on an older build can read) and once in the shared group
-(`MasterKey.addGenericPassword`). Items written by older builds gain a shared-
-group copy on the Mac's first successful read (`MasterKey.mirrorGenericPassword`);
-the original is never deleted, so a mixed-version fleet stays on one master.
-An iOS client **MUST** declare the same group and query with
-`kSecAttrSynchronizable = kSecAttrSynchronizableAny`. An iOS client that
-*creates* the identity **MUST** write into the shared group (its own default
-group is invisible to the Mac); the Mac mirrors that item into its default
-group on first read so older Mac builds can still unlock it. Until at least
-one Mac on this build has read the item, a master written only by an older
-Mac build is **not visible** on the phone — the phrase is the fallback. The
-resolution rule for the group string is in
-[`OsaurusKeychainGroup.swift`](../Packages/OsaurusCore/Identity/OsaurusKeychainGroup.swift).
+**Why a phone cannot read it yet.** iCloud Keychain only delivers a synced
+item to another app if both apps are in the same keychain access group, and
+the Mac app currently writes only into its own default group, which a
+different bundle ID can never join. The shared group
+`<TeamID>.ai.osaurus.identity` is fully implemented behind
+[`OsaurusKeychainGroup.swift`](../Packages/OsaurusCore/Identity/OsaurusKeychainGroup.swift)
+but **is not enabled in the shipped Mac app**: `keychain-access-groups` is a
+profile-managed entitlement on macOS, the Developer ID build carries no
+provisioning profile, and adding the key made AMFI refuse to launch 0.19.3
+(#1288 / #1296; a source test and the release spawn gate now keep it out).
+Until the release pipeline embeds a profile (or another sharing mechanism is
+chosen), **§ 2.2 (the phrase) is the only bootstrap path for a client on a
+different bundle ID**, and an iOS client **MUST NOT** assume the master is
+present in the Keychain.
+
+**Contract once the group is enabled** (so the iOS side can be built now):
+
+- The Mac writes every new item **twice** — its default per-app group (the
+  only group a Mac on an older build can read) and the shared group
+  (`MasterKey.addGenericPassword`). Items written by older builds gain a
+  shared-group copy on the Mac's first successful read
+  (`MasterKey.mirrorGenericPassword`); the original is never deleted, so a
+  mixed-version fleet stays on one master.
+- An iOS client **MUST** declare the same group and query with
+  `kSecAttrSynchronizable = kSecAttrSynchronizableAny`.
+- An iOS client that *creates* the identity **MUST** write into the shared
+  group (its own default group is invisible to the Mac); the Mac mirrors that
+  item into its default group on first read so older Mac builds can still
+  unlock it.
+- Until at least one Mac on an entitled build has read the item, a master
+  written by an older Mac build is **not visible** on the phone — fall back to
+  the phrase.
 
 ### 2.2 Master key via recovery phrase (fallback)
 
@@ -554,7 +568,7 @@ strings; match on status, not text.
 | Channel | X25519, HKDF-SHA256, ChaCha20-Poly1305, SHA-256 | §6.2 | CryptoKit |
 | Attestation verify | Ed25519 | §5.2 | CryptoKit `Curve25519.Signing` |
 | Device ID | App Attest / SHA-256 | §2.4 | `DCAppAttestService` |
-| Keychain | shared access group, `kSecAttrSynchronizable` | §2.1 | Security.framework |
+| Keychain | shared access group, `kSecAttrSynchronizable` (**blocked** until the Mac build ships the group; use §2.2) | §2.1 | Security.framework |
 
 **Signature domain prefixes.** Every secp256k1 signature is over
 `"\x19" + prefix + ":\n" + len(payload) + payload` (EIP-191 layout) and the
