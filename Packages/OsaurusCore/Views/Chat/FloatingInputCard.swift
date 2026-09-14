@@ -6240,10 +6240,7 @@ extension FloatingInputCard {
                     icon: "folder",
                     title: Text("Add Folder", bundle: .module),
                     disabledReason: isRemoteAgentRun
-                        ? Text(
-                            "Shared agents run on their host's Mac, so a folder on this Mac can't be attached.",
-                            bundle: .module
-                        )
+                        ? Text("Shared agents can't use folders on this Mac.", bundle: .module)
                         : nil
                 ) {
                     selectFolder()
@@ -8370,8 +8367,8 @@ private struct InputActionMenuButton: View {
     struct Item {
         let icon: String
         let title: Text
-        /// When non-nil the row is shown dimmed and inert, with this text as
-        /// its tooltip explaining why the action is unavailable.
+        /// When non-nil the row is shown dimmed and inert, with a trailing
+        /// info icon whose tooltip explains why the action is unavailable.
         let disabledReason: Text?
         let action: () -> Void
 
@@ -8461,18 +8458,28 @@ private struct InputActionMenuButton: View {
         private var isDisabled: Bool { disabledReason != nil }
 
         var body: some View {
-            Button(action: action) {
+            // Inert rather than `.disabled`: a disabled Button stops hover
+            // events reaching the trailing info icon, which would hide its
+            // tooltip, the only place the reason is shown.
+            Button(action: { if !isDisabled { action() } }) {
                 HStack(spacing: 10) {
                     Image(systemName: icon)
                         .font(.system(size: 12, weight: .medium))
                         .frame(width: 16)
                         .foregroundColor(theme.secondaryText)
+                        .opacity(isDisabled ? 0.45 : 1)
                     title
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.primaryText)
+                        .opacity(isDisabled ? 0.45 : 1)
                     Spacer(minLength: 0)
+                    if let disabledReason {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                            .help(disabledReason)
+                    }
                 }
-                .opacity(isDisabled ? 0.45 : 1)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(
@@ -8485,8 +8492,6 @@ private struct InputActionMenuButton: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(isDisabled)
-            .help(disabledReason ?? Text(""))
             .onHover { hovering in
                 withAnimation(.easeOut(duration: 0.12)) {
                     isHovering = hovering && !isDisabled
