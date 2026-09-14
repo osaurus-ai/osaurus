@@ -43,9 +43,9 @@ introduced.
 
 ## Tested source and artifacts
 
-- Core/app source: `7a4f5057326ea3c5e95aa33572577d25fba693d4`.
-- Evals source: `0e5d76f79abfdef3cd80ad029e31f14a651a4765`; app/Core trees are
-  identical to 7a4f50573. Subsequent proof-document commits do not change them.
+- Core/app production source: `7a4f5057326ea3c5e95aa33572577d25fba693d4`.
+- Evals source: `0e5d76f79abfdef3cd80ad029e31f14a651a4765`; app/Core production files are
+  identical to 7a4f50573. Later changes only update tests and proof documents.
 - vMLX: `67ccb4b347a23820b838a98f0c195b0c29c676d2`, checked in both build trees.
 - Fresh isolated Release binary SHA256:
   `da840573f8da69e6e104270b4587928fad4fe52903a61d5965b54de4a2031173`.
@@ -122,12 +122,13 @@ claim that Qwen4Exp has a small working set.
 
 ## Automated scores
 
-- Focused Core: **156/156, 8 suites**, 3.399 s after build:
+- Focused Core: **170/170, 9 suites**, 3.037 s after build:
   ModelMediaCapabilitiesMCDCTests, VLMDetectionTests,
   CapabilityFromDirectoryTests, MultiTurnCapabilityStabilityTests,
   CapabilityFromModelIdTests, ComposerAudioCapabilityTests,
-  ChatAttachmentSecurityTests, RuntimePolicySourceTests.
-  Raw `focused-tests-settled.log`.
+  ChatAttachmentSecurityTests, RuntimePolicySourceTests, MLXServiceRuntimePolicyTests.
+  Raw `focused-tests-final-170.log`. Previous settled selection was 156/156.
+  The separately executed MLXService policy suite is 14/14 (`mlxservice-policy-tests.log`).
 - Evals unit: **345/345, 42 suites**, 1.686 s; `eval-unit-tests.log`.
 - Full HTTPAPI lane at 0e5d76f79: Gemma **16 pass / 1 unsupported-video skip / 17**;
   Qwen35 **17/17**; Qwen4Exp **17/17**. Total **50 pass, 1 skip / 51**.
@@ -169,6 +170,13 @@ and exact reporter bundles still need separate investigation before claiming
 broad video support is reliable.
 
 ## Preserved earlier failures and investigation limits
+
+Full CI at 5bed81bd5 also caught four stale MLXService policy fixtures omitted
+from the earlier focused selection: two granted media from names/config alone;
+two asserted old diagnostic wording. The suite now supplies real header fixtures,
+checks removal of weights after a positive preflight, and keeps independent video
+policy/audio rejection checks. No app production file changed for this follow-up.
+Raw `ci-old-core-failure.log` preserves those failures; final-head CI is required.
 
 Initial focused tests were 153/154: an obsolete source assertion demanded the
 removed name exclusion. Earlier full HTTPAPI scores were Gemma 15 pass/1 fail/
