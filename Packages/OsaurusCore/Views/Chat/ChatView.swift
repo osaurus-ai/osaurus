@@ -9507,6 +9507,16 @@ struct ChatView: View {
                             workspaceAgentWorkspaceId: observedSession.workspaceContext?.workspaceId,
                             onSelectWorkspaceAgent: { address, workspaceId in
                                 windowState.switchToWorkspaceAgent(address: address, workspaceId: workspaceId)
+                            },
+                            discoveredAgents: windowState.discoveredAgents,
+                            activeDiscoveredAgentId: windowState.selectedDiscoveredAgent?.id,
+                            // Same pairing/connect flow the removed toolbar
+                            // agent pill drove through the
+                            // .chatToolbarSelectDiscoveredAgent notification;
+                            // the sidebar lives inside this view, so it can
+                            // call the handler directly.
+                            onSelectDiscoveredAgent: { agent in
+                                selectDiscoveredAgent(agent)
                             }
                         )
                     }
