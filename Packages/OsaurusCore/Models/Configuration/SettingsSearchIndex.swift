@@ -854,7 +854,8 @@ public enum SettingsSearchIndex {
             title: "Pair with n8n",
             keywords: [
                 "pairing code", "pair n8n", "n8n node", "n8n credential", "osaurus channel credential",
-                "n8n-nodes-osaurus", "remote n8n", "hosted n8n", "relay url", "secure channel",
+                "n8n-nodes-osaurus", "@osaurus/n8n-nodes-osaurus", "remote n8n", "hosted n8n",
+                "relay url", "secure channel",
                 "end-to-end encrypted", "osrs-n8n", "ping", "credential test",
             ],
             disambiguation:

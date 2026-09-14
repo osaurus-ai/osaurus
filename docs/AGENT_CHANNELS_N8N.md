@@ -352,7 +352,7 @@ service — posting through the custom runner alone skips the kill switch.
 With `shared_secret_header` the two signature headers become a single
 `X-Osaurus-Channel-Secret: <secret>` header on both requests.
 
-A dedicated [`n8n-nodes-osaurus`](https://github.com/osaurus-ai/n8n-nodes-osaurus)
+A dedicated [`@osaurus/n8n-nodes-osaurus`](https://github.com/osaurus-ai/n8n-nodes-osaurus)
 community node (operations: *Send message and wait*, *Poll task*, *Verify
 inbound push*, plus an HMAC-verified **Osaurus Trigger** for outbound push)
 replaces steps 2–6 and speaks exactly this contract. Its **Osaurus Channel**
