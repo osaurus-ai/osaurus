@@ -24,6 +24,13 @@ import Testing
         #expect(MLXBatchAdapter.nativeMTPDepthPolicy(.init(mode: .off)) == .fixed)
     }
 
+    @Test func defaultOffSuppressesEvenAnAlreadyLoadedNativeDraftStrategy() {
+        for depth in 1 ... 3 {
+            #expect(ModelRuntime.requestDraftStrategy(
+                .nativeMTP(depth: depth, verifierMode: nil), mtp: .init()) == nil)
+        }
+    }
+
     @Test func autoIgnoresStaleManualDepthLikeTheLaunchResolver() {
         let settings = VMLXServerMTPSettings(mode: .auto, explicitDepth: 1)
         #expect(MLXBatchAdapter.nativeMTPDepthPolicy(settings) == .adaptive(maximumDepth: 5))

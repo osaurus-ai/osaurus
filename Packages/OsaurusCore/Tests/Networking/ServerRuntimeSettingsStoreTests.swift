@@ -15,6 +15,62 @@ import Testing
 
 @Suite(.serialized)
 struct ServerRuntimeSettingsStoreTests {
+    @Test @MainActor func mtpDefaultOffMigrationPreservesChoicesAndOnlyRunsOnce() async throws {
+        let defaults = UserDefaults.standard
+        let keys = [NativeMTPSelectionDefault.userChoseKey, NativeMTPSelectionDefault.familyDefaultKey]
+        let saved = keys.map { defaults.object(forKey: $0) }
+        defer {
+            for (key, value) in zip(keys, saved) { defaults.set(value, forKey: key) }
+        }
+        let cases: [(mtp: VMLXServerMTPSettings, chosen: Bool, owned: Bool, expected: VMLXServerMTPSettings)] = [
+            (.init(mode: .auto), false, false, .init(mode: .off)),
+            (.init(mode: .forceOn, explicitDepth: 3), false, true, .init(mode: .off)),
+            (.init(mode: .auto), true, false, .init(mode: .auto)),
+            (.init(mode: .off), true, false, .init(mode: .off)),
+            (.init(mode: .forceOn, explicitDepth: 1), true, false, .init(mode: .forceOn, explicitDepth: 1)),
+            (.init(mode: .forceOn, explicitDepth: 2), true, false, .init(mode: .forceOn, explicitDepth: 2)),
+            (.init(mode: .forceOn, explicitDepth: 3), true, true, .init(mode: .forceOn, explicitDepth: 3)),
+            (.init(mode: .forceOn, explicitDepth: 3), false, false, .init(mode: .forceOn, explicitDepth: 3)),
+            (.init(mode: .auto, draftTokenLimit: 2), false, false, .init(mode: .auto, draftTokenLimit: 2)),
+        ]
+        for viaSnapshot in [false, true] {
+            for item in cases {
+                let dir = try makeTempDirectory()
+                try await withOverriddenDirectory(dir) {
+                    defaults.set(item.chosen, forKey: keys[0])
+                    defaults.set(item.owned, forKey: keys[1])
+                    var original = VMLXServerRuntimeSettings(mtp: item.mtp)
+                    original.generation.temperature = 0.73
+                    original.generation.topP = 0.92
+                    original.generation.topK = 19
+                    original.generation.minP = 0.04
+                    try writeSettings(original, to: dir)
+                    let loaded = try #require(
+                        viaSnapshot ? ServerRuntimeSettingsStore.snapshot() : ServerRuntimeSettingsStore.load())
+                    #expect(loaded.mtp == item.expected)
+                    #expect(loaded.generation.temperature == original.generation.temperature)
+                    #expect(loaded.generation.topP == original.generation.topP)
+                    #expect(loaded.generation.topK == original.generation.topK)
+                    #expect(loaded.generation.minP == original.generation.minP)
+                    #expect(defaults.bool(forKey: keys[0]) == item.chosen)
+                    #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent(
+                        ServerRuntimeSettingsStore.mtpDefaultOffMigrationMarkerName).path))
+                    ServerRuntimeSettingsStore.invalidateSnapshot()
+                    #expect(ServerRuntimeSettingsStore.snapshot().mtp == item.expected)
+
+                    // A later explicit document edit survives even without UI
+                    // provenance. The one-shot must not normalize Auto forever.
+                    var later = loaded
+                    later.mtp = .init(mode: .auto)
+                    try writeSettings(later, to: dir)
+                    defaults.removeObject(forKey: keys[0])
+                    ServerRuntimeSettingsStore.invalidateSnapshot()
+                    #expect(ServerRuntimeSettingsStore.load()?.mtp == later.mtp)
+                }
+            }
+        }
+    }
+
     @Test @MainActor func mtpChoiceTracksExplicitSaveButNotLegacyNormalization() async throws {
         let defaults = UserDefaults.standard
         let keys = [NativeMTPSelectionDefault.userChoseKey, NativeMTPSelectionDefault.familyDefaultKey]
@@ -36,7 +92,7 @@ struct ServerRuntimeSettingsStoreTests {
                 ServerRuntimeSettingsStore.invalidateSnapshot()
                 let automatic = try #require(
                     viaSnapshot ? ServerRuntimeSettingsStore.snapshot() : ServerRuntimeSettingsStore.load())
-                #expect(automatic.mtp.mode == .auto)
+                #expect(automatic.mtp.mode == .off)
                 #expect(!defaults.bool(forKey: NativeMTPSelectionDefault.userChoseKey))
 
                 var selected = automatic
@@ -82,7 +138,7 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(migrated.cache.defaultMaxKVSize == nil)
             #expect(migrated.cache.longPromptMultiplier == 2.0)
             #expect(migrated.cache.enableSSMReDerive == true)
-            #expect(migrated.mtp.mode == .auto)
+            #expect(migrated.mtp.mode == .off)
             #expect(migrated.memorySafety.mode == .safeAuto)
             #expect(migrated.memorySafety.slider == 2)
             #expect(migrated.memorySafety.allowExperimentalMLXPress == false)
@@ -121,7 +177,7 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(snapshot.cache.defaultMaxKVSize == nil)
             #expect(snapshot.cache.longPromptMultiplier == 2.0)
             #expect(snapshot.cache.enableSSMReDerive == true)
-            #expect(snapshot.mtp.mode == .auto)
+            #expect(snapshot.mtp.mode == .off)
             #expect(snapshot.memorySafety.mode == .safeAuto)
             #expect(snapshot.memorySafety.slider == 2)
             #expect(snapshot.memorySafety.allowExperimentalMLXPress == false)
@@ -487,7 +543,7 @@ struct ServerRuntimeSettingsStoreTests {
         #expect(decoded.deepseekV4ActivationQAT == false)
     }
 
-    @Test @MainActor func load_repairsOldPersistedMTPDefaultOffToAuto() async throws {
+    @Test @MainActor func load_keepsOldPersistedMTPDefaultOff() async throws {
         let dir = try makeTempDirectory()
         try await withOverriddenDirectory(dir) {
             var oldDefault = VMLXServerRuntimeSettings()
@@ -496,16 +552,16 @@ struct ServerRuntimeSettingsStoreTests {
 
             ServerRuntimeSettingsStore.invalidateSnapshot()
             let loaded = try #require(ServerRuntimeSettingsStore.load())
-            #expect(loaded.mtp.mode == .auto)
+            #expect(loaded.mtp.mode == .off)
             let repaired = try #require(ServerRuntimeSettingsStore.load())
-            #expect(repaired.mtp.mode == .auto)
+            #expect(repaired.mtp.mode == .off)
             let data = try Data(contentsOf: dir.appendingPathComponent("server-runtime.json"))
             let persisted = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: data)
-            #expect(persisted.mtp.mode == .auto)
+            #expect(persisted.mtp.mode == .off)
 
             ServerRuntimeSettingsStore.invalidateSnapshot()
             let snapshot = ServerRuntimeSettingsStore.snapshot()
-            #expect(snapshot.mtp.mode == .auto)
+            #expect(snapshot.mtp.mode == .off)
         }
     }
 

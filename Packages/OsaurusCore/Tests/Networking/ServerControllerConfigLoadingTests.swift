@@ -291,7 +291,7 @@ struct ServerControllerConfigLoadingTests {
         )
 
         var mtpChanged = base
-        mtpChanged.mtp.mode = .off
+        mtpChanged.mtp.mode = .auto
         #expect(
             ServerController.loadedModelRuntimeInputsRequireRefresh(
                 previous: base,

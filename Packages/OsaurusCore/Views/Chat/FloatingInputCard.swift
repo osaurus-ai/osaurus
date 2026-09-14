@@ -465,7 +465,7 @@ struct FloatingInputCard: View {
     @State private var nativeMTPManuallyBlockedModels: Set<String> = []
     /// Mirrors `mtp.mode` / `mtp.draftTokenLimit` so the row renders the value
     /// that is actually saved rather than a local guess.
-    @State private var nativeMTPSelection: String = "auto"
+    @State private var nativeMTPSelection: String = "off"
 
     // MARK: - RAM Tight-Fit State
 
@@ -2578,32 +2578,20 @@ extension FloatingInputCard {
     /// Depth-only changes apply to the next request; changes that require a
     /// different loaded model graph follow the guarded reload lifecycle.
     /// UserDefaults key: the user pressed an MTP segment themselves at least
-    /// once. From that point the family default logic never touches the
-    /// setting again — their choice outranks the Qwen family d3 default.
+    /// once. The default-off migration must preserve that explicit choice.
     private static let mtpSegmentUserChoseKey = NativeMTPSelectionDefault.userChoseKey
     /// UserDefaults key: the CURRENT saved segment was written by the
     /// Qwen family default, not by a person. Only a state we wrote is
-    /// ours to revert when the selection leaves the family.
+    /// eligible for the one-shot default-off migration.
     private static let mtpSegmentFamilyDefaultKey = NativeMTPSelectionDefault.familyDefaultKey
 
-    private func applyNativeMTPSegment(_ segment: String, userInitiated: Bool = true) {
-        if userInitiated {
-            UserDefaults.standard.set(true, forKey: Self.mtpSegmentUserChoseKey)
-            UserDefaults.standard.set(false, forKey: Self.mtpSegmentFamilyDefaultKey)
-        }
-        let modelAtSelection = selectedModel
-        let mtpAtSelection = ServerController.runtimeSettingsForConfigureTool().settings.mtp
+    private func applyNativeMTPSegment(_ segment: String) {
+        UserDefaults.standard.set(true, forKey: Self.mtpSegmentUserChoseKey)
+        UserDefaults.standard.set(false, forKey: Self.mtpSegmentFamilyDefaultKey)
         nativeMTPSelection = segment
         Task { @MainActor in
-            // Read the latest document when the task actually runs: a delayed
-            // default must not replay unrelated stale settings or beat a click.
+            // Preserve unrelated settings changed before this task runs.
             var settings = ServerController.runtimeSettingsForConfigureTool().settings
-            if !userInitiated {
-                guard selectedModel == modelAtSelection,
-                    !UserDefaults.standard.bool(forKey: Self.mtpSegmentUserChoseKey),
-                    settings.mtp == mtpAtSelection
-                else { return }
-            }
             switch segment {
             case "off":
                 settings.mtp.mode = .off
@@ -2626,30 +2614,8 @@ extension FloatingInputCard {
                 settings.mtp.draftTokenLimit = nil
             }
             _ = await ServerController.applyRuntimeSettingsFromConfigureTool(
-                settings,
-                mtpSelectionIsFamilyDefault: !userInitiated
+                settings
             )
-        }
-    }
-
-    /// Both eligible Qwen27B and Flash-Next bundles start at D3. The layout
-    /// advisory remains Flash-Next-only; defaults use the activation contract.
-    /// Only a value owned by this default may be reverted on leaving the family.
-    private func applyNativeMTPDefaultDepthIfNeeded(eligible: Bool) {
-        let defaults = UserDefaults.standard
-        let mtp = ServerController.runtimeSettingsForConfigureTool().settings.mtp
-        switch NativeMTPSelectionDefault.action(
-            settings: mtp,
-            eligible: eligible,
-            userHasChosen: defaults.bool(forKey: Self.mtpSegmentUserChoseKey),
-            ownsCurrentValue: defaults.bool(forKey: Self.mtpSegmentFamilyDefaultKey)
-        ) {
-        case .keep:
-            return
-        case .selectDepthThree:
-            applyNativeMTPSegment("3", userInitiated: false)
-        case .restoreAuto:
-            applyNativeMTPSegment("auto", userInitiated: false)
         }
     }
 
@@ -3333,7 +3299,7 @@ extension FloatingInputCard {
             values[Self.nativeMTPOptionID] = .string(
                 nativeMTPManuallyBlockedModels.contains(identity) ? "off" : nativeMTPSelection
             )
-            displayDefaults[Self.nativeMTPOptionID] = .string("auto")
+            displayDefaults[Self.nativeMTPOptionID] = .string("off")
         }
 
         return ModelPickerOptionsControl(
@@ -4730,8 +4696,6 @@ extension FloatingInputCard {
             // Selection must expose the controls before Send. This reads only
             // bundle metadata/headers; it neither loads nor warms the model.
             let capability = ModelRuntime.inspectLoadingModelMTP(name: model)
-            let defaultEligible = NativeMTPSelectionDefault.isEligible(
-                bundleDirectory: bundleDir)
             await MainActor.run {
                 // The selection may have moved while we were on disk.
                 guard selectedModel == model else { return }
@@ -4747,7 +4711,6 @@ extension FloatingInputCard {
                     nativeMTPCapableModels.remove(identity)
                     nativeMTPManuallyBlockedModels.remove(identity)
                 }
-                applyNativeMTPDefaultDepthIfNeeded(eligible: defaultEligible)
                 // Shown once per bundle per improper-state fingerprint: a
                 // dismissed state stays quiet across relaunches, while a
                 // DIFFERENT improper state re-arms the notice.

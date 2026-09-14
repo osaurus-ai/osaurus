@@ -81,6 +81,8 @@ public enum ServerRuntimeSettingsStore {
             let decoded = normalizeLoadedSettings(raw)
             if decoded != raw {
                 persist(decoded, mtpSelectionIsFamilyDefault: false, recordMTPChoice: false)
+            } else {
+                writeMTPDefaultOffMigrationMarker()
             }
             writeLegacyConcurrencyMigrationMarker()
             cachedSnapshot = decoded
@@ -156,6 +158,8 @@ public enum ServerRuntimeSettingsStore {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(settings).write(to: url, options: [.atomic])
+            // A failed settings write must not consume the one-shot migration.
+            writeMTPDefaultOffMigrationMarker()
             if recordMTPChoice {
                 NativeMTPSelectionDefault.recordSavedChoice(
                     previous: previousMTP,
@@ -192,6 +196,8 @@ public enum ServerRuntimeSettingsStore {
             let normalized = normalizeLoadedSettings(raw)
             if normalized != raw {
                 persist(normalized, mtpSelectionIsFamilyDefault: false, recordMTPChoice: false)
+            } else {
+                writeMTPDefaultOffMigrationMarker()
             }
             cachedSnapshot = normalized
             return normalized
@@ -392,39 +398,18 @@ public enum ServerRuntimeSettingsStore {
         // This is the right home for it. Both `load()` and `loadOrMigrate()`
         // funnel through here, and `load()` persists whenever normalization
         // changes the value, so the migration runs once and is written back.
-        // Captured BEFORE the migration, which overwrites `schemaVersion` and
-        // would otherwise make a legacy install indistinguishable from a
-        // current one by the time the MTP repair below runs.
-        let wasPreMigrationInstall =
-            settings.schemaVersion != VMLXServerRuntimeSettings.contractVersion
         normalized.migrateToCurrentSchema()
-        // vmlx-swift e095d0f changed the engine default from "MTP off" to
-        // "auto". Existing Osaurus installs persisted the old default exactly,
-        // so without this repair tuned MXFP8/MTP bundles still never reach the
-        // tensor+tuning-gated autodetect path after upgrade.
-        //
-        // Gated by a marker, because the condition above cannot tell a legacy
-        // install from a user who just switched MTP off and touched nothing
-        // else — both are `.off` with the other three fields at defaults.
-        // Ungated it re-fired on EVERY load, and load() persists what it
-        // changes, so "native MTP off" silently became "auto" forever. Same
-        // one-shot shape as the diffusion / tied-head / cache repairs below.
-        // Two gates, because either alone is insufficient. `wasPreMigrationInstall`
-        // is what separates a legacy install from a user who just switched MTP
-        // off — the field values are identical in both cases. The marker then
-        // stops the repair re-firing on later loads, since the migration makes
-        // every install look current from the second load onward.
-        if wasPreMigrationInstall,
-            normalized.mtp.mode == .off,
-            normalized.mtp.draftTokenLimit == nil,
-            normalized.mtp.keepDraftCacheSeparate,
-            normalized.mtp.acceptedTokensOnlyEnterBaseCache,
-            !FileManager.default.fileExists(
-                atPath: mtpAutoDefaultsMigrationMarkerURL().path
-            )
+        // Off is the product default. Retire only untouched old Auto or the
+        // recorded family-owned D3 default, preserving explicit/custom choices.
+        if !FileManager.default.fileExists(atPath: mtpDefaultOffMigrationMarkerURL().path),
+            NativeMTPSelectionDefault.action(
+                settings: normalized.mtp,
+                userHasChosen: UserDefaults.standard.bool(forKey: NativeMTPSelectionDefault.userChoseKey),
+                ownsCurrentValue: UserDefaults.standard.bool(forKey: NativeMTPSelectionDefault.familyDefaultKey)
+            ) == .restoreOff
         {
-            normalized.mtp.mode = .auto
-            writeMTPAutoDefaultsMigrationMarker()
+            normalized.mtp.mode = .off
+            normalized.mtp.explicitDepth = nil
         }
         // Osaurus product default for block-diffusion models: 16 denoising
         // steps (~74 tok/s on diffusiongemma-26B-A4B MXFP4, coherent) vs the
@@ -829,20 +814,19 @@ public enum ServerRuntimeSettingsStore {
         directoryURL().appendingPathComponent(diffusionDefaultsMigrationMarkerName)
     }
 
-    /// One-shot repair of the pre-e095d0f "MTP off" engine default. The marker
-    /// is what keeps a user's later explicit "off" sticky — without it the
-    /// repair cannot distinguish the two and overwrites the choice on reload.
-    static let mtpAutoDefaultsMigrationMarkerName =
-        "mtp-auto-defaults-migrated.marker"
+    /// Separate from the obsolete Auto marker; written only after settings
+    /// are durable or an existing file needs no normalization.
+    static let mtpDefaultOffMigrationMarkerName =
+        "mtp-default-off-migrated.marker"
 
-    private nonisolated static func mtpAutoDefaultsMigrationMarkerURL() -> URL {
-        directoryURL().appendingPathComponent(mtpAutoDefaultsMigrationMarkerName)
+    private nonisolated static func mtpDefaultOffMigrationMarkerURL() -> URL {
+        directoryURL().appendingPathComponent(mtpDefaultOffMigrationMarkerName)
     }
 
-    private nonisolated static func writeMTPAutoDefaultsMigrationMarker() {
-        let url = mtpAutoDefaultsMigrationMarkerURL()
+    private nonisolated static func writeMTPDefaultOffMigrationMarker() {
+        let url = mtpDefaultOffMigrationMarkerURL()
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
-        try? Data().write(to: url)
+        try? Data().write(to: url, options: [.atomic])
     }
 
     private nonisolated static func writeDiffusionDefaultsMigrationMarker() {
