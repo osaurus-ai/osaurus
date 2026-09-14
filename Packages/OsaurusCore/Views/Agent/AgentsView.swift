@@ -5663,6 +5663,7 @@ struct AgentDetailView: View {
             }
             let path = url.standardizedFileURL.path
             agentManager.updateWorkingFolder(for: agent.id, bookmark: bookmark, path: path)
+            RecentFoldersStore.shared.record(path: path, bookmark: bookmark)
             workingFolderPath = path
         }
     }

@@ -133,6 +133,7 @@ public final class ChatFolderState: ObservableObject {
         securityScopedURL = url
         bookmark = bookmarkData
         lastKnownPath = url.standardizedFileURL.path
+        RecentFoldersStore.shared.record(path: url.standardizedFileURL.path, bookmark: bookmarkData)
         // Folder tools register lazily on first mount anywhere in the
         // process; their bodies resolve the root per execution scope.
         FolderToolManager.shared.ensureFolderToolsRegistered()
