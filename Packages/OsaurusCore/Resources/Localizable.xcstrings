@@ -267747,6 +267747,314 @@
           }
         }
       }
+    },
+    "On another device": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Auf einem anderen Gerät"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "다른 기기에서"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "На другом устройстве"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "在另一台设备上"
+          }
+        }
+      }
+    },
+    "Served From Another Device": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Wird von einem anderen Gerät bereitgestellt"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "다른 기기에서 제공 중"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Обслуживается с другого устройства"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "由另一台设备提供"
+          }
+        }
+      }
+    },
+    "Shared by your identity from another device. Reached through the relay like a teammate's agent.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Von deiner Identität auf einem anderen Gerät geteilt. Erreichbar über das Relay wie der Agent eines Teammitglieds."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "다른 기기의 내 신원으로 공유되었습니다. 팀원의 에이전트처럼 릴레이를 통해 연결됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Опубликовано вашей идентичностью с другого устройства. Доступно через реле, как агент коллеги."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "由你的身份从另一台设备共享。通过中继访问，与队友的代理相同。"
+          }
+        }
+      }
+    },
+    "Your agent on another device": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Dein Agent auf einem anderen Gerät"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "다른 기기의 내 에이전트"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ваш агент на другом устройстве"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "你在另一台设备上的代理"
+          }
+        }
+      }
+    },
+    "Your agent on another device · %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Dein Agent auf einem anderen Gerät · %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "다른 기기의 내 에이전트 · %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ваш агент на другом устройстве · %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "你在另一台设备上的代理 · %@"
+          }
+        }
+      }
+    },
+    "Your agent · other device": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Dein Agent · anderes Gerät"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "내 에이전트 · 다른 기기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ваш агент · другое устройство"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "你的代理 · 其他设备"
+          }
+        }
+      }
+    },
+    "Your agent — shared from another of your devices": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Dein Agent – von einem anderen deiner Geräte geteilt"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "내 에이전트 — 다른 내 기기에서 공유됨"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ваш агент — опубликован с другого вашего устройства"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "你的代理 — 从你的另一台设备共享"
+          }
+        }
+      }
+    },
+    "Your agent — shared with %@ from another of your devices": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Dein Agent – mit %@ von einem anderen deiner Geräte geteilt"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "내 에이전트 — 다른 내 기기에서 %@과(와) 공유됨"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ваш агент — предоставлен %@ с другого вашего устройства"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "你的代理 — 从你的另一台设备与 %@ 共享"
+          }
+        }
+      }
+    },
+    "Yours · other device": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Deins · anderes Gerät"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "내 것 · 다른 기기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ваш · другое устройство"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "你的 · 其他设备"
+          }
+        }
+      }
+    },
+    "%@ is hosted on this Mac; run it locally instead of through the workspace.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ wird auf diesem Mac gehostet; starte ihn lokal statt über den Workspace."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@은(는) 이 Mac에서 호스팅됩니다. 작업 공간이 아니라 로컬에서 실행하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ размещён на этом Mac; запускайте его локально, а не через рабочую область."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ 托管在这台 Mac 上；请在本地运行，而不是通过工作区。"
+          }
+        }
+      }
+    },
+    "served from another device using your identity.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "wird von einem anderen Gerät mit deiner Identität bereitgestellt."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "내 신원을 사용하는 다른 기기에서 제공됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "обслуживается с другого устройства с вашей идентичностью."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正由使用你身份的另一台设备提供。"
+          }
+        }
+      }
     }
   },
   "version": "1.1"
