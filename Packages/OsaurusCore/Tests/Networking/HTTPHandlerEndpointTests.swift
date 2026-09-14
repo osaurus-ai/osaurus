@@ -23,6 +23,33 @@ import Testing
 @Suite(.serialized)
 struct HTTPHandlerEndpointTests {
 
+    @Test(arguments: ["/v1/embeddings", "/embeddings", "/api/embed", "/embed"])
+    func embeddings_rejectUnsupportedModelBeforeLoading(_ path: String) async throws {
+        let server = try await startServer()
+        defer { Task { await server.shutdown() } }
+        for model in ["mxbai-embed-large-v1", "bge-small-en-v1.5", "other/potion-base-4M", "bad\"model\\\n"] {
+            var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)\(path)")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["model": model, "input": "test"])
+            let (data, response) = try await URLSession.shared.data(for: request)
+            #expect((response as? HTTPURLResponse)?.statusCode == 400)
+            let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            #expect(object["data"] == nil)
+            #expect(object["embeddings"] == nil)
+            let message: String
+            if path.hasSuffix("embeddings") {
+                let error = try #require(object["error"] as? [String: Any])
+                #expect(error["code"] as? String == "unsupported_embedding_model")
+                #expect(error["param"] as? String == "model")
+                message = try #require(error["message"] as? String)
+            } else {
+                message = try #require(object["error"] as? String)
+            }
+            #expect(message.contains(model))
+        }
+    }
+
     @Test func health_endpoint_returns_healthy_json() async throws {
         let server = try await startServer()
         defer { Task { await server.shutdown() } }

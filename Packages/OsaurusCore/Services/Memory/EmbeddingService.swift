@@ -17,6 +17,28 @@ public actor EmbeddingService {
     /// Known dimension for potion-base-4M so VecturaKit can init without loading the model.
     public static let embeddingDimension = 128
 
+    enum APIModelError: LocalizedError {
+        case unsupportedModel(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .unsupportedModel(let requested):
+                return "Embedding model '\(requested)' is not supported by this endpoint. "
+                    + "Use '\(EmbeddingService.modelName)' or 'minishlab/\(EmbeddingService.modelName)'. "
+                    + "No embeddings were generated."
+            }
+        }
+    }
+
+    /// The public API currently exposes the shared Model2Vec backend only.
+    /// Reject other identities before loading it: returning Potion vectors for
+    /// a different requested model silently corrupts callers' vector indexes.
+    nonisolated static func validateAPIModel(_ requested: String) throws {
+        guard requested == modelName || requested == "minishlab/\(modelName)" else {
+            throw APIModelError.unsupportedModel(requested)
+        }
+    }
+
     /// Single shared embedder used by all VecturaKit indexes and the embedding API.
     /// Wrapped in MetalSafeEmbedder to coordinate embedding and generation work.
     public static let sharedEmbedder: MetalSafeEmbedder = MetalSafeEmbedder(

@@ -7782,6 +7782,32 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
+        do {
+            try EmbeddingService.validateAPIModel(request.model)
+        } catch {
+            let message = error.localizedDescription
+            let payload: [String: Any] = ollamaFormat
+                ? ["error": message]
+                : ["error": [
+                    "message": message, "type": "invalid_request_error",
+                    "param": "model", "code": "unsupported_embedding_model",
+                ]]
+            // Model IDs are caller-controlled; encode rather than interpolate
+            // so quotes, newlines and backslashes remain valid JSON.
+            let json = (try? JSONSerialization.data(withJSONObject: payload))
+                .map { String(decoding: $0, as: UTF8.self) }
+                ?? #"{"error":"Unsupported embedding model"}"#
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: stateRef.value.corsHeaders)
+            sendResponse(context: context, version: head.version, status: .badRequest, headers: headers, body: json)
+            logRequest(
+                method: "POST", path: logPath, userAgent: userAgent,
+                requestBody: requestBodyString, responseBody: json, responseStatus: 400,
+                startTime: startTime, errorMessage: message
+            )
+            return
+        }
+
         let texts = request.input.texts
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
