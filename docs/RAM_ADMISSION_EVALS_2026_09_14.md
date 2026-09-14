@@ -22,7 +22,7 @@ substitutes for the counters used by the admission estimator.
   `SubagentBatchAdmissionPlanner.memoryFactsAfterReclaimingIfNeeded`, `plan`,
   and one `SubagentAdmission` actor across all steps. No model execution is
   simulated or claimed. Real delayed sampling is retained.
-- `Suites/RAMAdmission`: 12 deterministic cases, registered in the catalog and
+- `Suites/RAMAdmission`: 13 deterministic cases, registered in the catalog and
   the 1.0 CI floor. Repeated release, actual reporter cutoff, one-byte boundary,
   successful/failed/unknown reclamation, explicit budget, RAM off, same-model
   width two, memory/engine serialization, batching off and occupied-engine
@@ -49,7 +49,7 @@ No screenshots or model artifacts are committed to the repository.
 
 - Full eval harness after target and transcript assertions: 353/353 tests,
   43 suites (`evals-complete-tests.log`). The new policy fixture runner covers all
-  12 committed memory scenarios. Scorer adversarial tests reject parent-only
+  13 committed memory scenarios. Scorer adversarial tests reject parent-only
   echoes, failed/deduped children, wrong order and truncated/missing evidence.
 - `scripts/live-proof/assert-eval-floors-makefile-sync.sh`: 11 suite directories
   agree with floors; RAMAdmission is included.
