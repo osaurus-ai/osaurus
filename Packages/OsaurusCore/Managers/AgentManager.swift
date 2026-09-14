@@ -55,7 +55,29 @@ public final class AgentManager: ObservableObject {
 
     /// All available agents (built-in + custom)
     @Published public private(set) var agents: [Agent] = [] {
-        didSet { syncIdentityRegistry() }
+        didSet {
+            rebuildAgentIndex()
+            syncIdentityRegistry()
+        }
+    }
+
+    /// `id -> agents` offset, so `agent(for:)` is a dictionary hit.
+    ///
+    /// The lookup was a linear scan, and the SwiftUI composer and sidebar call
+    /// it several times per render through `effectiveModel`,
+    /// `effectiveMaxTokens` and `effectiveCapabilities` — it showed up as the
+    /// leaf of main-thread hang samples on installs with many agents. The
+    /// index cannot go stale: `agents` is `private(set)` and every mutation
+    /// runs this `didSet`.
+    private var agentIndex: [UUID: Int] = [:]
+
+    private func rebuildAgentIndex() {
+        agentIndex = Dictionary(
+            agents.enumerated().map { ($0.element.id, $0.offset) },
+            // Duplicate ids should not exist; if one slips through, keep the
+            // first, matching the old `first(where:)` behaviour exactly.
+            uniquingKeysWith: { first, _ in first }
+        )
     }
 
     /// Spawn authority changes can race asynchronous approval, provider
@@ -798,7 +820,10 @@ public final class AgentManager: ObservableObject {
 
     /// Get an agent by ID
     public func agent(for id: UUID) -> Agent? {
-        agents.first { $0.id == id }
+        guard let offset = agentIndex[id], agents.indices.contains(offset) else {
+            return nil
+        }
+        return agents[offset]
     }
 
     /// Get an agent by its crypto address (case-insensitive)
