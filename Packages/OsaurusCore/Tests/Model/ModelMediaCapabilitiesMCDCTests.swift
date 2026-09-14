@@ -58,6 +58,48 @@ struct ModelMediaCapabilitiesMCDCTests {
         #expect(!VLMDetection.isVLM(at: root))
     }
 
+    @Test(arguments: ["patch_dense.weight", "patch_dense.bias", "patch_ln1.weight", "patch_ln1.bias",
+                      "patch_ln2.weight", "patch_ln2.bias", "pos_embedding", "pos_norm.weight",
+                      "pos_norm.bias", "embed_vision.embedding_projection.weight"])
+    func unifiedEmbedderRequiresEachComponent(component: String) throws {
+        let root = try VisionBundleFixture.make(type: "gemma4_unified", omit: component)
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(!VLMDetection.isVLM(at: root))
+    }
+
+    @Test(arguments: ["pixtral", "mistral3", "ministral3"])
+    func pixtralPatchConvolutionIsInputEvidence(type: String) throws {
+        let root = try VisionBundleFixture.make(type: type)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try VisionBundleFixture.writeJSON(["processor_class": "PixtralProcessor"],
+                                          to: root.appendingPathComponent("processor_config.json"))
+        let block = "vision_tower.transformer.layers.0.attention.wq.weight"
+        try VisionBundleFixture.writeWeights(["vision_tower.patch_conv.weight", block],
+                                            to: root.appendingPathComponent("model.safetensors"))
+        #expect(VLMDetection.isVLM(at: root))
+        try VisionBundleFixture.writeWeights([block], to: root.appendingPathComponent("model.safetensors"))
+        #expect(!LocalVisionEvidence.inspect(root, refresh: true).hasVision)
+    }
+
+    @Test func discreteVisionTokenizerUsesItsConfigAndCodebook() throws {
+        let root = try VisionBundleFixture.make(type: "apertus1p5")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try VisionBundleFixture.writeJSON(["model_type": "apertus1p5",
+            "vision_tokenizer_config": ["codebook_size": 131072]],
+            to: root.appendingPathComponent("config.json"))
+        try VisionBundleFixture.writeJSON(["processor_class": "Apertus1p5Processor"],
+            to: root.appendingPathComponent("processor_config.json"))
+        let weights = ["vision_tokenizer.encoder.conv_in.weight",
+            "vision_tokenizer.encoder.down.0.block.0.conv1.weight",
+            "vision_tokenizer.encoder.conv_out.weight", "vision_tokenizer.quant_conv.weight",
+            "vision_tokenizer.quantize.embedding.weight"]
+        try VisionBundleFixture.writeWeights(weights, to: root.appendingPathComponent("model.safetensors"))
+        #expect(VLMDetection.isVLM(at: root))
+        try VisionBundleFixture.writeWeights(Array(weights.dropLast()),
+            to: root.appendingPathComponent("model.safetensors"))
+        #expect(!LocalVisionEvidence.inspect(root, refresh: true).hasVision)
+    }
+
     @Test func configAndWeightsBothRequired() throws {
         for value: Any in [NSNull(), [:] as [String: Any], ["depth": 2]] {
             let root = try VisionBundleFixture.make()

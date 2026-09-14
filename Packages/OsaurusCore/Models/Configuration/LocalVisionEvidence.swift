@@ -86,10 +86,41 @@ enum LocalVisionEvidence {
         // Retain independent audio tensor evidence even when this configured
         // multimodal architecture has no vision tower. Gemma supports optional
         // vision and audio components; one missing modality must not hide another.
-        guard let vision = (omni?["vision_config"] ?? config["vision_config"]) as? [String: Any],
+        // Apertus uses a discrete vision tokenizer instead of a projected tower.
+        let visionKey = modelType == "apertus1p5" ? "vision_tokenizer_config" : "vision_config"
+        guard let vision = (omni?[visionKey] ?? config[visionKey]) as? [String: Any],
             !vision.isEmpty
         else {
             return result(false, "The installed bundle has no nonempty vision configuration.")
+        }
+        if modelType == "apertus1p5" {
+            let required = ["vision_tokenizer.encoder.conv_in.weight",
+                "vision_tokenizer.encoder.down.0.block.0.conv1.weight",
+                "vision_tokenizer.encoder.conv_out.weight", "vision_tokenizer.quant_conv.weight",
+                "vision_tokenizer.quantize.embedding.weight"]
+            guard required.allSatisfy({ suffix in
+                names.contains { $0 == suffix || $0.hasSuffix("." + suffix) }
+            }) else {
+                return result(false, "The configured vision tokenizer is missing encoder or codebook weights.")
+            }
+            return result(true, "Image input is backed by the installed vision tokenizer configuration and weights.")
+        }
+        let gemma4 = ["gemma4", "gemma4_unified", "diffusion_gemma"].contains(modelType)
+        // Gemma4's nested vision architecture selects an encoder-free embedder.
+        // It has no vision_tower or encoder depth: require its real patch,
+        // normalization, position and language-projection tensors instead.
+        if gemma4, vision["model_type"] as? String == "gemma4_unified_vision" {
+            let required = ["vision_embedder.patch_dense.weight", "vision_embedder.patch_dense.bias",
+                "vision_embedder.patch_ln1.weight", "vision_embedder.patch_ln1.bias",
+                "vision_embedder.patch_ln2.weight", "vision_embedder.patch_ln2.bias",
+                "vision_embedder.pos_embedding", "vision_embedder.pos_norm.weight",
+                "vision_embedder.pos_norm.bias", "embed_vision.embedding_projection.weight"]
+            guard required.allSatisfy({ suffix in
+                names.contains { $0 == suffix || $0.hasSuffix("." + suffix) }
+            }) else {
+                return result(false, "The unified vision embedder is missing configured component weights.")
+            }
+            return result(true, "Image input is backed by the installed unified vision configuration and embedder weights.")
         }
         let weights = names.filter { $0.hasSuffix(".weight") || $0.hasSuffix(".weights") }
         let visionWeights = weights.filter { key in
@@ -103,9 +134,9 @@ enum LocalVisionEvidence {
         // block. A lone visual weight or a stale index cannot grant vision.
         let qwen = ["qwen2_vl", "qwen2_5_vl", "qwen3_vl", "qwen3_5", "qwen3_5_moe", "qwen4_exp"]
             .contains(modelType)
-        let gemma4 = ["gemma4", "gemma4_unified", "diffusion_gemma"].contains(modelType)
         let hasInput = visionWeights.contains {
-            $0.contains("patch_embed") || $0.contains("patch_embedding") || $0.contains("patch_generator") || $0.contains("conv1.weight")
+            $0.contains("patch_embed") || $0.contains("patch_embedding") || $0.contains("patch_generator")
+                || $0.contains("patch_conv.weight") || $0.contains("conv1.weight")
         }
         let hasBlocks = visionWeights.contains { $0.contains(".blocks.") || $0.contains(".layers.") }
         guard hasInput, hasBlocks else {
