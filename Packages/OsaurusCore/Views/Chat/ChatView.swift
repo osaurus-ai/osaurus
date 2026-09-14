@@ -9487,6 +9487,10 @@ struct ChatView: View {
                             onSelectAgent: { newAgentId in
                                 windowState.switchAgent(to: newAgentId)
                             },
+                            onNewChatWithAgent: { newAgentId in
+                                windowState.startNewChat(with: newAgentId)
+                                isPinnedToBottom = true
+                            },
                             workspaceAgentAddress: windowState.workspaceAgentAddress,
                             workspaceAgentWorkspaceId: observedSession.workspaceContext?.workspaceId,
                             onSelectWorkspaceAgent: { address, workspaceId in

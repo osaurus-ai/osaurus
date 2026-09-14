@@ -63,6 +63,9 @@ struct ChatSessionSidebar: View {
     /// replaces the removed agent-selector pill; same effect as picking an
     /// agent from it).
     var onSelectAgent: ((UUID) -> Void)? = nil
+    /// Start a fresh chat with a local agent straight from its row (hover
+    /// "+" / context menu), without selecting the agent first.
+    var onNewChatWithAgent: ((UUID) -> Void)? = nil
     /// Lowercased address of the workspace teammate's agent the window's
     /// active tab is chatting with, or nil for a local chat. While set, the
     /// matching team-agent row is the selected one (no local row is).
@@ -1114,6 +1117,12 @@ struct ChatSessionSidebar: View {
                             newAgentHighlight.markSeen(localAgentId: agent.id)
                             onSelectAgent?(agent.id)
                         },
+                        onNewChat: onNewChatWithAgent.map { start in
+                            {
+                                newAgentHighlight.markSeen(localAgentId: agent.id)
+                                start(agent.id)
+                            }
+                        },
                         onStop: activity == nil ? nil : { stopActivity(for: agent) },
                         isReorderable: !agent.isBuiltIn,
                         isDragging: draggingAgentId == agent.id,
@@ -1860,6 +1869,10 @@ private struct AgentSidebarRow: View {
     /// Appeared during this app run and not opened yet: accent ring + pill.
     var isNew: Bool = false
     let onSelect: () -> Void
+    /// Start a fresh chat with this agent. Shown as a hover "+" so the user
+    /// can open a new chat without first selecting the agent and then
+    /// reaching for the "+" in the tab strip.
+    var onNewChat: (() -> Void)? = nil
     /// Stop every live run on this agent. Shown on hover while
     /// `activityStatus` is non-nil.
     var onStop: (() -> Void)? = nil
@@ -1957,16 +1970,30 @@ private struct AgentSidebarRow: View {
             // there). The selected row is already signalled by its
             // background, so no checkmark.
             else if isHovered {
-                Button(action: openAgentSettings) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
-                        .contentShape(Rectangle())
+                HStack(spacing: 2) {
+                    if let onNewChat {
+                        Button(action: onNewChat) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(theme.secondaryText)
+                                .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .pointingHandCursor()
+                        .localizedHelp("New Chat")
+                    }
+                    Button(action: openAgentSettings) {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(theme.secondaryText)
+                            .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .pointingHandCursor()
+                    .localizedHelp(agent.isBuiltIn ? LocalizedStringKey("Orchestrator Settings") : LocalizedStringKey("Agent Settings"))
                 }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
-                .localizedHelp(agent.isBuiltIn ? LocalizedStringKey("Orchestrator Settings") : LocalizedStringKey("Agent Settings"))
                 .transition(.opacity)
             }
         }
@@ -2020,6 +2047,11 @@ private struct AgentSidebarRow: View {
     /// share/unshare actions that otherwise live only in Settings.
     @ViewBuilder
     private var agentContextMenu: some View {
+        if let onNewChat {
+            Button(action: onNewChat) {
+                Label(L("New Chat"), systemImage: "plus")
+            }
+        }
         Button(action: openAgentSettings) {
             Label(L("Open Settings"), systemImage: "gearshape")
         }

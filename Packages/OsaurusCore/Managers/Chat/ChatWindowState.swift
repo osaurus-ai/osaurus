@@ -601,6 +601,22 @@ final class ChatWindowState: ObservableObject {
         newTab(agentId: newAgentId)
     }
 
+    /// Start a fresh chat with `newAgentId` from its sidebar row (hover "+").
+    /// Unlike `switchAgent`, this never lands on one of the agent's existing
+    /// tabs: if the active tab already belongs to that agent it behaves like
+    /// New Chat there (a blank tab is reused), otherwise a new tab opens for
+    /// the agent.
+    func startNewChat(with newAgentId: UUID) {
+        openProjectId = nil
+        enteredChatFromProjectPage = false
+        if ChatTabScope.local(newAgentId) == activeScope {
+            startNewChat()
+            return
+        }
+        TTSService.shared.stop()
+        newTab(agentId: newAgentId)
+    }
+
     /// Pick a workspace teammate's shared agent from the sidebar, exactly
     /// like picking a local agent: the agent's existing tabs are shown when
     /// it has any; otherwise a blank active tab is repurposed, else a new
