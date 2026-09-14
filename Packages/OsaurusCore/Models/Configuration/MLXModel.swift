@@ -291,7 +291,27 @@ struct MLXModel: Identifiable, Codable {
     /// The dropped precision is re-surfaced as a separate chip in the chooser so
     /// same-size variants stay distinguishable. Falls back to `name` when
     /// stripping would leave nothing.
+    /// Memoized `simplifiedName` results, keyed by the raw `name`.
+    ///
+    /// The computation is a pure function of `name`, but it runs up to five
+    /// `range(of:options:.regularExpression)` probes per token, and that API
+    /// recompiles its pattern on every call. Model grids and the chat empty
+    /// state read `simplifiedName` per card per SwiftUI update, so the
+    /// aggregate regex compilation showed up in the hang reports. Names come
+    /// from a curated catalog, so the cache stays small. Same staleness
+    /// characteristics as `formattedSizeCache` below: a given `name` always
+    /// simplifies to the same string.
+    private static let simplifiedNameCache = OSAllocatedUnfairLock<[String: String]>(
+        initialState: [:])
+
     var simplifiedName: String {
+        if let hit = Self.simplifiedNameCache.withLock({ $0[name] }) { return hit }
+        let computed = computeSimplifiedName()
+        Self.simplifiedNameCache.withLock { $0[name] = computed }
+        return computed
+    }
+
+    private func computeSimplifiedName() -> String {
         func isJargon(_ token: String) -> Bool {
             let t = token.lowercased()
             if t == "it" || t == "qat" || t == "mtp" { return true }
