@@ -1973,7 +1973,7 @@ private struct AgentSidebarRow: View {
                 HStack(spacing: 2) {
                     if let onNewChat {
                         Button(action: onNewChat) {
-                            Image(systemName: "plus")
+                            Image(systemName: "plus.bubble")
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundColor(theme.secondaryText)
                                 .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
@@ -2049,7 +2049,7 @@ private struct AgentSidebarRow: View {
     private var agentContextMenu: some View {
         if let onNewChat {
             Button(action: onNewChat) {
-                Label(L("New Chat"), systemImage: "plus")
+                Label(L("New Chat"), systemImage: "plus.bubble")
             }
         }
         Button(action: openAgentSettings) {
