@@ -4,7 +4,7 @@
 //
 //  Turning native MTP off did not stay off.
 //
-//  `ServerRuntimeSettingsStore` used to carry a repair for installs that persisted
+//  `ServerRuntimeSettingsStore` carries a repair for installs that persisted
 //  the pre-e095d0f engine default ("MTP off") before the default became
 //  "auto". It fires whenever `mode == .off` and the other three MTP fields are
 //  at their defaults — which is ALSO exactly the shape of a user who just
@@ -12,8 +12,9 @@
 //  apart, it ran on every `load()`, and `load()` persists what it changed. So
 //  the user's choice was silently rewritten to `.auto`, permanently.
 //
-//  Off is now the product default. Neither current nor legacy Off may be
-//  rewritten to Auto. Factory Auto/family D3 retirement is tested separately.
+//  Five sibling repairs in the same file are one-shot, gated by a marker file
+//  (`diffusion-defaults-migrated.marker`, `tied-head-...`, `cache-...`,
+//  `paged-cache-...`, `memory-safety-...`). This one had no marker at all.
 //
 //  These go through the store's real load path, because a test that calls the
 //  normalizer directly would prove it is correct, not that the user's setting
@@ -92,8 +93,11 @@ final class MTPOffStaysOffTests: XCTestCase {
         }
     }
 
-    /// Old Off is also Off: a schema migration is not an activation request.
-    func testLegacyInstallKeepsMTPOff() throws {
+    /// The counter-case the repair exists for must still work: a genuine
+    /// pre-migration install (no schemaVersion) carrying the old default does
+    /// get moved to auto. Without this the test above could be "passed" by
+    /// deleting the repair outright.
+    func testLegacyInstallStillGetsRepairedToAuto() throws {
         var settings = VMLXServerRuntimeSettings()
         settings.schemaVersion = nil  // never migrated
         settings.mtp.mode = .off
@@ -103,7 +107,7 @@ final class MTPOffStaysOffTests: XCTestCase {
         let loaded = try XCTUnwrap(ServerRuntimeSettingsStore.load())
 
         XCTAssertEqual(
-            loaded.mtp.mode, .off,
-            "a legacy settings migration silently enabled MTP")
+            loaded.mtp.mode, .auto,
+            "the legacy-default repair no longer reaches a pre-migration install")
     }
 }
