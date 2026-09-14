@@ -174,6 +174,11 @@ public final class WindowManager: NSObject, ObservableObject {
             centerOnActiveScreen(window)
         }
 
+        // The restored autosave frame may come from a larger display, so
+        // make sure the window (and the floor its content enforces) fits
+        // the screen it is about to appear on (#2761).
+        fitToScreen(window, identifier: identifier, repositions: false)
+
         // Temporarily use screenSaver level (highest) to force window above everything
         // This is necessary because macOS won't bring windows to front from background apps
         let isPinned = pinnedWindows.contains(identifier)
@@ -312,12 +317,17 @@ public final class WindowManager: NSObject, ObservableObject {
             hostingController.sizingOptions = [.minSize]
         }
 
-        // Calculate centered position on active screen
+        // Calculate centered position on active screen. The default size is
+        // shrunk to the screen's visible frame so a small display ("Larger
+        // Text" scaling on a 13" laptop) never opens a window that hangs
+        // off its edges (#2761).
+        let screen = activeScreen
+        let defaultSize = Self.fittedSize(config.defaultSize, to: screen)
         let initialRect: NSRect
-        if let s = activeScreen {
-            initialRect = centeredRect(size: config.defaultSize, on: s)
+        if let s = screen {
+            initialRect = centeredRect(size: defaultSize, on: s)
         } else {
-            initialRect = NSRect(origin: .zero, size: config.defaultSize)
+            initialRect = NSRect(origin: .zero, size: defaultSize)
         }
 
         let window: NSWindow
@@ -362,6 +372,12 @@ public final class WindowManager: NSObject, ObservableObject {
             window.standardWindowButton(buttonType)?.isHidden = true
         }
 
+        // The root view's floor must already fit the target screen when the
+        // hosting controller attaches: its first layout pass mirrors that
+        // floor into `contentMinSize`, and a too-tall floor at that point
+        // would grow the window past the screen before `fitToScreen` runs.
+        pushMinimumContentSize(for: window, identifier: config.identifier, on: screen)
+
         window.contentViewController = hostingController
 
         // Pre-layout to avoid jank
@@ -369,7 +385,7 @@ public final class WindowManager: NSObject, ObservableObject {
 
         // Force set content size again to ensure we start with the intended size
         // This prevents the window from starting at 0x0 or wrong size if layoutSubtreeIfNeeded did something unexpected
-        window.setContentSize(config.defaultSize)
+        window.setContentSize(defaultSize)
 
         if let autosaveKey = config.autosaveKey {
             window.setFrameAutosaveName(autosaveKey.rawValue)
@@ -377,6 +393,11 @@ public final class WindowManager: NSObject, ObservableObject {
 
         // Register with manager
         register(window, as: config.identifier)
+
+        // The autosave frame just restored may come from a larger display;
+        // shrink it to this screen and pull it fully into view.
+        fitToScreen(window, identifier: config.identifier, repositions: true)
+        ensureScreenParametersObserver()
 
         return window
     }
@@ -396,6 +417,102 @@ public final class WindowManager: NSObject, ObservableObject {
     private var activeScreen: NSScreen? {
         let mouse = NSEvent.mouseLocation
         return NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+    }
+
+    // MARK: - Screen fit
+
+    /// `size` shrunk to `screen`'s visible frame (menu bar and Dock
+    /// excluded). Unchanged when no screen is known.
+    private static func fittedSize(_ size: NSSize, to screen: NSScreen?) -> NSSize {
+        guard let vf = screen?.visibleFrame else { return size }
+        return NSSize(width: min(size.width, vf.width), height: min(size.height, vf.height))
+    }
+
+    /// The largest content area `screen` can show for `window`: the visible
+    /// frame minus the window's own titlebar chrome. `.zero` when no screen
+    /// is known, which the state's clamp treats as "keep the design minimum".
+    private static func availableContentSize(for window: NSWindow, on screen: NSScreen?) -> CGSize {
+        guard let vf = screen?.visibleFrame else { return .zero }
+        // With `.fullSizeContentView` the content view runs under the
+        // titlebar, but the SwiftUI root lays out inside the safe area, so
+        // the hosting controller's minimum includes that strip on top of the
+        // root's `.frame(minHeight:)`. Leave room for it.
+        let chrome = max(0, window.frame.height - window.contentLayoutRect.height)
+        return CGSize(width: vf.width, height: vf.height - chrome)
+    }
+
+    /// Clamp the floor the window's SwiftUI root enforces to what `screen`
+    /// can show. Only the settings window drives its floor from shared
+    /// state; chat windows do the same through `ChatWindowManager`.
+    private func pushMinimumContentSize(
+        for window: NSWindow,
+        identifier: WindowIdentifier,
+        on screen: NSScreen?
+    ) {
+        switch identifier {
+        case .management:
+            ManagementStateManager.shared.updateMinimumContentSize(
+                availableContentSize: Self.availableContentSize(for: window, on: screen)
+            )
+        case .chat, .permission:
+            break
+        }
+    }
+
+    /// Keep `window` inside its screen's visible frame: clamp the floor the
+    /// SwiftUI root enforces, then shrink the frame if it is larger than the
+    /// screen and move it back on screen. Runs on creation (the restored
+    /// autosave frame may come from a larger display), on every show, and
+    /// whenever the window lands on another screen. A window taller than
+    /// its screen could otherwise only be shown with its title bar under the
+    /// menu bar and its bottom cut off (#2761).
+    ///
+    /// `repositions` also pulls a window that FITS but sits partly off
+    /// screen back into view; only creation wants that. A window the user
+    /// dragged partly off screen on purpose is left alone, and nothing moves
+    /// while a mouse button is down (a drag between displays is in
+    /// progress; snapping mid-drag would fight the user). Full screen is
+    /// left to AppKit. Mirrors `ChatWindowManager.fitToScreen`.
+    private func fitToScreen(_ window: NSWindow, identifier: WindowIdentifier, repositions: Bool) {
+        guard !window.styleMask.contains(.fullScreen),
+            let screen = window.screen ?? activeScreen
+        else { return }
+        pushMinimumContentSize(for: window, identifier: identifier, on: screen)
+        guard NSEvent.pressedMouseButtons == 0 else { return }
+        let vf = screen.visibleFrame
+        var frame = window.frame
+        frame.size.width = min(frame.width, vf.width)
+        frame.size.height = min(frame.height, vf.height)
+        if repositions || frame.size != window.frame.size {
+            frame.origin.x = min(max(frame.minX, vf.minX), vf.maxX - frame.width)
+            frame.origin.y = min(max(frame.minY, vf.minY), vf.maxY - frame.height)
+        }
+        guard frame != window.frame else { return }
+        window.setFrame(frame, display: true)
+    }
+
+    fileprivate func windowDidChangeScreen(_ identifier: WindowIdentifier) {
+        guard let window = windows[identifier] else { return }
+        fitToScreen(window, identifier: identifier, repositions: false)
+    }
+
+    private var screenParametersCancellable: AnyCancellable?
+
+    /// Re-fit every managed window when a display's resolution or
+    /// arrangement changes (e.g. switching to "Larger Text" scaling, or
+    /// unplugging the external display the window was on). Armed on first
+    /// window creation.
+    private func ensureScreenParametersObserver() {
+        guard screenParametersCancellable == nil else { return }
+        screenParametersCancellable = NotificationCenter.default
+            .publisher(for: NSApplication.didChangeScreenParametersNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                for (identifier, window) in self.windows {
+                    self.fitToScreen(window, identifier: identifier, repositions: false)
+                }
+            }
     }
 
     private func applyPinnedStyle(to window: NSWindow, pinned: Bool) {
@@ -472,6 +589,10 @@ private final class WindowManagerDelegate: NSObject, NSWindowDelegate {
         self.identifier = identifier
         self.manager = manager
         super.init()
+    }
+
+    func windowDidChangeScreen(_ notification: Notification) {
+        manager?.windowDidChangeScreen(identifier)
     }
 
     func windowWillClose(_ notification: Notification) {
