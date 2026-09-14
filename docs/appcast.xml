@@ -3,6 +3,38 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.3</title>
+            <pubDate>Mon, 14 Sep 2026 15:25:07 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.3</sparkle:version>
+            <sparkle:shortVersionString>0.25.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.3/Osaurus-0.25.3.dmg" length="77325323" type="application/octet-stream" sparkle:edSignature="XrSuOblLplm+nPR2RUyEJY5Lj+VdANHIw7+66lef7L9RC0u1745JOx3sqMegcpXcl3V0N9Vl+L9toq8fJbhIBw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Add n8n pairing code for remote Secure Channel setup (#2762) by @tpae
+- qol improvements for providers and the chat sidebar (#2755) by @RaajeevChandran
+
+## 🚀 Features
+
+- persist open chat tabs across window close and relaunch (#2740) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- fit the settings window to small screens (#2764) by @RaajeevChandran
+- disable add folder for shared agent chats (#2763) by @RaajeevChandran
+- make sure upgraders see the workspaces intro after the whats new modal (#2760) by @RaajeevChandran
+- show LAN discovered agents in the sidebar (#2758) by @RaajeevChandran
+- Use installed config and weight evidence for local vision input (#2756) by @jjang-ai
+- reduce main thread work behind app hang (#2757) by @RaajeevChandran
+- Repair incomplete chat-history schemas so later turns persist (#2753) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.2...0.25.3
+]]></description>
+        </item>
+        <item>
             <title>0.25.2</title>
             <pubDate>Sun, 13 Sep 2026 20:56:39 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

@@ -283,6 +283,7 @@ struct FloatingInputCard: View {
 
     // Observe managers for reactive updates
     @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var recentFolders = RecentFoldersStore.shared
     // Deliberately NOT `@ObservedObject`: sandbox provisioning publishes
     // per-progress-tick during runtime downloads and the clipboard service
     // publishes on every copy, and an observing card re-ran its whole body
@@ -3750,6 +3751,58 @@ extension FloatingInputCard {
         }
     }
 
+    /// Recent folders listed under the + menu's rows. `dismiss` closes
+    /// the menu before the pick runs, like any row.
+    private func recentFoldersList(dismiss: @escaping () -> Void) -> AnyView {
+        AnyView(
+            RecentFoldersList(
+                // Stored string, not a URL: standardizing a file URL can stat
+                // the path, and this runs on the main actor during body.
+                activePath: folderState.lastKnownPath,
+                onPick: { entry in
+                    dismiss()
+                    applyRecentFolder(entry)
+                }
+            )
+        )
+    }
+
+    /// Attach a remembered folder to this chat. Resolves the entry (bookmark
+    /// first, plain path second) off the main actor, then runs the exact
+    /// post-pick steps `selectFolder` does so the sandbox and the agent's
+    /// sticky folder stay consistent with a panel pick. A folder that no
+    /// longer resolves is dropped from the list and reported.
+    private func applyRecentFolder(_ entry: RecentFoldersStore.Entry) {
+        guard !isRemoteAgentRun else { return }
+        let agentId = effectiveAgentId
+        let manager = agentManager
+        Task {
+            guard let url = await RecentFoldersStore.resolveURL(for: entry) else {
+                recentFolders.remove(path: entry.path)
+                ToastManager.shared.error(
+                    L("Folder no longer available"),
+                    message: entry.path
+                )
+                return
+            }
+            guard await folderState.setFolder(url) != nil else {
+                ToastManager.shared.error(L("Failed to grant folder access"))
+                return
+            }
+            do {
+                try await manager.disableSandboxForHostFolder(agentId: agentId)
+                persistWorkingFolderToAgent()
+            } catch {
+                folderState.clearFolder()
+                forgetAgentWorkingFolder()
+                debugLog(
+                    "[Workspace] Could not disable sandbox after recent folder pick: "
+                        + error.localizedDescription
+                )
+            }
+        }
+    }
+
     /// Whether this composer's folder picks/clears should write through to
     /// the agent's sticky working folder. False for the Default agent (it
     /// never carries a folder) and for a remote teammate run (the folder
@@ -6246,6 +6299,9 @@ extension FloatingInputCard {
             icon: "plus",
             help: "Add folder or attach files",
             items: [
+                .init(icon: "paperclip", title: Text("Attach Files", bundle: .module)) {
+                    pickAttachment()
+                },
                 // Mode 2 (remote agent run): the turn executes on the host's
                 // machine and no local system prompt or tools are sent, so a
                 // folder picked here would never reach the agent. Keep the row
@@ -6260,10 +6316,13 @@ extension FloatingInputCard {
                 ) {
                     selectFolder()
                 },
-                .init(icon: "paperclip", title: Text("Attach Files", bundle: .module)) {
-                    pickAttachment()
-                },
-            ]
+            ],
+            // Recently attached folders as a one-click list below a divider.
+            // Hidden for remote runs (same reason as Add Folder) and when
+            // there are none yet.
+            footer: isRemoteAgentRun || recentFolders.entries.isEmpty
+                ? nil
+                : { dismiss in recentFoldersList(dismiss: dismiss) }
         )
     }
 
@@ -8387,7 +8446,12 @@ private struct InputActionMenuButton: View {
         let disabledReason: Text?
         let action: () -> Void
 
-        init(icon: String, title: Text, disabledReason: Text? = nil, action: @escaping () -> Void) {
+        init(
+            icon: String,
+            title: Text,
+            disabledReason: Text? = nil,
+            action: @escaping () -> Void
+        ) {
             self.icon = icon
             self.title = title
             self.disabledReason = disabledReason
@@ -8398,6 +8462,9 @@ private struct InputActionMenuButton: View {
     let icon: String
     let help: String
     let items: [Item]
+    /// Optional content shown under a divider after the rows (recent folder
+    /// chips). Receives a closure that closes the menu.
+    var footer: ((@escaping () -> Void) -> AnyView)? = nil
 
     @State private var isHovered = false
     @State private var showPopover = false
@@ -8452,9 +8519,16 @@ private struct InputActionMenuButton: View {
                         item.action()
                     }
                 }
+                if let footer {
+                    Divider()
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                    footer({ showPopover = false })
+                }
             }
             .padding(.vertical, 6)
-            .frame(width: 180)
+            // Wider with a footer so recent folder names have room.
+            .frame(width: footer != nil ? 240 : 180)
             .background(theme.primaryBackground)
             .environment(\.theme, theme)
         }

@@ -72,7 +72,14 @@ struct ManagementView: View {
 
     var body: some View {
         sidebarNavigation
-            .frame(minWidth: 940, maxWidth: .infinity, minHeight: 640, maxHeight: .infinity)
+            // The floor is clamped to the window's screen by `WindowManager`
+            // so a small display can still show the whole window (#2761).
+            .frame(
+                minWidth: stateManager.minimumContentSize.width,
+                maxWidth: .infinity,
+                minHeight: stateManager.minimumContentSize.height,
+                maxHeight: .infinity
+            )
             .background(theme.primaryBackground)
             .environment(\.theme, themeManager.currentTheme)
             .tint(theme.accentColor)
