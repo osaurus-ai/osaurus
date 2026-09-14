@@ -119,7 +119,38 @@ setting `.cancelled`; stop synchronously publishes `isStreaming=false`, and
 `handleChatStreamingChange` could resume the waiting dispatcher as completed.
 The correction marks cancellation first. The regression asserts the pending
 waiter's result, since the final state alone hides this ordering defect.
-Current cancellation rebuild and verification are pending.
+Cancellation correction source: `6e1dd0fca`. The focused pending-waiter and
+related suites passed 31/31 (`cancellation-fix-tests.log`); the expanded
+background-task, dispatch, spawn, delegation, settings and admission matrix
+passed 888/888 tests in 136 suites (`core-cancellation-matrix.log`). Live Metal allocator checks passed 2/2 on the current pin
+(`allocator-current-pin.log`), including gate cancellation and live-array
+preservation.
+
+The corrected isolated Release rebuilt successfully on `6e1dd0fca` with binary
+SHA-256 `87bb3b550a2aa42fac3d06dd467ffc5a2428a8ac3f593158bba4a68b39a96053`
+(`release-cancellation-receipt.json`). The same native Stop scenario now
+returns `ok: false`, `execution_error`, and "cancelled with the parent run";
+no partial digest is promoted to success. The next SysAdmin run returned
+AFTER_STOP_OK at 29.6 child tok/s and 84.7 parent tok/s, with Stop gone and
+input unlocked. Artifacts: `ui-fixed-cancel-active`, `ui-fixed-cancel-settled`,
+`ui-fixed-after-stop-result`, and the parsed `native-fixed-*.json`.
+
+The next parent question, "What code did SysAdmin just return? Reply with the
+code only," FAILED: it answered that the prior result was a status message,
+not code, instead of repeating the marker (84.2 tok/s). Preserve
+`ui-fixed-grounded-followup` as a failed semantic/history-fidelity row, not a
+successful continuation assertion. Cancellation itself still has no terminal
+throughput field; speed qualification for the interrupted generation remains
+missing. The corrected app peaked at 2,745.46 MiB physical footprint and was
+closed after capture. `ui-fixed-cache.json` retains the actual runtime state.
+
+Current CI on `6e1dd0fca`: CLI/packages/SwiftLint/shellcheck passed;
+Core/evals/StatsPack were still pending at capture. The preceding `9b303cb65`
+eval CI passed. Neither status is represented as final-head all-green.
+PR #2752 remains draft and unmerged. Outstanding qualification includes the
+actual M4 16 GiB repeated run and before/after measurements, reliable batch
+task fidelity, and the broader native different-model/mixed-target settings
+matrix. This follow-up does not claim those unexecuted combinations.
 
 The native process peaked at 2,942.14 MiB physical footprint (not RSS), on
 128 GiB physical RAM. Cache API captures show 3 ordinary KV + 12 rotating KV
