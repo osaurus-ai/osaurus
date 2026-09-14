@@ -57,6 +57,9 @@ public final class AgentManager: ObservableObject {
     @Published public private(set) var agents: [Agent] = [] {
         didSet {
             rebuildAgentIndex()
+            // Avatars are added and removed alongside agent edits, so this is
+            // the moment the cached existence probes can become wrong.
+            AvatarExistenceCache.shared.invalidateAll()
             syncIdentityRegistry()
         }
     }
