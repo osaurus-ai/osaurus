@@ -161,13 +161,15 @@ struct N8nConnectionDraftTests {
 
     @Test func setupRailIsN8nShapedAndDoesNotReuseDiscordCaptions() {
         let ids = N8nSetupSection.sections.map(\.id)
-        #expect(ids == ["where", "call", "who", "reply", "live"])
-        #expect(N8nSetupSection.requiredSectionIds == ["where", "call", "who"])
+        // Everything the pairing code needs (id, bound agent) precedes Connect n8n.
+        #expect(ids == ["basics", "who", "reply", "connect", "live"])
+        #expect(N8nSetupSection.requiredSectionIds == ["basics", "connect", "who"])
         #expect(N8nSetupSection.fallbackSectionId == "live")
-        #expect(N8nSetupSection.whereIsN8n.title == L("Where is n8n?"))
-        #expect(N8nSetupSection.howN8nCalls.caption == L("Webhook"))
+        #expect(N8nSetupSection.basics.title == L("Name this channel"))
+        #expect(N8nSetupSection.connect.title == L("Connect n8n"))
+        #expect(N8nSetupSection.connect.caption == L("Pairing code"))
         #expect(N8nSetupSection.whoMaySpeak.caption == L("Allowlists"))
-        #expect(N8nSetupSection.howOsaurusReplies.caption == L("Poll or push"))
+        #expect(N8nSetupSection.howOsaurusReplies.caption == L("Agent, poll or push"))
         #expect(N8nSetupSection.liveCheck.caption == L("Verify"))
         // Discord/Telegram captions must not appear on the n8n rail.
         for section in N8nSetupSection.sections {

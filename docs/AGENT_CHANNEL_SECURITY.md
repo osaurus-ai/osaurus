@@ -264,8 +264,9 @@ when authorized channel requests are evaluated.
 
 ## Webhook Ingress (`/channels/`)
 
-The generic inbound route `POST /channels/{kind}/{connection_id}/inbound` and
-its poll twin `GET /channels/{kind}/{connection_id}/tasks/{task_id}` are
+The generic inbound route `POST /channels/{kind}/{connection_id}/inbound`, its
+poll twin `GET /channels/{kind}/{connection_id}/tasks/{task_id}`, and the
+credential-test probe `GET /channels/{kind}/{connection_id}/ping` are
 bearer-exempt: they are reachable without an `osk-v1` key because the caller is
 an external automation (today: n8n) that cannot hold one. The connection
 secret is therefore the entire authentication, and `AgentChannelWebhookIngress`
@@ -304,10 +305,37 @@ applies these rules in order, before any other work:
   only a redacted header twin and a byte count, and the secret never appears in
   responses, activity rows, audit rows, or diagnostics.
 
+- **Ping is not a task read.** `/ping` verifies the secret on the empty body
+  and reports the connection's verification method and the transport it saw
+  (`loopback`, `plaintext`, `secure_channel`). It never consults the task
+  store, so a credential test cannot probe task ids and does not pay the
+  foreign-task penalty.
+
 Residual risk to state, not hide: a `plaintext_allowed` connection reachable
 from a non-loopback network relies solely on the secret and rate limiter, and
 the read-only poll route is replayable within its window. Secure Channel
 remains the default and recommended remote transport.
+
+### Pairing code
+
+The n8n sheet issues a pairing code (`osrs-n8n-1.<base64url JSON>`,
+`N8nPairingCode`) that bundles the URL candidates, connection id, verification
+method, **the channel secret**, and optionally the address of the bound local
+agent. Security properties:
+
+- The code **is** the secret. It is shown once in the sheet, copied to the
+  clipboard, and pasted into an n8n credential (encrypted at rest by n8n). It
+  is never written to `agent-channels.json`, logs, or diagnostics. Rotating
+  the secret invalidates every code issued before.
+- The agent address in the code is a **pin**, not a credential. The node
+  refuses a `/secure/session` whose transcript signature does not recover to
+  that address, so a relay or MITM cannot substitute its own ephemeral key.
+- When the address is present the node never downgrades to plaintext: a peer
+  that answers `/secure/session` with 404 is reported as unsupported, not
+  retried in the clear.
+- The Secure Channel inner request carries no `osk-v1` bearer for
+  `/channels/` routes; the channel secret remains the only authentication and
+  is verified inside the ciphertext exactly as in plaintext.
 
 ## Local State Assumption
 

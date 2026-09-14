@@ -87,6 +87,10 @@ struct SettingsSearchSelfFindProbe {
             ("schedules", "schedules.overview"),
             ("sandbox", "sandbox.overview"),
             ("macos permissions", "permissions.tools"),
+            ("pair with n8n", "agentChannels.n8n.pairingCode"),
+            ("pairing code", "agentChannels.n8n.pairingCode"),
+            ("connect n8n", "agentChannels.n8n"),
+            ("remote callers", "agentChannels.n8n"),
         ]
 
         let missed = labels.filter { label in

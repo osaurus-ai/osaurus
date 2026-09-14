@@ -844,7 +844,21 @@ public enum SettingsSearchIndex {
                 "hmac signature", "shared secret header", "poll url", "task poll",
                 "host.docker.internal", "plaintext allowed", "secure channel required",
                 "http request", "conversation_id", "topology", "docker desktop",
+                "connect n8n", "remote callers", "name this channel", "who may speak",
             ]
+        ),
+        .init(
+            id: "agentChannels.n8n.pairingCode",
+            tab: .agentChannels,
+            section: "Native Integrations",
+            title: "Pair with n8n",
+            keywords: [
+                "pairing code", "pair n8n", "n8n node", "n8n credential", "osaurus channel credential",
+                "n8n-nodes-osaurus", "remote n8n", "hosted n8n", "relay url", "secure channel",
+                "end-to-end encrypted", "osrs-n8n", "ping", "credential test",
+            ],
+            disambiguation:
+                "Inside the n8n channel sheet (Settings → Channels → n8n → Connect n8n). One copyable string the Osaurus n8n community node decodes; it contains the channel secret. Not the osk-v1 access key from Share Agent."
         ),
         .init(
             id: "agentChannels.customJSON",

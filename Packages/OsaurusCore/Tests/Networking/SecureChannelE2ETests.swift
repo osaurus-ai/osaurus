@@ -470,6 +470,152 @@ struct SecureChannelE2ETests {
         #expect(String(decoding: body, as: UTF8.self).contains("agent_scope_denied"))
     }
 
+    // MARK: - n8n Channel Ingress Through The Channel
+
+    /// The remote-n8n contract the pairing code relies on: a relay-origin
+    /// caller under the default `secure_channel_required` policy is 426'd in
+    /// plaintext, but the same ping/inbound wrapped in `/secure/call` is
+    /// accepted — no `Remote callers` plaintext toggle, no bearer, secret
+    /// still verified inside the ciphertext.
+    @Test func secureCall_n8nPingAndInbound_relayOrigin_acceptedUnderDefaultPolicy() async throws {
+        let channelSecret = "e2e-channel-secret-0123456789abcdef"
+        struct FixedSecretResolver: AgentChannelSecretResolving {
+            let value: String
+            func secret(named name: String, keychainId: String, connection: AgentChannelConnection) -> String? {
+                value
+            }
+        }
+        let connection = AgentChannelConnection(
+            id: "n8n-remote",
+            name: "n8n remote",
+            kind: .n8n,
+            supportedActions: [.diagnostics],
+            spaceAllowlist: [AgentChannelN8nConfiguration.spaceId],
+            inboundAuthorization: AgentChannelInboundAuthorizationPolicy(
+                senderAllowlist: ["workflow"],
+                roomAllowlist: ["conv-remote"]
+            ),
+            n8n: AgentChannelN8nConfiguration(
+                inboundVerification: AgentChannelN8nInboundVerification(method: .hmacSHA256),
+                inboundDispatch: AgentChannelInboundDispatchConfiguration(enabled: true, targetAgentId: UUID()),
+                remoteTransportPolicy: .secureChannelRequired
+            )
+        )
+
+        try await AgentChannelConfigurationTestLock.shared.run {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("osaurus-n8n-secure-\(UUID().uuidString)", isDirectory: true)
+            let previousDirectory = AgentChannelConfigurationStore.overrideDirectory
+            let previousIngress = AgentChannelWebhookIngress.shared
+            AgentChannelConfigurationStore.overrideDirectory = root
+            defer {
+                AgentChannelConfigurationStore.overrideDirectory = previousDirectory
+                AgentChannelWebhookIngress.shared = previousIngress
+                try? FileManager.default.removeItem(at: root)
+            }
+            try AgentChannelConfigurationStore.save(AgentChannelConfiguration(connections: [connection]))
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            AgentChannelWebhookIngress.shared = AgentChannelWebhookIngress(
+                secretResolver: FixedSecretResolver(value: channelSecret),
+                messageStore: store,
+                activityCenter: AgentChannelInboundActivityCenter(),
+                transportHealth: AgentChannelTransportHealthCenter(),
+                relaySubmit: { _ in .dispatched(agentId: UUID(), rule: "default") },
+                taskLookup: { _ in nil },
+                rateLimiter: PairingRateLimiter(window: 60, maxPerWindow: 1_000, denialCooldown: 0)
+            )
+
+            let server = try await startSecureTestServer(trustLoopback: true)
+            defer { Task { await server.shutdown() } }
+            let session = try establishSession()
+            let base = "http://\(server.host):\(server.port)"
+
+            // Control: plaintext relay-origin ping is refused.
+            var plain = URLRequest(url: URL(string: "\(base)/channels/n8n/n8n-remote/ping")!)
+            plain.setValue("1", forHTTPHeaderField: HTTPHandler.relayOriginHeaderName)
+            plain.setValue(
+                "sha256=\(AgentChannelAsyncSubstrate.hmacSHA256Hex(body: Data(), secret: channelSecret))",
+                forHTTPHeaderField: "X-Osaurus-Channel-Signature"
+            )
+            let (plainData, plainResp) = try await URLSession.shared.data(for: plain)
+            #expect((plainResp as? HTTPURLResponse)?.statusCode == 426)
+            #expect(String(decoding: plainData, as: UTF8.self).contains("secure_channel_required"))
+
+            // Ping through the channel: inner 200 with secure_channel: true.
+            let pingInner = SecureChannel.InnerRequest(
+                method: "GET",
+                path: "/channels/n8n/n8n-remote/ping",
+                authorization: nil,
+                accept: "application/json",
+                headers: [
+                    "X-Osaurus-Channel-Signature":
+                        "sha256=\(AgentChannelAsyncSubstrate.hmacSHA256Hex(body: Data(), secret: channelSecret))"
+                ]
+            )
+            let (pingCall, pingSeq) = try session.sealCall(innerRequest: JSONEncoder().encode(pingInner))
+            var pingRequest = try secureCallRequest(server: server, call: pingCall)
+            pingRequest.setValue("1", forHTTPHeaderField: HTTPHandler.relayOriginHeaderName)
+            let (pingData, pingResp) = try await URLSession.shared.data(for: pingRequest)
+            #expect((pingResp as? HTTPURLResponse)?.statusCode == 200)
+            let pingOpened = try SecureChannelClient.openBufferedResponse(
+                pingData, opener: session.makeResponseOpener(requestSeq: pingSeq))
+            #expect(pingOpened.status == 200)
+            let pingBody = String(decoding: pingOpened.body.flatMap { Data(base64urlEncoded: $0) } ?? Data(), as: UTF8.self)
+            #expect(pingBody.contains("\"secure_channel\":true"))
+            #expect(pingBody.contains("\"transport\":\"secure_channel\""))
+
+            // Inbound envelope through the channel: inner 202 accepted.
+            let envelope = Data(
+                #"{"v":1,"event_id":"evt-secure-1","conversation_id":"conv-remote","sender":{"id":"workflow"},"content":"ping"}"#
+                    .utf8)
+            let inboundInner = SecureChannel.InnerRequest(
+                method: "POST",
+                path: "/channels/n8n/n8n-remote/inbound",
+                authorization: nil,
+                accept: "application/json",
+                contentType: "application/json",
+                headers: [
+                    "X-Osaurus-Channel-Signature":
+                        "sha256=\(AgentChannelAsyncSubstrate.hmacSHA256Hex(body: envelope, secret: channelSecret))"
+                ],
+                body: envelope.base64urlEncoded
+            )
+            let (inboundCall, inboundSeq) = try session.sealCall(innerRequest: JSONEncoder().encode(inboundInner))
+            var inboundRequest = try secureCallRequest(server: server, call: inboundCall)
+            inboundRequest.setValue("1", forHTTPHeaderField: HTTPHandler.relayOriginHeaderName)
+            let (inboundData, inboundResp) = try await URLSession.shared.data(for: inboundRequest)
+            #expect((inboundResp as? HTTPURLResponse)?.statusCode == 200)
+            // The wire never shows the envelope status or the task id.
+            #expect(!String(decoding: inboundData, as: UTF8.self).contains("accepted"))
+            let inboundOpened = try SecureChannelClient.openBufferedResponse(
+                inboundData, opener: session.makeResponseOpener(requestSeq: inboundSeq))
+            #expect(inboundOpened.status == 202)
+            let inboundBody =
+                (try? JSONSerialization.jsonObject(
+                    with: inboundOpened.body.flatMap { Data(base64urlEncoded: $0) } ?? Data())) as? [String: Any]
+                ?? [:]
+            #expect(inboundBody["status"] as? String == "accepted")
+            #expect((inboundBody["poll_url"] as? String)?.hasPrefix("/channels/n8n/n8n-remote/tasks/") == true)
+
+            // A wrong secret inside the channel is still a 401 — encryption
+            // never substitutes for the channel secret.
+            let badInner = SecureChannel.InnerRequest(
+                method: "GET",
+                path: "/channels/n8n/n8n-remote/ping",
+                authorization: nil,
+                headers: ["X-Osaurus-Channel-Signature": "sha256=00"]
+            )
+            let (badCall, badSeq) = try session.sealCall(innerRequest: JSONEncoder().encode(badInner))
+            var badRequest = try secureCallRequest(server: server, call: badCall)
+            badRequest.setValue("1", forHTTPHeaderField: HTTPHandler.relayOriginHeaderName)
+            let (badData, _) = try await URLSession.shared.data(for: badRequest)
+            let badOpened = try SecureChannelClient.openBufferedResponse(
+                badData, opener: session.makeResponseOpener(requestSeq: badSeq))
+            #expect(badOpened.status == 401)
+        }
+    }
+
     // MARK: - Inner Auth Still Enforced
 
     @Test func secureCall_missingInnerBearer_401Inside() async throws {
