@@ -63,11 +63,6 @@ enum LocalVisionEvidence {
         guard VLMTypeRegistry.supportedModelTypes.contains(modelType) else {
             return result(false, "The configured architecture has no local vision runtime.")
         }
-        guard let vision = (omni?["vision_config"] ?? config["vision_config"]) as? [String: Any],
-            !vision.isEmpty
-        else {
-            return result(false, "The installed bundle has no nonempty vision configuration.")
-        }
         // Mirror the factory's file precedence. A declaration in a file the
         // loader does not select is not proof of a usable processor.
         let processorURL = ["preprocessor_config.json", "processor_config.json",
@@ -87,6 +82,14 @@ enum LocalVisionEvidence {
             names = try tensorNames(directory)
         } catch {
             return result(false, "Cannot verify the installed vision weights: \(error.localizedDescription)")
+        }
+        // Retain independent audio tensor evidence even when this configured
+        // multimodal architecture has no vision tower. Gemma supports optional
+        // vision and audio components; one missing modality must not hide another.
+        guard let vision = (omni?["vision_config"] ?? config["vision_config"]) as? [String: Any],
+            !vision.isEmpty
+        else {
+            return result(false, "The installed bundle has no nonempty vision configuration.")
         }
         let weights = names.filter { $0.hasSuffix(".weight") || $0.hasSuffix(".weights") }
         let visionWeights = weights.filter { key in

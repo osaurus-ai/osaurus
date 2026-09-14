@@ -32,6 +32,25 @@ struct ModelMediaCapabilitiesMCDCTests {
             fallbackSupportsImages: true, localModelType: "qwen3_5") == .textOnly)
     }
 
+    @Test func missingVisionDoesNotHideIndependentAudioWeights() throws {
+        let root = try VisionBundleFixture.make(type: "gemma4")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try VisionBundleFixture.writeJSON([
+            "model_type": "gemma4", "vision_config": NSNull(),
+            "audio_config": ["model_type": "gemma4_audio"],
+        ], to: root.appendingPathComponent("config.json"))
+        try VisionBundleFixture.writeWeights(["embed_audio.embedding_projection.weight"],
+                                             to: root.appendingPathComponent("model.safetensors"))
+        let caps = ModelMediaCapabilities.from(directory: root, modelId: "neutral")
+        #expect(!caps.supportsImage)
+        #expect(!caps.supportsVideo)
+        #expect(caps.supportsAudio)
+        try VisionBundleFixture.writeWeights(["language_model.weight"],
+                                             to: root.appendingPathComponent("model.safetensors"))
+        #expect(!ModelMediaCapabilities.descriptor(directory: root, modelId: "neutral", refresh: true)
+            .capabilities.supportsAudio)
+    }
+
     @Test(arguments: ["patch_embed", "blocks.1", "merger"])
     func missingComponentRejected(component: String) throws {
         let root = try VisionBundleFixture.make(omit: component)
