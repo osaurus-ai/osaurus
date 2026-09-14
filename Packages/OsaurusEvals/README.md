@@ -1133,7 +1133,9 @@ model children.
 `AgentLoopRAMAdmission` runs real parent and worker inference. Its fixtures set
 RAM safety ON, local handoff ON, coexistence OFF, continuous batching ON with
 one concurrent sequence, and per-agent batch limit one. Child budgets are
-2048 output tokens, two turns, zero tools and 120 seconds. Sampling remains
+2048 output tokens, two turns and 120 seconds, with worker tools disabled.
+`maxToolCalls: 0` retains the default budget of eight; it does not itself disable
+tools. Sampling remains
 bundle-driven. Single and sequential cases each require all four trials; the
 reporter-order case first runs three fresh single-child chats, then a fresh
 sequential pair in the same process without unloading/resetting the runtime.

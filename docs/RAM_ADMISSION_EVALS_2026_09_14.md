@@ -48,7 +48,7 @@ Private artifacts: `/Users/eric/vmlx-private-evidence/ram-evals-2026-09-14/`.
 No screenshots or model artifacts are committed to the repository.
 
 - Full eval harness after target and transcript assertions: 353/353 tests,
-  43 suites (`evals-complete-tests.log`). The new policy fixture runner covers all
+  43 suites (`evals-final-tests.log`). The new policy fixture runner covers all
   13 committed memory scenarios. Scorer adversarial tests reject parent-only
   echoes, failed/deduped children, wrong order and truncated/missing evidence.
 - `scripts/live-proof/assert-eval-floors-makefile-sync.sh`: 11 suite directories
@@ -60,7 +60,7 @@ No screenshots or model artifacts are committed to the repository.
   bundle in the test bundle's Resources.
 - Fresh isolated Release: build succeeded (`release-build.log`), binary SHA-256
   `9d42ed9dd5190296bed7f3acd5c464c590d54e760ecd031d3145862888d17148`,
-  bundle `com.dinoki.osaurus.ramevals20260914`. Native UI campaign pending.
+  bundle `com.dinoki.osaurus.ramevals20260914`. Native UI evidence follows below; a later cancellation fix requires a new binary.
 - First live targeted run on Core/eval source `cd93bfcf2`: 7/8 aggregate cases
   passed. Four single trials, four sequential trials and the reporter-order
   scenario passed, as did all three same-model setting controls and batching
@@ -75,11 +75,55 @@ No screenshots or model artifacts are committed to the repository.
 - Follow-up transcript-only changes preserve full batch observations, validate
   ordered worker selectors and retain successful RAM/batch traces when
   `--transcripts` is enabled. These do not change the built Core runtime.
-  The stricter live matrix is pending and will retain both attempts.
-- Full AgentLoop/AgentLoopFrontier current-runtime campaign: running.
+  The stricter run on `9b303cb65` again scored 7/8: RAM cases and all three
+  controls passed; native width two passed, batching-disabled exact content
+  failed. All 27 children were admitted and settled. The parent replaced both
+  marker tasks with generic math/writing jobs; both actual child digests asked
+  for missing context. All 17 trial/warmup transcripts are retained in
+  `targeted-final/`, including successful full child observations.
+- Full AgentLoop: 37 passed / 6 failed / 4 skipped; Frontier: 18 passed /
+  21 failed. `full-agent-loop/` contains raw results and failure transcripts;
+  `full-agent-loop-failures.txt` extracts every failed/skipped row. Failures
+  include incomplete file edits, omitted artifacts, malformed tool arguments,
+  budget/compaction/ordering violations and an existing rejection expectation
+  mismatch. The local Gemma self-judge is not independent quality evidence.
   Prior branch live evidence is recorded separately in
   `ORCHESTRATOR_RAM_SAFETY_AUDIT_2026_09_13.md` and is not relabeled current proof.
 - Reporter hardware qualification: absent. Required before claiming the
   recurring M4 16 GB failure resolved. Preserve measured refusals and capture
   before/after headroom plus process footprint; do not count a safe refusal as
   successful execution or injected 16 GB arithmetic as hardware proof.
+
+## Native Release evidence and cancellation defect
+
+`ui-single-1/2/3`, `ui-sequential`, and `ui-parent-followup` AX/screenshots
+capture three fresh SysAdmin chats followed by a fourth fresh chat with
+SysAdmin then Writer, without restarting. All five actual children returned
+the requested markers. Child decode rates: 22.6, 31.3, 31.3, 30.6, 30.4 tok/s.
+The grounded parent follow-up returned both markers at 83.2 tok/s. Expanded
+payloads identify the intended worker IDs and `residency_mode: in_place`.
+
+Native settings were saved and relaunched before the sequence: RAM ON,
+handoff ON, coexistence OFF, local concurrency one. The RAM-off control then
+returned RAM_OFF_OK at 30.0 child tok/s. `ui-admission-live.log` observes the
+actual planner switch from `ramSafety=false` back to `true` after restoring
+baseline. This proves same-model control behavior, not different-model swaps.
+
+The native Stop probe exposed a separate completion race. The child stopped
+mid-sentence, but its envelope said `ok: true` and had no usage. The immediate
+next child returned AFTER_STOP_OK; therefore this row demonstrates admission
+recovery but fails cancellation-result correctness and throughput qualification.
+Artifacts: `ui-cancel-active`, `ui-cancel-settled`, `ui-after-stop-result`.
+Source: `BackgroundTaskManager.cancelTask` called `ChatSession.stop()` before
+setting `.cancelled`; stop synchronously publishes `isStreaming=false`, and
+`handleChatStreamingChange` could resume the waiting dispatcher as completed.
+The correction marks cancellation first. The regression asserts the pending
+waiter's result, since the final state alone hides this ordering defect.
+Current cancellation rebuild and verification are pending.
+
+The native process peaked at 2,942.14 MiB physical footprint (not RSS), on
+128 GiB physical RAM. Cache API captures show 3 ordinary KV + 12 rotating KV
+layers, disk-backed restore, paged RAM off, zero TurboQuant KV layers, and
+increasing disk L2 hits. Resident weight bytes: 5,899,232,198. This is not a
+16 GiB footprint/capacity qualification. Cancellation and broader native
+batch/handoff combinations must not inherit a pass from this evidence.
