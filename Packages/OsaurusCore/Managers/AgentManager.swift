@@ -626,11 +626,12 @@ public final class AgentManager: ObservableObject {
     /// synchronous result before continuing.
     func assignAddressInBackground(to agent: Agent) {
         guard !agent.isBuiltIn, agent.agentAddress == nil else { return }
-        let index = nextUnusedAgentIndex()
+        let path = nextUnusedKeyPath()
         // Park the reservation immediately (address comes later) so another
         // creation in the same window gets the next index.
         if var reserving = self.agent(for: agent.id), reserving.agentIndex == nil {
-            reserving.agentIndex = index
+            reserving.agentIndex = path.index
+            reserving.agentDeviceScope = path.deviceScope
             update(reserving)
         }
         Task.detached(priority: .userInitiated) {
@@ -640,13 +641,14 @@ public final class AgentManager: ObservableObject {
             context.interactionNotAllowed = true
             guard var masterKeyData = try? MasterKey.getPrivateKey(context: context) else { return }
             defer { masterKeyData.zeroOut() }
-            guard let address = try? AgentKey.deriveAddress(masterKey: masterKeyData, index: index)
+            guard let address = try? AgentKey.deriveAddress(masterKey: masterKeyData, path: path)
             else { return }
             await MainActor.run {
                 guard var current = AgentManager.shared.agent(for: agent.id),
                     current.agentAddress == nil
                 else { return }
-                current.agentIndex = index
+                current.agentIndex = path.index
+                current.agentDeviceScope = path.deviceScope
                 current.agentAddress = address
                 AgentManager.shared.update(current)
             }
@@ -663,11 +665,12 @@ public final class AgentManager: ObservableObject {
         guard var masterKeyData = try? MasterKey.getPrivateKey(context: context) else { return }
         defer { masterKeyData.zeroOut() }
 
-        let nextIndex = nextUnusedAgentIndex()
-        let address = try AgentKey.deriveAddress(masterKey: masterKeyData, index: nextIndex)
+        let path = nextUnusedKeyPath()
+        let address = try AgentKey.deriveAddress(masterKey: masterKeyData, path: path)
 
         var updated = agent
-        updated.agentIndex = nextIndex
+        updated.agentIndex = path.index
+        updated.agentDeviceScope = path.deviceScope
         updated.agentAddress = address
         update(updated)
     }
@@ -679,26 +682,45 @@ public final class AgentManager: ObservableObject {
     /// trying to undo).
     ///
     /// No-op for built-in agents. Throws if there's no master key in Keychain.
-    public func rotateAddress(of agent: Agent) throws {
-        guard !agent.isBuiltIn else { return }
+    /// Outcome of `rotateAddress(of:)`: what the agent was reachable as
+    /// before, and what it is reachable as now. Callers propagate the change
+    /// to every surface that pinned the old address (relay tunnel, workspace
+    /// shares) — the rotation itself only touches the local record and keys.
+    public struct AddressRotation: Equatable, Sendable {
+        public let agentId: UUID
+        public let previousAddress: String?
+        public let newAddress: String
+        public let newKeyPath: AgentKeyPath
+    }
+
+    @discardableResult
+    public func rotateAddress(of agent: Agent) throws -> AddressRotation? {
+        guard !agent.isBuiltIn else { return nil }
         guard MasterKey.exists() else { throw OsaurusIdentityError.keychainReadFailed }
 
         let context = OsaurusIdentityContext.biometric()
         var masterKeyData = try MasterKey.getPrivateKey(context: context)
         defer { masterKeyData.zeroOut() }
 
-        let nextIndex = nextUnusedAgentIndex()
-        let newAddress = try AgentKey.deriveAddress(masterKey: masterKeyData, index: nextIndex)
+        let path = nextUnusedKeyPath()
+        let newAddress = try AgentKey.deriveAddress(masterKey: masterKeyData, path: path)
         let previousAddress = agent.agentAddress
 
         var updated = agent
-        updated.agentIndex = nextIndex
+        updated.agentIndex = path.index
+        updated.agentDeviceScope = path.deviceScope
         updated.agentAddress = newAddress
         update(updated)
 
         if let previousAddress {
             revokeActiveKeys(forAudience: previousAddress)
         }
+        return AddressRotation(
+            agentId: agent.id,
+            previousAddress: previousAddress,
+            newAddress: newAddress,
+            newKeyPath: path
+        )
     }
 
     /// Clear an agent's cryptographic identity and revoke every active osk-v1
@@ -713,6 +735,7 @@ public final class AgentManager: ObservableObject {
 
         var updated = agent
         updated.agentIndex = nil
+        updated.agentDeviceScope = nil
         updated.agentAddress = nil
         update(updated)
 
@@ -721,14 +744,49 @@ public final class AgentManager: ObservableObject {
         }
     }
 
-    /// First derivation index not already used by any agent in the list. We do
-    /// not reuse indices because previously-derived addresses may still be
-    /// referenced by external clients holding osk-v1 tokens.
-    private func nextUnusedAgentIndex() -> UInt32 {
+    /// Write back a device scope that an older build dropped on re-save.
+    /// Lossless: the stored address and index are untouched and every key
+    /// minted for the agent stays valid — only the derivation path is
+    /// restored so signing uses the right child key again. Callers pass the
+    /// scope `IdentityHealthCheck` proved reproduces the stored address.
+    ///
+    /// Repairs across the whole list in one pass so a re-diagnose after the
+    /// call sees no `recoverableScopeAgents`. Returns the number repaired.
+    @discardableResult
+    public func repairDeviceScope(for repairable: [Agent], scope: String) -> Int {
+        guard !scope.isEmpty else { return 0 }
+        var repaired = 0
+        for agent in repairable {
+            guard !agent.isBuiltIn, agent.agentAddress != nil, agent.agentIndex != nil,
+                agent.agentDeviceScope == nil,
+                let current = self.agent(for: agent.id)
+            else { continue }
+            var updated = current
+            updated.agentDeviceScope = scope
+            update(updated)
+            repaired += 1
+        }
+        return repaired
+    }
+
+    /// The key path a freshly minted (or rotated) agent identity uses: the
+    /// device-scoped v2 layout under this device's ID, at the first index
+    /// not already used by any agent in the list. Indices are never reused
+    /// because previously-derived addresses may still be referenced by
+    /// external clients holding osk-v1 tokens.
+    ///
+    /// Device scoping is what keeps two devices sharing one master from
+    /// minting the same address for their respective agent #N. Falls back to
+    /// the legacy master-global layout only when this device has no device
+    /// ID yet (identity setup normally attests before any agent is minted).
+    private func nextUnusedKeyPath() -> AgentKeyPath {
         let used = Set(agents.compactMap(\.agentIndex))
         var index: UInt32 = 0
         while used.contains(index) { index += 1 }
-        return index
+        if let scope = try? DeviceKey.currentDeviceId(), !scope.isEmpty {
+            return .deviceScoped(index: index, deviceScope: scope)
+        }
+        return .legacy(index: index)
     }
 
     /// Revoke every still-active osk-v1 access key whose audience matches

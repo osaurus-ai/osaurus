@@ -5,9 +5,10 @@
 //  The relay (`*.agent.osaurus.ai`) is the authoritative presence source: a
 //  host is online exactly when it holds a live tunnel. The router's roster
 //  `online` flag is derived from the relay's internal `/presence` endpoint,
-//  but that endpoint is router-only and Redis-backed with a 120 s claim TTL,
-//  so the roster can lag a dead tunnel by up to two minutes and a live one
-//  by a poll interval.
+//  but that endpoint is router-only and Redis-backed with a short claim TTL
+//  (`AGENT_TTL_SECONDS = 20` in osaurus-relay `src/redis.ts`), so the roster
+//  can lag a dead tunnel by up to ~20 s plus the router's poll interval, and a
+//  live one by a poll interval.
 //
 //  Every request this client sends *through* the relay already carries the
 //  fresh answer, for free:

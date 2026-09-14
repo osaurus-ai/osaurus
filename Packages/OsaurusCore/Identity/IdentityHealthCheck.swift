@@ -18,8 +18,8 @@ import Foundation
 
 public struct IdentityDrift: Sendable {
     /// Agents whose stored `agentAddress` does NOT match what the current master
-    /// would derive at their stored `agentIndex`. These agents were minted under
-    /// a previous master.
+    /// would derive at their stored key path (`agentIndex` + optional
+    /// `agentDeviceScope`). These agents were minted under a previous master.
     public let mismatchedAgents: [Agent]
 
     /// osk-v1 keys whose `iss` does not match the current master and does not
@@ -28,13 +28,28 @@ public struct IdentityDrift: Sendable {
     /// them.
     public let staleAccessKeys: [AccessKeyInfo]
 
+    /// Agents whose stored `agentAddress` does not match their stored path
+    /// **because the path lost its device scope**: `agentDeviceScope` is nil,
+    /// the legacy v1 derivation at `agentIndex` differs, but the device-scoped
+    /// v2 derivation under `currentDeviceScope` reproduces the stored address
+    /// exactly. This is the downgrade signature — an older build that did not
+    /// know the field re-saved the agent and dropped it. The fix is lossless
+    /// (write the scope back); nothing needs re-minting or revoking, so these
+    /// are NOT counted as drift.
+    public let recoverableScopeAgents: [Agent]
+
     public var hasDrift: Bool {
         !mismatchedAgents.isEmpty || !staleAccessKeys.isEmpty
     }
 
-    public init(mismatchedAgents: [Agent], staleAccessKeys: [AccessKeyInfo]) {
+    public init(
+        mismatchedAgents: [Agent],
+        staleAccessKeys: [AccessKeyInfo],
+        recoverableScopeAgents: [Agent] = []
+    ) {
         self.mismatchedAgents = mismatchedAgents
         self.staleAccessKeys = staleAccessKeys
+        self.recoverableScopeAgents = recoverableScopeAgents
     }
 }
 
@@ -48,12 +63,18 @@ public enum IdentityHealthCheck {
     ///   - agents: All agents (built-ins included; built-ins without an address
     ///     are skipped automatically).
     ///   - accessKeys: All persisted osk-v1 access key metadata.
+    ///   - currentDeviceScope: This device's ID. When supplied, an agent with a
+    ///     nil scope whose stored address re-derives under the v2 path at this
+    ///     scope is reported as `recoverableScopeAgents` (its scope was lost,
+    ///     not its master) instead of `mismatchedAgents`.
     public static func diagnose(
         masterKey: Data,
         agents: [Agent],
-        accessKeys: [AccessKeyInfo]
+        accessKeys: [AccessKeyInfo],
+        currentDeviceScope: String? = nil
     ) -> IdentityDrift {
         var mismatched: [Agent] = []
+        var recoverable: [Agent] = []
 
         let currentMasterAddress: OsaurusID
         do {
@@ -70,15 +91,32 @@ public enum IdentityHealthCheck {
         for agent in agents {
             guard !agent.isBuiltIn else { continue }
             guard let storedAddress = agent.agentAddress else { continue }
-            guard let storedIndex = agent.agentIndex else { continue }
+            // Re-derive along the agent's own persisted path (legacy v1 or
+            // device-scoped v2) so a v2 agent isn't flagged just because a
+            // v1 derivation at the same index would differ.
+            guard let storedPath = agent.agentKeyPath else { continue }
 
             let storedLower = storedAddress.lowercased()
 
             do {
-                let derived = try AgentKey.deriveAddress(masterKey: masterKey, index: storedIndex)
+                let derived = try AgentKey.deriveAddress(masterKey: masterKey, path: storedPath)
                 let derivedLower = derived.lowercased()
 
                 if storedLower != derivedLower {
+                    // Downgrade signature: no scope stored, but the v2 path
+                    // under THIS device reproduces the address. Lossless to
+                    // fix, and the stored address stays valid throughout.
+                    if storedPath.deviceScope == nil, let scope = currentDeviceScope, !scope.isEmpty,
+                        let scoped = try? AgentKey.deriveAddress(
+                            masterKey: masterKey,
+                            path: AgentKeyPath(index: storedPath.index, deviceScope: scope)
+                        ),
+                        scoped.lowercased() == storedLower
+                    {
+                        recoverable.append(agent)
+                        validAddresses.insert(storedLower)
+                        continue
+                    }
                     mismatched.append(agent)
                     // The new derived address is what we'd issue *if* the user
                     // chooses Repair. Until then it's only "valid" insofar as
@@ -104,6 +142,10 @@ public enum IdentityHealthCheck {
             return !validAddresses.contains(issLower)
         }
 
-        return IdentityDrift(mismatchedAgents: mismatched, staleAccessKeys: stale)
+        return IdentityDrift(
+            mismatchedAgents: mismatched,
+            staleAccessKeys: stale,
+            recoverableScopeAgents: recoverable
+        )
     }
 }

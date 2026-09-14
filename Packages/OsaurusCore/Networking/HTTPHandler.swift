@@ -4431,7 +4431,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let agents = await MainActor.run { AgentManager.shared.agents }
             guard
                 let agent = agents.first(where: { $0.agentAddress?.lowercased() == wanted }),
-                let agentIndex = agent.agentIndex
+                let agentKeyPath = agent.agentKeyPath
             else {
                 reply(status: .notFound, body: #"{"error":"Unknown agent address"}"#, code: 404)
                 return
@@ -4445,7 +4445,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     signContext.interactionNotAllowed = true
                     var masterKeyData = try MasterKey.getPrivateKey(context: signContext)
                     defer { masterKeyData.zeroOut() }
-                    var childKey = AgentKey.derive(masterKey: masterKeyData, index: agentIndex)
+                    var childKey = AgentKey.derive(masterKey: masterKeyData, path: agentKeyPath)
                     defer { childKey.zeroOut() }
                     return try signSecureChannelPayload(transcript, privateKey: childKey)
                 }
@@ -4853,7 +4853,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             //    Generating the key triggers biometric auth to derive the
             //    agent key from the Master Key.
             let label = "Paired – \(pairingHost)"
-            guard let agentIndex = agent.agentIndex else {
+            guard let agentKeyPath = agent.agentKeyPath else {
                 reply(
                     status: .internalServerError,
                     body: #"{"error":"Agent is missing a derived key index"}"#,
@@ -4866,7 +4866,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let (fullKey, keyInfo) = try? APIKeyManager.shared.generate(
                     label: label,
                     expiration: expiration,
-                    agentIndex: agentIndex
+                    agentKeyPath: agentKeyPath
                 )
             else {
                 reply(
@@ -4895,7 +4895,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     return nil
                 }
                 defer { masterKeyData.zeroOut() }
-                var childKey = AgentKey.derive(masterKey: masterKeyData, index: agentIndex)
+                var childKey = AgentKey.derive(masterKey: masterKeyData, path: agentKeyPath)
                 defer { childKey.zeroOut() }
                 let payload = pairingServerSigningPayload(agentAddress: agentAddress, nonce: req.nonce)
                 guard let sig = try? signPairingServerPayload(payload, privateKey: childKey) else {
@@ -5006,6 +5006,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// redeemer's HPKE public key.
     static let pairInviteRedactedKeys: Set<String> = [
         "attestation", "wallet_signature", "sig", "signature", "nonce", "encPub", "enc_pub",
+        // owner_redeem: the device id is a stable per-device identifier.
+        "device_id",
     ]
 
     /// Redacted twin of a `/pair-invite` request body for the Insights request
@@ -5122,6 +5124,101 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
         }
 
+        /// Shared "key granted" emission for the workspace and owner
+        /// handshakes: same `PairInviteResponse` shape, same redacted twin
+        /// for the request log — never echo the key.
+        func replyGranted(
+            agentAddress: String,
+            agentName: String,
+            agentDescription: String?,
+            agentModel: String?,
+            apiKeyForWire: String,
+            sealedApiKey: PairingKeyEnvelope.Sealed?
+        ) {
+            func responseBody(apiKey: String, sealed: PairingKeyEnvelope.Sealed?) -> String {
+                let body = PairInviteResponse(
+                    agentAddress: agentAddress,
+                    agentName: agentName,
+                    agentDescription: agentDescription,
+                    agentModel: agentModel,
+                    relayBaseURL: "https://\(agentAddress).agent.osaurus.ai",
+                    apiKey: apiKey,
+                    sealedApiKey: sealed,
+                    secureChannel: true
+                )
+                return (try? JSONEncoder.osaurusCanonical().encode(body))
+                    .map { String(decoding: $0, as: UTF8.self) }
+                    ?? #"{"error":"Encoding failed"}"#
+            }
+            let json = responseBody(apiKey: apiKeyForWire, sealed: sealedApiKey)
+            let redactedJson = responseBody(apiKey: "<redacted>", sealed: nil)
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .ok,
+                    headers: headers,
+                    body: json
+                )
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/pair-invite",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: redactedJson,
+                    responseStatus: 200,
+                    startTime: logStartTime
+                )
+            }
+        }
+
+        func replyRejected(status: Int, message rawMessage: String) {
+            let message = rawMessage
+                .replacingOccurrences(of: "\\", with: "")
+                .replacingOccurrences(of: "\"", with: "'")
+            reply(
+                status: HTTPResponseStatus(statusCode: status),
+                body: #"{"error":"\#(message)"}"#,
+                code: status
+            )
+        }
+
+        // Owner mode: a `{"owner_redeem": …}` envelope is a device holding
+        // the SAME master identity as this host asking for a key to one of
+        // the agents hosted here. Proof is a master-key signature over the
+        // host's nonce; no router, roster, or invite involved.
+        if let envelope = try? JSONDecoder().decode(OwnerPairRedeemEnvelope.self, from: data) {
+            let payload = envelope.ownerRedeem
+            runRequestTask(priority: .userInitiated) {
+                let outcome = await OwnerDeviceAccessHost.shared.handle(payload)
+                switch outcome {
+                case .challenge(let nonce, let expiresIn):
+                    let challenge = OwnerPairChallengeResponse(
+                        ownerChallenge: .init(nonce: nonce, expiresIn: expiresIn)
+                    )
+                    let body =
+                        (try? JSONEncoder.osaurusCanonical().encode(challenge))
+                        .map { String(decoding: $0, as: UTF8.self) }
+                        ?? #"{"error":"Encoding failed"}"#
+                    reply(status: .ok, body: body, code: 200)
+                case .rejected(let rejection):
+                    replyRejected(status: rejection.httpStatus, message: rejection.wireMessage)
+                case .granted(let grant):
+                    replyGranted(
+                        agentAddress: grant.agentAddress,
+                        agentName: grant.agentName,
+                        agentDescription: grant.agentDescription,
+                        agentModel: grant.agentModel,
+                        apiKeyForWire: grant.apiKeyForWire,
+                        sealedApiKey: grant.sealedApiKey
+                    )
+                }
+            }
+            return
+        }
+
         // Workspace mode: a `{"team_redeem": …}` envelope is the membership-
         // attestation handshake (teammate connecting to a shared agent), not
         // an invite redemption. Same endpoint so relays need no new route.
@@ -5140,55 +5237,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         ?? #"{"error":"Encoding failed"}"#
                     reply(status: .ok, body: body, code: 200)
                 case .rejected(let rejection):
-                    let message = rejection.wireMessage
-                        .replacingOccurrences(of: "\\", with: "")
-                        .replacingOccurrences(of: "\"", with: "'")
-                    reply(
-                        status: HTTPResponseStatus(statusCode: rejection.httpStatus),
-                        body: #"{"error":"\#(message)"}"#,
-                        code: rejection.httpStatus
-                    )
+                    replyRejected(status: rejection.httpStatus, message: rejection.wireMessage)
                 case .granted(let grant):
-                    func responseBody(apiKey: String, sealed: PairingKeyEnvelope.Sealed?) -> String {
-                        let body = PairInviteResponse(
-                            agentAddress: grant.agentAddress,
-                            agentName: grant.agentName,
-                            agentDescription: grant.agentDescription,
-                            agentModel: grant.agentModel,
-                            relayBaseURL: "https://\(grant.agentAddress).agent.osaurus.ai",
-                            apiKey: apiKey,
-                            sealedApiKey: sealed,
-                            secureChannel: true
-                        )
-                        return (try? JSONEncoder.osaurusCanonical().encode(body))
-                            .map { String(decoding: $0, as: UTF8.self) }
-                            ?? #"{"error":"Encoding failed"}"#
-                    }
-                    let json = responseBody(
-                        apiKey: grant.apiKeyForWire, sealed: grant.sealedApiKey
+                    replyGranted(
+                        agentAddress: grant.agentAddress,
+                        agentName: grant.agentName,
+                        agentDescription: grant.agentDescription,
+                        agentModel: grant.agentModel,
+                        apiKeyForWire: grant.apiKeyForWire,
+                        sealedApiKey: grant.sealedApiKey
                     )
-                    // Redacted twin for the request log — never echo the key.
-                    let redactedJson = responseBody(apiKey: "<redacted>", sealed: nil)
-                    hop {
-                        var headers = [("Content-Type", "application/json; charset=utf-8")]
-                        headers.append(contentsOf: cors)
-                        self.sendResponse(
-                            context: ctx.value,
-                            version: head.version,
-                            status: .ok,
-                            headers: headers,
-                            body: json
-                        )
-                        logSelf.logRequest(
-                            method: "POST",
-                            path: "/pair-invite",
-                            userAgent: logUserAgent,
-                            requestBody: logRequestBody,
-                            responseBody: redactedJson,
-                            responseStatus: 200,
-                            startTime: logStartTime
-                        )
-                    }
                 }
             }
             return
@@ -5221,7 +5279,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let agents = await MainActor.run { AgentManager.shared.agents }
             guard
                 let agent = agents.first(where: { ($0.agentAddress?.lowercased() ?? "") == invite.addr.lowercased() }),
-                let agentIndex = agent.agentIndex,
+                let agentKeyPath = agent.agentKeyPath,
                 let agentAddress = agent.agentAddress
             else {
                 reply(status: .notFound, body: #"{"error":"Agent address not found on this server"}"#, code: 404)
@@ -5264,7 +5322,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let (fullKey, keyInfo) = try APIKeyManager.shared.generate(
                     label: label,
                     expiration: .year1,
-                    agentIndex: agentIndex
+                    agentKeyPath: agentKeyPath
                 )
                 await MainActor.run {
                     AgentInviteStore.attachAccessKey(

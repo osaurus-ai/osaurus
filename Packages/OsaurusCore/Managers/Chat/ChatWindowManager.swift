@@ -399,7 +399,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         let localAgents = state.agents
         for roster in WorkspaceRosterStore.shared.rosters {
             for agent in roster.agents
-            where !WorkspaceRosterStore.isOwnAgent(address: agent.agentAddress, localAgents: localAgents)
+            where !WorkspaceRosterStore.isHostedHere(address: agent.agentAddress, localAgents: localAgents)
             {
                 let entry = Entry.workspace(agent.agentAddress.lowercased(), roster.id)
                 if !entries.contains(entry) { entries.append(entry) }

@@ -255,7 +255,7 @@ public enum AgentTargetResolver {
         var out: [(ref: WorkspaceAgentRef, name: String?)] = []
         var seen = Set<WorkspaceAgentRef>()
         for entry in roster.rosters {
-            for agent in entry.agents where !roster.isOwnAgent(address: agent.agentAddress) {
+            for agent in entry.agents where !roster.isHostedHere(address: agent.agentAddress) {
                 let ref = WorkspaceAgentRef(workspaceId: entry.id, agentAddress: agent.agentAddress)
                 guard seen.insert(ref).inserted else { continue }
                 let name = agent.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -888,7 +888,7 @@ final class WorkspacesService: ObservableObject {
     func shareAgent(
         workspaceId: String,
         agentAddress: String,
-        agentIndex: UInt32,
+        agentKeyPath: AgentKeyPath,
         displayName: String,
         description: String?
     ) async -> Bool {
@@ -902,7 +902,7 @@ final class WorkspacesService: ObservableObject {
             let proof = try await WorkspacesAgentProofSigner.makeProof(
                 workspaceId: workspaceId,
                 agentAddress: agentAddress,
-                agentIndex: agentIndex
+                agentKeyPath: agentKeyPath
             )
             let body = OsaurusRouterWorkspaceShareAgentBody(
                 agent_address: agentAddress.lowercased(),
@@ -951,6 +951,129 @@ final class WorkspacesService: ObservableObject {
             )
             self.publishRoster(workspaceId: workspaceId)
         }
+    }
+
+    // MARK: - Address rotation
+
+    /// Outcome of `migrateShares(from:to:)`. Workspace ids, so the caller can
+    /// name the ones that still point at the old address.
+    struct ShareMigration: Equatable, Sendable {
+        var migrated: [String] = []
+        var failed: [String] = []
+        var touchedAny: Bool { !migrated.isEmpty || !failed.isEmpty }
+    }
+
+    /// Re-point every workspace share from an agent's previous address to its
+    /// current one after `AgentManager.rotateAddress`. Shares are keyed by
+    /// address on the router, so without this the roster keeps advertising
+    /// an address no tunnel will ever answer for.
+    ///
+    /// Per workspace: share the NEW address (fresh agent-key proof, same
+    /// display name / description), then unshare the old one and kill the
+    /// workspace-minted keys that pointed at it. Share-before-unshare so a
+    /// failure never leaves a workspace with neither. The per-agent pool
+    /// billing preference is re-keyed to the new address once up front — it
+    /// is stored by agent id, so the workspace binding survives.
+    ///
+    /// - Parameter makeProof: test seam; production mints via
+    ///   `WorkspacesAgentProofSigner.makeProof` (biometric master read).
+    func migrateShares(
+        from previousAddress: String,
+        to agent: Agent,
+        makeProof: ((_ workspaceId: String) async throws -> OsaurusRouterWorkspaceShareAgentBody.Proof)? = nil
+    ) async -> ShareMigration {
+        var result = ShareMigration()
+        guard let newAddress = agent.agentAddress, let keyPath = agent.agentKeyPath,
+            newAddress.lowercased() != previousAddress.lowercased()
+        else { return result }
+        let previousLower = previousAddress.lowercased()
+
+        rekeyBillingPreference(agentId: agent.id, newAddress: newAddress)
+
+        // Every workspace the caller belongs to; the roster store may know
+        // some the summaries list hasn't loaded yet and vice versa.
+        var candidateIds: [String] = workspaces.map(\.id)
+        for roster in WorkspaceRosterStore.shared.rosters where !candidateIds.contains(roster.id) {
+            candidateIds.append(roster.id)
+        }
+        if candidateIds.isEmpty, let listed = try? await client.listWorkspaces() {
+            candidateIds = listed.map(\.id)
+        }
+
+        let proofFor: (String) async throws -> OsaurusRouterWorkspaceShareAgentBody.Proof =
+            makeProof
+            ?? { workspaceId in
+                try await WorkspacesAgentProofSigner.makeProof(
+                    workspaceId: workspaceId, agentAddress: newAddress, agentKeyPath: keyPath
+                )
+            }
+
+        for workspaceId in candidateIds {
+            let roster: [OsaurusRouterWorkspaceAgent]
+            do {
+                roster = try await client.workspaceAgents(id: workspaceId)
+            } catch {
+                // Can't tell whether the old address is shared here; report
+                // it so the user re-checks rather than silently skipping.
+                result.failed.append(workspaceId)
+                continue
+            }
+            guard let existing = roster.first(where: { $0.agentAddress.lowercased() == previousLower })
+            else { continue }
+
+            do {
+                let proof = try await proofFor(workspaceId)
+                let body = OsaurusRouterWorkspaceShareAgentBody(
+                    agent_address: newAddress.lowercased(),
+                    display_name: existing.displayName?.isEmpty == false ? existing.displayName! : agent.name,
+                    description: existing.description?.isEmpty == false ? existing.description : nil,
+                    proof: proof
+                )
+                _ = try await client.shareWorkspaceAgent(id: workspaceId, body: body)
+                try await client.unshareWorkspaceAgent(id: workspaceId, agentAddress: previousAddress)
+            } catch {
+                noteError(error)
+                result.failed.append(workspaceId)
+                continue
+            }
+
+            await WorkspaceAgentAccessHost.shared.invalidateKeys(
+                workspaceId: workspaceId, agentAddress: previousAddress
+            )
+            await WorkspaceAuditLog.shared.recordOwnerAction(
+                .agentShared, workspaceId: workspaceId,
+                agentAddress: newAddress, agentName: agent.name,
+                details: ["rotated_from": previousLower]
+            )
+            result.migrated.append(workspaceId)
+
+            if selectedWorkspaceId == workspaceId {
+                workspaceAgents.removeAll { $0.agentAddress.lowercased() == previousLower }
+                if let fetched = try? await client.workspaceAgents(id: workspaceId) {
+                    workspaceAgents = fetched
+                }
+                publishRoster(workspaceId: workspaceId)
+            }
+        }
+
+        if result.touchedAny {
+            await WorkspaceRosterStore.shared.refresh(reason: .manual)
+        }
+        return result
+    }
+
+    /// The billing map is keyed by agent id with the address as a value;
+    /// point the value at the rotated address so the binding follows.
+    private func rekeyBillingPreference(agentId: UUID, newAddress: String) {
+        guard
+            var map = defaults.dictionary(forKey: Self.agentBillingDefaultsKey)
+                as? [String: [String: String]],
+            var entry = map[agentId.uuidString]
+        else { return }
+        entry["agent_address"] = newAddress.lowercased()
+        map[agentId.uuidString] = entry
+        defaults.set(map, forKey: Self.agentBillingDefaultsKey)
+        objectWillChange.send()
     }
 
     /// Mirror this view's freshly fetched agent list into the chat sidebar's

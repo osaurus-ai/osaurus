@@ -3855,6 +3855,9 @@ struct AgentDetailView: View {
                 .foregroundColor(theme.primaryText)
             if let preview = bundleImportPreview {
                 bundleManifestSummary(preview.manifest)
+                if let note = preview.identityNote {
+                    bundleIdentityNote(note)
+                }
             }
             Text(
                 "Activate copies the agent into ~/.osaurus/agents/<id>/, rekeys its database to your local key, and registers the agent for use. Discard wipes the unpacked scratch directory and changes nothing on disk.",
@@ -3907,6 +3910,45 @@ struct AgentDetailView: View {
         .background(
             RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground)
         )
+    }
+
+    /// What activating will do to the bundled agent's address. Moving an
+    /// agent between your own devices keeps its address (pairings and
+    /// shares survive); a clash with a local agent re-mints it.
+    @ViewBuilder
+    private func bundleIdentityNote(_ note: AgentBundleService.IdentityNote) -> some View {
+        let (symbol, text): (String, String) = {
+            switch note {
+            case .mintedOnAnotherDevice:
+                return (
+                    "laptopcomputer.and.iphone",
+                    L(
+                        "This agent's address was created on another device. It keeps that address, so existing pairings and workspace shares keep working — but if the other device is still serving it, the relay will route to whichever device connected last."
+                    )
+                )
+            case .collidesWithLocalAgent(let name):
+                return (
+                    "exclamationmark.triangle",
+                    L(
+                        "Its address is already used by your agent “\(name)”. The imported copy gets a new address on activation; clients paired to the old one must pair again."
+                    )
+                )
+            case .legacyV1:
+                return (
+                    "key",
+                    L("This agent uses a legacy (non device-scoped) address. It is kept as-is; rotate the key later to move it to the current layout.")
+                )
+            }
+        }()
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: symbol)
+                .font(.system(size: 11))
+                .foregroundColor(theme.warningColor)
+            Text(text)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private func beginBundleExport() {
@@ -7059,6 +7101,7 @@ struct AgentDetailView: View {
             updatedAt: Date(),
             agentIndex: current.agentIndex,
             agentAddress: current.agentAddress,
+            agentDeviceScope: current.agentDeviceScope,
             autonomousExec: current.autonomousExec,
             claudeCode: current.claudeCode,
             pluginInstructions: effectivePluginInstructions,
@@ -7557,6 +7600,10 @@ private struct AgentDetailRelaySection: View {
             Circle()
                 .fill(theme.errorColor)
                 .frame(width: 8, height: 8)
+        case .servedElsewhere:
+            Circle()
+                .fill(theme.warningColor.opacity(0.6))
+                .frame(width: 8, height: 8)
         }
     }
 
@@ -7567,6 +7614,7 @@ private struct AgentDetailRelaySection: View {
             case .connecting: return ("Connecting", theme.warningColor)
             case .connected: return ("Connected", theme.successColor)
             case .error: return ("Error", theme.errorColor)
+            case .servedElsewhere: return (L("On another device"), theme.warningColor)
             }
         }()
         return Text(label)

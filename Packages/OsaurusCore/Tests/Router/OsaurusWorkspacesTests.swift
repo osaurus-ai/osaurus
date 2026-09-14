@@ -1167,7 +1167,7 @@ struct WorkspacesAgentProofSignerTests {
             agentAddress: agentAddress,
             timestamp: timestamp,
             masterKey: TestKeys.alicePrivateKey,
-            agentIndex: agentIndex
+            agentKeyPath: .legacy(index: agentIndex)
         )
         #expect(proof.timestamp == timestamp)
         #expect(proof.signature.hasPrefix("0x"))
@@ -1198,7 +1198,7 @@ struct WorkspacesAgentProofSignerTests {
             agentAddress: addressOfIndex1,
             timestamp: 1_717_171_717,
             masterKey: TestKeys.alicePrivateKey,
-            agentIndex: 2
+            agentKeyPath: .legacy(index: 2)
         )
         let message = WorkspacesAgentProofSigner.proofMessage(
             workspaceId: "team-1", agentAddress: addressOfIndex1, timestamp: 1_717_171_717
@@ -2508,6 +2508,145 @@ struct WorkspacesServiceTests {
         }
     }
 
+    // MARK: address rotation
+
+    /// After Rotate Key the router still lists the OLD address. The
+    /// migration must, per workspace that shares it: share the new address
+    /// (same display name, fresh proof), then unshare the old one — and skip
+    /// workspaces that never shared the agent. The billing preference, keyed
+    /// by agent id, follows the new address.
+    @Test func migrateShares_resharesNewAddressThenUnsharesOld_andRekeysBilling() async throws {
+        let calls = CallLog()
+        try await withService(handler: { request in
+            let path = request.url?.path ?? "?"
+            calls.append("\(request.httpMethod ?? "?") \(path)")
+            switch (request.httpMethod, path) {
+            case ("GET", "/workspaces"):
+                return json(
+                    #"{"data":[{"id":"team-1","name":"Dino Devs","role":"owner","active":true},{"id":"team-2","name":"Other","role":"member","active":true}]}"#
+                )
+            case ("GET", "/workspaces/team-1/agents"):
+                if calls.count(of: "DELETE /workspaces/team-1/agents/0xOLD000000000000000000000000000000000001") > 0 {
+                    return json(
+                        #"{"data":[{"agent_address":"0xnew000000000000000000000000000000000002","display_name":"Coco (shared)","description":"Writes docs","relay_url":"https://x","shared_at":"2026-08-31T00:00:00.000Z"}]}"#
+                    )
+                }
+                return json(
+                    #"{"data":[{"agent_address":"0xold000000000000000000000000000000000001","display_name":"Coco (shared)","description":"Writes docs","relay_url":"https://x","shared_at":"2026-08-31T00:00:00.000Z"}]}"#
+                )
+            case ("GET", "/workspaces/team-2/agents"):
+                return json(#"{"data":[]}"#)
+            case ("POST", "/workspaces/team-1/agents"):
+                let body = try JSONSerialization.jsonObject(
+                    with: Data(bodyString(request).utf8)
+                ) as? [String: Any]
+                #expect(body?["agent_address"] as? String == "0xnew000000000000000000000000000000000002")
+                #expect(body?["display_name"] as? String == "Coco (shared)")
+                #expect(body?["description"] as? String == "Writes docs")
+                #expect((body?["proof"] as? [String: Any])?["signature"] as? String == "0xproof")
+                return json(
+                    #"{"agent_address":"0xnew000000000000000000000000000000000002","display_name":"Coco (shared)","relay_url":"https://x","shared_at":"2026-08-31T00:00:00.000Z"}"#,
+                    status: 201
+                )
+            case ("DELETE", "/workspaces/team-1/agents/0xOLD000000000000000000000000000000000001"):
+                return json(#"{"revoked":true}"#)
+            default:
+                return json(#"{"data":[]}"#)
+            }
+        }) { service, defaults in
+            let agent = Agent(
+                id: UUID(),
+                name: "Coco",
+                isBuiltIn: false,
+                agentIndex: 1,
+                agentAddress: "0xNEW000000000000000000000000000000000002",
+                autonomousExec: AutonomousExecConfig(enabled: false)
+            )
+            let previous = "0xOLD000000000000000000000000000000000001"
+            WorkspacesService.setBillingWorkspace(
+                agentId: agent.id, agentAddress: previous, workspaceId: "team-1", defaults: defaults
+            )
+
+            let migration = await service.migrateShares(
+                from: previous,
+                to: agent,
+                makeProof: { workspaceId in
+                    #expect(workspaceId == "team-1")
+                    return .init(timestamp: 1_717_171_717, signature: "0xproof")
+                }
+            )
+
+            #expect(migration.migrated == ["team-1"])
+            #expect(migration.failed.isEmpty)
+            // Share the new address BEFORE unsharing the old one.
+            let sharePos = calls.firstIndex(of: "POST /workspaces/team-1/agents")
+            let unsharePos = calls.firstIndex(of: "DELETE /workspaces/team-1/agents/\(previous)")
+            #expect(sharePos != nil && unsharePos != nil)
+            if let sharePos, let unsharePos { #expect(sharePos < unsharePos) }
+            #expect(calls.count(of: "POST /workspaces/team-2/agents") == 0)
+            // Billing binding survives, now under the new address.
+            #expect(service.billingWorkspaceId(forAgentAddress: previous) == nil)
+            #expect(service.billingWorkspaceId(forAgentAddress: agent.agentAddress!) == "team-1")
+        }
+    }
+
+    @Test func migrateShares_reportsWorkspaceWhoseShareFailed() async throws {
+        try await withService(handler: { request in
+            switch (request.httpMethod, request.url?.path) {
+            case ("GET", "/workspaces"):
+                return json(#"{"data":[{"id":"team-1","name":"Dino Devs","role":"owner","active":true}]}"#)
+            case ("GET", "/workspaces/team-1/agents"):
+                return json(
+                    #"{"data":[{"agent_address":"0xold000000000000000000000000000000000001","display_name":"Coco","relay_url":"https://x","shared_at":"2026-08-31T00:00:00.000Z"}]}"#
+                )
+            case ("POST", "/workspaces/team-1/agents"):
+                return json(#"{"error":{"code":"WORKSPACE_AGENT_LIMIT","message":"full"}}"#, status: 409)
+            default:
+                return json(#"{"data":[]}"#)
+            }
+        }) { service, _ in
+            let agent = Agent(
+                id: UUID(),
+                name: "Coco",
+                isBuiltIn: false,
+                agentIndex: 1,
+                agentAddress: "0xNEW000000000000000000000000000000000002",
+                autonomousExec: AutonomousExecConfig(enabled: false)
+            )
+            let migration = await service.migrateShares(
+                from: "0xOLD000000000000000000000000000000000001",
+                to: agent,
+                makeProof: { _ in .init(timestamp: 1, signature: "0xproof") }
+            )
+            #expect(migration.migrated.isEmpty)
+            #expect(migration.failed == ["team-1"])
+            #expect(service.lastErrorCode == .agentLimit)
+        }
+    }
+
+    @Test func migrateShares_noopWhenAddressUnchangedOrMissing() async throws {
+        let unchanged = Agent(
+            id: UUID(), name: "Same", isBuiltIn: false, agentIndex: 0,
+            agentAddress: "0xAAA0000000000000000000000000000000000001",
+            autonomousExec: AutonomousExecConfig(enabled: false)
+        )
+        let noIdentity = Agent(
+            id: UUID(), name: "None", isBuiltIn: false,
+            autonomousExec: AutonomousExecConfig(enabled: false)
+        )
+        try await withService(handler: { request in
+            Issue.record("router must not be called: \(request.url?.path ?? "?")")
+            throw URLError(.badURL)
+        }) { service, _ in
+            let a = await service.migrateShares(
+                from: "0xaaa0000000000000000000000000000000000001", to: unchanged
+            )
+            let b = await service.migrateShares(from: "0xanything", to: noIdentity)
+            #expect(!a.touchedAny)
+            #expect(!b.touchedAny)
+        }
+    }
+
     // MARK: helpers
 
     private func withService(
@@ -2788,6 +2927,30 @@ private let pricesBody =
     #"{"plan":{"seats":null,"max_shared_agents":null,"monthly_credit_micro":"20000000","monthly_credits":"20.00","trial_days":14},"prices":[{"id":"price_month","billing_interval":"month","price_usd_micro":"20000000","price_usd":"20.00","active":true},{"id":"price_year","billing_interval":"year","price_usd_micro":"200000000","price_usd":"200.00","active":true}]}"#
 
 /// Thread-safe request counter for stub handlers (`@Sendable` closures).
+/// Ordered record of "METHOD path" strings the stub saw.
+private final class CallLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [String] = []
+
+    func append(_ entry: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        entries.append(entry)
+    }
+
+    func count(of entry: String) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries.filter { $0 == entry }.count
+    }
+
+    func firstIndex(of entry: String) -> Int? {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries.firstIndex(of: entry)
+    }
+}
+
 private final class CallCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
@@ -2942,7 +3105,7 @@ struct WorkspaceAutoConnectTests {
         let now = Date()
         let roster = [
             agent("0xA"),  // eligible
-            agent("0xB", owner: "0xme"),  // mine (case-insensitive match)
+            agent("0xB", owner: "0xme"),  // hosted on this Mac (case-insensitive match)
             agent("0xC"),  // already paired
             agent("0xD"),  // handshake in flight
             agent("0xE", online: false),  // host known offline
@@ -2950,7 +3113,7 @@ struct WorkspaceAutoConnectTests {
         ]
         let picked = WorkspaceAgentConnectService.autoConnectCandidates(
             agents: roster,
-            myWalletAddress: "0xME",
+            hostedAddresses: ["0xB"],
             pairedAddresses: ["0xc"],
             connectingAddresses: ["0xd"],
             lastAttempts: [:],
@@ -2968,7 +3131,7 @@ struct WorkspaceAutoConnectTests {
         )
         let picked = WorkspaceAgentConnectService.autoConnectCandidates(
             agents: roster,
-            myWalletAddress: nil,
+            hostedAddresses: [],
             pairedAddresses: [],
             connectingAddresses: [],
             lastAttempts: ["0xa": recent, "0xb": old],
@@ -2977,17 +3140,37 @@ struct WorkspaceAutoConnectTests {
         #expect(picked.map(\.agentAddress) == ["0xB"])
     }
 
-    @Test func unknownSelfWalletNeverExcludesAgents() {
-        // Before the first signed router call the local wallet is unknown;
-        // the owner check must not accidentally match everything or nothing.
+    @Test func noHostedAgentsNeverExcludesAgents() {
+        // A Mac with no agents of its own must not accidentally exclude
+        // everything or nothing.
         let picked = WorkspaceAgentConnectService.autoConnectCandidates(
             agents: [agent("0xA", owner: nil), agent("0xB")],
-            myWalletAddress: nil,
+            hostedAddresses: [],
             pairedAddresses: [],
             connectingAddresses: [],
             lastAttempts: [:]
         )
         #expect(picked.count == 2)
+    }
+
+    @Test func ownWalletAgentHostedOnAnotherDevice_isAutoConnected() {
+        // The same identity on two devices: an agent this wallet shared from
+        // the OTHER device is not hosted here, so it must be treated like a
+        // teammate's and paired over the relay — ownership alone never
+        // excludes it.
+        let roster = [
+            agent("0xHERE", owner: "0xme"),  // hosted on this Mac → skip
+            agent("0xTHERE", owner: "0xme"),  // same wallet, other device → connect
+            agent("0xTEAM", owner: "0xteammate"),
+        ]
+        let picked = WorkspaceAgentConnectService.autoConnectCandidates(
+            agents: roster,
+            hostedAddresses: ["0xhere"],
+            pairedAddresses: [],
+            connectingAddresses: [],
+            lastAttempts: [:]
+        )
+        #expect(picked.map(\.agentAddress) == ["0xTHERE", "0xTEAM"])
     }
 }
 

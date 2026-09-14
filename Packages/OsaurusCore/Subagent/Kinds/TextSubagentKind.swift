@@ -550,7 +550,7 @@ final class TextSubagentKind:
                 RemoteAgentManager.shared
                     .remoteAgent(forAddress: ref.agentAddress, workspaceId: ref.workspaceId)?
                     .model?.trimmingCharacters(in: .whitespacesAndNewlines),
-                WorkspaceRosterStore.shared.isOwnAgent(address: ref.agentAddress),
+                WorkspaceRosterStore.shared.isHostedHere(address: ref.agentAddress),
                 AgentTargetResolver.workspaceName(for: ref)
             )
         }

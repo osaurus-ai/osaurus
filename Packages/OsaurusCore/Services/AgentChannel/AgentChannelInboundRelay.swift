@@ -126,7 +126,7 @@ final class AgentChannelInboundRelay {
         case .workspace(let ref):
             let roster = WorkspaceRosterStore.shared
             guard roster.agent(forAddress: ref.agentAddress, workspaceId: ref.workspaceId) != nil,
-                !roster.isOwnAgent(address: ref.agentAddress)
+                !roster.isHostedHere(address: ref.agentAddress)
             else {
                 return .suppressed("inbound_workspace_agent_unavailable")
             }

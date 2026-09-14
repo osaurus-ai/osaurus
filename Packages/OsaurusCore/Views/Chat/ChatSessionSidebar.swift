@@ -1564,7 +1564,10 @@ struct ChatSessionSidebar: View {
                                 )
                             },
                             onOpenWorkspace: { openWorkspaceInSettings(id: workspace.id) },
-                            onUnshare: identity.isMine ? { unshare(identity, from: workspace) } : nil
+                            // Unshare is an ownership right: an agent this
+                            // identity shared from another device can be
+                            // unshared from here too.
+                            onUnshare: identity.isOwnedByMe ? { unshare(identity, from: workspace) } : nil
                         )
                     }
                 }
@@ -2248,7 +2251,10 @@ private struct WorkspaceAgentSidebarRow: View {
     @Environment(\.theme) private var theme
     @State private var isHovered = false
 
-    private var isMine: Bool { identity.isMine }
+    /// Hosted on this Mac — the row reads relay reachability and opens the
+    /// agent's Settings. Own agents on another device are remote from here
+    /// and take the teammate affordances (Chat, pairing status).
+    private var isMine: Bool { identity.isHostedHere }
     private var isOffline: Bool {
         if case .offline = status { return true }
         return false
@@ -2421,7 +2427,11 @@ private struct WorkspaceAgentSidebarRow: View {
 
     private var ownerAndModelLabel: String {
         var parts: [String] = []
-        if let owner = identity.ownerName, !owner.isEmpty { parts.append(owner) }
+        if identity.isOwnedElsewhere {
+            parts.append(L("Your agent · other device"))
+        } else if let owner = identity.ownerName, !owner.isEmpty {
+            parts.append(owner)
+        }
         if let model = identity.modelLabel { parts.append(model) }
         if parts.isEmpty { parts.append(L("Shared agent")) }
         return parts.joined(separator: " · ")
@@ -2462,6 +2472,12 @@ private struct WorkspaceAgentSidebarRow: View {
             if let sharedAs = identity.sharedAsName {
                 lines.append(String(format: L("shared as “%@”"), sharedAs))
             }
+        } else if identity.isOwnedElsewhere {
+            lines.append(
+                identity.workspaceName.map {
+                    String(format: L("Your agent — shared with %@ from another of your devices"), $0)
+                } ?? L("Your agent — shared from another of your devices")
+            )
         } else if let owner = identity.ownerName, !owner.isEmpty {
             lines.append(String(format: L("Shared by %@"), owner))
         }

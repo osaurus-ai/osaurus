@@ -160,15 +160,15 @@ struct WorkspaceRosterStoreTests {
 
     // MARK: - Own-agent detection
 
-    @Test func isOwnAgent_matchesLocalAgentAddressCaseInsensitively() {
+    @Test func isHostedHere_matchesLocalAgentAddressCaseInsensitively() {
         var mine = Agent(name: "Mine")
         mine.agentAddress = "0xMyAgent"
         let other = Agent(name: "Other")
 
-        #expect(WorkspaceRosterStore.isOwnAgent(address: "0xmyagent", localAgents: [mine, other]))
-        #expect(WorkspaceRosterStore.isOwnAgent(address: "0XMYAGENT", localAgents: [mine]))
-        #expect(!WorkspaceRosterStore.isOwnAgent(address: "0xsomeoneelse", localAgents: [mine, other]))
-        #expect(!WorkspaceRosterStore.isOwnAgent(address: "0xmyagent", localAgents: []))
+        #expect(WorkspaceRosterStore.isHostedHere(address: "0xmyagent", localAgents: [mine, other]))
+        #expect(WorkspaceRosterStore.isHostedHere(address: "0XMYAGENT", localAgents: [mine]))
+        #expect(!WorkspaceRosterStore.isHostedHere(address: "0xsomeoneelse", localAgents: [mine, other]))
+        #expect(!WorkspaceRosterStore.isHostedHere(address: "0xmyagent", localAgents: []))
     }
 
     @Test func allAgents_dedupesAcrossWorkspacesByAddress() throws {

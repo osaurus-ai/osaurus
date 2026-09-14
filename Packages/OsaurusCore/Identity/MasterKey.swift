@@ -71,20 +71,33 @@ public struct MasterKey: Sendable {
             delete()
         }
 
-        let status = addToKeychain(keyData: keyData, synchronizable: true)
-        if status != errSecSuccess {
-            let fallback = addToKeychain(keyData: keyData, synchronizable: false)
-            guard fallback == errSecSuccess else {
-                throw OsaurusIdentityError.keychainWriteFailed
-            }
+        guard addPreferringSharedGroup(keyData: keyData) else {
+            throw OsaurusIdentityError.keychainWriteFailed
         }
 
         setCachedExists(true)
         return osaurusId
     }
 
+    /// Write order: shared access group + iCloud sync, then shared group
+    /// device-only, then the default group (sync, then device-only). A build
+    /// whose entitlements lack the group gets `errSecMissingEntitlement` on
+    /// the first two and lands where it always did.
+    private static func addPreferringSharedGroup(keyData: Data) -> Bool {
+        let attempts: [(group: String?, synchronizable: Bool)] =
+            (OsaurusKeychainGroup.shared.map { [($0, true), ($0, false)] } ?? [])
+            + [(nil, true), (nil, false)]
+        for attempt in attempts {
+            let status = addToKeychain(
+                keyData: keyData, synchronizable: attempt.synchronizable, accessGroup: attempt.group
+            )
+            if status == errSecSuccess { return true }
+        }
+        return false
+    }
+
     // The Master Key is a synchronizable iCloud Keychain item.
-    private static func addToKeychain(keyData: Data, synchronizable: Bool) -> OSStatus {
+    private static func addToKeychain(keyData: Data, synchronizable: Bool, accessGroup: String?) -> OSStatus {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -92,6 +105,14 @@ public struct MasterKey: Sendable {
             kSecValueData as String: keyData,
             kSecAttrLabel as String: "Osaurus Master Key",
         ]
+        if let accessGroup {
+            // Access groups only exist in the data-protection keychain on
+            // macOS; a synchronizable item lands there anyway, a device-only
+            // one needs to be told. Reads with `kSecAttrSynchronizableAny`
+            // implicitly search that keychain, so they find either.
+            query[kSecAttrAccessGroup as String] = accessGroup
+            query[kSecUseDataProtectionKeychain as String] = true
+        }
         if synchronizable {
             query[kSecAttrSynchronizable as String] = true
             query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
@@ -99,6 +120,110 @@ public struct MasterKey: Sendable {
             query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         }
         return SecItemAdd(query as CFDictionary, nil)
+    }
+
+    // MARK: - Shared-group migration
+
+    /// Once per process: if the build declares the shared access group and
+    /// the master currently lives only in the default (per-app) group, copy
+    /// it into the shared group and drop the old item. Runs after a
+    /// successful read so no extra prompt is ever raised. Any failure leaves
+    /// the original item untouched — reads without a group match both.
+    private static let migrationLock = NSLock()
+    private nonisolated(unsafe) static var migrationAttempted = false
+
+    private static func migrateToSharedGroupIfNeeded(keyData: Data) {
+        guard let group = OsaurusKeychainGroup.shared else { return }
+        migrationLock.lock()
+        let alreadyTried = migrationAttempted
+        migrationAttempted = true
+        migrationLock.unlock()
+        guard !alreadyTried else { return }
+        Self.migrateGenericPassword(
+            service: service, account: account, label: "Osaurus Master Key",
+            data: keyData, toGroup: group
+        )
+    }
+
+    /// Shared with `MasterMnemonicStore`. Steps: (1) is there already an
+    /// item in `group`? done. (2) Find the current item's access group.
+    /// (3) Add a copy in `group` (sync, then device-only). (4) Verify it
+    /// reads back. (5) Delete the item in the OLD group only — never a
+    /// blanket delete, which would take the new copy with it.
+    static func migrateGenericPassword(
+        service: String, account: String, label: String, data: Data, toGroup group: String
+    ) {
+        let inGroup: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
+            kSecAttrAccessGroup as String: group,
+            kSecReturnData as String: false,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+        ]
+        let probe = SecItemCopyMatching(inGroup as CFDictionary, nil)
+        if probe == errSecSuccess || probe == OsaurusKeychainGroup.missingEntitlementStatus { return }
+
+        // Which group does the existing item live in?
+        let attrsQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
+            kSecReturnAttributes as String: true,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+        ]
+        var attrsResult: AnyObject?
+        guard SecItemCopyMatching(attrsQuery as CFDictionary, &attrsResult) == errSecSuccess,
+            let attrs = attrsResult as? [String: Any],
+            let oldGroup = attrs[kSecAttrAccessGroup as String] as? String,
+            oldGroup != group
+        else { return }
+        let wasSynchronizable = (attrs[kSecAttrSynchronizable as String] as? Bool) ?? false
+
+        var add: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: data,
+            kSecAttrLabel as String: label,
+            kSecAttrAccessGroup as String: group,
+            kSecUseDataProtectionKeychain as String: true,
+        ]
+        if wasSynchronizable {
+            add[kSecAttrSynchronizable as String] = true
+            add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
+        } else {
+            add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        }
+        var added = SecItemAdd(add as CFDictionary, nil)
+        if added != errSecSuccess, wasSynchronizable {
+            add[kSecAttrSynchronizable as String] = nil
+            add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            added = SecItemAdd(add as CFDictionary, nil)
+        }
+        guard added == errSecSuccess else { return }
+
+        // Verify before deleting anything.
+        var verifyResult: AnyObject?
+        var verify = inGroup
+        verify[kSecReturnData as String] = true
+        guard SecItemCopyMatching(verify as CFDictionary, &verifyResult) == errSecSuccess,
+            let copied = verifyResult as? Data, copied == data
+        else {
+            SecItemDelete(inGroup as CFDictionary)
+            return
+        }
+
+        let deleteOld: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
+            kSecAttrAccessGroup as String: oldGroup,
+        ]
+        SecItemDelete(deleteOld as CFDictionary)
     }
 
     // MARK: - Existence Check
@@ -247,6 +372,7 @@ public struct MasterKey: Sendable {
         guard status == errSecSuccess, let data = result as? Data else {
             throw OsaurusIdentityError.keychainReadFailed
         }
+        migrateToSharedGroupIfNeeded(keyData: data)
         return data
     }
 

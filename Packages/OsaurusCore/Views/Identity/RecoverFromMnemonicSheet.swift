@@ -26,7 +26,7 @@ enum RecoverFromMnemonicMode {
     /// Identity drift banner: restore the previous master so persisted
     /// derivatives match again.
     case driftRepair(IdentityDrift)
-    /// No identity on disk: restore an identity from another Mac.
+    /// No identity on disk: restore an identity from another device.
     case freshRestore
     /// Healthy identity present: replace it with a different one.
     case replaceExisting(current: OsaurusID)
@@ -365,7 +365,13 @@ struct RecoverFromMnemonicSheet: View {
         statusMessage = nil
         requiresExplicitOverride = false
         isRestoring = true
+        Task { @MainActor in
+            await performRestore(forceOverride: forceOverride)
+        }
+    }
 
+    @MainActor
+    private func performRestore(forceOverride: Bool) async {
         do {
             // Drift repair verifies the phrase is the *previous* master before
             // installing, so a typo'd-but-valid mnemonic can't silently mint a
@@ -385,7 +391,7 @@ struct RecoverFromMnemonicSheet: View {
                 }
             }
 
-            let result = try OsaurusIdentity.restore(words: parsedWords)
+            let result = try await OsaurusIdentity.restore(words: parsedWords)
             statusIsError = false
             statusMessage = successMessage(for: result)
             isRestoring = false
@@ -428,11 +434,11 @@ struct RecoverFromMnemonicSheet: View {
         }
 
         for agent in mismatched {
-            guard let storedIndex = agent.agentIndex,
+            guard let storedPath = agent.agentKeyPath,
                 let storedAddress = agent.agentAddress
             else { continue }
             do {
-                let derived = try AgentKey.deriveAddress(masterKey: seed, index: storedIndex)
+                let derived = try AgentKey.deriveAddress(masterKey: seed, path: storedPath)
                 if derived.lowercased() == storedAddress.lowercased() {
                     return nil
                 }

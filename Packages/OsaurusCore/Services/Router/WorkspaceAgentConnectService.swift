@@ -146,22 +146,27 @@ final class WorkspaceAgentConnectService: ObservableObject {
 
     // MARK: - Auto-connect
 
-    /// Shared agents that should be connected automatically right now: shared
-    /// by someone else, not paired yet, not mid-handshake, not known to be
+    /// Shared agents that should be connected automatically right now: not
+    /// hosted on this Mac, not paired yet, not mid-handshake, not known to be
     /// offline (a `nil` presence is "unknown" and still worth one try), and
     /// past the retry cooldown since their last automatic attempt.
+    ///
+    /// `hostedAddresses` are the addresses of THIS Mac's own agents. The
+    /// exclusion is by hosting, not by owner wallet: the same identity can
+    /// run on several devices, and an agent this wallet shared from another
+    /// device is reached exactly like a teammate's — through the relay.
     nonisolated static func autoConnectCandidates(
         agents: [OsaurusRouterWorkspaceAgent],
-        myWalletAddress: String?,
+        hostedAddresses: Set<String>,
         pairedAddresses: Set<String>,
         connectingAddresses: Set<String>,
         lastAttempts: [String: Date],
         now: Date = Date()
     ) -> [OsaurusRouterWorkspaceAgent] {
-        let me = myWalletAddress?.lowercased()
+        let hosted = Set(hostedAddresses.map { $0.lowercased() })
         return agents.filter { agent in
             let address = agent.agentAddress.lowercased()
-            if let owner = agent.owner?.walletAddress?.lowercased(), let me, owner == me {
+            if hosted.contains(address) {
                 return false
             }
             if pairedAddresses.contains(address) || connectingAddresses.contains(address) {
@@ -191,7 +196,7 @@ final class WorkspaceAgentConnectService: ObservableObject {
         )
         let candidates = Self.autoConnectCandidates(
             agents: agents,
-            myWalletAddress: OsaurusRouterWalletCache.lastSignedAddress,
+            hostedAddresses: Set(AgentManager.shared.agents.compactMap { $0.agentAddress?.lowercased() }),
             pairedAddresses: paired,
             connectingAddresses: Set(
                 agents.map(\.agentAddress).filter { isConnecting($0, workspaceId: workspaceId) }.map { $0.lowercased() }

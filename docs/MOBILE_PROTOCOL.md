@@ -1,0 +1,666 @@
+# Osaurus Mobile Protocol
+
+Everything a second Osaurus client — an iPhone/iPad app, a second Mac, or any
+same-identity device that does **not** host agents — needs in order to find,
+authenticate to, and chat with the agents a user hosts on their Mac(s).
+
+This document is the wire contract. Every shape below is lifted from the
+shipping Swift implementation (file references are given per section) so a
+client written against it interoperates with today's hosts without a router
+or relay change. Normative language: **MUST** / **SHOULD** / **MAY**.
+
+Related: [`IDENTITY.md`](IDENTITY.md) (identity model, key derivation),
+[`SECURE_CHANNEL.md`](SECURE_CHANNEL.md) (E2E channel internals),
+[`OSAURUS_WORKSPACES.md`](OSAURUS_WORKSPACES.md) (workspace sharing).
+
+---
+
+## Table of contents
+
+1. [Scope and roles](#1-scope-and-roles)
+2. [Identity bootstrap](#2-identity-bootstrap)
+3. [Agent addressing](#3-agent-addressing)
+4. [Discovery](#4-discovery)
+5. [Getting an access key](#5-getting-an-access-key)
+6. [Talking to the agent](#6-talking-to-the-agent)
+7. [Presence, errors, and key lifecycle](#7-presence-errors-and-key-lifecycle)
+8. [Crypto inventory for iOS](#8-crypto-inventory-for-ios)
+9. [Compatibility contract](#9-compatibility-contract)
+10. [Sequence diagrams](#10-sequence-diagrams)
+
+---
+
+## 1. Scope and roles
+
+| Role | Who | Holds | Does |
+|---|---|---|---|
+| **Host** | Osaurus for Mac | master key, agents, agent child keys, HTTP server, relay tunnel | Serves `/agents/{address}/run` for its agents through the relay; mints `osk-v1` keys |
+| **Client** | Osaurus for iOS / second Mac | the **same** master key (or a key it obtained), device ID | Discovers hosted agents, obtains keys, chats over the Secure Channel |
+
+Rules that follow from the current host implementation:
+
+- A client **never opens a relay tunnel**. The relay maps each agent address to exactly one tunnel; only the device that hosts the agent authenticates it. A client that did so would evict the real host (`agent_removed reason:"superseded"`, [`RelayTunnelManager.swift`](../Packages/OsaurusCore/Networking/RelayTunnelManager.swift)).
+- The **built-in Default agent is not reachable remotely** from any device, including the owner's own. `Agent.rejectBuiltInForExternalSurface` fires on every external surface ([`BuiltInAgentGuard.swift`](../Packages/OsaurusCore/Models/Agent/BuiltInAgentGuard.swift)); owner redeem returns `403` for it (§5.1). Only custom agents are addressable.
+- "Same identity" means the client can produce EIP-191 signatures with the **master** secp256k1 key whose address equals the host's master address. That is the entire trust root for owner access; there is no account, session, or server-side registry of devices.
+- Two Macs sharing an identity are just two hosts. Each mints device-scoped addresses (§3), so their agents never collide at the relay.
+
+---
+
+## 2. Identity bootstrap
+
+The client must end up with the 32-byte master seed and a stable device ID.
+
+### 2.1 Master key via iCloud Keychain (preferred)
+
+The host stores the master as a synchronizable generic-password item
+([`MasterKey.swift`](../Packages/OsaurusCore/Identity/MasterKey.swift)):
+
+| Attribute | Value |
+|---|---|
+| `kSecClass` | `kSecClassGenericPassword` |
+| `kSecAttrService` | `com.osaurus.account` |
+| `kSecAttrAccount` | `master-key` |
+| `kSecAttrSynchronizable` | `true` (falls back to device-only if iCloud Keychain is off) |
+| `kSecAttrAccessible` | `kSecAttrAccessibleWhenUnlocked` |
+| `kSecAttrAccessGroup` | `<TeamID>.ai.osaurus.identity` (see below) |
+| `kSecValueData` | 32 raw bytes (secp256k1 private scalar) |
+
+The 24-word phrase lives beside it under `kSecAttrAccount = master-mnemonic`
+([`MasterMnemonicStore.swift`](../Packages/OsaurusCore/Identity/MasterMnemonicStore.swift)),
+UTF-8, space-separated.
+
+**Shared access group.** iCloud Keychain only delivers a synced item to
+another app if both apps are in the same keychain access group. The Mac app
+declares `keychain-access-groups: [$(AppIdentifierPrefix)ai.osaurus.identity]`
+([`osaurus.entitlements`](../App/osaurus/osaurus.entitlements)) and writes new
+items into that group; items written by older builds are migrated into the
+group on the first successful read
+(`MasterKey.migrateGenericPassword`). An iOS client **MUST** declare the same
+group and query with `kSecAttrSynchronizable = kSecAttrSynchronizableAny`; it
+**SHOULD** omit `kSecAttrAccessGroup` from read queries so it also matches
+items the Mac has not migrated yet (a read without the group matches every
+group the app can see). Resolution rule for the group string is in
+[`OsaurusKeychainGroup.swift`](../Packages/OsaurusCore/Identity/OsaurusKeychainGroup.swift).
+
+### 2.2 Master key via recovery phrase (fallback)
+
+24 BIP39 English words. **Encoding is BIP39 entropy, not the PBKDF2 seed**:
+the 32 bytes of entropy *are* the master scalar
+([`MasterKeyMnemonic.swift`](../Packages/OsaurusCore/Identity/MasterKeyMnemonic.swift)):
+
+```
+words   = BIP39.encode(entropy = master[0..32], checksum = SHA256(master)[0] high 8 bits)
+master  = BIP39.decodeEntropy(words)      // 24 words → 264 bits → 256 entropy + 8 checksum
+```
+
+Do **not** run the phrase through `PBKDF2-HMAC-SHA512("mnemonic"+passphrase)`;
+that produces a different key and a different address.
+
+### 2.3 Master address
+
+EIP-55 checksummed Ethereum-style address of the secp256k1 public key
+(`deriveOsaurusId`, [`CryptoHelpers.swift`](../Packages/OsaurusCore/Identity/CryptoHelpers.swift)):
+
+```
+pub     = secp256k1_pubkey(master)             // 64 bytes, uncompressed without 0x04
+address = EIP55( keccak256(pub)[12..32] )      // "0x" + 40 hex, mixed-case checksum
+```
+
+Comparisons everywhere in the protocol are case-insensitive (`lowercased()`).
+
+### 2.4 Device ID
+
+Each device has an ID used for (a) scoping agent addresses minted *on that
+device* and (b) labelling keys it redeems. Format: **8 lowercase hex chars**,
+`SHA256(keyId)[0..4]` of an App Attest key on hardware that supports it, or of
+a random software key otherwise ([`DeviceKey.swift`](../Packages/OsaurusCore/Identity/DeviceKey.swift)).
+Semantics:
+
+- `DeviceKey.ensureAttested()` returns the existing ID and only attests a new
+  key when none exists; a master that arrived via iCloud sync therefore gets a
+  device ID on first launch without touching the master.
+- The ID is stored in `UserDefaults`; a defaults reset regenerates it. That is
+  harmless for chat (a client's device ID only labels its keys) and harmless
+  for hosted v2 agents (their scope is persisted on the agent record).
+- Clients **MAY** use any stable opaque token ≤ 64 chars of `[A-Za-z0-9._-]`
+  as `device_id` in owner redeem (§5.1); Osaurus clients use the 8-hex ID.
+
+---
+
+## 3. Agent addressing
+
+Every hosted agent has a secp256k1 **child key** derived from the master, and
+its address is the agent's identity on the wire. Two layouts exist
+([`AgentKey.swift`](../Packages/OsaurusCore/Identity/AgentKey.swift)):
+
+```
+v1 (legacy, master-global):
+  child = HMAC-SHA512(key = master, msg = "osaurus-agent-v1" || BE32(index))[0..32]
+
+v2 (device-scoped):
+  child = HMAC-SHA512(key = master,
+                      msg = "osaurus-agent-v2" || utf8(deviceScope) || 0x00 || BE32(index))[0..32]
+
+address = EIP55(keccak256(pubkey(child))[12..32])
+```
+
+`AgentKeyPath { index: UInt32, deviceScope: String? }` names a derivation;
+`deviceScope == nil ⇒ v1`. New agents are minted v2 under the hosting device's
+ID; agents that predate device scoping stay v1 until the user rotates them.
+
+What this means for a client:
+
+- **No wire format carries an index or scope.** `osk-v1` (`iss`/`aud`),
+  invites (`addr`), workspace rosters, relay auth frames, Secure Channel hellos
+  all pin an *address + signature*. A client never needs to re-derive an
+  agent key to chat; it only needs the address.
+- Given `(master, scope, index)` a same-identity client *can* recompute any of
+  its agents' child keys. Today nothing requires it. Do not build features on
+  it without also persisting `(scope, index)` somewhere the client can read.
+- Two hosts sharing a master never collide on v2 addresses because scopes
+  differ. Collisions only arise from duplicated agent *state* (restored
+  backup running on two Macs, bundle import while the source still runs);
+  the relay resolves them by "last authenticated tunnel wins" (§7.3).
+
+---
+
+## 4. Discovery
+
+"Which agents does my identity host, and where?" There are two shipped
+surfaces and one proposed.
+
+### 4.1 Workspaces roster (shipped)
+
+If the user has shared agents into any Workspace, the router lists them.
+All `/workspaces/*` calls are signed with the master key
+([`OsaurusRouterAuthSigner.swift`](../Packages/OsaurusCore/Services/Router/OsaurusRouterAuthSigner.swift)):
+
+```
+Headers:
+  x-wallet-address:   <master address, lowercase>
+  x-wallet-timestamp: <unix seconds>
+  x-wallet-signature: 0x<65-byte EIP-191 signature, hex>
+  x-wallet-nonce:     <optional, only when the route demands one>
+
+Message (EIP-191 personal_sign):
+  "osaurus-credits:<address_lower>:<METHOD>:<pathAndQuery>:<timestamp>:<sha256hex(body)>:<nonce or empty>"
+```
+
+Base URL `https://router.osaurus.ai`. Relevant routes:
+
+| Route | Returns |
+|---|---|
+| `GET /workspaces` | `{"data":[{id, name, role, source?, active?, members_active?, agents_shared?, created_at?}]}` |
+| `GET /workspaces/:id/agents` | `{"data":[{agent_address, display_name?, description?, owner:{account_id, wallet_address, display_name}, relay_url?, online?, last_seen?, shared_at?}]}` |
+
+A client filters the roster by `owner.wallet_address == myMasterAddress`
+(case-insensitive) to find its own agents. The host-side flags this maps to
+are documented in [`OSAURUS_WORKSPACES.md`](OSAURUS_WORKSPACES.md) ("Owned vs.
+hosted"): the client is `isOwnedByMe && !isHostedHere`.
+
+### 4.2 Agent invite deep link / QR (shipped)
+
+The host can issue a per-agent invite ([`AgentInvite.swift`](../Packages/OsaurusCore/Models/Agent/AgentInvite.swift)):
+
+```
+osaurus://<addr>?pair=<base64url(json)>
+
+json = {"v":1,"addr":"0x…","name":"Writer","desc":"…"|null,
+        "url":"https://<addr_lower>.agent.osaurus.ai","nonce":"<base64url 32B>",
+        "exp":<unix s>,"sig":"<hex 65B>"}
+
+signed bytes: "osaurus-agent-invite-v1:<addr>:<nonce>:<exp>"
+domain:       "Osaurus Signed Invite"   → recovered signer MUST equal addr
+```
+
+The client posts the **exact** JSON back to `POST <url>/pair-invite`
+(optionally adding `"encPub"`), receives a `PairInviteResponse` (§5.4).
+Single-use, host-enforced expiry.
+
+### 4.3 Proposed — not implemented
+
+Neither the router nor the host exposes "all agents hosted under this master"
+today. Two candidate designs, recorded so the client and router converge:
+
+1. **Router `GET /me/agents`** (wallet-signed): every agent address the
+   wallet has *ever* authenticated at the relay, with `host_device` (the
+   hosting device's ID, sent by the host as an additive field on
+   `add_agent`), `online`, `last_seen`. Requires a relay/router change.
+2. **iCloud key-value directory**: each host writes
+   `hosted-agents/<deviceId>.json = [{address, name, scope, index, updatedAt}]`
+   to `NSUbiquitousKeyValueStore`; a client merges all entries. No server
+   change, but eventual-consistency and 1 MB KVS limits apply.
+
+Until one ships, a client **MUST** rely on §4.1 / §4.2 or on the user typing
+an agent address obtained from the Mac's Identity view.
+
+---
+
+## 5. Getting an access key
+
+Every remote request carries an agent-scoped `osk-v1` bearer. Three ways to
+obtain one; a same-identity client uses **owner redeem** first.
+
+All three run on the same public host route through the relay:
+
+```
+POST https://<agent_address_lower>.agent.osaurus.ai/pair-invite
+Content-Type: application/json
+```
+
+The route is rate-limited per source IP; a `401`/`403` penalises the source.
+Sensitive fields are redacted from the host's request log.
+
+### 5.1 Owner redeem (same identity, primary)
+
+Host: [`OwnerDeviceAccessHost.swift`](../Packages/OsaurusCore/Services/Auth/OwnerDeviceAccessHost.swift),
+route branch in `HTTPHandler.handlePairInviteEndpoint`.
+
+**Step 1 — request a challenge**
+
+```json
+{"owner_redeem": {"v": 1,
+                  "agent_address": "0xAbC…",
+                  "device_id": "c3d4e5f6",
+                  "device_name": "iPhone"}}
+```
+
+→ `200`
+
+```json
+{"owner_challenge": {"nonce": "<base64url 32B>", "expires_in": 120}}
+```
+
+The host issues a challenge without revealing whether the agent exists.
+Validation at this step: `v == 1`; `agent_address` is `0x` + 40 hex;
+`device_id` is 1–64 chars of `[A-Za-z0-9._-]`; `device_name` ≤ 80 chars
+(optional). Anything else → `400`.
+
+**Step 2 — prove the master, receive the key**
+
+```
+message   = "osaurus-owner:redeem:<agent_address_lower>:<nonce>"
+signature = EIP191_sign(master, message)        // 65 bytes r‖s‖v (v = 27/28)
+```
+
+```json
+{"owner_redeem": {"v": 1,
+                  "agent_address": "0xAbC…",
+                  "device_id": "c3d4e5f6",
+                  "device_name": "iPhone",
+                  "nonce": "<from step 1>",
+                  "wallet_signature": "0x<130 hex>",
+                  "encPub": "<base64url X25519 public key>"}}
+```
+
+Host checks, in order:
+
+| # | Check | Failure |
+|---|---|---|
+| 1 | nonce known, unexpired (120 s), issued for this `agent_address` **and** `device_id`; consumed on use | `401 Unknown or expired challenge nonce` |
+| 2 | host can read its master non-interactively | `503 Host identity is unavailable right now` |
+| 3 | `ecrecover(message, wallet_signature) == host master address` | `401 Signature does not match this host's identity` |
+| 4 | an agent with that address is hosted here | `404 Agent address not found on this server` |
+| 5 | agent is not built-in | `403 Built-in agents are not reachable from other devices` |
+| 6 | mint `osk-v1` (label `Owner device – <device_name>`, 90-day expiry, `aud` = agent address) | `500 Failed to mint access key` |
+| 7 | if `encPub` present, HPKE-seal the key (§5.4); an unusable `encPub` deletes the minted key | `400 Invalid encryption key` |
+
+→ `200 PairInviteResponse` (§5.4) with `"secureChannel": true`.
+
+Semantics:
+
+- **One live key per `(device_id, agent)`.** Re-running the redeem replaces
+  (deletes) the previous key for that pair. Clients **SHOULD** re-redeem
+  before expiry rather than hoard keys.
+- The host records `{keyId, deviceId, deviceName, agentAddressLower, issuedAt}`
+  in `~/.osaurus/identity/owner-devices.json` so the user can revoke one
+  device's keys from the Mac. Rotating the agent's key revokes them all.
+- Signatures over the workspace wording (`osaurus-workspaces:redeem:…`) are
+  **not** accepted here and vice versa — the domain string is part of the
+  proof.
+- `encPub` is optional on the wire but **strongly recommended**: the relay
+  terminates TLS, so an unsealed key is visible to it.
+
+### 5.2 Workspace redeem (teammate or same identity via a Workspace)
+
+Host: [`WorkspaceAgentAccessHost.swift`](../Packages/OsaurusCore/Services/Router/WorkspaceAgentAccessHost.swift).
+Requires a router membership attestation:
+
+```
+POST https://router.osaurus.ai/workspaces/:id/attestation   (wallet-signed headers, §4.1)
+→ {"attestation": "<base64url(payload)>.<base64url(ed25519 sig)>", "expires_at": "…"}
+
+payload = {"v":1,"workspace_id":"…","account_id":"…","wallet":"0x… lowercase",
+           "role":"owner|admin|member|viewer","iat":<s>,"exp":<s>}     // TTL 10 min
+router key: GET /workspaces/attestation-key → {"alg":"Ed25519","public_key":"<base64url 32B>"}
+```
+
+Step 1:
+
+```json
+{"team_redeem": {"v": 1, "agent_address": "0x…", "attestation": "<token>"}}
+```
+
+→ `{"team_challenge": {"nonce": "…", "expires_in": 120}}`
+
+Step 2 adds `"nonce"`, `"wallet_signature"` (EIP-191 by the **master** over
+`osaurus-workspaces:redeem:<agent_address_lower>:<nonce>`; the legacy wording
+`osaurus-teams:redeem:…` is still accepted by hosts), `"encPub"`. Host
+verifies the attestation offline, re-checks the share with the router, and
+mints a key whose `exp` **equals the attestation's** `exp`. Clients refresh at
+80 % of TTL (`WorkspaceAgentAccess.refreshFraction`).
+
+A same-identity client **MAY** use this path when the agent is shared into a
+Workspace; nothing in the handshake rejects the host's own wallet.
+
+### 5.3 Invite redeem
+
+Post the invite JSON (§4.2) plus optional `"encPub"`. Host verifies `sig`,
+consumes `nonce`, mints a 1-year key labelled `Invite – <name> (<nonce8>)`.
+
+### 5.4 The response and the HPKE envelope
+
+All three redeems return the same body:
+
+```json
+{"agentAddress": "0xAbC…",
+ "agentName": "Writer",
+ "agentDescription": "…" | null,
+ "agentModel": "…" | null,
+ "relayBaseURL": "https://0xabc….agent.osaurus.ai",
+ "apiKey": "" ,
+ "sealedApiKey": {"enc": "<base64url>", "ct": "<base64url>"} | null,
+ "secureChannel": true}
+```
+
+`apiKey` is empty when `sealedApiKey` is present. Open the envelope
+([`PairingKeyEnvelope.swift`](../Packages/OsaurusCore/Identity/PairingKeyEnvelope.swift)):
+
+```
+suite = HPKE(KEM = DHKEM(X25519, HKDF-SHA256), KDF = HKDF-SHA256, AEAD = ChaCha20-Poly1305)
+info  = utf8("osaurus-pair-key-v1:<agent_address_lower>:<nonce>")
+key   = HPKE.Recipient(privateKey = my ephemeral X25519, info, encapsulatedKey = enc).open(ct)
+```
+
+`<nonce>` is the challenge nonce for owner/workspace redeem and the invite
+nonce for invites. A client **MUST** generate a fresh X25519 key per exchange.
+
+**`osk-v1` format** (what you received):
+
+```
+"osk-v1." + base64url(payload_json) + "." + hex(65-byte signature)
+payload = {"aud":"<agent address>","cnt":<uint64>,"exp":<s>|null,"iat":<s>,
+           "iss":"<agent address>","lbl":"<label>"|null,"nonce":"<base64url>"}
+signed with domain "Osaurus Signed Access" by the agent child key (iss).
+```
+
+Clients treat it as an opaque bearer; they **MAY** read `exp` to schedule a
+re-redeem.
+
+---
+
+## 6. Talking to the agent
+
+### 6.1 Relay URL
+
+`https://<agent_address_lower>.agent.osaurus.ai`. The relay forwards HTTP to
+the tunnel that authenticated that address. No client auth at the relay.
+
+### 6.2 Secure Channel v1 — mandatory
+
+Remote requests to `/agents/{…}/run` and `/agents/{…}/dispatch` that arrive
+in plaintext are refused with `426`:
+
+```json
+{"error":{"code":"secure_channel_required","message":"…","type":"upgrade_required"}}
+```
+
+Handshake ([`SecureChannel.swift`](../Packages/OsaurusCore/Identity/SecureChannel.swift)):
+
+```
+POST /secure/session
+{"v":1,"agentAddress":"0x… lowercase","encPub":"<base64url X25519 pub>","nonce":"<base64url 16B>"}
+
+→ {"v":1,"sid":"<base64url 16B>","encPub":"<base64url X25519 pub>","expiresAt":<unix s>,
+   "signature":"0x<130 hex>"}
+
+transcript = utf8("osaurus-sc1|v=1|aA=<agentAddress>|eC=<client encPub>|nC=<nonce>"
+                  + "|sid=<sid>|eS=<server encPub>|exp=<expiresAt>")
+ecrecover(transcript, signature, domain "Osaurus Secure Channel") MUST == agentAddress
+
+shared = X25519(eC_priv, eS_pub)
+salt   = SHA256(transcript)
+c2s    = HKDF-SHA256(shared, salt, info = "osaurus-sc1:c2s", 32)
+s2c    = HKDF-SHA256(shared, salt, info = "osaurus-sc1:s2c", 32)
+```
+
+Session TTL 1 h (`expiresAt`); re-handshake on `401 secure_session_unknown`.
+
+Call framing:
+
+```
+POST /secure/call
+{"v":1,"sid":"<sid>","seq":<uint64, monotonic per session>,"ct":"<base64url ct‖tag>"}
+
+nonce(seq) = 0x00000000 ‖ BE64(seq)                      // 12 bytes
+AAD(req)   = utf8("osaurus-sc1:req:<sid>:<seq>")
+ct         = ChaCha20-Poly1305.seal(key = c2s, nonce(seq), AAD, plaintext = InnerRequest JSON)
+
+InnerRequest = {"method":"POST","path":"/agents/<address>/run",
+                "authorization":"Bearer osk-v1.…","accept":"text/event-stream",
+                "contentType":"application/json","headers":{…}|null,
+                "body":"<base64url(body bytes)>"}
+```
+
+Responses are frames `{"seq":<n>,"ct":"…","fin":true|absent}`:
+
+```
+respKey(reqSeq) = HKDF-SHA256(s2c, salt = SHA256(transcript), info = "osaurus-sc1:resp:<reqSeq>", 32)
+AAD(resp)       = utf8("osaurus-sc1:resp:<sid>:<reqSeq>:<seq>:<fin ? 1 : 0>")
+```
+
+- Buffered response: one frame, `fin: true`, plaintext
+  `{"status":<int>,"contentType":"…","body":"<base64url>"}`.
+- SSE stream: frames `seq = 0,1,2,…` each decrypting to raw SSE bytes; the
+  last has `fin: true`. A stream that ends without an authenticated `fin`
+  **MUST** be treated as truncated.
+- `409 secure_replay`: never resend an envelope with the same `seq`.
+
+### 6.3 The inner run request
+
+`POST /agents/<agent_address>/run` — a `ChatCompletionRequest` body; `model`
+**MAY** be omitted (host uses the agent's effective model):
+
+```json
+{"messages":[{"role":"user","content":"hello"}],
+ "stream": true,
+ "session_id": "<client-stable conversation id>",
+ "workspace_context": {"workspace_id":"…","agent_address":"0x…"}}
+```
+
+- `session_id` (optional) scopes host-side conversation/cache state to one
+  client conversation.
+- `workspace_context` (optional) is only for workspace-billed runs with a
+  workspace-minted key; omit it for owner-redeemed keys.
+- Response is standard OpenAI-style SSE `data: {…}` chunks with text deltas;
+  tool calls execute on the host and are never forwarded. Ends with
+  `data: [DONE]`.
+
+`GET /agents/<address>` (inside the channel, same bearer) returns agent
+metadata for the roster.
+
+---
+
+## 7. Presence, errors, and key lifecycle
+
+### 7.1 Relay errors (outer HTTP, before the host answers)
+
+| Status | Body | Meaning | Client action |
+|---|---|---|---|
+| `502` | `{"error":"agent_offline"}` | No tunnel for this address | Show offline; retry later |
+| `502` | `{"error":"tunnel_send_failed"}` | Tunnel dropped mid-request | Retry once after backoff |
+| `504` | `{"error":"gateway_timeout"}` | Host did not answer | Retry; long runs should stream |
+
+### 7.2 Presence
+
+The relay keeps an address "online" for `AGENT_TTL_SECONDS = 20` after the
+last tunnel heartbeat; a host that dies can read as online for up to 20 s.
+Workspace rosters expose `online` / `last_seen` from that state; a `502
+agent_offline` from a real request is fresher than a roster `online: true`.
+
+### 7.3 `superseded`
+
+If two tunnels authenticate the same address, the newer wins and the older
+receives `agent_removed reason:"superseded"` and stops reconnecting. For a
+**client** this is invisible except that the agent may briefly flap; requests
+simply reach whichever device holds the address now. A client **MUST NOT**
+attempt to "take over" an address.
+
+### 7.4 Key expiry, replacement, revocation
+
+| Key source | Lifetime | Renewal | Revocation |
+|---|---|---|---|
+| Owner redeem | 90 d | Re-redeem (replaces the old key for that device+agent) | Mac Identity view (per key / per device); agent key rotation |
+| Workspace redeem | = attestation `exp` (≤ 10 min) | Refresh at 80 % TTL with a new attestation | Unshare, member removal, workspace deletion, rotation |
+| Invite | 1 y | New invite | Mac issued-invites list; rotation |
+
+A revoked or expired key fails **inside** the channel with the inner status
+`401`. Agent key **rotation** on the Mac revokes every key whose `aud` was
+the old address; the agent gets a new address and every client must
+re-discover and re-redeem (the host re-authenticates the relay and migrates
+workspace shares automatically).
+
+### 7.5 Host-side error bodies for owner redeem
+
+`{"error":"<message>"}` with the statuses in §5.1. Messages are stable
+strings; match on status, not text.
+
+---
+
+## 8. Crypto inventory for iOS
+
+| Need | Primitive | Where used | Suggested API |
+|---|---|---|---|
+| Master / agent keys | secp256k1 recoverable ECDSA, Keccak-256 | addresses, EIP-191, `osk-v1`, invites, Secure Channel signature | `swift-secp256k1` (`P256K.Recovery`) |
+| Child derivation | HMAC-SHA512 | §3 | CryptoKit `HMAC<SHA512>` |
+| Mnemonic | BIP39 (entropy encoding) | §2.2 | any BIP39 wordlist impl; **skip PBKDF2** |
+| Key delivery | HPKE X25519 / HKDF-SHA256 / ChaCha20-Poly1305 | §5.4 | CryptoKit `HPKE` (iOS 17+) |
+| Channel | X25519, HKDF-SHA256, ChaCha20-Poly1305, SHA-256 | §6.2 | CryptoKit |
+| Attestation verify | Ed25519 | §5.2 | CryptoKit `Curve25519.Signing` |
+| Device ID | App Attest / SHA-256 | §2.4 | `DCAppAttestService` |
+| Keychain | shared access group, `kSecAttrSynchronizable` | §2.1 | Security.framework |
+
+**Signature domain prefixes.** Every secp256k1 signature is over
+`"\x19" + prefix + ":\n" + len(payload) + payload` (EIP-191 layout) and the
+prefixes are never interchangeable:
+
+| Prefix | Signed by | Used for |
+|---|---|---|
+| `Ethereum Signed Message` | master | router headers, owner/workspace redeem proofs, relay `add_agent` |
+| `Osaurus Signed Access` | agent child | `osk-v1` |
+| `Osaurus Signed Invite` | agent child | `AgentInvite.sig` |
+| `Osaurus Secure Channel` | agent child | `ServerHello.signature` |
+| `Osaurus Signed Pairing` / `… Pairing Server` | connector / agent child | LAN `/pair` (not used by a relay-only client) |
+| `Osaurus Signed Message` | master | `TokenPayload` internal tokens (not used on the wire by a client) |
+
+Recovery: `v ∈ {27, 28}` appended as the 65th byte; hex is lowercase; the
+`0x` prefix is present on JSON fields (`wallet_signature`, `signature`, `sig`).
+
+---
+
+## 9. Compatibility contract
+
+- **Additive only.** Hosts add JSON fields; they never rename or remove one
+  within a version. Unknown fields **MUST** be ignored by both sides.
+- **Version fields.** `owner_redeem.v`, `team_redeem.v`, `AgentInvite.v`,
+  `ClientHello.v`, attestation `v`: all `1`. A host rejects an unknown version
+  with `400`; a client must not send a version it does not implement.
+- **Legacy wordings hosts still accept.** `osaurus-teams:redeem:…` (workspace
+  redeem signature), `team_id` (in `workspace_context` and attestation
+  payloads). New clients send only the current wording.
+- **Addresses.** v1 and v2 agents are indistinguishable on the wire and both
+  fully supported by every flow above. A client **MUST NOT** infer layout
+  from an address.
+- **Downgrade behaviour.** A client that lacks the Secure Channel cannot run
+  agents (`426`); there is no plaintext fallback. A host older than owner
+  redeem answers the `owner_redeem` envelope with `400 Invalid invite payload`
+  (it falls through to the invite decoder) — clients **SHOULD** map that to
+  "update Osaurus on the Mac".
+- **Host data written by older builds.** A host downgraded and re-upgraded
+  may have lost `agentDeviceScope` on v2 agents; the host repairs this itself
+  on the next Identity view load (`IdentityDrift.recoverableScopeAgents`).
+  Addresses are unchanged throughout, so clients are unaffected.
+- **Future v3 addressing** must add an explicit key-version field to the agent
+  record rather than overloading `deviceScope`; wire formats stay address-only.
+
+---
+
+## 10. Sequence diagrams
+
+### 10.1 Owner redeem, then chat
+
+```mermaid
+sequenceDiagram
+    participant P as Phone (same master)
+    participant R as Relay (<addr>.agent.osaurus.ai)
+    participant M as Mac host
+    Note over P: address known via Workspace roster, invite, or typed
+    P->>R: POST /pair-invite {owner_redeem: v1, agent_address, device_id, device_name}
+    R->>M: (tunnel) same request
+    M-->>P: 200 {owner_challenge: {nonce, expires_in: 120}}
+    Note over P: sig = EIP191(master, "osaurus-owner:redeem:<addr_lower>:<nonce>")<br/>ephemeral X25519 → encPub
+    P->>R: POST /pair-invite {owner_redeem: …, nonce, wallet_signature, encPub}
+    R->>M: (tunnel)
+    Note over M: nonce ✓ · ecrecover == my master ✓ · agent hosted ✓ · not built-in ✓<br/>mint osk-v1 (90 d) · HPKE seal · record (device, agent)
+    M-->>P: 200 {agentAddress, agentName, relayBaseURL, sealedApiKey, secureChannel: true}
+    Note over P: osk = HPKE.open(sealed, info "osaurus-pair-key-v1:<addr>:<nonce>")
+    P->>R: POST /secure/session {v1, agentAddress, encPub, nonce}
+    R->>M: (tunnel)
+    M-->>P: {sid, encPub, expiresAt, signature}
+    Note over P: verify signature recovers to agentAddress · derive c2s/s2c
+    P->>R: POST /secure/call {sid, seq, ct = seal(InnerRequest POST /agents/<addr>/run + Bearer osk)}
+    R->>M: (tunnel)
+    M-->>P: frames {seq, ct}… {seq, ct, fin: true}  (SSE deltas inside)
+```
+
+### 10.2 Workspace redeem, then chat
+
+```mermaid
+sequenceDiagram
+    participant P as Phone
+    participant X as Router (router.osaurus.ai)
+    participant R as Relay
+    participant M as Mac host
+    P->>X: GET /workspaces  (x-wallet-* headers)
+    X-->>P: workspaces
+    P->>X: GET /workspaces/:id/agents
+    X-->>P: roster (filter owner.wallet_address == me, or any teammate agent)
+    P->>X: POST /workspaces/:id/attestation
+    X-->>P: {attestation (Ed25519, 10 min), expires_at}
+    P->>R: POST /pair-invite {team_redeem: v1, agent_address, attestation}
+    R->>M: (tunnel)
+    M-->>P: 200 {team_challenge: {nonce, expires_in}}
+    Note over P: sig = EIP191(master, "osaurus-workspaces:redeem:<addr_lower>:<nonce>")
+    P->>R: POST /pair-invite {team_redeem: …, nonce, wallet_signature, encPub}
+    R->>M: (tunnel)
+    Note over M: verify attestation offline · share still active (router) · mint key exp = attestation exp
+    M-->>P: 200 PairInviteResponse (sealed)
+    Note over P: Secure Channel handshake + /secure/call as in 10.1<br/>refresh attestation + re-redeem at 80% TTL
+```
+
+### 10.3 Address rotation seen from a client
+
+```mermaid
+sequenceDiagram
+    participant M as Mac host
+    participant R as Relay
+    participant X as Router
+    participant P as Phone
+    Note over M: user taps Rotate Key on agent A (old → new address)
+    M->>M: revoke every osk-v1 with aud = old
+    M->>R: remove_agent old · add_agent new (signed)
+    M->>X: share new address · unshare old (per workspace)
+    P->>R: /secure/call to old address
+    R-->>P: 502 agent_offline
+    Note over P: re-discover (roster now lists new address) · owner redeem again
+```

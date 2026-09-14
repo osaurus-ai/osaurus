@@ -250,11 +250,14 @@ struct IdentityView: View {
             // The device and master key reads block on securityd XPC + decrypt,
             // which can take seconds on a slow or legacy keychain, so the load
             // runs off the main actor and only the resulting phase is published.
-            let (newPhase, newDrift): (IdentityPhase, IdentityDrift?) = await Task.detached(
+            let (newPhase, newDrift, repairedScopes): (IdentityPhase, IdentityDrift?, Int) = await Task.detached(
                 priority: .userInitiated
             ) {
                 do {
-                    let deviceId = try DeviceKey.currentDeviceId()
+                    // A master that synced here via iCloud Keychain has no
+                    // device key yet; attest on first sight instead of
+                    // reporting "no identity" for an identity that exists.
+                    let deviceId = try await OsaurusIdentity.ensureDeviceAttested()
                     let context = OsaurusIdentityContext.biometric()
                     var masterKeyData = try MasterKey.getPrivateKey(context: context)
                     defer { masterKeyData.zeroOut() }
@@ -262,19 +265,44 @@ struct IdentityView: View {
                     let osaurusId = try deriveOsaurusId(from: masterKeyData)
 
                     let accessKeys = APIKeyManager.shared.listKeys()
-                    let diagnosed = IdentityHealthCheck.diagnose(
+                    var diagnosed = IdentityHealthCheck.diagnose(
                         masterKey: masterKeyData,
                         agents: agents,
-                        accessKeys: accessKeys
+                        accessKeys: accessKeys,
+                        currentDeviceScope: deviceId
                     )
-                    return (.ready(osaurusId: osaurusId, deviceId: deviceId), diagnosed)
+                    // A device scope dropped by an older build is restored
+                    // in place — no re-mint, no revocation — then the
+                    // diagnosis is re-run so the banner reflects real drift.
+                    var repaired = 0
+                    if !diagnosed.recoverableScopeAgents.isEmpty {
+                        let recoverable = diagnosed.recoverableScopeAgents
+                        let refreshedAgents: [Agent] = await MainActor.run {
+                            repaired = AgentManager.shared.repairDeviceScope(for: recoverable, scope: deviceId)
+                            return AgentManager.shared.agents
+                        }
+                        diagnosed = IdentityHealthCheck.diagnose(
+                            masterKey: masterKeyData,
+                            agents: refreshedAgents,
+                            accessKeys: accessKeys,
+                            currentDeviceScope: deviceId
+                        )
+                    }
+                    return (.ready(osaurusId: osaurusId, deviceId: deviceId), diagnosed, repaired)
                 } catch {
-                    return (.noIdentity, nil)
+                    return (.noIdentity, nil, 0)
                 }
             }.value
 
             phase = newPhase
             drift = newDrift
+            if repairedScopes > 0 {
+                lastActionResult = ActionResult(
+                    message:
+                        "Restored the device scope for \(repairedScopes) agent address(es) saved by an older version. No keys were changed.",
+                    isError: false
+                )
+            }
         }
     }
 
@@ -328,6 +356,7 @@ struct IdentityView: View {
                 // off the current master.
                 var cleared = agent
                 cleared.agentIndex = nil
+                cleared.agentDeviceScope = nil
                 cleared.agentAddress = nil
                 agentManager.update(cleared)
                 if let refreshed = agentManager.agent(for: agent.id) {
@@ -663,7 +692,7 @@ private struct IdentitySetupCard: View {
     let onCreated: (IdentityInfo) -> Void
     /// Open the fresh-restore mnemonic sheet.
     let onRestore: () -> Void
-    /// Re-probe Keychain — an identity synced from another Mac via iCloud
+    /// Re-probe Keychain — an identity synced from another device via iCloud
     /// Keychain may have arrived since this card was rendered.
     let onCheckAgain: () -> Void
 
@@ -753,7 +782,7 @@ private struct IdentitySetupCard: View {
 
             VStack(spacing: 4) {
                 Text(
-                    "Already using Osaurus on another Mac? With iCloud Keychain enabled on both, your identity restores here automatically — it can take a few minutes to sync.",
+                    "Already using Osaurus on another device? With iCloud Keychain enabled on both, your identity restores here automatically — it can take a few minutes to sync.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
@@ -1171,9 +1200,32 @@ private struct AgentAddressesSection: View {
     private func rotateKey(for agent: Agent) {
         errorMessage = nil
         do {
-            try agentManager.rotateAddress(of: agent)
+            guard let rotation = try agentManager.rotateAddress(of: agent) else { return }
             restartServerIfRunning()
+            // The relay and every workspace share pin the OLD address; move
+            // them or the agent goes dark for teammates and other devices.
+            RelayTunnelManager.shared.handleAddressRotated(
+                agentId: rotation.agentId, previousAddress: rotation.previousAddress
+            )
+            if let previous = rotation.previousAddress {
+                // Owner-device keys for the old address were revoked with
+                // the rotation; drop their records so the device list is
+                // accurate and the phone re-redeems against the new address.
+                Task { await OwnerDeviceAccessHost.shared.forgetRecords(agentAddress: previous) }
+            }
             onChange()
+            if let previous = rotation.previousAddress, OsaurusRouter.isEnabled,
+                let rotated = agentManager.agent(for: rotation.agentId)
+            {
+                Task { @MainActor in
+                    let migration = await WorkspacesService.shared.migrateShares(from: previous, to: rotated)
+                    if !migration.failed.isEmpty {
+                        errorMessage = L(
+                            "Key rotated, but \(migration.failed.count) workspace share(s) still point at the old address. Re-share the agent there manually."
+                        )
+                    }
+                }
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -1220,7 +1272,7 @@ private struct AgentAddressesSection: View {
 
     private func generateAccessKey(for agent: Agent) {
         let label = generatorLabel.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !label.isEmpty, let agentIndex = agent.agentIndex else { return }
+        guard !label.isEmpty, let agentKeyPath = agent.agentKeyPath else { return }
 
         generatorBusy = true
         generatorError = nil
@@ -1229,7 +1281,7 @@ private struct AgentAddressesSection: View {
             let result = try AccessKeyLifecycleService.shared.create(
                 label: label,
                 expiration: generatorExpiration,
-                agentIndex: agentIndex
+                agentKeyPath: agentKeyPath
             )
             lastGeneratedKey = result.fullKey
             closeGenerator()

@@ -16,16 +16,16 @@ enum WorkspacesAgentProofSigner {
     }
 
     /// Pure signing core: derives the agent child key from `masterKey` at
-    /// `agentIndex` and signs the proof message. The caller owns zeroing
+    /// `agentKeyPath` and signs the proof message. The caller owns zeroing
     /// `masterKey`.
     static func signProof(
         workspaceId: String,
         agentAddress: String,
         timestamp: Int,
         masterKey: Data,
-        agentIndex: UInt32
+        agentKeyPath: AgentKeyPath
     ) throws -> OsaurusRouterWorkspaceShareAgentBody.Proof {
-        var childKey = AgentKey.derive(masterKey: masterKey, index: agentIndex)
+        var childKey = AgentKey.derive(masterKey: masterKey, path: agentKeyPath)
         defer { childKey.zeroOut() }
         let message = proofMessage(
             workspaceId: workspaceId, agentAddress: agentAddress, timestamp: timestamp
@@ -43,7 +43,7 @@ enum WorkspacesAgentProofSigner {
     static func makeProof(
         workspaceId: String,
         agentAddress: String,
-        agentIndex: UInt32,
+        agentKeyPath: AgentKeyPath,
         timestamp: Int = Int(Date().timeIntervalSince1970)
     ) async throws -> OsaurusRouterWorkspaceShareAgentBody.Proof {
         try await Task.detached(priority: .userInitiated) {
@@ -56,7 +56,7 @@ enum WorkspacesAgentProofSigner {
                 agentAddress: agentAddress,
                 timestamp: timestamp,
                 masterKey: masterKey,
-                agentIndex: agentIndex
+                agentKeyPath: agentKeyPath
             )
         }.value
     }

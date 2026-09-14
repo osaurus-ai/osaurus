@@ -17,6 +17,13 @@ public enum AgentRelayStatus: Equatable {
     case connecting
     case connected(url: String)
     case error(String)
+    /// The relay evicted this agent because a newer tunnel authenticated the
+    /// same address — another device sharing this identity is serving it
+    /// now. The manager stops reconnecting for the address (per the relay
+    /// contract: two auto-reconnecting sessions would evict each other
+    /// forever) until the user explicitly re-enables the tunnel here or the
+    /// app relaunches.
+    case servedElsewhere
 }
 
 // MARK: - Public URL Probe
@@ -224,6 +231,16 @@ public final class RelayTunnelManager: ObservableObject {
     /// skew). Reset on a successful auth.
     private var authErrorRetries = 0
     private static let maxAuthErrorRetries = 3
+    /// Agents the relay evicted with `reason: "superseded"` — a newer tunnel
+    /// (another device sharing this identity) now serves their address.
+    /// Excluded from every automatic auth/reconnect until a user-initiated
+    /// enable or an app relaunch clears them, so two devices that both hold
+    /// a legacy (v1) address can't ping-pong ownership.
+    private var supersededAgentIds: Set<UUID> = []
+    /// Superseded frames can arrive before the address→agent map is built
+    /// (or after it was torn down); remember the address so the next
+    /// `connect()` still honours the eviction.
+    private var supersededAddresses: Set<String> = []
     /// Public-link checks run after relay auth so green UI means the public
     /// HTTPS route, not just the WebSocket auth handshake, is usable.
     private let publicURLProbe = RelayPublicURLProbe.live()
@@ -268,6 +285,9 @@ public final class RelayTunnelManager: ObservableObject {
         RelayConfigurationStore.save(configuration)
 
         if enabled {
+            // A user-initiated enable is the one legitimate way to take an
+            // address back from the device that superseded us.
+            clearSuperseded(agentId)
             agentStatuses[agentId] = .connecting
             if isConnected {
                 Task { await addAgentToTunnel(agentId: agentId) }
@@ -286,10 +306,59 @@ public final class RelayTunnelManager: ObservableObject {
         configuration.isEnabled(for: agentId)
     }
 
+    /// The agent's address was rotated. The relay maps *addresses* to
+    /// tunnels, so the live tunnel keeps serving the OLD address until told
+    /// otherwise: drop it (`remove_agent`) and authenticate the new one
+    /// (`add_agent`) in place. A rotation is also a fresh claim, so any
+    /// `superseded` mark from the old address is cleared — the new address
+    /// has never been contested.
+    ///
+    /// No-op when the agent's tunnel is disabled. When enabled but not
+    /// connected, the next `connect()` picks the new address up from the
+    /// agent record on its own.
+    public func handleAddressRotated(agentId: UUID, previousAddress: String?) {
+        clearSuperseded(agentId)
+        if let previousAddress {
+            supersededAddresses.remove(previousAddress.lowercased())
+        }
+        guard configuration.isEnabled(for: agentId) else { return }
+        agentStatuses[agentId] = .connecting
+        guard isConnected else {
+            Task { await connect() }
+            return
+        }
+        if let previousAddress {
+            let lower = previousAddress.lowercased()
+            sendJSON(["type": "remove_agent", "address": previousAddress])
+            authenticatedAgents.remove(lower)
+            addressToAgentId.removeValue(forKey: lower)
+            cancelInFlightRequests(forAgentUUID: agentId.uuidString)
+            cancelPublicCheck(for: agentId)
+        }
+        Task { await addAgentToTunnel(agentId: agentId) }
+    }
+
+    /// Whether the relay handed this agent's address to another device's
+    /// tunnel and we are deliberately not reconnecting for it.
+    public func isServedElsewhere(_ agentId: UUID) -> Bool {
+        supersededAgentIds.contains(agentId)
+    }
+
+    /// User-initiated "serve this agent from this device again" after a
+    /// `servedElsewhere` eviction. Equivalent to re-enabling the tunnel; the
+    /// other device receives the `superseded` frame and goes quiet.
+    public func reclaimTunnel(for agentId: UUID) {
+        setTunnelEnabled(true, for: agentId)
+    }
+
     /// Called when the local server starts -- reconnects tunnels for any previously-enabled agents.
     public func reconnectIfNeeded(port: Int) {
         localPort = port
         configuration = RelayConfigurationStore.load()
+        // A server (re)start is a fresh session; the relay contract allows an
+        // app restart to legitimately supersede a stale session elsewhere.
+        supersededAgentIds.removeAll()
+        supersededAddresses.removeAll()
         let enabled = configuration.enabledAgentIds
         guard !enabled.isEmpty else { return }
 
@@ -316,6 +385,8 @@ public final class RelayTunnelManager: ObservableObject {
         authenticatedAgents.removeAll()
         addressToAgentId.removeAll()
         pendingNonceHandlers.removeAll()
+        supersededAgentIds.removeAll()
+        supersededAddresses.removeAll()
         cancelAllPublicChecks()
         for id in agentStatuses.keys {
             agentStatuses[id] = .disconnected
@@ -339,7 +410,10 @@ public final class RelayTunnelManager: ObservableObject {
         // Re-checking against this identity catches the overlap exactly.
         let taskAtEntry = webSocketTask
 
-        let enabled = configuration.enabledAgentIds
+        // Addresses another device now serves are never re-claimed
+        // automatically (relay contract). If that leaves nothing to
+        // authenticate, there is no tunnel to open.
+        let enabled = configuration.enabledAgentIds.filter { !isSupersededAgent($0) }
         guard !enabled.isEmpty else { return }
 
         for id in enabled {
@@ -405,14 +479,14 @@ public final class RelayTunnelManager: ObservableObject {
             var authAgents: [[String: Any]] = []
 
             for agent in agents {
-                guard let index = agent.agentIndex, let address = agent.agentAddress else { continue }
+                guard let keyPath = agent.agentKeyPath, let address = agent.agentAddress else { continue }
                 do {
                     let sigHex = try Self.signAgentAuth(
                         address: address,
                         nonce: nonce,
                         timestamp: timestamp,
                         masterKey: signingKey,
-                        agentIndex: index
+                        agentKeyPath: keyPath
                     )
                     authAgents.append(["address": address, "signature": sigHex])
                 } catch {
@@ -575,14 +649,55 @@ public final class RelayTunnelManager: ObservableObject {
         }
     }
 
-    private func handleAgentRemoved(_ json: [String: Any]) {
+    /// Relay frame `{type:"agent_removed", address, reason?}`. Internal (not
+    /// private) so the supersession contract can be unit-tested without a
+    /// live socket.
+    func handleAgentRemoved(_ json: [String: Any]) {
         guard let address = json["address"] as? String else { return }
         let lower = address.lowercased()
+        let superseded = (json["reason"] as? String) == "superseded"
         authenticatedAgents.remove(lower)
-        if let agentId = addressToAgentId.removeValue(forKey: lower) {
-            cancelInFlightRequests(forAgentUUID: agentId.uuidString)
-            cancelPublicCheck(for: agentId)
+        if superseded {
+            supersededAddresses.insert(lower)
+        }
+        let agentId = addressToAgentId.removeValue(forKey: lower) ?? findAgent(byAddress: lower)?.id
+        guard let agentId else { return }
+        cancelInFlightRequests(forAgentUUID: agentId.uuidString)
+        cancelPublicCheck(for: agentId)
+        if superseded {
+            supersededAgentIds.insert(agentId)
+            agentStatuses[agentId] = .servedElsewhere
+            print("[Relay] \(lower) is now served from another device; not reconnecting for it")
+            // The relay closes the socket once it carries no agents; when
+            // every enabled agent was taken over, stop the reconnect loop
+            // proactively instead of re-opening a tunnel with nothing to auth.
+            if configuration.enabledAgentIds.allSatisfy({ isSupersededAgent($0) }) {
+                reconnectTask?.cancel()
+                reconnectTask = nil
+            }
+        } else {
             agentStatuses[agentId] = .disconnected
+        }
+    }
+
+    /// Superseded by agent id, or by the address the relay named when the
+    /// id map was not populated at the time.
+    func isSupersededAgent(_ agentId: UUID) -> Bool {
+        if supersededAgentIds.contains(agentId) { return true }
+        guard !supersededAddresses.isEmpty,
+            let address = AgentManager.shared.agent(for: agentId)?.agentAddress?.lowercased()
+        else { return false }
+        if supersededAddresses.contains(address) {
+            supersededAgentIds.insert(agentId)
+            return true
+        }
+        return false
+    }
+
+    func clearSuperseded(_ agentId: UUID) {
+        supersededAgentIds.remove(agentId)
+        if let address = AgentManager.shared.agent(for: agentId)?.agentAddress?.lowercased() {
+            supersededAddresses.remove(address)
         }
     }
 
@@ -978,7 +1093,7 @@ public final class RelayTunnelManager: ObservableObject {
         ensureAgentIdentity(agentId)
 
         guard let agent = AgentManager.shared.agent(for: agentId),
-            let index = agent.agentIndex,
+            let keyPath = agent.agentKeyPath,
             let address = agent.agentAddress
         else {
             agentStatuses[agentId] = .error("No identity")
@@ -1010,7 +1125,7 @@ public final class RelayTunnelManager: ObservableObject {
                     nonce: nonce,
                     timestamp: timestamp,
                     masterKey: signingKey,
-                    agentIndex: index
+                    agentKeyPath: keyPath
                 )
                 self.sendJSON([
                     "type": "add_agent",
@@ -1065,13 +1180,18 @@ public final class RelayTunnelManager: ObservableObject {
         pendingNonceHandlers.removeAll()
         cancelAllPublicChecks()
 
-        for id in configuration.enabledAgentIds {
+        let stillOurs = configuration.enabledAgentIds.filter { !isSupersededAgent($0) }
+        for id in stillOurs {
             if agentStatuses[id] != .disconnected {
                 agentStatuses[id] = .connecting
             }
         }
 
         guard shouldReconnect else { return }
+        // Every enabled address is served from another device: the relay
+        // contract says do not reconnect for them, and there is nothing else
+        // to authenticate. A user-initiated enable or relaunch resumes.
+        guard !stillOurs.isEmpty else { return }
 
         reconnectTask?.cancel()
         reconnectTask = Task { [weak self] in
@@ -1102,10 +1222,11 @@ public final class RelayTunnelManager: ObservableObject {
         nonce: String,
         timestamp: Int,
         masterKey: Data,
-        agentIndex: UInt32
+        agentKeyPath: AgentKeyPath
     ) throws -> String {
         let message = "osaurus-tunnel:\(address):\(nonce):\(timestamp)"
-        let childKey = AgentKey.derive(masterKey: masterKey, index: agentIndex)
+        var childKey = AgentKey.derive(masterKey: masterKey, path: agentKeyPath)
+        defer { childKey.zeroOut() }
         let sig = try signEIP191Message(message, privateKey: childKey)
         return "0x" + sig.hexEncodedString
     }

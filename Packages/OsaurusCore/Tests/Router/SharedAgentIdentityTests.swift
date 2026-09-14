@@ -75,7 +75,7 @@ struct SharedAgentIdentityTests {
         localEffectiveModel: String? = nil,
         liveEffectiveModel: String? = nil,
         lastKnownName: String? = nil,
-        isMine: Bool = false
+        isOwnedByMe: Bool = false
     ) -> SharedAgentIdentity {
         SharedAgentIdentity.make(
             address: Self.address,
@@ -86,7 +86,7 @@ struct SharedAgentIdentityTests {
             localEffectiveModel: localEffectiveModel,
             liveEffectiveModel: liveEffectiveModel,
             lastKnownName: lastKnownName,
-            isMine: isMine
+            isOwnedByMe: isOwnedByMe
         )
     }
 
@@ -99,6 +99,9 @@ struct SharedAgentIdentityTests {
         #expect(identity.name == "Editorial Writer")
         #expect(identity.ownerName == "Alice")
         #expect(!identity.isMine)
+        #expect(!identity.isOwnedByMe)
+        #expect(!identity.isHostedHere)
+        #expect(!identity.isOwnedElsewhere)
     }
 
     @Test func name_teammate_fallsBackToPairedThenLastKnownThenShortAddress() throws {
@@ -114,23 +117,51 @@ struct SharedAgentIdentityTests {
     @Test func name_mine_isLocalAgentNameAndExposesSharedAsWhenRosterDiffers() throws {
         var local = Agent(name: "Editorial Writer")
         local.agentAddress = Self.address
-        let identity = make(roster: try Self.rosterAgent(name: "Dinoki"), local: local, isMine: true)
+        let identity = make(roster: try Self.rosterAgent(name: "Dinoki"), local: local, isOwnedByMe: true)
         #expect(identity.name == "Editorial Writer")
         #expect(identity.sharedAsName == "Dinoki")
         #expect(identity.ownerName == nil)
         #expect(identity.isMine)
-        #expect(!identity.isMissingLocally)
+        #expect(identity.isHostedHere)
+        #expect(identity.isOwnedByMe)
+        #expect(!identity.isOwnedElsewhere)
 
-        let same = make(roster: try Self.rosterAgent(name: "Editorial Writer"), local: local, isMine: true)
+        let same = make(roster: try Self.rosterAgent(name: "Editorial Writer"), local: local, isOwnedByMe: true)
         #expect(same.sharedAsName == nil)
     }
 
-    @Test func mine_withoutLocalRecord_isMissingLocally() throws {
-        let identity = make(roster: try Self.rosterAgent(), isMine: true)
-        #expect(identity.isMissingLocally)
+    @Test func hostedHere_impliesOwned_evenWhenRosterOwnerUnknown() {
+        // A local record is always ours; the wallet check is only needed for
+        // agents that have no local record.
+        var local = Agent(name: "Mine")
+        local.agentAddress = Self.address
+        let identity = make(local: local, isOwnedByMe: false)
+        #expect(identity.isHostedHere)
+        #expect(identity.isOwnedByMe)
+        #expect(identity.localAgent != nil)
+    }
+
+    @Test func ownedByWallet_withoutLocalRecord_isOwnedElsewhere_notMissing() throws {
+        // Same identity on two devices: the roster says this wallet shared
+        // the agent, but it lives on the OTHER device. It must read as a
+        // remote, chat-able agent that happens to be yours — not as "deleted
+        // on this Mac" and not as a teammate's.
+        let identity = make(
+            roster: try Self.rosterAgent(),
+            paired: Self.paired(name: "Editorial Writer", model: "remote-model"),
+            isOwnedByMe: true
+        )
+        #expect(identity.isOwnedByMe)
+        #expect(!identity.isHostedHere)
+        #expect(identity.isOwnedElsewhere)
+        #expect(!identity.isMine, "isMine is the local-affordance gate and must stay hosted-here only")
         #expect(identity.localAgent == nil)
-        // Still named from the roster so the row isn't a bare address.
+        // Named from the roster like any remote agent, no "shared by" owner.
         #expect(identity.name == "Editorial Writer")
+        #expect(identity.ownerName == nil)
+        #expect(identity.sharedAsName == nil)
+        // Model comes from the remote path (pairing / live), not a local record.
+        #expect(identity.model == "remote-model")
     }
 
     // MARK: - Model precedence
@@ -145,8 +176,8 @@ struct SharedAgentIdentityTests {
     @Test func model_mine_usesEffectiveModelThenDefaultModel() {
         var local = Agent(name: "Mine", defaultModel: "default-model")
         local.agentAddress = Self.address
-        #expect(make(local: local, localEffectiveModel: "effective", isMine: true).model == "effective")
-        #expect(make(local: local, isMine: true).model == "default-model")
+        #expect(make(local: local, localEffectiveModel: "effective", isOwnedByMe: true).model == "effective")
+        #expect(make(local: local, isOwnedByMe: true).model == "default-model")
     }
 
     // MARK: - Workspace / avatar / description
@@ -164,9 +195,11 @@ struct SharedAgentIdentityTests {
     @Test func avatar_mineUsesLocal_teammateUsesPairedLiveAvatar() {
         var local = Agent(name: "Mine")
         local.avatar = "rex"
-        #expect(make(local: local, isMine: true).avatar == "rex")
+        #expect(make(local: local, isOwnedByMe: true).avatar == "rex")
         #expect(make(paired: Self.paired(avatar: "dino")).avatar == "dino")
-        #expect(make(paired: Self.paired(avatar: "dino"), local: local).avatar == "dino")
+        // A local record means hosted here, and hosted here wins: the pairing
+        // (a stale self-pairing) never overrides the agent's own avatar.
+        #expect(make(paired: Self.paired(avatar: "dino"), local: local).avatar == "rex")
     }
 
     @Test func description_rosterFirstThenPairedThenLocal() throws {

@@ -11,12 +11,21 @@
 //  another.
 //
 //  Naming contract (decided with the product owner):
-//  - The user's OWN shared agent is named by its local `Agent.name` — that
-//    is what they see everywhere else in the app.
-//  - A TEAMMATE's shared agent is named by the router display name the
+//  - A shared agent HOSTED ON THIS MAC is named by its local `Agent.name` —
+//    that is what the user sees everywhere else in the app.
+//  - Any other shared agent — a teammate's, or the user's own agent hosted
+//    on ANOTHER of their devices — is named by the router display name the
 //    sharer typed in the Share sheet (the roster's `display_name`). The
 //    host's live agent name is a fallback for rosters without one; the
 //    short address is the last resort.
+//
+//  Ownership vs. hosting are deliberately separate questions. One Osaurus
+//  identity can run on several devices, so "shared by my wallet" no longer
+//  implies "runs on this Mac": `isOwnedByMe` drives labels ("Yours") and
+//  management rights (Unshare), `isHostedHere` drives every local-only
+//  affordance (Open Settings, relay toggle, billing toggle, run locally).
+//  An agent that is owned but not hosted here is reached exactly like a
+//  teammate's — pair through the workspace and chat over the relay.
 //
 
 import Foundation
@@ -43,11 +52,25 @@ struct SharedAgentIdentity: Equatable {
     /// Description shown under the agent's name (roster description first,
     /// then the pairing's, then the local agent's).
     let description: String?
-    /// True when the agent is one of THIS Mac's agents (shared by the user).
-    let isMine: Bool
-    /// The local agent record for own agents; nil for teammates' agents or
-    /// an own agent that has since been deleted locally.
+    /// True when the agent was shared by the user's own identity (wallet),
+    /// whichever of their devices hosts it. Drives "Yours" labelling and
+    /// management rights, never local-only affordances.
+    let isOwnedByMe: Bool
+    /// True when the agent's record lives on THIS Mac (`localAgent != nil`).
+    /// The only thing that unlocks local affordances: Open Settings, relay
+    /// and billing toggles, running the agent locally.
+    let isHostedHere: Bool
+    /// The local agent record when hosted here; nil for teammates' agents
+    /// and for the user's own agents hosted on another device.
     let localAgent: Agent?
+
+    /// Owned by this identity but running on another of the user's devices.
+    /// Reached like a teammate's agent (pair + relay), labelled as yours.
+    var isOwnedElsewhere: Bool { isOwnedByMe && !isHostedHere }
+
+    /// Hosted on this Mac. Kept as the name the local-affordance call sites
+    /// already use; it intentionally does NOT include owned-elsewhere agents.
+    var isMine: Bool { isHostedHere }
     /// The teammate pairing record, when paired on this Mac.
     let paired: RemoteAgent?
     /// The roster row, when the agent is currently on a loaded roster.
@@ -63,19 +86,16 @@ struct SharedAgentIdentity: Equatable {
     var shortAddress: String { Self.shortAddress(address) }
 
     /// The router display name the sharer typed, when it differs from the
-    /// resolved name (only possible for own agents, whose title is the local
-    /// name). Surfaces "shared as “X”" so a mistaken share name is visible.
+    /// resolved name (only possible for locally hosted agents, whose title is
+    /// the local name). Surfaces "shared as “X”" so a mistaken share name is
+    /// visible.
     var sharedAsName: String? {
-        guard isMine,
+        guard isHostedHere,
             let shared = rosterAgent?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
             !shared.isEmpty, shared != name
         else { return nil }
         return shared
     }
-
-    /// An own agent the roster still lists but whose local record is gone
-    /// (deleted on this Mac). It can only be unshared.
-    var isMissingLocally: Bool { isMine && localAgent == nil }
 
     static func shortAddress(_ raw: String) -> String {
         guard raw.count > 12 else { return raw }
@@ -86,6 +106,10 @@ struct SharedAgentIdentity: Equatable {
 
     /// Resolve from explicit inputs. Pure so it is unit-testable; the
     /// `resolve(address:)` convenience gathers the inputs from the live stores.
+    ///
+    /// `isOwnedByMe` is the wallet check (roster owner == this identity); a
+    /// non-nil `localAgent` is what makes the agent hosted here. Hosting
+    /// implies ownership (a local agent is always ours), never the reverse.
     static func make(
         address rawAddress: String,
         rosterAgent: OsaurusRouterWorkspaceAgent?,
@@ -95,14 +119,16 @@ struct SharedAgentIdentity: Equatable {
         localEffectiveModel: String?,
         liveEffectiveModel: String?,
         lastKnownName: String?,
-        isMine: Bool
+        isOwnedByMe ownedByWallet: Bool
     ) -> SharedAgentIdentity {
         let address = rawAddress.lowercased()
         let rosterName = rosterAgent?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
         let pairedName = paired?.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isHostedHere = localAgent != nil
+        let isOwnedByMe = ownedByWallet || isHostedHere
 
         let name: String
-        if isMine, let local = localAgent {
+        if let local = localAgent {
             name = local.displayName
         } else if let rosterName, !rosterName.isEmpty {
             name = rosterName
@@ -115,7 +141,7 @@ struct SharedAgentIdentity: Equatable {
         }
 
         let model: String?
-        if isMine {
+        if isHostedHere {
             model = localEffectiveModel ?? localAgent?.defaultModel
         } else if let live = liveEffectiveModel, !live.isEmpty {
             model = live
@@ -131,20 +157,22 @@ struct SharedAgentIdentity: Equatable {
         .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
         .first { !$0.isEmpty }
 
-        let ownerName: String? = isMine ? nil : rosterAgent?.owner?.friendlyName
+        // Own agents (on any device) are labelled "Yours", not "shared by …".
+        let ownerName: String? = isOwnedByMe ? nil : rosterAgent?.owner?.friendlyName
 
         return SharedAgentIdentity(
             address: address,
             name: name,
-            avatar: isMine ? localAgent?.avatar : paired?.avatar,
-            customAvatarURL: isMine ? localAgent?.customAvatarURL : nil,
+            avatar: isHostedHere ? localAgent?.avatar : paired?.avatar,
+            customAvatarURL: isHostedHere ? localAgent?.customAvatarURL : nil,
             model: model,
             ownerName: ownerName,
             workspaceId: workspace?.id ?? paired?.workspaceId,
             workspaceName: workspace?.name,
             description: description,
-            isMine: isMine,
-            localAgent: isMine ? localAgent : nil,
+            isOwnedByMe: isOwnedByMe,
+            isHostedHere: isHostedHere,
+            localAgent: localAgent,
             paired: paired,
             rosterAgent: rosterAgent
         )
@@ -164,9 +192,7 @@ struct SharedAgentIdentity: Equatable {
             workspaceId: workspaceId?.isEmpty == false ? workspaceId : nil
         )
         let localAgent = AgentManager.shared.agent(byAddress: address)
-        let isMine =
-            localAgent != nil
-            || (rosterAgent.map { WorkspacesService.shared.isSelf($0.owner) } ?? false)
+        let isOwnedByMe = rosterAgent.map { WorkspacesService.shared.isSelf($0.owner) } ?? false
         var workspace = workspaceId.flatMap { id in roster.rosters.first { $0.id == id }?.workspace }
         if workspace == nil, let id = paired?.workspaceId {
             workspace = roster.rosters.first { $0.id == id }?.workspace
@@ -180,7 +206,7 @@ struct SharedAgentIdentity: Equatable {
             localEffectiveModel: localAgent.flatMap { AgentManager.shared.effectiveModel(for: $0.id) },
             liveEffectiveModel: liveEffectiveModel,
             lastKnownName: roster.lastKnownName(forAddress: address),
-            isMine: isMine
+            isOwnedByMe: isOwnedByMe
         )
     }
 }
@@ -291,15 +317,25 @@ enum SharedAgentStatus: Equatable {
         }
     }
 
-    /// Status for the user's OWN shared agent as teammates experience it:
-    /// reachable only while its relay tunnel is up. Pure so list rows and
-    /// tests share one mapping.
+    /// Status for a shared agent HOSTED ON THIS MAC as teammates experience
+    /// it: reachable only while its relay tunnel is up. Pure so list rows
+    /// and tests share one mapping. Own agents hosted on another device go
+    /// through `forTeammateRow` instead — from here they are remote.
     static func forOwnAgent(relayStatus: AgentRelayStatus?) -> SharedAgentStatus {
         switch relayStatus {
         case .connected: return .ready
         case .connecting: return .connecting
         case .error(let message):
             return .notConnected(reason: message, hasAttempted: true)
+        case .servedElsewhere:
+            // Not an outage: another device with this identity took the
+            // address over, so teammates still reach the agent — just not
+            // through this Mac. Reported as attempted so the row doesn't
+            // nag "turn the relay on".
+            return .notConnected(
+                reason: L("served from another device using your identity."),
+                hasAttempted: true
+            )
         case .disconnected, nil:
             return .notConnected(
                 reason: L("relay is off — teammates can't reach it."),

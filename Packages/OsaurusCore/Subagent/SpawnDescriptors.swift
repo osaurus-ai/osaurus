@@ -538,7 +538,7 @@ public enum SpawnDescriptors {
                 if roster.lastRefreshedAt != nil { return nil }
             }
             // Never advertise one of this instance's own agents as a target.
-            if roster.isOwnAgent(address: ref.agentAddress) { return nil }
+            if roster.isHostedHere(address: ref.agentAddress) { return nil }
             let paired = remoteAgents.remoteAgent(
                 forAddress: ref.agentAddress, workspaceId: ref.workspaceId
             )

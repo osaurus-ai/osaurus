@@ -28,8 +28,10 @@ public final class APIKeyManager: @unchecked Sendable {
     /// - Parameters:
     ///   - label: Human-readable label for the key.
     ///   - expiration: When the key expires.
-    ///   - agentIndex: If set, sign with the derived agent key and scope to that agent.
-    ///                 If nil, sign with the master key for all-agent access.
+    ///   - agentKeyPath: If set, sign with the derived agent key at that path
+    ///                 (v1 or device-scoped v2, per the agent's persisted
+    ///                 derivation) and scope to that agent. If nil, sign with
+    ///                 the master key for all-agent access.
     ///   - overrideExpiresAt: Exact expiry that beats `expiration`'s relative
     ///                 date when set. Used by the Workspaces handshake, where the
     ///                 key MUST die exactly when the membership attestation it
@@ -39,7 +41,7 @@ public final class APIKeyManager: @unchecked Sendable {
     public func generate(
         label: String,
         expiration: AccessKeyExpiration,
-        agentIndex: UInt32? = nil,
+        agentKeyPath: AgentKeyPath? = nil,
         overrideExpiresAt: Date? = nil
     ) throws -> (fullKey: String, info: AccessKeyInfo) {
         ensureLoadedFromKeychain()
@@ -54,8 +56,8 @@ public final class APIKeyManager: @unchecked Sendable {
 
         let signerAddress: OsaurusID
         let audienceAddress: OsaurusID
-        if let idx = agentIndex {
-            signerAddress = try AgentKey.deriveAddress(masterKey: masterKeyData, index: idx)
+        if let path = agentKeyPath {
+            signerAddress = try AgentKey.deriveAddress(masterKey: masterKeyData, path: path)
             audienceAddress = signerAddress
         } else {
             signerAddress = masterAddress
@@ -84,8 +86,8 @@ public final class APIKeyManager: @unchecked Sendable {
         let payloadData = try encoder.encode(payload)
 
         let signature: Data
-        if let idx = agentIndex {
-            signature = try AgentKey.sign(payload: payloadData, masterKey: masterKeyData, index: idx)
+        if let path = agentKeyPath {
+            signature = try AgentKey.sign(payload: payloadData, masterKey: masterKeyData, path: path)
         } else {
             signature = try signAccessPayload(payloadData, privateKey: masterKeyData)
         }

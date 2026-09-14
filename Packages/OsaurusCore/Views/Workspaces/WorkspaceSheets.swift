@@ -1016,22 +1016,22 @@ struct WorkspaceShareAgentSheet: View {
     }
 
     /// Makes sure the agent has an identity key and the relay tunnel enabled,
-    /// returning the (address, index) to sign with. Nil when no master key
+    /// returning the (address, key path) to sign with. Nil when no master key
     /// exists to derive from (the tab's Identity gate normally prevents this).
-    private func prepareForSharing(_ agent: Agent) -> (address: String, index: UInt32)? {
+    private func prepareForSharing(_ agent: Agent) -> (address: String, keyPath: AgentKeyPath)? {
         var current = agent
         if current.agentAddress == nil || current.agentIndex == nil {
             try? AgentManager.shared.assignAddress(to: current)
             guard let refreshed = AgentManager.shared.agent(for: agent.id) else { return nil }
             current = refreshed
         }
-        guard let address = current.agentAddress, let index = current.agentIndex else {
+        guard let address = current.agentAddress, let keyPath = current.agentKeyPath else {
             return nil
         }
         if !RelayTunnelManager.shared.isTunnelEnabled(for: current.id) {
             RelayTunnelManager.shared.setTunnelEnabled(true, for: current.id)
         }
-        return (address, index)
+        return (address, keyPath)
     }
 
     private func submit() {
@@ -1049,7 +1049,7 @@ struct WorkspaceShareAgentSheet: View {
             let ok = await service.shareAgent(
                 workspaceId: workspaceId,
                 agentAddress: signer.address,
-                agentIndex: signer.index,
+                agentKeyPath: signer.keyPath,
                 displayName: displayName,
                 description: descriptionText.isEmpty ? nil : descriptionText
             )

@@ -28592,7 +28592,7 @@
         }
       }
     },
-    "Already using Osaurus on another Mac? With iCloud Keychain enabled on both, your identity restores here automatically — it can take a few minutes to sync.": {},
+    "Already using Osaurus on another device? With iCloud Keychain enabled on both, your identity restores here automatically — it can take a few minutes to sync.": {},
     "Also delete my message": {
       "localizations": {
         "de": {
@@ -108384,6 +108384,7 @@
         }
       }
     },
+    "Key rotated, but %lld workspace share(s) still point at the old address. Re-share the agent there manually.": {},
     "Key invalid": {
       "localizations": {
         "de": {
@@ -214468,6 +214469,9 @@
         }
       }
     },
+    "This agent's address was created on another device. It keeps that address, so existing pairings and workspace shares keep working — but if the other device is still serving it, the relay will route to whichever device connected last.": {},
+    "This agent uses a legacy (non device-scoped) address. It is kept as-is; rotate the key later to move it to the current layout.": {},
+    "Its address is already used by your agent “%@”. The imported copy gets a new address on activation; clients paired to the old one must pair again.": {},
     "This agent and Server Concurrent Sessions persist one configured limit. Existing engine work and RAM-Safety can queue or split it into smaller waves at run time. Different local models run in serial model waves; remote jobs can overlap.": {},
     "This agent doesn't reply on any channel yet. Open a connected channel in Channels settings and choose this agent under “Reply to incoming messages”.": {
       "comment": "A message that appears when an agent has no",

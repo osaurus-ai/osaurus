@@ -20,5 +20,13 @@
 	<true/>
 	<key>com.apple.security.virtualization</key>
 	<true/>
+	<!-- Shared Keychain access group for the Osaurus identity (master key +
+	     recovery phrase). An iOS/iPadOS Osaurus client signed by the same
+	     team declares the same group so iCloud Keychain hands it the master
+	     directly. See docs/MOBILE_PROTOCOL.md § Identity bootstrap. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)ai.osaurus.identity</string>
+	</array>
 </dict>
 </plist>

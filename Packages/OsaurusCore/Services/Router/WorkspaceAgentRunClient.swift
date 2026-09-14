@@ -50,7 +50,7 @@ enum WorkspaceAgentRunError: Error, Equatable, Sendable {
         case .notShared:
             return L("\(agentName) is no longer shared with a workspace you belong to.")
         case .ownAgent:
-            return L("\(agentName) is one of this Mac's own agents; run it locally instead of through the workspace.")
+            return L("\(agentName) is hosted on this Mac; run it locally instead of through the workspace.")
         case .offline(let lastSeen):
             return WorkspaceAgentLiveness.message(for: .offline, agentName: agentName, lastSeen: lastSeen, now: now)
         case .hostUnreachable(let why):
@@ -135,8 +135,10 @@ final class WorkspaceAgentRunClient {
     var rosterKnows: (WorkspaceAgentRef) -> Bool = { ref in
         WorkspaceRosterStore.shared.agent(forAddress: ref.agentAddress, workspaceId: ref.workspaceId) != nil
     }
-    var isOwnAgent: (WorkspaceAgentRef) -> Bool = { ref in
-        WorkspaceRosterStore.shared.isOwnAgent(address: ref.agentAddress)
+    /// Hosting check, not ownership: an agent this identity shared from
+    /// another device is a legitimate remote target here.
+    var isHostedHere: (WorkspaceAgentRef) -> Bool = { ref in
+        WorkspaceRosterStore.shared.isHostedHere(address: ref.agentAddress)
     }
     var lastSeen: (WorkspaceAgentRef) -> Date? = { ref in
         WorkspaceRosterStore.shared.agent(forAddress: ref.agentAddress, workspaceId: ref.workspaceId)?.lastSeen
@@ -152,7 +154,7 @@ final class WorkspaceAgentRunClient {
     func prepare(_ ref: WorkspaceAgentRef) async throws -> Prepared {
         guard routerEnabled() else { throw WorkspaceAgentRunError.routerDisabled }
         guard identityExists() else { throw WorkspaceAgentRunError.noIdentity }
-        guard !isOwnAgent(ref) else { throw WorkspaceAgentRunError.ownAgent }
+        guard !isHostedHere(ref) else { throw WorkspaceAgentRunError.ownAgent }
 
         let displayName = AgentTargetResolver.displayName(for: ref)
         let workspaceName = AgentTargetResolver.workspaceName(for: ref)

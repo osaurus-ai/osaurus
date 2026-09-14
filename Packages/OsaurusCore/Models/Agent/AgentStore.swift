@@ -414,7 +414,12 @@ public enum AgentStore {
         let candidateAddress = agent.agentAddress?.lowercased()
         return loadAll().contains { existing in
             guard !existing.isBuiltIn else { return false }
-            if let index = agent.agentIndex, existing.agentIndex == index {
+            // Same derivation slot = same address, so it's a conflict only
+            // when the device scope matches too (v2 agents from another
+            // device legitimately reuse index numbers).
+            if let index = agent.agentIndex, existing.agentIndex == index,
+                existing.agentDeviceScope == agent.agentDeviceScope
+            {
                 return true
             }
             if let candidateAddress,

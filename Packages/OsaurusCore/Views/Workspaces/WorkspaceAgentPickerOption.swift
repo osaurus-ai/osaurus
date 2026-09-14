@@ -45,7 +45,7 @@ struct WorkspaceAgentPickerOption: Identifiable, Equatable {
         var seen = Set<WorkspaceAgentRef>()
         var out: [WorkspaceAgentPickerOption] = []
         for entry in roster.rosters {
-            for agent in entry.agents where !roster.isOwnAgent(address: agent.agentAddress) {
+            for agent in entry.agents where !roster.isHostedHere(address: agent.agentAddress) {
                 let ref = WorkspaceAgentRef(workspaceId: entry.id, agentAddress: agent.agentAddress)
                 guard seen.insert(ref).inserted else { continue }
                 let description = agent.description?.trimmingCharacters(in: .whitespacesAndNewlines)

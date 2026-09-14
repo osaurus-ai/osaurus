@@ -200,15 +200,19 @@ final class WorkspaceRosterStore: ObservableObject {
         return Self.presence(for: agent)
     }
 
-    /// Whether `address` is one of THIS instance's agents (shared by the
-    /// user), by matching the local agent's identity address.
-    nonisolated static func isOwnAgent(address: String, localAgents: [Agent]) -> Bool {
+    /// Whether `address` is HOSTED ON THIS MAC, by matching a local agent's
+    /// identity address. This is a hosting check, not an ownership check:
+    /// an agent the same identity shared from another device is not "own"
+    /// here and is reached through the relay like a teammate's. Callers use
+    /// it to decide "run locally instead" and to hide local agents from the
+    /// remote-target pickers.
+    nonisolated static func isHostedHere(address: String, localAgents: [Agent]) -> Bool {
         let lowered = address.lowercased()
         return localAgents.contains { $0.agentAddress?.lowercased() == lowered }
     }
 
-    func isOwnAgent(address: String) -> Bool {
-        Self.isOwnAgent(address: address, localAgents: AgentManager.shared.agents)
+    func isHostedHere(address: String) -> Bool {
+        Self.isHostedHere(address: address, localAgents: AgentManager.shared.agents)
     }
 
     // MARK: - Pure presence mapping

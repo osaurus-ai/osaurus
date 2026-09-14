@@ -230,6 +230,12 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var agentIndex: UInt32?
     /// Derived cryptographic address for this agent (nil = no address yet)
     public var agentAddress: String?
+    /// Device scope the address was minted under (the minting device's
+    /// `DeviceKey` ID). Selects the device-scoped v2 derivation so agents on
+    /// different devices that share one master get disjoint addresses.
+    /// `nil` = legacy v1 (master-global) derivation; every agent created
+    /// before device scoping decodes as v1 and keeps its address.
+    public var agentDeviceScope: String?
     /// Controls the agent's ability to run arbitrary commands in the sandbox.
     /// `nil` is an unconfigured custom agent and resolves default-on when a
     /// sandbox backend is available; `enabled: false` is an explicit opt-out.
@@ -311,6 +317,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         updatedAt: Date = Date(),
         agentIndex: UInt32? = nil,
         agentAddress: String? = nil,
+        agentDeviceScope: String? = nil,
         autonomousExec: AutonomousExecConfig? = nil,
         claudeCode: ClaudeCodeAgentConfig? = nil,
         pluginInstructions: [String: String]? = nil,
@@ -344,6 +351,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.updatedAt = updatedAt
         self.agentIndex = agentIndex
         self.agentAddress = agentAddress
+        self.agentDeviceScope = agentDeviceScope
         self.autonomousExec = autonomousExec
         self.claudeCode = claudeCode
         self.pluginInstructions = pluginInstructions
@@ -360,6 +368,18 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.order = order
         self.workingFolderBookmark = workingFolderBookmark
         self.workingFolderPath = workingFolderPath
+    }
+
+    // MARK: - Cryptographic identity
+
+    /// Where this agent's child key sits under the master, or `nil` when the
+    /// agent has no derived identity yet. Every derivation / signing site
+    /// must use this (via `AgentKey.derive(masterKey:path:)`) so legacy v1
+    /// and device-scoped v2 agents both re-derive the key their persisted
+    /// `agentAddress` was minted from.
+    public var agentKeyPath: AgentKeyPath? {
+        guard let agentIndex else { return nil }
+        return AgentKeyPath(index: agentIndex, deviceScope: agentDeviceScope)
     }
 
     // MARK: - Custom avatar resolution
@@ -488,6 +508,9 @@ extension Agent {
         updatedAt = try c.decode(Date.self, forKey: .updatedAt)
         agentIndex = try c.decodeIfPresent(UInt32.self, forKey: .agentIndex)
         agentAddress = try c.decodeIfPresent(String.self, forKey: .agentAddress)
+        // Added with device-scoped (v2) derivation; absent for every agent
+        // minted before it, which is exactly the legacy v1 signal.
+        agentDeviceScope = try c.decodeIfPresent(String.self, forKey: .agentDeviceScope)
         autonomousExec = try c.decodeIfPresent(AutonomousExecConfig.self, forKey: .autonomousExec)
         // Added after initial release; absent in older agent JSON.
         claudeCode = try c.decodeIfPresent(ClaudeCodeAgentConfig.self, forKey: .claudeCode)

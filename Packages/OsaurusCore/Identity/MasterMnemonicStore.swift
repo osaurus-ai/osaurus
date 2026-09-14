@@ -44,17 +44,23 @@ public struct MasterMnemonicStore: Sendable {
             delete()
         }
 
-        let status = addToKeychain(data: data, synchronizable: true)
-        if status != errSecSuccess {
-            let fallback = addToKeychain(data: data, synchronizable: false)
-            guard fallback == errSecSuccess else {
-                throw OsaurusIdentityError.keychainWriteFailed
+        // Same write order as `MasterKey`: shared group first, default
+        // group as the fallback for builds without the entitlement.
+        let attempts: [(group: String?, synchronizable: Bool)] =
+            (OsaurusKeychainGroup.shared.map { [($0, true), ($0, false)] } ?? [])
+            + [(nil, true), (nil, false)]
+        for attempt in attempts {
+            if addToKeychain(data: data, synchronizable: attempt.synchronizable, accessGroup: attempt.group)
+                == errSecSuccess
+            {
+                return
             }
         }
+        throw OsaurusIdentityError.keychainWriteFailed
     }
 
     // Mirrors `MasterKey`: a synchronizable iCloud Keychain item.
-    private static func addToKeychain(data: Data, synchronizable: Bool) -> OSStatus {
+    private static func addToKeychain(data: Data, synchronizable: Bool, accessGroup: String?) -> OSStatus {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -62,6 +68,10 @@ public struct MasterMnemonicStore: Sendable {
             kSecValueData as String: data,
             kSecAttrLabel as String: "Osaurus Recovery Phrase",
         ]
+        if let accessGroup {
+            query[kSecAttrAccessGroup as String] = accessGroup
+            query[kSecUseDataProtectionKeychain as String] = true
+        }
         if synchronizable {
             query[kSecAttrSynchronizable as String] = true
             query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
@@ -127,7 +137,26 @@ public struct MasterMnemonicStore: Sendable {
         guard words.count == 24 else {
             throw OsaurusIdentityError.mnemonicInvalidWordCount
         }
+        migrateToSharedGroupIfNeeded(data: data)
         return words
+    }
+
+    /// Once per process, mirror of `MasterKey`'s migration: move a phrase
+    /// written before the shared access group existed into that group.
+    private static let migrationLock = NSLock()
+    private nonisolated(unsafe) static var migrationAttempted = false
+
+    private static func migrateToSharedGroupIfNeeded(data: Data) {
+        guard let group = OsaurusKeychainGroup.shared else { return }
+        migrationLock.lock()
+        let alreadyTried = migrationAttempted
+        migrationAttempted = true
+        migrationLock.unlock()
+        guard !alreadyTried else { return }
+        MasterKey.migrateGenericPassword(
+            service: service, account: account, label: "Osaurus Recovery Phrase",
+            data: data, toGroup: group
+        )
     }
 
     // MARK: - Delete

@@ -212,16 +212,81 @@ public actor AgentBundleService {
 
     // MARK: - Import (review-before-activate)
 
+    /// What activating this bundle will do to the agent's cryptographic
+    /// identity (`agentIndex` / `agentAddress` / `agentDeviceScope`). Shown
+    /// in the review sheet so a user moving an agent between their devices
+    /// knows whether its address (and every pairing / share that pins it)
+    /// survives the import.
+    public enum IdentityNote: Equatable, Sendable {
+        /// The address was minted on another device (different device
+        /// scope) and does not collide locally. It is kept as-is — this is a
+        /// **move**: pairings and workspace shares keep working, and if the
+        /// source device is still serving the address the relay hands it to
+        /// whichever tunnel authenticated last.
+        case mintedOnAnotherDevice(scope: String)
+        /// A different local agent already owns this address or derivation
+        /// slot (same `(index, scope)`). The imported copy's identity is
+        /// cleared and a fresh device-scoped address is minted on activate;
+        /// external clients that pinned the old address must re-pair.
+        case collidesWithLocalAgent(name: String)
+        /// Legacy master-global (v1) address with no collision. Kept as-is.
+        case legacyV1
+    }
+
     public struct ImportPreview: Sendable {
         /// Read-only directory we unpacked into. Caller can show its
         /// contents in a review UI. Survives until `activate` or
         /// `discard` is called.
         public var stagingDirectory: URL
         public var manifest: AgentBundleManifest
+        /// How activation treats the bundled agent's address; nil when the
+        /// agent has no address or it was minted on this very device.
+        public var identityNote: IdentityNote?
         /// Bundle key, unwrapped with the user's passphrase. Held
         /// in-memory only — never written to disk. We need it again
         /// in `activate` to rekey `db.sqlite` to the local storage key.
         let bundleKey: SymmetricKey
+    }
+
+    /// Pure identity rule for an imported agent. Same-UUID re-imports are
+    /// overwrites, so the existing record with the agent's own id never
+    /// counts as a collision. Split out so the review sheet and `activate`
+    /// can never disagree, and so the rule is unit-testable without a tar.
+    static func resolveImportIdentity(
+        agent: Agent,
+        localAgents: [Agent],
+        currentDeviceScope: String?
+    ) -> (agent: Agent, note: IdentityNote?) {
+        guard !agent.isBuiltIn, agent.agentAddress != nil || agent.agentIndex != nil else {
+            return (agent, nil)
+        }
+        let addressLower = agent.agentAddress?.lowercased()
+        let collision = localAgents.first { existing in
+            guard !existing.isBuiltIn, existing.id != agent.id else { return false }
+            if let index = agent.agentIndex, existing.agentIndex == index,
+                existing.agentDeviceScope == agent.agentDeviceScope
+            {
+                return true
+            }
+            if let addressLower, existing.agentAddress?.lowercased() == addressLower {
+                return true
+            }
+            return false
+        }
+        if let collision {
+            var cleared = agent
+            cleared.agentIndex = nil
+            cleared.agentDeviceScope = nil
+            cleared.agentAddress = nil
+            return (cleared, .collidesWithLocalAgent(name: collision.name))
+        }
+        guard let scope = agent.agentDeviceScope, !scope.isEmpty else {
+            return (agent, .legacyV1)
+        }
+        if let current = currentDeviceScope, !current.isEmpty, current == scope {
+            return (agent, nil)
+        }
+        return (agent, .mintedOnAnotherDevice(scope: scope))
     }
 
     /// Unpack and verify a bundle without touching `~/.osaurus/`. The
@@ -305,9 +370,27 @@ public actor AgentBundleService {
             )
         }
 
+        // Identity note for the review sheet. Best-effort: a malformed
+        // agent.json is reported by `activate`, not here.
+        var identityNote: IdentityNote?
+        let stagedAgentURL = staging.appendingPathComponent("agent.json")
+        if let agentData = try? Data(contentsOf: stagedAgentURL) {
+            let agentDecoder = JSONDecoder()
+            agentDecoder.dateDecodingStrategy = .iso8601
+            if let staged = try? agentDecoder.decode(Agent.self, from: agentData) {
+                let locals = await MainActor.run { AgentManager.shared.agents }
+                identityNote = Self.resolveImportIdentity(
+                    agent: staged,
+                    localAgents: locals,
+                    currentDeviceScope: try? DeviceKey.currentDeviceId()
+                ).note
+            }
+        }
+
         return ImportPreview(
             stagingDirectory: staging,
             manifest: manifest,
+            identityNote: identityNote,
             bundleKey: SymmetricKey(data: bundleKeyData)
         )
     }
@@ -330,10 +413,24 @@ public actor AgentBundleService {
         let agentData = try Data(contentsOf: agentURL)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let agent = try decoder.decode(Agent.self, from: agentData)
-        guard agent.id == manifest.agentId else {
+        let bundled = try decoder.decode(Agent.self, from: agentData)
+        guard bundled.id == manifest.agentId else {
             throw AgentBundleError.manifestInvalid("manifest agentId mismatch")
         }
+        // Apply the identity rule the review sheet showed. A collision with
+        // a different local agent clears the bundled identity; a fresh
+        // device-scoped address is minted after the record lands.
+        let locals = await MainActor.run { AgentManager.shared.agents }
+        let resolved = Self.resolveImportIdentity(
+            agent: bundled,
+            localAgents: locals,
+            currentDeviceScope: try? DeviceKey.currentDeviceId()
+        )
+        let agent = resolved.agent
+        let identityCleared: Bool = {
+            if case .collidesWithLocalAgent = resolved.note { return true }
+            return false
+        }()
 
         // 2. Materialize `db.sqlite` from the bundle key into the host's
         //    at-rest posture: plaintext by default, or SQLCipher (host key)
@@ -392,6 +489,14 @@ public actor AgentBundleService {
             // Imported agents are creations too: they join the Default
             // spawn pool like any other new custom agent.
             AgentManager.shared.registerInDefaultSpawnPool(agent)
+            if identityCleared {
+                // Re-mint under this device's scope so the imported copy
+                // never shares an address with the agent it collided with.
+                AgentManager.shared.refresh()
+                if let saved = AgentManager.shared.agent(for: agent.id) {
+                    AgentManager.shared.assignAddressInBackground(to: saved)
+                }
+            }
         }
         try? FileManager.default.removeItem(at: staging)
         return agent
