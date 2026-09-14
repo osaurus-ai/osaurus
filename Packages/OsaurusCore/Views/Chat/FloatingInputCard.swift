@@ -3679,6 +3679,9 @@ extension FloatingInputCard {
     /// disables the VM for this agent. The folder picker is presented as a
     /// sheet on this chat's window so ownership remains unambiguous.
     private func selectFolder() {
+        // Defensive: the menu row is disabled for remote runs, but no folder
+        // context can reach a host-executed agent, so never open the picker.
+        guard !isRemoteAgentRun else { return }
         let window = windowId.flatMap { ChatWindowManager.shared.getNSWindow(id: $0) }
         let agentId = effectiveAgentId
         let manager = agentManager
@@ -6191,7 +6194,18 @@ extension FloatingInputCard {
             icon: "plus",
             help: "Add folder or attach files",
             items: [
-                .init(icon: "folder", title: Text("Add Folder", bundle: .module)) {
+                // Mode 2 (remote agent run): the turn executes on the host's
+                // machine and no local system prompt or tools are sent, so a
+                // folder picked here would never reach the agent. Keep the row
+                // visible but disabled so the flow fails loudly instead of
+                // silently accepting a folder that is then dropped.
+                .init(
+                    icon: "folder",
+                    title: Text("Add Folder", bundle: .module),
+                    disabledReason: isRemoteAgentRun
+                        ? Text("Shared agents can't use folders on this Mac.", bundle: .module)
+                        : nil
+                ) {
                     selectFolder()
                 },
                 .init(icon: "paperclip", title: Text("Attach Files", bundle: .module)) {
@@ -8316,7 +8330,17 @@ private struct InputActionMenuButton: View {
     struct Item {
         let icon: String
         let title: Text
+        /// When non-nil the row is shown dimmed and inert, with a trailing
+        /// info icon whose tooltip explains why the action is unavailable.
+        let disabledReason: Text?
         let action: () -> Void
+
+        init(icon: String, title: Text, disabledReason: Text? = nil, action: @escaping () -> Void) {
+            self.icon = icon
+            self.title = title
+            self.disabledReason = disabledReason
+            self.action = action
+        }
     }
 
     let icon: String
@@ -8371,7 +8395,7 @@ private struct InputActionMenuButton: View {
         .popover(isPresented: $showPopover, arrowEdge: .top) {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    MenuItemRow(icon: item.icon, title: item.title) {
+                    MenuItemRow(icon: item.icon, title: item.title, disabledReason: item.disabledReason) {
                         showPopover = false
                         item.action()
                     }
@@ -8389,21 +8413,35 @@ private struct InputActionMenuButton: View {
     private struct MenuItemRow: View {
         let icon: String
         let title: Text
+        var disabledReason: Text? = nil
         let action: () -> Void
         @Environment(\.theme) private var theme
         @State private var isHovering = false
+        @State private var showReason = false
+
+        private var isDisabled: Bool { disabledReason != nil }
 
         var body: some View {
-            Button(action: action) {
+            // Inert rather than `.disabled` so the row still tracks hover.
+            // The info icon is an overlay sibling rather than part of the
+            // Button label: `.help` never fires inside a plain-style label
+            // in a popover, and a sibling receives its own hover events.
+            Button(action: { if !isDisabled { action() } }) {
                 HStack(spacing: 10) {
                     Image(systemName: icon)
                         .font(.system(size: 12, weight: .medium))
                         .frame(width: 16)
                         .foregroundColor(theme.secondaryText)
+                        .opacity(isDisabled ? 0.45 : 1)
                     title
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.primaryText)
+                        .opacity(isDisabled ? 0.45 : 1)
                     Spacer(minLength: 0)
+                    if isDisabled {
+                        // Reserve the trailing slot; the live icon is overlaid.
+                        Color.clear.frame(width: 14, height: 14)
+                    }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -8419,7 +8457,29 @@ private struct InputActionMenuButton: View {
             .buttonStyle(.plain)
             .onHover { hovering in
                 withAnimation(.easeOut(duration: 0.12)) {
-                    isHovering = hovering
+                    isHovering = hovering && !isDisabled
+                }
+            }
+            .overlay(alignment: .trailing) {
+                if let disabledReason {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(showReason ? theme.primaryText : theme.secondaryText)
+                        .frame(width: 14, height: 14)
+                        .contentShape(Rectangle())
+                        .padding(.trailing, 18)
+                        .onHover { showReason = $0 }
+                        .popover(isPresented: $showReason, arrowEdge: .trailing) {
+                            disabledReason
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.primaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: 200, alignment: .leading)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 8)
+                                .background(theme.primaryBackground)
+                                .environment(\.theme, theme)
+                        }
                 }
             }
         }

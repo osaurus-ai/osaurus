@@ -528,6 +528,70 @@ actor AgentChannelWebhookIngress {
         return .json(200, body)
     }
 
+    // MARK: Ping
+
+    /// `GET /channels/{kind}/{id}/ping` — the credential-test probe for the
+    /// n8n node. Same gate order as a poll (connection → transport policy →
+    /// secret verification on the empty body) but never touches tasks, so a
+    /// health check no longer spends rate-limit penalty budget on a 404.
+    func handlePing(_ request: AgentChannelWebhookIngressRequest) async -> AgentChannelWebhookIngressResponse {
+        let connectionId = AgentChannelConnection.normalizedId(request.connectionId)
+        guard rateLimiter.allow(ip: request.sourceAddress) else {
+            bump(connectionId) { $0.rateLimited += 1 }
+            return .error(429, code: "rate_limited", message: "Too many channel requests. Try again shortly.")
+        }
+
+        let connection: AgentChannelConnection
+        let n8n: AgentChannelN8nConfiguration
+        switch resolveConnection(kind: request.kind, connectionId: connectionId) {
+        case .failure(let response):
+            return response
+        case .success(let resolved):
+            connection = resolved.connection
+            n8n = resolved.n8n
+        }
+        if let refusal = transportPolicyRefusal(n8n, request: request) {
+            return refusal
+        }
+
+        let verification = substrate.verifyWebhookSource(
+            request: AgentChannelWebhookVerificationRequest(
+                headers: request.headers,
+                body: request.body,
+                sourceAddress: request.sourceAddress,
+                receivedAt: request.receivedAt
+            ),
+            policy: n8n.inboundVerification.policy(secret: resolveSecret(connection: connection, n8n: n8n))
+        )
+        guard verification.status == .verified else {
+            bump(connectionId) { $0.signatureFailures += 1 }
+            return penalizing(
+                .error(401, code: "unauthorized", message: "Channel request did not verify.", penalize: true),
+                source: request.sourceAddress
+            )
+        }
+
+        let transport: String
+        if request.isSecureChannel {
+            transport = "secure_channel"
+        } else if request.isLoopback {
+            transport = "loopback"
+        } else {
+            transport = "plaintext"
+        }
+        return .json(
+            200,
+            [
+                "status": "ok",
+                "connection_id": connection.id,
+                "verification": n8n.inboundVerification.method.rawValue,
+                "header": n8n.inboundVerification.effectiveHeaderName,
+                "secure_channel": request.isSecureChannel,
+                "transport": transport,
+            ]
+        )
+    }
+
     // MARK: Health
 
     func healthSnapshot(connectionId: String) -> AgentChannelWebhookIngressHealth {
@@ -574,10 +638,16 @@ actor AgentChannelWebhookIngress {
         "/channels/\(kind)/\(AgentChannelConnection.normalizedId(connectionId))/tasks/\(taskId.uuidString.lowercased())"
     }
 
-    /// Parses `/channels/{kind}/{connection_id}/inbound` and
+    static func pingPath(kind: String, connectionId: String) -> String {
+        "/channels/\(kind)/\(AgentChannelConnection.normalizedId(connectionId))/ping"
+    }
+
+    /// Parses `/channels/{kind}/{connection_id}/inbound`,
+    /// `/channels/{kind}/{connection_id}/ping`, and
     /// `/channels/{kind}/{connection_id}/tasks/{task_id}`.
     enum Route: Equatable, Sendable {
         case inbound(kind: String, connectionId: String)
+        case ping(kind: String, connectionId: String)
         case taskPoll(kind: String, connectionId: String, taskId: String)
     }
 
@@ -589,6 +659,9 @@ actor AgentChannelWebhookIngress {
         guard !kind.isEmpty, !connectionId.isEmpty else { return nil }
         if parts.count == 4, parts[3] == "inbound" {
             return .inbound(kind: kind, connectionId: connectionId)
+        }
+        if parts.count == 4, parts[3] == "ping" {
+            return .ping(kind: kind, connectionId: connectionId)
         }
         if parts.count == 5, parts[3] == "tasks", !parts[4].isEmpty {
             return .taskPoll(kind: kind, connectionId: connectionId, taskId: parts[4])

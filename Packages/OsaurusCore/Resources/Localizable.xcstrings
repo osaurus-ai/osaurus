@@ -266823,6 +266823,796 @@
           }
         }
       }
+    },
+    "Access key for the Agent resource": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zugangsschlüssel für die Agent-Ressource"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent 资源的访问密钥"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent 리소스용 액세스 키"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ключ доступа для ресурса Agent"
+          }
+        }
+      }
+    },
+    "Agent, poll or push": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent, Poll oder Push"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "代理、轮询或推送"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "에이전트, 폴링 또는 푸시"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Агент, опрос или пуш"
+          }
+        }
+      }
+    },
+    "Allow plaintext HTTP from other machines": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unverschlüsseltes HTTP von anderen Rechnern zulassen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许其他机器使用明文 HTTP"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "다른 기기의 평문 HTTP 허용"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить открытый HTTP с других машин"
+          }
+        }
+      }
+    },
+    "Channel secret": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kanalgeheimnis"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通道密钥"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "채널 시크릿"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Секрет канала"
+          }
+        }
+      }
+    },
+    "Confirm the n8n credential holds the current pairing code from Connect n8n and its Test passes.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bestätige, dass die n8n-Credential den aktuellen Pairing-Code aus „n8n verbinden“ enthält und der Test erfolgreich ist."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "确认 n8n 凭据中是“连接 n8n”里当前的配对码，并且测试已通过。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n 자격 증명에 ‘n8n 연결’의 현재 페어링 코드가 있고 테스트가 통과하는지 확인하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Убедитесь, что учётные данные n8n содержат текущий код сопряжения из «Подключить n8n» и тест проходит."
+          }
+        }
+      }
+    },
+    "Connect n8n": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n verbinden"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接 n8n"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n 연결"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Подключить n8n"
+          }
+        }
+      }
+    },
+    "Docker Desktop reaches this Mac as host.docker.internal; it counts as a same-Mac caller.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Docker Desktop erreicht diesen Mac als host.docker.internal; das zählt als Aufruf vom selben Mac."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Docker Desktop 通过 host.docker.internal 访问此 Mac，视为本机调用。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Docker Desktop은 host.docker.internal로 이 Mac에 접근하며, 같은 Mac 호출로 취급됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Docker Desktop обращается к этому Mac как host.docker.internal; это считается вызовом с того же Mac."
+          }
+        }
+      }
+    },
+    "End-to-end encrypted via Secure Channel": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ende-zu-Ende verschlüsselt über Secure Channel"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通过 Secure Channel 端到端加密"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Secure Channel로 종단 간 암호화됨"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сквозное шифрование через Secure Channel"
+          }
+        }
+      }
+    },
+    "Enter a Connection ID in Name this channel and the pairing code appears here.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gib unter „Kanal benennen“ eine Connection-ID ein, dann erscheint hier der Pairing-Code."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在“命名此通道”中输入连接 ID，配对码就会显示在这里。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "‘이 채널 이름 지정’에서 연결 ID를 입력하면 여기에 페어링 코드가 나타납니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Введите ID соединения в «Назвать канал» — здесь появится код сопряжения."
+          }
+        }
+      }
+    },
+    "Expose the server to the network in Server settings first, then turn on Remote callers above.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stelle den Server zuerst in den Server-Einstellungen im Netzwerk bereit und aktiviere dann oben „Entfernte Aufrufer“."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "先在服务器设置中将服务器暴露到网络，然后打开上方的“远程调用方”。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "먼저 서버 설정에서 네트워크에 서버를 노출한 다음, 위의 ‘원격 호출자’를 켜세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сначала откройте сервер в сеть в настройках сервера, затем включите «Удалённые вызывающие» выше."
+          }
+        }
+      }
+    },
+    "Generate or paste the channel secret above and the pairing code appears here.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Erzeuge oder füge oben das Kanalgeheimnis ein, dann erscheint hier der Pairing-Code."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在上方生成或粘贴通道密钥，配对码就会显示在这里。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "위에서 채널 시크릿을 생성하거나 붙여 넣으면 여기에 페어링 코드가 나타납니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сгенерируйте или вставьте секрет канала выше — здесь появится код сопряжения."
+          }
+        }
+      }
+    },
+    "Inbound": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eingehend"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "入站"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "인바운드"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Входящий"
+          }
+        }
+      }
+    },
+    "Issue an agent-scoped osk-v1 key so remote n8n can call this agent end-to-end encrypted.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stelle einen agentenbezogenen osk-v1-Schlüssel aus, damit entferntes n8n diesen Agenten Ende-zu-Ende verschlüsselt aufrufen kann."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "签发仅限该代理的 osk-v1 密钥，以便远程 n8n 以端到端加密方式调用此代理。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "원격 n8n이 이 에이전트를 종단 간 암호화로 호출할 수 있도록 에이전트 범위 osk-v1 키를 발급합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выпустите ключ osk-v1 для агента, чтобы удалённый n8n вызывал его со сквозным шифрованием."
+          }
+        }
+      }
+    },
+    "New secret ready — Save, then paste the new pairing code into n8n": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neues Geheimnis bereit — speichern, dann den neuen Pairing-Code in n8n einfügen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新密钥已就绪 — 先保存，再把新配对码粘贴到 n8n"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "새 시크릿이 준비됨 — 저장한 뒤 새 페어링 코드를 n8n에 붙여 넣으세요"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Новый секрет готов — сохраните и вставьте новый код сопряжения в n8n"
+          }
+        }
+      }
+    },
+    "Pair with n8n": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mit n8n koppeln"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "与 n8n 配对"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n과 페어링"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сопряжение с n8n"
+          }
+        }
+      }
+    },
+    "Pairing code": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pairing-Code"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "配对码"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "페어링 코드"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Код сопряжения"
+          }
+        }
+      }
+    },
+    "Pairing code copied": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pairing-Code kopiert"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已复制配对码"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "페어링 코드를 복사했습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Код сопряжения скопирован"
+          }
+        }
+      }
+    },
+    "Plaintext HTTP": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unverschlüsseltes HTTP"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "明文 HTTP"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "평문 HTTP"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открытый HTTP"
+          }
+        }
+      }
+    },
+    "Poll (same header)": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Poll (gleicher Header)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "轮询（同一请求头）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "폴링 (같은 헤더)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Опрос (тот же заголовок)"
+          }
+        }
+      }
+    },
+    "Replace <this-mac-ip> with this Mac's address and turn on Remote callers above.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ersetze <this-mac-ip> durch die Adresse dieses Macs und aktiviere oben „Entfernte Aufrufer“."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将 <this-mac-ip> 换成此 Mac 的地址，并打开上方的“远程调用方”。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "<this-mac-ip>를 이 Mac의 주소로 바꾸고 위의 ‘원격 호출자’를 켜세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Замените <this-mac-ip> на адрес этого Mac и включите «Удалённые вызывающие» выше."
+          }
+        }
+      }
+    },
+    "Run the n8n workflow (or the curl example under Connect n8n) and each stage appears here.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Starte den n8n-Workflow (oder das curl-Beispiel unter „n8n verbinden“) — jede Stufe erscheint hier."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "运行 n8n 工作流（或“连接 n8n”中的 curl 示例），各阶段会显示在这里。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n 워크플로(또는 ‘n8n 연결’의 curl 예제)를 실행하면 각 단계가 여기에 나타납니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запустите рабочий процесс n8n (или пример curl в «Подключить n8n») — здесь появятся все этапы."
+          }
+        }
+      }
+    },
+    "Save the channel first. Then run the n8n workflow and each stage appears here.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Speichere zuerst den Kanal. Starte dann den n8n-Workflow — jede Stufe erscheint hier."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请先保存通道。然后运行 n8n 工作流，各阶段会显示在这里。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "먼저 채널을 저장하세요. 그런 다음 n8n 워크플로를 실행하면 각 단계가 여기에 나타납니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сначала сохраните канал. Затем запустите рабочий процесс n8n — здесь появятся все этапы."
+          }
+        }
+      }
+    },
+    "Secret generated — the pairing code below includes it": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Geheimnis erzeugt — der Pairing-Code darunter enthält es"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已生成密钥 — 下方配对码已包含它"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시크릿이 생성됨 — 아래 페어링 코드에 포함되어 있습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Секрет создан — код сопряжения ниже уже содержит его"
+          }
+        }
+      }
+    },
+    "Without the Osaurus node": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ohne den Osaurus-Node"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不使用 Osaurus 节点时"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus 노드 없이"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Без узла Osaurus"
+          }
+        }
+      }
+    },
+    "curl": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "curl"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "curl"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "curl"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "curl"
+          }
+        }
+      }
+    },
+    "n8n on this Mac calls 127.0.0.1.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n auf diesem Mac ruft 127.0.0.1 auf."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此 Mac 上的 n8n 会调用 127.0.0.1。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 Mac의 n8n은 127.0.0.1을 호출합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n8n на этом Mac обращается к 127.0.0.1."
+          }
+        }
+      }
+    },
+    "the bound agent": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "der gebundene Agent"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已绑定的代理"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "바인딩된 에이전트"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "привязанный агент"
+          }
+        }
+      }
+    },
+    "Shared agents can't use folders on this Mac.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Geteilte Agenten können keine Ordner auf diesem Mac verwenden."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "공유 에이전트는 이 Mac의 폴더를 사용할 수 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Общие агенты не могут использовать папки на этом Mac."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "共享代理无法使用此 Mac 上的文件夹。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "共享代理程式無法使用此 Mac 上的資料夾。"
+          }
+        }
+      }
     }
   },
   "version": "1.1"

@@ -176,6 +176,50 @@ struct HTTPChannelInboundRouteTests {
         }
     }
 
+    @Test func pingRouteIsBearerExemptSecretVerifiedAndPolicyGated() async throws {
+        try await withRouteFixture { server in
+            let (ok, okJSON) = try await send(
+                server,
+                method: "GET",
+                path: "/channels/n8n/n8n-plain/ping",
+                headers: ["X-Osaurus-Channel-Secret": Self.secret]
+            )
+            #expect(ok == 200)
+            #expect(okJSON["status"] as? String == "ok")
+            #expect(okJSON["connection_id"] as? String == "n8n-plain")
+            #expect(okJSON["verification"] as? String == "shared_secret_header")
+            #expect(okJSON["transport"] as? String == "loopback")
+
+            let (bad, badJSON) = try await send(
+                server,
+                method: "GET",
+                path: "/channels/n8n/n8n-plain/ping",
+                headers: ["X-Osaurus-Channel-Secret": "wrong"]
+            )
+            #expect(bad == 401)
+            #expect(Self.errorCode(badJSON) == "unauthorized")
+
+            // Relay-origin plaintext against the default policy: 426, same as inbound.
+            let (relayed, relayedJSON) = try await send(
+                server,
+                method: "GET",
+                path: "/channels/n8n/n8n-secure/ping",
+                headers: ["X-Osaurus-Channel-Secret": Self.secret, HTTPHandler.relayOriginHeaderName: "1"]
+            )
+            #expect(relayed == 426)
+            #expect(Self.errorCode(relayedJSON) == "secure_channel_required")
+
+            let (wrongMethod, _) = try await send(
+                server,
+                method: "POST",
+                path: "/channels/n8n/n8n-plain/ping",
+                headers: ["X-Osaurus-Channel-Secret": Self.secret],
+                body: Data()
+            )
+            #expect(wrongMethod == 405)
+        }
+    }
+
     @Test func badSecretUnknownConnectionAndSecurePolicyAreRefusedOnTheWire() async throws {
         try await withRouteFixture { server in
             let (badSecret, badJSON) = try await send(
