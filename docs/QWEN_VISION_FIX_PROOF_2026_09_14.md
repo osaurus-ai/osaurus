@@ -1,5 +1,160 @@
 # Installed vision evidence — implementation and proof
 
+PR #2756 fixes local image admission using installed configuration and actual
+weight headers, and preserves attachments when switching to an unsupported model.
+**PARTIAL for the reporter's exact artifact, general caption fidelity and video
+quality.** This does not qualify the separate 16 GB RAM-safety issue.
+
+## Latest tested production source
+
+- Source `bd30588099097b7ae4967e6aca5d46e30f249921`.
+- Engine pin unchanged: `67ccb4b347a23820b838a98f0c195b0c29c676d2`.
+- Isolated Release executable SHA256
+  `2a8224de51bb7ec0e78607bf059b063d07e367f96aed3248083c7d7716cabac4`.
+- Development bundle `com.dinoki.osaurus.visionproof20260913`, version 1.0;
+  `/private/tmp/osaurus-qwen-vision-derived/Build/Products/Release/osaurus.app`.
+- Local Apple M5 Max, 18 logical cores, 128 GiB physical RAM. Inference remained
+  local. Model source files were referenced in place and not modified.
+- Private artifacts `/Users/eric/vmlx-private-evidence/qwen-vision-2026-09-13/`;
+  current rows use `arch-*`, `*-architecture*`, and `release-build-architecture.json`.
+  Screenshots are outside the repository.
+- Test root `/private/tmp/osaurus-qwen-vision-ui`; API `127.0.0.1:19314`.
+  Vision Probe agent has empty instructions and no tools, knowledge, memory,
+  delegation, web or screen context. UI Thinking was Off. Sampler fields were
+  blank; live cache records expose bundle temperature 1, top-p .95, Gemma top-k
+  64/Qwen top-k 20, `sampler_was_changed=false`. API max tokens explicitly 1024.
+
+## Main integration boundary
+
+Main advanced to `83eac58f064e6ad6ee43ed17efae77c62a75d1b0` (#2757) during
+proof. The integration preserves its directory-keyed MLXModel caches, cache-only
+composer lookup, context-budget snapshot and other UI performance changes.
+The overlapping ModelMediaCapabilities memo is supplied by LocalVisionEvidence's
+existing directory memo and generation-aware invalidation, rather than a second
+memo that could hide a refreshed preflight result. The evidence below predates
+this integration. **Combined-head Release UI/API verification and CI are required
+before merge; their exact SHA, executable hash and results belong in the PR's
+current verification record.** No engine change is part of this integration.
+
+## Source trace and additional architecture coverage
+
+`LocalVisionEvidence.swift:29` shares cached installed evidence;
+`:63` checks the engine architecture registry; `:68` mirrors selected processor
+file precedence; `:168` reads bounded actual safetensors headers, checks offsets
+and validates index declarations against the selected shard's actual keys.
+Qwen2/2.5/3VL, Qwen35/MoE and Qwen4Exp require input, every configured encoder
+block and merger. Traditional Gemma4 requires input, encoder blocks and projection.
+These are component-presence checks, not full tensor-shape/numerical validation.
+
+The broader installed audit exposed an actual false refusal in the initial patch:
+Gemma4 Unified has an encoder-free vision embedder. `:112` now follows its nested
+`gemma4_unified_vision` config and requires patch dense/norm, position/norm and
+language-projection tensors. No fabricated encoder depth is required.
+Pixtral's `patch_conv` and Apertus's configured discrete vision tokenizer/codebook
+are also represented by source-traced fixtures. Pixtral/Apertus have no local
+inference row and remain header/fixture coverage only.
+
+`VLMDetection`, `MLXModel`, `ModelMediaCapabilities`, composer/send and
+`MLXService` preflight share this evidence. Model names neither grant nor deny
+installed vision. Preflight refreshes the actual directory. ChatView validates
+new attachments before filtering old history and retains drafts across model
+changes. ModelRuntime compares the constructed model's modalities with installed
+vision expectations so a silent text-factory fallback cannot consume an image.
+Independent audio tensor evidence remains available without a vision tower.
+
+Nine additional installed header probes report positive evidence, including
+Gemma4 Unified 12B, Gemma4 MoE 26B, ZAYA, Muse Glimmer, Ornith, Qwen4Exp 4M,
+LFM2VL, GLM5Next and DeepSeekOCR. These are not nine inference passes.
+`additional-vision-evidence-after.json/log` records exact paths and tensors.
+AgentWorld has vision config but zero actual vision weights: its refusal is
+correct. API `arch-config-only-negative.json` returns HTTP 400 in 36.36 ms;
+`arch-vl-name-negative.json` refuses a text-only bundle aliased with “VL” in
+14.23 ms. No inference ran for either negative.
+
+## Current local image matrix at bd3058809
+
+Image A: red circle left, blue square right. Image B reverses colors. Each family
+has a real app image turn and follow-up, plus API A/repeat A/B. All API rows ended
+normally with visible content. These are bounded shape/color tests.
+
+| Config / installed bundle | UI image / follow-up tok/s | API A / repeat A / B tok/s | Result |
+| --- | --- | --- | --- |
+| gemma4 / OsaurusAI/gemma-4-E2B-it-8bit snapshot 433003a1e3fbfd10819ad15179d5e3c4d02d7ea7 | 90.4 / 92.6 | 93.9919 / 93.3623 / 93.2887 | Shape/color/order 5/5 |
+| qwen3_5 / JANGQ-AI/Qwen3.8-27B-JANG_4D | 25.6 / 25.4 | 25.7704 / 25.8043 / 25.8811 | Shape/color/order 5/5 |
+| qwen4_exp / JANGQ-AI/Qwen3.8-Flash-Next-JANG_1L | 46.4 / 47.6 | 46.8509 / 47.0263 / 47.8346 | Shape/color/order 5/5; incidental caption detail not comprehensively scored |
+| gemma4_unified / OsaurusAI/OsaurusAI--gemma-4-12B-it-qat-JANG_4M | 30.5 / 31.4 | 32.3086 / 32.1076 / 32.1071 | Admission succeeds; color/order 5/5, shape/caption quality PARTIAL |
+
+Unified repeat-A invents a gray horizontal rectangle; B invents a serrated
+semi-circle. These are quality failures, not an image-fidelity pass. No sampler,
+prompt, thinking, template or output coercion was added to conceal them.
+Artifacts: `arch-{gemma,qwen35,qwen4exp,unified}-*.json/ax.txt/png`.
+
+Draft regression: attaching under Qwen4Exp then switching to **Qwen3 VL Proof
+Text** retains the draft image. Send produces the explicit unsupported-image
+error. Switching to Gemma and Regenerate recovers the retained image; its follow-up
+is correct. `arch-retained-draft.*`, `arch-unsupported-attachment.*`,
+`arch-gemma-{recovery,followup}.*`.
+Settings Force Off → Save returns HTTP 400 in 24.29 ms. Auto → Save → navigate
+away/back → quit/relaunch returns a correct Gemma image answer, HTTP 200,
+95.3887 tok/s. `arch-force-off*`, `arch-auto-settings.ax.txt`, `arch-auto-relaunch*`.
+
+## Memory and cache evidence
+
+`physical-footprint-architecture.jsonl` samples actual `proc_pid_rusage`
+`phys_footprint` every .5 seconds, not RSS or MLX allocator bytes. Windows derive
+from live model-load decision timestamps. Sampled process peaks: Unified 5.868
+GiB; Qwen35 5.089 GiB; Qwen4Exp 47.629 GiB. The subsequent Gemma transition
+window still contains 16.569 GiB during outgoing Qwen4Exp reclamation; after the
+first Gemma API snapshot its sampled peak is 1.998 GiB. Both windows are retained
+in `physical-footprint-architecture-summary.json`; do not attribute the transition
+peak to Gemma alone or claim this establishes 16 GB safety.
+
+Actual cache topology: E2B 3 KV + 12 rotating; Unified 8 KV + 40 rotating;
+Qwen35 16 KV + 48 Mamba; Qwen4Exp 12 KV + 36 Mamba. All require disk-backed
+restore; TurboQuant KV-layer counts are zero, paged RAM is off. Repeat-A increases
+the actual disk-L2 hit counter for all four. Changed media have distinct salts.
+`arch-*-cache-summary.json` contains defaults, effective generation and topology.
+Earlier actual disk-header inspection found inline Mamba state despite zero
+separate-sidecar hit counters; details below remain applicable to the unchanged
+engine pin. Do not claim separate-sidecar reuse or TurboQuant KV topology.
+
+## Automated results at bd3058809
+
+- Focused Core **173/173, 9 suites, 3.619 s**;
+  `focused-tests-architecture-final.log`.
+- Evals unit **345/345, 42 suites, 1.504 s**;
+  `eval-unit-tests-architecture.log`.
+- Full HTTPAPI: Gemma E2B **16 pass/1 unsupported-video skip**; Unified12B
+  **16 pass/1 unsupported-video skip**; Qwen35 **17/17**; Qwen4Exp **17/17**.
+  Total **66 pass, 2 skips / 68**. `evals-architecture-*-httpapi.json/log`.
+- Evals executable SHA256
+  `920a64e90d6e738df79592195afb69c78a39c34e5f007692edbdc6dca2642bf0`;
+  `eval-build-architecture.json` records dependency graph and engine pin.
+
+## Video and reporter limitations — PARTIAL
+
+The same real eight-frame red/blue and reversed H264 clips with the open-ended
+sequence question remain unreliable in the current app: Qwen35 **0/2** (both
+claimed a static blue image), Qwen4Exp **1/2** (A invented an intervening black
+band; B correct), all normal stops. Rates: Qwen35 25.8108/25.8483; Qwen4Exp
+47.706/47.7807 tok/s. Raw `arch-qwen35-video-{a,b}.json` and
+`arch-qwen4exp-video-{a,b}.json`. The automated video's narrower structured
+question does not override these failures. Prior cold-cache/frame-delivery
+investigation and preserved failures follow below. Video quality is not fixed
+by this image-admission PR and its engine cause is not established.
+
+The original Discord URLs returned HTTP 403. Exact reporter bundle IDs,
+quantization and error remain missing. Historical fixes #2389/#2427/#2442/#2504
+are still ancestors. No evidence establishes another contributor as the cause.
+See [the historical audit](QWEN_VISION_REGRESSION_2026_09_13.md).
+
+---
+
+The remainder preserves the earlier checkpoint and failures. It is historical,
+not the latest binary's proof, and must not be substituted for the matrix above.
+
+# Historical checkpoint before architecture coverage and main integration
+
 Image admission and attachment preservation have current source and local Release
 UI/API evidence below. **PARTIAL for the original reporter's exact failure and
 broad video quality**: the reporter's bundle/error are unavailable, and open-ended
@@ -12,8 +167,8 @@ Merge status belongs to PR #2756; this document does not imply it is merged.
 processor config and actual safetensors headers. The configured architecture must
 exist in the engine's VLM registry. Index entries must exist in their selected
 shard headers. Qwen2/2.5/3VL, Qwen35/MoE and Qwen4Exp require patch input, every
-declared encoder block, and merger weights; Gemma4/unified require patch input,
-declared encoder blocks and the vision embedding projection. Other registered
+declared encoder block, and merger weights; Traditional Gemma4 requires patch input, encoder blocks and projection. The
+then-incorrect unified requirement was subsequently replaced as recorded above. Other registered
 architectures require encoder input and block evidence. Header reads are bounded
 to 64 MiB per shard and validate offsets against actual file size. These are
 component-presence checks, not full shape, quantization or numerical validation.

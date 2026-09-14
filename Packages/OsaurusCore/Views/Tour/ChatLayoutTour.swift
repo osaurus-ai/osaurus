@@ -77,6 +77,14 @@ public final class ChatLayoutTour: ObservableObject {
     /// Once-per-user gate. Set when the tour finishes or is dismissed.
     private static let completedKey = "chatLayoutTourCompleted"
 
+    /// Serial queue owning the deferred `completedKey` write.
+    private static let completionWriteQueue = DispatchQueue(
+        label: "com.dinoki.osaurus.chat-tour-completion-write")
+
+    /// True once `finish(markCompleted:)` has run this process. Authoritative
+    /// over `completedKey` while the write is still in flight.
+    private var didComplete = false
+
     /// The chat window the tour is running in, or nil when inactive.
     @Published private(set) var windowId: UUID?
     @Published private(set) var stepIndex: Int = 0
@@ -113,7 +121,9 @@ public final class ChatLayoutTour: ObservableObject {
     func autoStartIfEligible(windowId: UUID) {
         guard !didAutoCheckThisLaunch else { return }
         didAutoCheckThisLaunch = true
-        guard !UserDefaults.standard.bool(forKey: Self.completedKey) else { return }
+        guard !didComplete,
+            !UserDefaults.standard.bool(forKey: Self.completedKey)
+        else { return }
         pendingAutoStartWindowId = windowId
         scheduleAutoStartAttempt()
     }
@@ -274,7 +284,15 @@ public final class ChatLayoutTour: ObservableObject {
 
     private func finish(markCompleted: Bool) {
         if markCompleted {
-            UserDefaults.standard.set(true, forKey: Self.completedKey)
+            // Deferred: this runs from a button action inside a layout pass,
+            // and the cfprefsd XPC round-trip blocked the main thread there.
+            // `didComplete` carries the value for the rest of the process so
+            // `autoStartIfEligible` cannot re-offer the tour before the write
+            // lands; the key is only ever written here.
+            didComplete = true
+            Self.completionWriteQueue.async {
+                UserDefaults.standard.set(true, forKey: Self.completedKey)
+            }
         }
         windowId = nil
         stepIndex = 0

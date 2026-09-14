@@ -185,6 +185,9 @@ public enum ModelMediaCapabilities {
     }
 
     /// Configuration and actual tensor headers must agree. No name fallback.
+    /// LocalVisionEvidence memoizes both vision and audio by directory and
+    /// invalidates on localModelsChanged; avoid a second memo that could hide
+    /// a refreshed preflight result from the composer.
     public static func from(directory: URL, modelId: String) -> Capabilities {
         let evidence = LocalVisionEvidence.inspect(directory)
         return capabilities(evidence)
