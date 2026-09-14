@@ -36,6 +36,12 @@ struct AgentChannelAddChannelSheet: View {
                 IMessageSettingsView(onBack: goBack)
             case .whatsapp:
                 WhatsAppSettingsView(onBack: goBack)
+            case .n8n:
+                N8nSettingsView(
+                    connection: nil,
+                    onBack: goBack,
+                    onDidChange: onDidChange
+                )
             case .customHTTP:
                 AgentChannelCustomConnectionSheet(
                     connection: nil,

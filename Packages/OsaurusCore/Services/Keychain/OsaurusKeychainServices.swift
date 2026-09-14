@@ -45,6 +45,8 @@ public enum OsaurusKeychainServices {
     public static let github = "com.dinoki.osaurus.github"
     /// Hugging Face access token (`HuggingFaceAuth`).
     public static let huggingFace = "com.dinoki.osaurus.huggingface"
+    /// Osaurus ID router session token (`OsaurusIDSessionStore`).
+    public static let osaurusID = "ai.osaurus.id"
 
     /// Everything factory reset must wipe.
     public static let all: [String] = [
@@ -62,5 +64,6 @@ public enum OsaurusKeychainServices {
         ttsRemote,
         github,
         huggingFace,
+        osaurusID,
     ]
 }

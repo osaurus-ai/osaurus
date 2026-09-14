@@ -105,8 +105,13 @@ and
 iMessage release proof (helper pin rotation, macOS permissions, advanced
 private-API gating) uses
 [`CHANNEL_RELEASE_RUNBOOK_IMESSAGE.md`](CHANNEL_RELEASE_RUNBOOK_IMESSAGE.md).
+n8n release proof (secret-verified inbound webhook, pull-based replies, Docker
+topology) uses [`AGENT_CHANNELS_N8N.md`](AGENT_CHANNELS_N8N.md) and
+[`CHANNEL_RELEASE_RUNBOOK_N8N.md`](CHANNEL_RELEASE_RUNBOOK_N8N.md).
 Primary desktop transports are Slack Socket Mode, Telegram long-poll, and
-the iMessage local watch stream; public webhooks are advanced/future proof paths.
+the iMessage local watch stream; public webhooks are advanced/future proof paths
+for those providers. The `n8n` kind is the exception: its inbound webhook is the
+primary transport, verified by the connection secret before parsing.
 
 ## Release Readiness and Plugin Migration
 
@@ -152,6 +157,11 @@ The connection center can create, edit, delete, export, import, and diagnose
 JSON-backed channel definitions. It also hosts native Discord, Slack, and
 Telegram credential and allowlist settings so users do not need to hand-edit
 provider configuration files.
+
+Connection kinds are `discord`, `slack`, `telegram`, `imessage`, `whatsapp`,
+`n8n`, and `custom_http`. The `n8n` kind is a secret-verified generic inbound
+webhook with pollable replies; see `docs/AGENT_CHANNELS_N8N.md` for its
+connection block, envelope contract, and topology notes.
 
 ```json
 {
@@ -410,6 +420,17 @@ Secrets:
   resolve or print raw secret values.
 - Provider error bodies and mapped raw JSON are scrubbed for any resolved secret
   values before they enter tool output.
+
+Body signatures:
+
+- An action may carry `bodySignature`
+  (`{ "header": "X-Osaurus-Channel-Signature", "secretName": "webhook",
+  "algorithm": "hmac_sha256", "prefix": "sha256=" }`). After the body is
+  rendered, the runner computes HMAC-SHA256 over the exact request bytes with
+  the named secret and attaches `<prefix><hex>` in the configured header.
+- Signing happens after all template, host, method, and write gates pass; a
+  missing signing secret rejects the action before dispatch. The `n8n` outbound
+  preset uses this to sign pushes so the receiving workflow can verify them.
 
 Responses:
 
@@ -828,3 +849,28 @@ email, and custom adapters still own provider payload parsing, provider API
 calls, rate-limit behavior, and channel-specific formatting. They should share
 these contracts so retries, reply routing, session partitioning, and audit
 event semantics behave consistently across channel families.
+
+### Generic inbound webhook route
+
+`POST /channels/{kind}/{connection_id}/inbound` and
+`GET /channels/{kind}/{connection_id}/tasks/{task_id}` are the first inbound
+transport built directly on the substrate rather than on a provider SDK.
+`AgentChannelWebhookIngress` owns both routes; the `HTTPHandler` shim only
+copies the raw body, captures source IP / loopback / Secure Channel facts, and
+hops off the event loop. The `/channels/` prefix is exempt from the server
+bearer gate because the connection secret (shared header or HMAC-SHA256 over
+the raw body) is the credential, verified through
+`AgentChannelAsyncSubstrate.verifyWebhookSource` before the body is parsed.
+
+Pipeline: resolve connection → remote transport policy (`426` for non-loopback
+plaintext unless the connection allows it) → verify → parse envelope →
+`authorizeInboundMessage` (fail-closed sender and room allowlists) →
+`recordReceiveEvent` (dedupe on `event_id`) → `AgentChannelInboundRelay.submit`
+→ `202` with `task_id`, `session_id` and `poll_url`. The task id equals the
+session partition id, so the poll route can locate the task deterministically
+and the ingress can prove ownership per connection. Poll output passes through
+`ChannelRemoteSafetyGate.sanitizeResult`.
+
+`n8n` is the only kind that accepts the route today; other kinds return
+`400 unsupported_kind`. Provider adapters that want pull-based replies should
+add themselves to the ingress rather than open new bearer-exempt paths.

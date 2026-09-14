@@ -45,6 +45,30 @@ suites (e.g. `PluginAgentScopingTests`) still fail by design under
 `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`; run those without the flag when you
 need real Keychain proof.
 
+## Settings catalog (required with every setting change)
+
+`SettingsSearchIndex` is the single catalog for Management search and the
+Orchestrator (`osaurus_help` action `find`). If you add, remove, rename, move,
+or change the on-screen label of a user-facing setting:
+
+1. Add or update the row in
+   `Packages/OsaurusCore/Models/Configuration/SettingsSearchIndex.swift`: id,
+   tab, section, **exact UI title**, keywords/aliases, `subTab` when the
+   destination has inner nav, plus `disambiguation` / `declarativeSection`
+   when the setting is easy to confuse or writable via `osaurus_config`.
+2. Put the same id on the control (`settingsLandingAnchor` / `anchorId`) so
+   search scrolls and glows.
+3. Update `Packages/OsaurusCore/Resources/Guide/guide-settings.md` (and any
+   topic that names the old path). Do not leave stale
+   “Settings → Chat → …” leftovers.
+4. Add the on-screen label to
+   `Packages/OsaurusCore/Tests/Configuration/SettingsSearchSelfFindProbe.swift`.
+5. Do **not** invent a second list in the orchestrator prompt. The model
+   queries the catalog.
+
+A control that is not in the catalog is not shipped. A guide path that
+disagrees with the catalog is a bug.
+
 ## Osaurus Release Proof and PR Reporting
 
 For every change that can affect a runtime, parser, tool call, agent loop,

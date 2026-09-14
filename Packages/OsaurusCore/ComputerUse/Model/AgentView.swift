@@ -253,6 +253,14 @@ public struct AgentView: Sendable, Equatable {
         }
         if items.isEmpty {
             lines.append("(no actionable elements found)")
+        } else if truncated {
+            // The traversal hit its deadline / element cap before reading the
+            // whole window. Left unsaid, the model treats an absent control as
+            // nonexistent and re-observes the same partial list until dead end.
+            lines.append(
+                "(accessibility read was cut off before the whole window was covered — a control "
+                    + "that isn't listed may still exist; use `find` with a query, or `scroll`)"
+            )
         }
         return lines.joined(separator: "\n")
     }

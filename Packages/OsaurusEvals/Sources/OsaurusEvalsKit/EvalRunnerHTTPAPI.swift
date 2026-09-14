@@ -519,29 +519,42 @@ extension EvalRunner {
         // Requires a local cache-enabled model; SKIP-shaped soft note when
         // the host has none (foundation/remote route).
         let batchBefore = json["batch_diagnostics"] as? [String: Any]
-        guard let before = batchBefore?["prefix_hits"] as? Int else {
+        guard let before = batchBefore?["prefix_hits"] as? Int,
+            let diskBefore = batchBefore?["disk_l2_hits"] as? Int
+        else {
             note(
                 "note: prefixProbe skipped — no batch_diagnostics (no local MLX engine resolved)"
             )
             return
         }
         let sharedPrefix = String(repeating: prompt + " ", count: 8)
-        for _ in 0 ..< 2 {
-            _ = try await httpJSON(
+        for attempt in 1 ... 2 {
+            let (requestStatus, response, responseRaw) = try await httpJSON(
                 port: port,
                 path: "/v1/chat/completions",
                 body: chatBody(prompt: sharedPrefix, maxTokens: 16, stream: false)
             )
+            check(requestStatus == 200,
+                  "prefix request \(attempt) status 200",
+                  "prefix request \(attempt) status \(requestStatus): \(responseRaw.prefix(200))")
+            check(!chatContent(response).isEmpty,
+                  "prefix request \(attempt) produced content",
+                  "prefix request \(attempt) produced no content")
         }
         let (_, jsonAfter, _) = try await httpJSON(
             port: port, path: "/admin/cache-stats", method: "GET"
         )
-        let after =
-            ((jsonAfter?["batch_diagnostics"] as? [String: Any])?["prefix_hits"] as? Int) ?? before
+        let batchAfter = jsonAfter?["batch_diagnostics"] as? [String: Any]
+        let after = (batchAfter?["prefix_hits"] as? Int) ?? before
+        let diskAfter = (batchAfter?["disk_l2_hits"] as? Int) ?? diskBefore
+        // Rotating and recurrent cache topologies restore their shared prefix
+        // through the v2 disk payload. Requiring the memory-tier counter alone
+        // falsely fails a real disk-prefix hit. Keep both deltas visible.
+        let counters = "memory prefix_hits \(before) → \(after); disk_l2_hits \(diskBefore) → \(diskAfter)"
         check(
-            after > before,
-            "prefix_hits increased (\(before) → \(after)) after prefix-sharing requests",
-            "prefix_hits did not increase (\(before) → \(after))"
+            after > before || diskAfter > diskBefore,
+            "prefix reuse observed (\(counters))",
+            "no prefix reuse observed (\(counters))"
         )
     }
 

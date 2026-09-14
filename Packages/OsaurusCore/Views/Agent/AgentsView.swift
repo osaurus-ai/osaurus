@@ -4189,7 +4189,12 @@ struct AgentDetailView: View {
             hasReadyImageModel: ModelPickerItemCache.shared.hasReadyImageModel,
             hasReadyVideoModel: ModelPickerItemCache.shared.hasReadyVideoGenerationModel,
             hasReadyAppleScriptModel: ModelPickerItemCache.shared.hasReadyAppleScriptModel,
-            permission: permission
+            permission: permission,
+            // Computer Use's runtime floor is Accessibility (the registry
+            // permission gate fails the first call without it). Only that
+            // flag consults TCC; `AXIsProcessTrusted` is a cheap local read.
+            hasRequiredSystemPermissions: flag != .computerUse
+                || SystemPermissionService.shared.isGranted(.accessibility)
         )
     }
 

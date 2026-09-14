@@ -254,12 +254,39 @@ enum FeatureTelemetry {
         service.track("agent_run", ["source": source])
     }
 
+    /// The model invoked `computer_use`. Fired at the registry permission
+    /// gate — the single chokepoint every real invocation passes — BEFORE any
+    /// refusal can happen, so the funnel's denominator is "attempts", not
+    /// "runs that reached the loop". No properties: the goal, agent, and app
+    /// are never sent.
+    static func computerUseAttempt(service: TelemetryService = .shared) {
+        service.track("computer_use_attempt")
+    }
+
+    /// A `computer_use` invocation was refused before its perceive→act loop
+    /// started, so no `computer_use_run` will follow. `stage` is the closed
+    /// `ComputerUseRefusalStage` token naming which pre-loop gate fired.
+    /// Together with `computer_use_attempt` this makes a usage drop
+    /// attributable: fewer attempts is demand, more refusals is a gate.
+    static func computerUseRefused(
+        stage: ComputerUseRefusalStage,
+        service: TelemetryService = .shared
+    ) {
+        service.track("computer_use_refused", ["stage": stage.rawValue])
+    }
+
     /// A Computer Use run finished. Every dimension is a coarse, non-identifying
     /// bucket or enum — never the goal text, app name, on-screen content, or
     /// raw counts. Full-fidelity per-app/per-tier analysis happens locally in
     /// the OsaurusEvals suite, not here. `outcome` is the `RunOutcome` token
     /// (`done` | `gave_up` | `dead_end` | `step_cap` | `interrupted` |
     /// `failed`).
+    ///
+    /// `route_used` is the dominant synthesized-input transport for the run
+    /// (`none` when no input was posted); `done_without_change` flags a run
+    /// the model declared `done` after acting at least once while the verify
+    /// step never observed a view change — the "reported success, nothing
+    /// happened" signature.
     static func computerUseRun(
         _ metrics: ComputerUseRunMetrics,
         outcome: String,
@@ -275,6 +302,10 @@ enum FeatureTelemetry {
             "had_dead_end": metrics.deadEnds > 0,
             "had_block": metrics.blocked > 0,
             "cloud_vision_used": metrics.cloudVisionUsed,
+            "route_used": metrics.dominantRouteToken,
+            "done_without_change": outcome == "done" && metrics.actsAttempted > 0
+                && metrics.verifyChanged == 0,
+            "unverified_acts_bucket": ComputerUseRunMetrics.countBucket(metrics.unverifiedActs),
         ]
         service.track("computer_use_run", props)
     }

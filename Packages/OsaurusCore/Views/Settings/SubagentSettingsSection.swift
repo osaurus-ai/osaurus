@@ -36,6 +36,21 @@ struct SubagentSettingsSection: View {
                         .foregroundColor(themeManager.currentTheme.tertiaryText)
                         .fixedSize(horizontal: false, vertical: true)
 
+                        // The Orchestrator never gets `computer_use` /
+                        // `browser_use`, and an ephemeral spawned worker
+                        // strips them too. The only paths are chatting with
+                        // the custom agent directly or adding it to the spawn
+                        // allow-list below (delegated runs keep the agent's
+                        // full tool surface). Say so here, where users look
+                        // when Computer Use "does nothing" in the main chat.
+                        Text(
+                            "To drive apps or the browser, chat with a custom agent that has Computer Use or Browser Use enabled (Agents → Configure → Subagents), or add that agent to the Main Chat Spawn allow-list below so the Orchestrator can delegate to it.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(themeManager.currentTheme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+
                         mainCapabilityToggle(
                             title: "Image",
                             description:

@@ -1,0 +1,53 @@
+{
+  "id": "agent_loop.ram-admission-single-child",
+  "domain": "agent_loop",
+  "label": "same-model RAM admission: single-child",
+  "query": "Delegate only to RAM Admission Research. Ask it to return exactly RAM_FIRST_OK. Do not give it additional tasks or context. Return its result.",
+  "notes": "Run with RAM-Safety ON, Handoff ON, Coexistence OFF and --repeat 3 to exercise fresh agent loops against the same resident model. Worker model and samplers inherit the selected bundle. Deterministic outcome assertions; no rubric judge. This does not emulate a 16 GiB host or inject memory availability.",
+  "fixtures": {
+    "agentCapabilities": {
+      "spawnAgents": [
+        {
+          "id": "A11CE912-0000-4000-8000-000000000101",
+          "name": "RAM Admission Research",
+          "systemPrompt": ""
+        }
+      ],
+      "maxParallelSpawns": 1
+    },
+    "runtimeConcurrency": {
+      "continuousBatching": true,
+      "maxConcurrentSequences": 1
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "maxModelSteps": 3,
+      "mustCallTools": [
+        "spawn_agent"
+      ],
+      "mustNotCallTools": [
+        "spawn_batch",
+        "spawn_model"
+      ],
+      "maxToolCalls": 1,
+      "noDuplicateExecutedCalls": true,
+      "noToolErrors": true,
+      "allowedExits": [
+        "finalResponse"
+      ],
+      "finalTextContains": [
+        "RAM_FIRST_OK"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "spawn_agent",
+          "minCalls": 1,
+          "maxCalls": 1,
+          "maxErrors": 0
+        }
+      ]
+    }
+  }
+}

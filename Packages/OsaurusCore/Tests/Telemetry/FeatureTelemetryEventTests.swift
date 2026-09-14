@@ -739,6 +739,114 @@ struct FeatureTelemetryEventTests {
         #expect(FeatureTelemetry.settingsTabToken(.agentChannels) == "agent_channels")
     }
 
+    // MARK: - Computer Use funnel
+
+    /// The funnel denominator: one property-less event per invocation.
+    @Test func computerUseAttempt_hasNoProperties() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        FeatureTelemetry.computerUseAttempt(service: service)
+
+        #expect(rec.events.count == 1)
+        #expect(rec.events[0].name == "computer_use_attempt")
+        #expect(business(rec.events[0].props).isEmpty)
+    }
+
+    /// Pre-loop refusals carry exactly one closed `stage` token — never an
+    /// agent id, goal, or message text — and every stage is snake_case.
+    @Test func computerUseRefused_carriesClosedStageToken() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        for stage in ComputerUseRefusalStage.allCases {
+            FeatureTelemetry.computerUseRefused(stage: stage, service: service)
+        }
+
+        #expect(rec.events.count == ComputerUseRefusalStage.allCases.count)
+        for (event, stage) in zip(rec.events, ComputerUseRefusalStage.allCases) {
+            #expect(event.name == "computer_use_refused")
+            let props = business(event.props)
+            #expect(props.keys.sorted() == ["stage"])
+            #expect(props["stage"] as? String == stage.rawValue)
+        }
+        #expect(
+            ComputerUseRefusalStage.allCases.allSatisfy { stage in
+                stage.rawValue.allSatisfy { $0.isLowercase || $0.isNumber || $0 == "_" }
+            }
+        )
+        // Pin the tokens the dashboard segments on.
+        #expect(ComputerUseRefusalStage.permissionAccessibility.rawValue == "permission_accessibility")
+        #expect(ComputerUseRefusalStage.agentAuth.rawValue == "agent_auth")
+        #expect(ComputerUseRefusalStage.modelUnavailable.rawValue == "model_unavailable")
+        #expect(ComputerUseRefusalStage.handoffDenied.rawValue == "handoff_denied")
+        #expect(ComputerUseRefusalStage.admissionTimeout.rawValue == "admission_timeout")
+        #expect(ComputerUseRefusalStage.ramSafety.rawValue == "ram_safety")
+        #expect(ComputerUseRefusalStage.recursion.rawValue == "recursion")
+    }
+
+    /// `computer_use_run` keeps its original coarse shape and adds the
+    /// reliability dimensions: the dominant input route and the "declared
+    /// done, nothing observably changed" flag.
+    @Test func computerUseRun_shape_includesRouteAndDoneWithoutChange() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        var metrics = ComputerUseRunMetrics()
+        metrics.steps = 5
+        metrics.actsAttempted = 3
+        metrics.verifyChanged = 0
+        metrics.unverifiedActs = 3
+        metrics.recordRoute(.perPid)
+        metrics.recordRoute(.perPid)
+        metrics.recordRoute(nil)  // AX action: not a synthesized-input route
+
+        FeatureTelemetry.computerUseRun(metrics, outcome: "done", service: service)
+
+        #expect(rec.events.count == 1)
+        #expect(rec.events[0].name == "computer_use_run")
+        let props = business(rec.events[0].props)
+        #expect(
+            props.keys.sorted() == [
+                "ax_resolvable", "cloud_vision_used", "confirms_bucket", "done_without_change",
+                "had_block", "had_dead_end", "max_tier", "outcome", "route_used", "steps_bucket",
+                "unverified_acts_bucket", "verify_pass",
+            ]
+        )
+        #expect(props["route_used"] as? String == "per_pid")
+        #expect(props["done_without_change"] as? Bool == true)
+        #expect(props["unverified_acts_bucket"] as? String == "1-3")
+        #expect(props["verify_pass"] as? String == "low")
+    }
+
+    /// `done_without_change` is only the "acted but nothing changed"
+    /// signature: a verified run and a pure read run both report `false`.
+    @Test func computerUseRun_doneWithoutChange_requiresAnUnverifiedAct() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        var verified = ComputerUseRunMetrics()
+        verified.actsAttempted = 2
+        verified.verifyChanged = 1
+        verified.recordRoute(.skyLight)
+        verified.recordRoute(.hidFallback)
+        FeatureTelemetry.computerUseRun(verified, outcome: "done", service: service)
+
+        let readOnly = ComputerUseRunMetrics()
+        FeatureTelemetry.computerUseRun(readOnly, outcome: "done", service: service)
+
+        var gaveUp = ComputerUseRunMetrics()
+        gaveUp.actsAttempted = 1
+        FeatureTelemetry.computerUseRun(gaveUp, outcome: "gave_up", service: service)
+
+        #expect(rec.events.count == 3)
+        #expect(rec.events[0].props["done_without_change"] as? Bool == false)
+        #expect(rec.events[0].props["route_used"] as? String == "mixed")
+        #expect(rec.events[1].props["done_without_change"] as? Bool == false)
+        #expect(rec.events[1].props["route_used"] as? String == "none")
+        #expect(rec.events[2].props["done_without_change"] as? Bool == false)
+    }
+
     // MARK: - Hardware RAM bucket (attached to every event)
 
     /// Every emitted event must carry the coarse `total_memory_gb` bucket so

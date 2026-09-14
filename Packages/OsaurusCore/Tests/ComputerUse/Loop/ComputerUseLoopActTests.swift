@@ -76,7 +76,10 @@ final class ComputerUseLoopActTests: XCTestCase {
         XCTAssertEqual(y, 210)
         XCTAssertEqual(clickPid, pid)
         XCTAssertEqual(metrics.coordinateFallbacks, 1)
-        XCTAssertTrue(out.contains("Action succeeded"), "Fallback success should be reported; got: \(out)")
+        XCTAssertTrue(
+            out.contains("Input was posted") && !out.contains("Action failed"),
+            "Fallback posted the input (the mock view never changes, so it stays unverified); got: \(out)"
+        )
         // A landed fallback means no need to escalate.
         XCTAssertEqual(currentTier, .ax)
     }
@@ -162,7 +165,10 @@ final class ComputerUseLoopActTests: XCTestCase {
         XCTAssertEqual(text, "Jared")
         XCTAssertTrue(replace)
         XCTAssertEqual(metrics.coordinateFallbacks, 1)
-        XCTAssertTrue(out.contains("Action succeeded"), "Fallback success should be reported; got: \(out)")
+        XCTAssertTrue(
+            out.contains("Input was posted") && !out.contains("Action failed"),
+            "Fallback posted the input (the mock view never changes, so it stays unverified); got: \(out)"
+        )
         XCTAssertEqual(currentTier, .ax, "A landed fallback means no need to escalate")
     }
 
@@ -378,7 +384,10 @@ final class ComputerUseLoopActTests: XCTestCase {
         XCTAssertEqual(id, "s1-13")
         XCTAssertEqual(button, .left)
         XCTAssertTrue(double, "double_click must set doubleClick:true")
-        XCTAssertTrue(out.contains("Action succeeded"))
+        XCTAssertTrue(
+            out.contains("Input was posted") && !out.contains("Action failed"),
+            "Driver success with an unchanged mock view must read as posted-but-unverified; got: \(out)"
+        )
     }
 
     func testRightClickPerformsRightClickOnElement() async {
@@ -409,7 +418,10 @@ final class ComputerUseLoopActTests: XCTestCase {
         XCTAssertEqual(ex, 340)
         XCTAssertEqual(ey, 410)
         XCTAssertEqual(dragPid, 4242)
-        XCTAssertTrue(out.contains("Action succeeded"))
+        XCTAssertTrue(
+            out.contains("Input was posted") && !out.contains("Action failed"),
+            "Driver success with an unchanged mock view must read as posted-but-unverified; got: \(out)"
+        )
     }
 
     func testDoubleClickRetriesAtCenterWhenRefRemoved() async {

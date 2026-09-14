@@ -153,7 +153,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .credits: L("Credits")
         case .workspaces: L("Workspaces")
         case .models: L("Local Models")
-        case .providers: L("Cloud Models")
+        case .providers: L("Providers")
         case .agents: L("Agents")
         case .agentChannels: L("Channels")
         case .sandbox: L("Sandbox")

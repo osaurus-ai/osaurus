@@ -389,6 +389,65 @@ struct ChatHistoryMigrationRepairTests {
         }
     }
 
+    /// #2736 / projects-branch fork: a build stamped `user_version = 15`
+    /// after adding `project_id` without ever running main's v14, so `turns`
+    /// had no `shared_artifacts`. The old version-gated ladder skipped v15
+    /// (`current < 15` is false) and only ran v16, leaving every save
+    /// failing with `failedToPrepare("table turns has no column named
+    /// shared_artifacts")`. An open must still add the missing write
+    /// columns, advance the stamp to latest, and accept a new save.
+    @Test
+    func stampedV15MissingSharedArtifactsHealsAndPreservesHistory() async throws {
+        try await runWithPlaintextRoot {
+            let sid = UUID()
+            var statements = [Self.createSessionsV1]
+            statements += Self.alterV3 + Self.alterV4
+            statements += [
+                "ALTER TABLE sessions ADD COLUMN folder_bookmark BLOB",
+                "ALTER TABLE sessions ADD COLUMN folder_path TEXT",
+                "ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE sessions ADD COLUMN project_id TEXT",
+            ]
+            statements.append(Self.createTurnsV1)
+            statements +=
+                Self.alterV2 + Self.alterV5 + Self.alterV6 + Self.alterV7
+                + Self.alterV8 + Self.alterV12 + Self.alterV13
+            // No shared_artifacts — the projects stamp skipped main's v14.
+            statements += [
+                """
+                INSERT INTO sessions (id, title, created_at, updated_at, source, turn_count, archived, capabilities)
+                VALUES ('\(sid.uuidString)', 'Projects-branch chat', 1000, 2000, 'chat', 1, 0, '')
+                """,
+                """
+                INSERT INTO turns (id, session_id, seq, role, content)
+                VALUES ('\(UUID().uuidString)', '\(sid.uuidString)', 0, 'user', 'kept through the fork')
+                """,
+                "PRAGMA user_version = 15",
+            ]
+            try self.seedChatHistoryDB(statements)
+
+            let db = ChatHistoryDatabase()
+            try db.open()
+            defer { db.close() }
+
+            #expect(self.diskColumns(table: "turns").contains("shared_artifacts"))
+            #expect(self.diskColumns(table: "sessions").contains("workspace_context"))
+            #expect(self.diskColumns(table: "sessions").contains("remote_agent_address"))
+            #expect(self.diskUserVersion() == ChatHistoryDatabase.latestSchemaVersion)
+
+            #expect(db.loadSession(id: sid)?.turns.first?.content == "kept through the fork")
+            let newId = UUID()
+            try db.saveSession(
+                ChatSessionData(
+                    id: newId,
+                    title: "saved after v15 repair",
+                    turns: [ChatTurnData(role: .assistant, content: "ok")]
+                )
+            )
+            #expect(db.loadSession(id: newId)?.turns.count == 1)
+        }
+    }
+
     // MARK: - Fresh database
 
     /// Guard against migration regressions: a brand-new (empty) database

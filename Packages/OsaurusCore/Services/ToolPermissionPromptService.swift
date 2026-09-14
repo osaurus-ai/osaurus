@@ -64,6 +64,11 @@ enum ToolPermissionPromptService {
         /// Whether the card offers "Allow for This Task". Only the generic
         /// registry prompt has a run lease to grant into.
         let offersRunLease: Bool
+        /// Where the approved call will run (VM / this Mac / remote MCP
+        /// server), shown on the card so consent is informed
+        /// (osaurus#2651). Nil for prompts that are not about executing a
+        /// tool on a machine (billing, spawn policy), which show no badge.
+        let executionSurface: ToolExecutionSurface?
     }
 
     private struct PendingPrompt {
@@ -99,6 +104,8 @@ enum ToolPermissionPromptService {
     private static var queue: [PendingPrompt] = []
     private static var continuations: [UUID: CheckedContinuation<PromptResolution, Never>] = [:]
     private static var slot: PresenterSlot?
+    /// The request behind the presented `slot`, kept for test introspection.
+    private static var presentedRequest: PromptRequest?
     /// Card size reported by `onGeometryChange` during the sizing layout
     /// pass, applied once the panel is registered.
     private static var lastRenderedCardSize: CGSize?
@@ -148,6 +155,11 @@ enum ToolPermissionPromptService {
 
     static var presentedPromptIDForTesting: UUID? { slot?.id }
     static var queuedPromptCountForTesting: Int { queue.count }
+    /// The surface the presented card is showing, so a test can prove the
+    /// gate's routing answer reached the prompt.
+    static var presentedExecutionSurfaceForTesting: ToolExecutionSurface? {
+        presentedRequest?.executionSurface
+    }
 
     /// Deny everything outstanding.
     static func resetForTesting() {
@@ -155,6 +167,7 @@ enum ToolPermissionPromptService {
         for id in Set(outstanding) { resolve(id: id, outcome: .denied) }
         if let slot { tearDown(slot) }
         slot = nil
+        presentedRequest = nil
         queue.removeAll()
     }
 
@@ -165,14 +178,16 @@ enum ToolPermissionPromptService {
         description: String,
         argumentsJSON: String,
         knowledgeWritePreview: KnowledgeWritePreview? = nil,
-        perCallApprovalOnly: Bool = false
+        perCallApprovalOnly: Bool = false,
+        executionSurface: ToolExecutionSurface? = nil
     ) async -> Bool {
         switch await requestApprovalOutcome(
             toolName: toolName,
             description: description,
             argumentsJSON: argumentsJSON,
             knowledgeWritePreview: knowledgeWritePreview,
-            perCallApprovalOnly: perCallApprovalOnly
+            perCallApprovalOnly: perCallApprovalOnly,
+            executionSurface: executionSurface
         ) {
         case .denied: return false
         case .allowOnce, .allowForRun, .alwaysAllow: return true
@@ -185,12 +200,17 @@ enum ToolPermissionPromptService {
     ///
     /// `perCallApprovalOnly` suppresses "Allow for This Task" and "Always
     /// Allow" so the call cannot be pre-granted. See `PerCallApprovalTool`.
+    ///
+    /// `executionSurface` names the machine the call runs on (VM / this Mac /
+    /// remote MCP server). The registry gate resolves it from the tool's
+    /// live routing; other callers leave it nil and the card shows no badge.
     static func requestApprovalOutcome(
         toolName: String,
         description: String,
         argumentsJSON: String,
         knowledgeWritePreview: KnowledgeWritePreview? = nil,
-        perCallApprovalOnly: Bool = false
+        perCallApprovalOnly: Bool = false,
+        executionSurface: ToolExecutionSurface? = nil
     ) async -> ApprovalOutcome {
         if isHeadlessTestProcess { return .denied }
         if Task.isCancelled { return .denied }
@@ -202,7 +222,8 @@ enum ToolPermissionPromptService {
                 argumentsJSON: argumentsJSON,
                 knowledgeWritePreview: knowledgeWritePreview,
                 perCallApprovalOnly: perCallApprovalOnly,
-                offersRunLease: !perCallApprovalOnly
+                offersRunLease: !perCallApprovalOnly,
+                executionSurface: executionSurface
             ),
             revalidate: nil
         )
@@ -255,7 +276,8 @@ enum ToolPermissionPromptService {
                 argumentsJSON: argumentsJSON,
                 knowledgeWritePreview: nil,
                 perCallApprovalOnly: false,
-                offersRunLease: false
+                offersRunLease: false,
+                executionSurface: nil
             ),
             revalidate: mappedRevalidate
         )
@@ -347,6 +369,7 @@ enum ToolPermissionPromptService {
         if let current = slot, current.id == id {
             tearDown(current)
             slot = nil
+            presentedRequest = nil
         }
         if let continuation = continuations.removeValue(forKey: id) {
             continuation.resume(returning: outcome)
@@ -370,6 +393,7 @@ enum ToolPermissionPromptService {
         let id = entry.id
         let request = entry.request
         let queuedBehind = queue.count
+        presentedRequest = request
 
         if let override = entry.presenter {
             slot = .presented(id, nil)
@@ -399,7 +423,8 @@ enum ToolPermissionPromptService {
             onAllowForRun: onAllowForRun,
             knowledgeWritePreview: request.knowledgeWritePreview,
             perCallApprovalOnly: request.perCallApprovalOnly,
-            queuedBehind: queuedBehind
+            queuedBehind: queuedBehind,
+            executionSurface: request.executionSurface
         )
         .environment(\.theme, themeManager.currentTheme)
 

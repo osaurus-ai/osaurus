@@ -24,6 +24,7 @@ private enum AgentChannelSheetTarget: Identifiable {
     case addChannel
     case native(AgentChannelKind)
     case editCustom(AgentChannelConnection)
+    case editN8n(AgentChannelConnection)
     case addDestination
     case editDestination(AgentChannelBinding)
 
@@ -32,6 +33,7 @@ private enum AgentChannelSheetTarget: Identifiable {
         case .addChannel: return "add-channel"
         case .native(let kind): return "native-\(kind.rawValue)"
         case .editCustom(let connection): return "custom-\(connection.id)"
+        case .editN8n(let connection): return "n8n-\(connection.id)"
         case .addDestination: return "destination-new"
         case .editDestination(let binding): return "destination-\(binding.id)"
         }
@@ -140,11 +142,16 @@ struct AgentChannelConnectionCenterView: View {
                 IMessageSettingsView()
             case .native(.whatsapp):
                 WhatsAppSettingsView()
-            case .native(.customHTTP):
-                // Custom HTTP is never presented as a native channel.
+            case .native(.customHTTP), .native(.n8n):
+                // Custom HTTP and n8n connections are stored rows, never
+                // presented as a fixed native channel.
                 EmptyView()
             case .editCustom(let connection):
                 AgentChannelCustomConnectionSheet(connection: connection) {
+                    reloadConnections()
+                }
+            case .editN8n(let connection):
+                N8nSettingsView(connection: connection) {
                     reloadConnections()
                 }
             case .addDestination:
@@ -341,11 +348,14 @@ struct AgentChannelConnectionCenterView: View {
                             icon: connection.kind.icon,
                             gradient: connection.kind.brandGradient,
                             title: connection.name.isEmpty ? connection.id : connection.name,
-                            subtitle: connection.id,
-                            subtitleIsMonospaced: true,
-                            badge: Self.customBadge(for: connection)
+                            subtitle: connection.kind == .n8n
+                                ? L("n8n HTTP Request in, poll or webhook out")
+                                : connection.id,
+                            subtitleIsMonospaced: connection.kind != .n8n,
+                            badge: Self.customBadge(for: connection, writesEnabled: globalWritesEnabled),
+                            anchorId: connection.kind == .n8n ? "agentChannels.n8n" : nil
                         ) {
-                            activeSheet = .editCustom(connection)
+                            activeSheet = connection.kind == .n8n ? .editN8n(connection) : .editCustom(connection)
                         }
                     }
                 }
@@ -668,6 +678,7 @@ struct AgentChannelConnectionCenterView: View {
         case .telegram: return L("Bot access to allowlisted chats and groups")
         case .imessage: return L("This Mac's Messages app, allowlisted chats only")
         case .whatsapp: return L("QR-linked WhatsApp Web bridge, allowlisted chats only")
+        case .n8n: return L("n8n HTTP Request in, poll or webhook out")
         case .customHTTP: return L("JSON-defined HTTP channel")
         }
     }
@@ -825,9 +836,15 @@ struct AgentChannelConnectionCenterView: View {
 
     /// Honest custom-channel badge: enabled alone is not usable — a custom
     /// channel needs defined HTTP actions before agents can do anything.
-    static func customBadge(for connection: AgentChannelConnection) -> AgentChannelStatusPresentation {
+    static func customBadge(
+        for connection: AgentChannelConnection,
+        writesEnabled: Bool = true
+    ) -> AgentChannelStatusPresentation {
         guard connection.enabled else {
             return AgentChannelStatusPresentation(label: L("Disabled"), tone: .neutral)
+        }
+        if connection.kind == .n8n {
+            return n8nBadge(for: connection, writesEnabled: writesEnabled)
         }
         let actionCount = connection.customHTTP?.actions.count ?? 0
         guard actionCount > 0 else {
@@ -837,6 +854,42 @@ struct AgentChannelConnectionCenterView: View {
             return AgentChannelStatusPresentation(label: L("Enabled"), tone: .success)
         }
         return AgentChannelStatusPresentation(label: L("Enabled (read-only)"), tone: .success)
+    }
+
+    /// n8n rows are inbound-first: usable once a dispatch target exists and
+    /// authorization can admit something (both allowlists are fail-closed).
+    static func n8nBadge(
+        for connection: AgentChannelConnection,
+        writesEnabled: Bool = true
+    ) -> AgentChannelStatusPresentation {
+        let authorization = connection.inboundAuthorization
+        guard !authorization.senderAllowlist.isEmpty, !authorization.roomAllowlist.isEmpty else {
+            return AgentChannelStatusPresentation(label: L("No allowed senders"), tone: .warning)
+        }
+        guard connection.n8n?.inboundDispatch.isConfigured == true else {
+            return AgentChannelStatusPresentation(label: L("No agent assigned"), tone: .warning)
+        }
+        let mode = N8nSetupRecipe.verifyModeChip(
+            for: connection.n8n?.inboundVerification.method ?? .hmacSHA256
+        )
+        let wantsPush = connection.n8n?.outbound.isConfigured == true
+            || connection.writeEnabled
+        if wantsPush && !writesEnabled {
+            return AgentChannelStatusPresentation(
+                label: "\(mode) · \(L("Push blocked"))",
+                tone: .warning
+            )
+        }
+        if wantsPush {
+            return AgentChannelStatusPresentation(
+                label: "\(mode) · \(L("Enabled (push + poll)"))",
+                tone: .success
+            )
+        }
+        return AgentChannelStatusPresentation(
+            label: "\(mode) · \(L("Enabled (poll replies)"))",
+            tone: .success
+        )
     }
 
     /// A saved token must not read as "Configured" while a receive transport

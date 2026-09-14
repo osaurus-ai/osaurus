@@ -131,6 +131,7 @@ struct CacheSection: View {
                 value: $metadataFallbackTokens,
                 clamp: 2_048 ... 4_194_304
             )
+            .settingsLandingAnchor("settings.server.contextMetadataFallback")
 
             // The fallback above cannot constrain a local bundle — metadata
             // wins. This is the field that actually lowers the window, so it
@@ -143,6 +144,7 @@ struct CacheSection: View {
                 value: $contextLengthCap,
                 clamp: 2_048 ... 4_194_304
             )
+            .settingsLandingAnchor("settings.chat.contextLength")
 
             OptionalIntField(
                 label: "KV Retention Override (tokens)",
@@ -152,6 +154,7 @@ struct CacheSection: View {
                 value: $draft.cache.defaultMaxKVSize,
                 clamp: 1_024 ... 4_194_304
             )
+            .settingsLandingAnchor("settings.server.kvRetention")
 
             OptionalDoubleField(
                 label: "Long-Prompt Window Multiplier",

@@ -65,8 +65,25 @@ public final class ComputerUsePromptQueue: ObservableObject {
     /// highest effect auto-approved`. An action confirms automatically when its
     /// effect is `<=` the recorded ceiling for its app. Cleared on teardown.
     private var autoApprove: [String: [String: EffectClass]] = [:]
+    /// Number of mounted `ComputerUseConfirmOverlay`s. Zero means nobody can
+    /// render a card, so a confirm would suspend until the wall clock — the
+    /// loop asks `canPresent` first and fails fast instead.
+    @Published public private(set) var presenterCount = 0
 
     private init() {}
+
+    // MARK: - Presenters
+
+    public func registerPresenter() { presenterCount += 1 }
+
+    public func unregisterPresenter() { presenterCount = max(0, presenterCount - 1) }
+
+    /// Whether a confirm / consent card can currently be shown to the user.
+    /// Under tests there is no UI; treat the queue as presentable so scripted
+    /// confirm seams keep working.
+    public var canPresent: Bool {
+        presenterCount > 0 || RuntimeEnvironment.isUnderTests
+    }
 
     // MARK: - Confirmation
 

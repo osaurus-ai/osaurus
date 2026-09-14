@@ -57,8 +57,8 @@ struct SettingsSearchSelfFindProbe {
             ("gpu cache", "server.cache"),
             ("context window cap", "settings.chat.contextLength"),
             ("max context", "settings.chat.contextLength"),
-            ("kv retention", "settings.chat.contextLength"),
-            ("metadata fallback", "settings.chat.contextLength"),
+            ("kv retention", "settings.server.kvRetention"),
+            ("metadata fallback", "settings.server.contextMetadataFallback"),
             // Reasoning was unfindable by every one of its own words while
             // three real controls existed: Reasoning Parser Override, Expand
             // Thinking While Streaming, Group Thinking & Tool Activity.
@@ -74,6 +74,19 @@ struct SettingsSearchSelfFindProbe {
             ("allow all tools", "settings.chat.autoAllowAllTools"),
             ("always allow", "settings.chat.autoAllowAllTools"),
             ("approve tools", "settings.chat.autoAllowAllTools"),
+            ("smooth streaming", "settings.chat.smoothStreaming"),
+            ("clipboard monitoring", "settings.chat.clipboard"),
+            ("keep mac awake", "settings.chat.keepAwakeForAgentRuns"),
+            ("group thinking", "settings.chat.activityRollup"),
+            ("hide dock icon", "settings.general.dock"),
+            ("max visible toasts", "settings.notifications.maxVisible"),
+            ("max concurrent tasks", "settings.notifications.maxConcurrent"),
+            ("enable memory", "memory.settings.enabled"),
+            ("consolidation interval", "memory.settings.consolidation"),
+            ("share my models", "server.peerInference"),
+            ("schedules", "schedules.overview"),
+            ("sandbox", "sandbox.overview"),
+            ("macos permissions", "permissions.tools"),
         ]
 
         let missed = labels.filter { label in

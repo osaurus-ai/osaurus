@@ -691,6 +691,13 @@ public final class ToolRegistry: ObservableObject {
         )
         if let permissioned = tool as? PermissionedTool {
             let requirements = permissioned.requirements
+            // Computer Use funnel: this gate is the one chokepoint every real
+            // `computer_use` invocation passes, so it is where an ATTEMPT is
+            // counted. Every later refusal (agent auth, model, admission) is
+            // attributed by `ComputerUseTool`; the Accessibility refusal below
+            // is the only one that happens before the tool body exists.
+            let isComputerUse = name == ComputerUseTool.toolName
+            if isComputerUse { FeatureTelemetry.computerUseAttempt() }
 
             // Check system permissions and prompt the user for any that are missing
             let missingSystemPermissions = await SystemPermissionService.shared.missingPermissions(
@@ -703,6 +710,9 @@ public final class ToolRegistry: ObservableObject {
                 from: requirements
             )
             if !stillMissing.isEmpty {
+                if isComputerUse {
+                    FeatureTelemetry.computerUseRefused(stage: .permissionAccessibility)
+                }
                 let missingNames = stillMissing.map { $0.displayName }.joined(separator: ", ")
                 throw NSError(
                     domain: "ToolRegistry",
@@ -801,7 +811,8 @@ public final class ToolRegistry: ObservableObject {
                         description: tool.description,
                         argumentsJSON: approvalArgumentsJSON,
                         knowledgeWritePreview: writePreview,
-                        perCallApprovalOnly: perCallApproval
+                        perCallApprovalOnly: perCallApproval,
+                        executionSurface: executionSurface(for: name, argumentsJSON: argumentsJSON)
                     )
                     switch outcome {
                     case .denied:
@@ -866,7 +877,8 @@ public final class ToolRegistry: ObservableObject {
                     approved = await ToolPermissionPromptService.requestApproval(
                         toolName: name,
                         description: tool.description,
-                        argumentsJSON: approvalArgumentsJSON
+                        argumentsJSON: approvalArgumentsJSON,
+                        executionSurface: executionSurface(for: name, argumentsJSON: argumentsJSON)
                     )
                 }
                 if !approved {
@@ -1357,6 +1369,39 @@ public final class ToolRegistry: ObservableObject {
             )
         }
         return activeSandboxAgentContext
+    }
+
+    /// Where calling `name` with these arguments will land: the isolated VM,
+    /// this Mac, or a remote MCP server. Shown on the approval card
+    /// (osaurus#2651). Resolved from the same state the tool body routes
+    /// on — `isSandboxTool`, the provider's transport/execution host, and
+    /// for the context-routed workspace vocabulary the sandbox bridge +
+    /// folder root the body will read — so the card never claims a surface
+    /// the call will not use. Callers must invoke it inside the same
+    /// task-local scope as the execution (the permission gate does).
+    func executionSurface(for name: String, argumentsJSON: String) -> ToolExecutionSurface {
+        if isSandboxTool(name) { return .sandboxVM }
+        guard let tool = toolsByName[name] else { return .nativeHost }
+        if let mcp = tool as? MCPProviderTool {
+            let provider = MCPProviderManager.shared.configuration.providers
+                .first { $0.id == mcp.providerId }
+            return .forMCPProvider(
+                transport: provider?.transport,
+                executionHost: provider?.executionHost
+            )
+        }
+        if ToolExecutionSurface.contextRoutedToolNames.contains(name) {
+            return .forContextRoutedTool(
+                name: name,
+                pathArgument: ToolExecutionSurface.routedPathArgument(
+                    toolName: name,
+                    argumentsJSON: argumentsJSON
+                ),
+                hasSandboxBridge: combinedSandboxReadBridge != nil,
+                hasFolderRoot: ChatExecutionContext.currentFolderRoot != nil
+            )
+        }
+        return .nativeHost
     }
 
     /// Sandbox agent name bound for Agent DB file tools. Same resolution

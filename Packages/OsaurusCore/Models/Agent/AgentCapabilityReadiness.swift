@@ -66,7 +66,7 @@ public enum AgentCapabilityBlocker: String, Sendable, Hashable, CaseIterable {
         case .permissionDenied:
             return L("Unavailable: denied by policy")
         case .systemPermissionMissing:
-            return L("Unavailable: required macOS permission is missing")
+            return L("Unavailable: Accessibility permission is missing")
         case .providerDisconnected:
             return L("Unavailable: the configured provider is disconnected")
         case .unsupportedSurface:
@@ -141,12 +141,20 @@ public struct AgentCapabilityReadiness: Sendable, Equatable {
         hasReadyImageModel: Bool = false,
         hasReadyVideoModel: Bool = false,
         hasReadyAppleScriptModel: Bool = false,
-        permission: SubagentPermissionPolicy = .ask
+        permission: SubagentPermissionPolicy = .ask,
+        hasRequiredSystemPermissions: Bool = true
     ) -> AgentCapabilityReadiness {
         var blockers: [AgentCapabilityBlocker] = []
 
         switch flag {
-        case .computerUse, .browserUse:
+        case .computerUse:
+            if !hasResolvedModel { blockers.append(.noModelSelected) }
+            // Accessibility is the runtime floor (`ComputerUseTool.requirements`):
+            // `ToolRegistry.runPermissionGate` fails the very first call without
+            // it, so a card that said "Active" here was promising a run that
+            // could not start.
+            if !hasRequiredSystemPermissions { blockers.append(.systemPermissionMissing) }
+        case .browserUse:
             if !hasResolvedModel { blockers.append(.noModelSelected) }
         case .spawn:
             if configuredSpawnTargetCount == 0 {

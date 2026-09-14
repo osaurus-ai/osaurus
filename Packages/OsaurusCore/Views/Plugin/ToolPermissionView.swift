@@ -31,6 +31,12 @@ struct ToolPermissionView: View {
     /// service presents one card at a time; telling the user more are coming
     /// explains why another card appears right after this decision.
     var queuedBehind: Int = 0
+    /// Where the approved call will run — the isolated sandbox VM, this Mac,
+    /// or a remote MCP server. `shell_run` and the `file_*` tools keep one
+    /// name in every mode and are routed at execution time, so without this
+    /// the card cannot tell the user whether "run this command" touches the
+    /// host (osaurus#2651). Nil hides the row (billing / policy prompts).
+    var executionSurface: ToolExecutionSurface? = nil
 
     @ObservedObject private var themeManager = ThemeManager.shared
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -85,6 +91,14 @@ struct ToolPermissionView: View {
                     .padding(.horizontal, 24)
                     .opacity(appeared ? 1 : 0)
                     .offset(y: appeared ? 0 : -8)
+
+                if let executionSurface {
+                    ExecutionSurfaceNotice(surface: executionSurface)
+                        .padding(.top, 12)
+                        .padding(.horizontal, 24)
+                        .opacity(appeared ? 1 : 0)
+                        .offset(y: appeared ? 0 : -4)
+                }
 
                 if !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     ContentSizedScrollView(maxHeight: 140) {
@@ -305,6 +319,63 @@ struct ToolPermissionView: View {
     }
 }
 
+/// Execution-surface row on the approval card: which machine the call will
+/// run on, tinted so the host case reads as the one that needs a closer
+/// look. Host = warning tint (it can change this Mac), VM = success tint
+/// (isolated), remote = neutral.
+private struct ExecutionSurfaceNotice: View {
+    let surface: ToolExecutionSurface
+
+    @Environment(\.theme) private var theme
+
+    private var accent: Color {
+        switch surface {
+        case .sandboxVM: theme.successColor
+        case .nativeHost: theme.warningColor
+        case .remoteServer: theme.secondaryText
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: surface.symbolName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(accent)
+                .frame(width: 18, alignment: .center)
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text("Runs in", bundle: .module)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                    Text(surface.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                }
+                Text(surface.consentDetail)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(accent.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(accent.opacity(0.35), lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(verbatim: "\(L("Runs in")) \(surface.title). \(surface.consentDetail)"))
+        .accessibilityIdentifier("toolPermission.executionSurface.\(surface.rawValue)")
+    }
+}
+
 /// Vertical scroll area sized to its content up to `maxHeight`. The card sits
 /// under `.fixedSize`, which lays children out at their ideal height — and a
 /// plain ScrollView's ideal height is its minimum, so capped scroll areas can
@@ -449,18 +520,17 @@ private struct AlwaysAllowButton: View {
 #if DEBUG && canImport(PreviewsMacros)
     #Preview("Tool Permission - Dark") {
         ToolPermissionView(
-            toolName: "execute_code",
-            description: "This tool will execute Python code on your system.",
+            toolName: "shell_run",
+            description: "Run a shell command in the working directory.",
             argumentsJSON: """
                 {
-                    "language": "python",
-                    "code": "import os\\nprint(os.getcwd())",
-                    "timeout": 30
+                    "command": "rm -rf build && swift build"
                 }
                 """,
             onAllow: { print("Allowed") },
             onDeny: { print("Denied") },
-            onAlwaysAllow: { print("Always Allow") }
+            onAlwaysAllow: { print("Always Allow") },
+            executionSurface: .nativeHost
         )
         .environment(\.theme, DarkTheme())
         .preferredColorScheme(.dark)
@@ -470,16 +540,17 @@ private struct AlwaysAllowButton: View {
 
     #Preview("Tool Permission - Light") {
         ToolPermissionView(
-            toolName: "read_file",
-            description: "Read the contents of a file from disk.",
+            toolName: "shell_run",
+            description: "Run a shell command in the working directory.",
             argumentsJSON: """
                 {
-                    "path": "/Users/example/Documents/config.json"
+                    "command": "pip install requests && python3 fetch.py"
                 }
                 """,
             onAllow: { print("Allowed") },
             onDeny: { print("Denied") },
-            onAlwaysAllow: { print("Always Allow") }
+            onAlwaysAllow: { print("Always Allow") },
+            executionSurface: .sandboxVM
         )
         .environment(\.theme, LightTheme())
         .preferredColorScheme(.light)

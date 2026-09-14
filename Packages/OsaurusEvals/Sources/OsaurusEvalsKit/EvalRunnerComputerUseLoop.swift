@@ -39,7 +39,11 @@ extension EvalRunner {
         // every effect so the case measures the model's planning rather than
         // gate friction; a case can pick a stricter preset to exercise the
         // confirm path (auto-approved here).
-        let driver = ScriptedCUDriver(app: exp.app, elements: exp.elements)
+        let driver = ScriptedCUDriver(
+            app: exp.app,
+            elements: exp.elements,
+            openNotReady: exp.openNotReady ?? false
+        )
         let preset = AutonomyPreset(rawValue: exp.preset ?? "autonomous") ?? .autonomous
         let gate = ComputerUseGate(policy: AutonomyPolicy(globalPreset: preset))
         let feed = SubagentFeed(
@@ -48,7 +52,24 @@ extension EvalRunner {
             title: testCase.query
         )
         let interrupt = InterruptToken()
-        let limits = RunLimits(maxSteps: exp.maxSteps ?? 16, wallClockSeconds: 240)
+        let limits = RunLimits(
+            maxSteps: exp.maxSteps ?? 16,
+            wallClockSeconds: exp.wallClockSeconds ?? 240,
+            requireVerifiedChangeForDone: exp.requireVerifiedChangeForDone ?? true
+        )
+        // Confirm surface: approve (after an optional simulated user delay),
+        // or report that no surface exists so the loop must fail fast.
+        let confirmDelay = exp.confirmDelaySeconds ?? 0
+        let confirm: @Sendable (ActionPreview) async -> Bool = { _ in
+            if confirmDelay > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(confirmDelay * 1_000_000_000))
+            }
+            return true
+        }
+        let confirmIsUnavailable = exp.confirmUnavailable ?? false
+        let confirmUnavailable: @Sendable () async -> String? = {
+            confirmIsUnavailable ? "no chat window is open to show the approval card" : nil
+        }
 
         // Scripted-model harness: when the scene supplies `scriptedActions`,
         // the loop is driven deterministically via the `AgentStepProvider` seam
@@ -58,6 +79,24 @@ extension EvalRunner {
             (exp.scriptedActions?.isEmpty == false)
             ? ComputerUseLoop.scriptedProvider(rawArguments: exp.scriptedActions!)
             : nil
+
+        // Model-free lane (`OSAURUS_EVALS_SCRIPTED_ONLY=1`, set by
+        // `make evals-deterministic`): live model-driven cases are reported as
+        // an honest SKIP so this suite can sit behind the floors gate — every
+        // scripted row is a code contract, and no model is ever loaded.
+        if scriptedProvider == nil, Self.scriptedOnly {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .skipped,
+                notes: [
+                    "live model-driven case skipped: OSAURUS_EVALS_SCRIPTED_ONLY=1 "
+                        + "(model-free lane runs only cases with scriptedActions)"
+                ],
+                modelId: modelId
+            )
+        }
 
         // Tiny-context skip (mirrors the `agent_loop` / `capability_claims`
         // tiny-context skips). The loop's `modelStep` FORCES an `agent_action`
@@ -98,7 +137,8 @@ extension EvalRunner {
             gate: gate,
             feed: feed,
             interrupt: interrupt,
-            confirm: { _ in true },
+            confirm: confirm,
+            confirmUnavailable: confirmUnavailable,
             limits: limits,
             policySummary: "",
             vision: .none,
@@ -243,6 +283,35 @@ extension EvalRunner {
             )
         }
 
+        // 8. Completion evidence — the verify contract. `minUnverifiedActs`
+        // proves the loop counted (and so reported) a posted-but-unobserved
+        // input; `minVerifyChanged` proves a real change was seen.
+        if let minUnverified = exp.minUnverifiedActs {
+            check(
+                metrics.unverifiedActs >= minUnverified,
+                pass: "unverifiedActs ok: \(metrics.unverifiedActs) ≥ \(minUnverified)",
+                fail: "unverifiedActs \(metrics.unverifiedActs) < \(minUnverified)"
+            )
+        }
+        if let minChanged = exp.minVerifyChanged {
+            check(
+                metrics.verifyChanged >= minChanged,
+                pass: "verifyChanged ok: \(metrics.verifyChanged) ≥ \(minChanged)",
+                fail: "verifyChanged \(metrics.verifyChanged) < \(minChanged)"
+            )
+        }
+
+        // 9. Loop-side reporting that lives only in the feed (an open that
+        // came back not ready, an unverified verify, a fail-fast confirm).
+        let feedTitles = events.map(\.title)
+        for needle in exp.feedTitleContains ?? [] {
+            check(
+                feedTitles.contains { $0.localizedCaseInsensitiveContains(needle) },
+                pass: "feed reported '\(needle)'",
+                fail: "no feed event title contained '\(needle)' (titles: \(feedTitles))"
+            )
+        }
+
         // Telemetry summary (always present so a pass is still legible).
         if redactEvidenceValues {
             notes.append("outcome: \(outcomeName) summaryLength=\(result.outcome.summary.count)")
@@ -251,9 +320,11 @@ extension EvalRunner {
         }
         notes.append(
             "telemetry: steps=\(metrics.steps) proposed=\(proposed) acted=\(acted) "
-                + "verifyChanged=\(metrics.verifyChanged) blocked=\(metrics.blocked) "
-                + "confirms=\(metrics.confirmsRequested) invalidActions=\(invalidActions) "
-                + "tokens=\(metrics.modelTokens) latencyMs=\(Int(latency))"
+                + "verifyChanged=\(metrics.verifyChanged) unverifiedActs=\(metrics.unverifiedActs) "
+                + "blocked=\(metrics.blocked) confirms=\(metrics.confirmsRequested) "
+                + "confirmsUnpresentable=\(metrics.confirmsUnpresentable) "
+                + "invalidActions=\(invalidActions) tokens=\(metrics.modelTokens) "
+                + "latencyMs=\(Int(latency))"
         )
         if let rate = metrics.axResolvableRate {
             notes.append(
@@ -264,6 +335,10 @@ extension EvalRunner {
         notes.append("verbs: [\(verbTrace.joined(separator: ","))]")
 
         if !passed {
+            // Step trace so a failed live row is attributable without a
+            // re-run: every feed event's kind + title, in order.
+            let trace = events.map { "\($0.kind.rawValue):\($0.title.prefix(160))" }
+            notes.append("trace: " + trace.joined(separator: " | "))
             notes.append(
                 "attribution: "
                     + Self.attributeFailure(
@@ -311,6 +386,12 @@ extension EvalRunner {
     }
 
     // MARK: - Helpers
+
+    /// `OSAURUS_EVALS_SCRIPTED_ONLY=1`: run only scripted (model-free) cases;
+    /// live cases skip. The deterministic CI lane sets this.
+    static var scriptedOnly: Bool {
+        ProcessInfo.processInfo.environment["OSAURUS_EVALS_SCRIPTED_ONLY"] == "1"
+    }
 
     /// Whether `needles` appear in `haystack` in order (a subsequence — gaps
     /// allowed), the matcher for `expectVerbsInOrder`.

@@ -61,6 +61,46 @@ enum ChatSessionStore {
         return recovered
     }
 
+    /// Metadata rows (turns empty) for the given ids, in one query. Writes
+    /// still deferred behind a closed database are overlaid so a chat saved
+    /// moments ago is not reported missing. Ids with no row are absent.
+    static func loadMetadata(ids: [UUID]) -> [ChatSessionData] {
+        ensureOpen()
+        var byId: [UUID: ChatSessionData] = [:]
+        for row in ChatHistoryDatabase.shared.loadMetadata(ids: ids) {
+            byId[row.id] = row
+        }
+        for id in ids {
+            if var pending = pendingSaves[id] {
+                pending.turns = []
+                byId[id] = pending
+            }
+        }
+        return ids.compactMap { byId[$0] }
+    }
+
+    /// `load(id:)` with the database read off the main actor, for callers
+    /// on the interactive path (waking a hibernated tab) that must not park
+    /// the main thread behind the history queue. Same pending-save overlay
+    /// and transcript recovery as the synchronous load.
+    static func loadAsync(id: UUID) async -> ChatSessionData? {
+        ensureOpen()
+        if let pending = pendingSaves[id] { return pending }
+        guard didOpen else { return nil }
+        let db = ChatHistoryDatabase.shared
+        guard let session = await Task.detached(priority: .userInitiated, operation: { db.loadSession(id: id) }).value
+        else { return nil }
+        let recovered = recoverTranscriptTurnsIfNeeded(session)
+        if session.turns.isEmpty, !recovered.turns.isEmpty, didOpen {
+            do {
+                try ChatHistoryDatabase.shared.saveSession(recovered)
+            } catch {
+                print("[ChatSessionStore] Failed to heal recovered turns for \(id): \(error)")
+            }
+        }
+        return recovered
+    }
+
     /// Session ids whose message bodies contain `text` (case-insensitive
     /// substring). Backs the sidebar's full-text search; returns an empty set
     /// for a blank query or while the database is deferred/closed. The scan
@@ -145,6 +185,20 @@ enum ChatSessionStore {
     }
 
     static func retryUnsaved() {
+        // A failed `open()` must be retried before re-issuing writes —
+        // otherwise Retry loops on `saveSessionAsync` against a nil
+        // connection (#2736). Off-main / tests open synchronously; the
+        // main-actor production path only kicks the background prewarm so
+        // we never park the UI on Keychain + migrations. Pending snapshots
+        // stay queued and `didOpenNotification` → `flushPendingSaves`.
+        if !didOpen {
+            if Thread.isMainThread, !RuntimeEnvironment.isUnderTests {
+                preloadInBackground()
+                return
+            }
+            ensureOpen()
+        }
+        guard didOpen else { return }
         for id in ChatPersistenceStatus.shared.unsaved {
             if let data = pendingSaves[id] {
                 saveAsync(data)
@@ -430,9 +484,15 @@ enum ChatSessionStore {
             return
         }
         StorageMutationGate.blockingAwaitNotMutating()
-        didOpen = true
         do {
+            #if DEBUG
+            if _forceNextOpenFailureForTesting {
+                _forceNextOpenFailureForTesting = false
+                throw ChatHistoryDatabaseError.failedToOpen("forced test failure")
+            }
+            #endif
             try ChatHistoryDatabase.shared.open()
+            didOpen = true
         } catch {
             print("[ChatSessionStore] Failed to open chat-history database: \(error)")
             return
@@ -499,8 +559,12 @@ enum ChatSessionStore {
     }
 
     #if DEBUG
+        static var _forceNextOpenFailureForTesting = false
+        static var _didOpenForTesting: Bool { didOpen }
+
         static func _resetForTesting() {
             didOpen = false
+            _forceNextOpenFailureForTesting = false
             retryTask?.cancel()
             retryTask = nil
             saveVersions.removeAll()

@@ -457,10 +457,7 @@ final class AgentChannelInboundRelay {
             }
             guard let state = taskManager.taskState(for: taskId) else {
                 if let stored = ChatSessionStore.load(id: taskId),
-                   let text = stored.turns.last(where: {
-                       $0.role == .assistant
-                           && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                   })?.content {
+                   let text = Self.latestAssistantReply(in: stored.turns) {
                     return .reply(
                         text,
                         awaitingClarification: false,
@@ -485,10 +482,7 @@ final class AgentChannelInboundRelay {
                 }
                 return .failed("The agent is waiting for input but did not provide a clarification question.")
             case .completed:
-                if let text = state.chatSession?.turns.last(where: {
-                    $0.role == .assistant
-                        && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                })?.content {
+                if let text = Self.latestAssistantReply(in: state.chatSession?.turns ?? []) {
                     return .reply(
                         text,
                         awaitingClarification: false,
@@ -506,6 +500,22 @@ final class AgentChannelInboundRelay {
             }
         }
         return .failed("The channel task was cancelled.")
+    }
+
+    /// The visible reply of a finished channel turn: the last assistant turn
+    /// with non-blank content. Shared by the relay's reply wait and the
+    /// pull-based `/channels/{kind}/{id}/tasks/{task_id}` poll route so both
+    /// surfaces agree on what "the reply" is.
+    nonisolated static func latestAssistantReply(in turns: [ChatTurnData]) -> String? {
+        turns.last(where: {
+            $0.role == .assistant
+                && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        })?.content
+    }
+
+    /// Live-session twin of `latestAssistantReply(in:)`.
+    static func latestAssistantReply(in turns: [ChatTurn]) -> String? {
+        turns.last(where: { $0.role == .assistant && !$0.contentIsBlank })?.content
     }
 
     /// Artifacts eligible for channel delivery: created by this run, backed by

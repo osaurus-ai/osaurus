@@ -13,17 +13,26 @@ actor OsaurusRouterAPIClient {
     private let signer: OsaurusRouterAuthSigner
     private let authOverride: (@Sendable (inout URLRequest, Data?) async throws -> Void)?
     private let decoder: JSONDecoder
+    /// Osaurus ID session bearer token for `/id/*` routes (nil = wallet
+    /// signing). Injectable so tests can exercise both auth paths without a
+    /// real keychain.
+    private let idSessionToken: @Sendable () -> String?
+    private let clearIDSession: @Sendable () -> Void
 
     init(
         baseURL: URL = OsaurusRouter.defaultBaseURL,
         session: URLSession? = nil,
         searchSession: URLSession? = nil,
         signer: OsaurusRouterAuthSigner = OsaurusRouterAuthSigner(),
-        authOverride: (@Sendable (inout URLRequest, Data?) async throws -> Void)? = nil
+        authOverride: (@Sendable (inout URLRequest, Data?) async throws -> Void)? = nil,
+        idSessionToken: @escaping @Sendable () -> String? = { OsaurusIDSessionStore.token() },
+        clearIDSession: @escaping @Sendable () -> Void = { OsaurusIDSessionStore.clear() }
     ) {
         self.baseURL = baseURL
         self.signer = signer
         self.authOverride = authOverride
+        self.idSessionToken = idSessionToken
+        self.clearIDSession = clearIDSession
         self.session = session ?? Self.makeSession()
         // An injected plain `session` (tests) also serves search calls unless
         // a dedicated search session is provided.
@@ -85,6 +94,116 @@ actor OsaurusRouterAPIClient {
     func models() async throws -> [OsaurusRouterModel] {
         let response: OsaurusRouterModelListResponse = try await get("/models")
         return response.data
+    }
+
+    // MARK: - Osaurus ID (`/id/*`)
+    //
+    // Auth: claiming and session creation are always wallet-signed (the spec
+    // requires it — no session exists yet, and a session token may never mint
+    // another). Every other `/id/*` call prefers the stored `osk_…` session
+    // bearer token so routine profile traffic never re-touches the master
+    // key, falling back to wallet signing when no token exists. A 401 under a
+    // bearer token drops the token and retries wallet-signed once.
+
+    /// `GET /id/availability?osaurus_id=…` — cheap pre-claim check for the
+    /// claim field. Always 200; availability can still change before the
+    /// claim lands.
+    func osaurusIDAvailability(_ handle: String) async throws -> OsaurusIDAvailability {
+        try await idRequest(
+            method: "GET",
+            path: "/id/availability",
+            queryItems: [URLQueryItem(name: "osaurus_id", value: handle)]
+        )
+    }
+
+    /// `POST /id` — claim the account's one Osaurus ID. Wallet-signed.
+    func claimOsaurusID(handle: String) async throws -> OsaurusIDProfile {
+        struct Body: Encodable { let osaurus_id: String }
+        return try await post("/id", body: Body(osaurus_id: handle))
+    }
+
+    /// `GET /id/me` — the own profile (404 `NOT_FOUND` = no Osaurus ID yet).
+    func osaurusIDProfile() async throws -> OsaurusIDProfile {
+        try await idRequest(method: "GET", path: "/id/me")
+    }
+
+    /// `PATCH /id/me` — update any subset of the mutable profile fields.
+    func updateOsaurusIDProfile(_ patch: OsaurusIDProfilePatch) async throws -> OsaurusIDProfile {
+        let body = try JSONEncoder.osaurusCanonical(prettyPrinted: false).encode(patch)
+        return try await idRequest(method: "PATCH", path: "/id/me", bodyData: body)
+    }
+
+    /// `POST /id/sessions` — mint an `osk_…` bearer token. Wallet-signed
+    /// always; the token in the response is shown exactly once.
+    func createOsaurusIDSession(
+        label: String,
+        expiresInDays: Int? = nil
+    ) async throws -> OsaurusIDSessionCreateResponse {
+        struct Body: Encodable {
+            let label: String
+            let expires_in_days: Int?
+        }
+        return try await post("/id/sessions", body: Body(label: label, expires_in_days: expiresInDays))
+    }
+
+    func listOsaurusIDSessions() async throws -> [OsaurusIDSession] {
+        let response: OsaurusIDSessionListResponse = try await idRequest(method: "GET", path: "/id/sessions")
+        return response.data
+    }
+
+    func revokeOsaurusIDSession(id: String) async throws {
+        _ = try await idData(method: "DELETE", path: "/id/sessions/\(try routerPathComponent(id))")
+    }
+
+    private func idRequest<T: Decodable>(
+        method: String,
+        path: String,
+        queryItems: [URLQueryItem] = [],
+        bodyData: Data? = nil
+    ) async throws -> T {
+        let data = try await idData(method: method, path: path, queryItems: queryItems, bodyData: bodyData)
+        return try decoder.decode(T.self, from: data)
+    }
+
+    /// Session-token-first transport for the `/id/*` routes (see the auth
+    /// note at the top of this section).
+    private func idData(
+        method: String,
+        path: String,
+        queryItems: [URLQueryItem] = [],
+        bodyData: Data? = nil
+    ) async throws -> Data {
+        let url = try url(path: path, queryItems: queryItems)
+        func makeRequest() -> URLRequest {
+            var request = URLRequest(url: url)
+            request.httpMethod = method
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            if bodyData != nil {
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            }
+            request.httpBody = bodyData
+            return request
+        }
+
+        if let token = idSessionToken() {
+            var request = makeRequest()
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (data, response) = try await perform(request)
+            if let http = response as? HTTPURLResponse, http.statusCode == 401 {
+                // Revoked or expired server-side: drop the dead token and
+                // fall through to wallet signing.
+                clearIDSession()
+            } else {
+                try ensureOK(data: data, response: response)
+                return data
+            }
+        }
+
+        var request = makeRequest()
+        try await sign(request: &request, body: bodyData ?? Data())
+        let (data, response) = try await perform(request)
+        try ensureOK(data: data, response: response)
+        return data
     }
 
     // MARK: - Workspaces (`/workspaces/*`)

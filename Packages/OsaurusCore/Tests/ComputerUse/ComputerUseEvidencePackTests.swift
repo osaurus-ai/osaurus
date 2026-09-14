@@ -543,7 +543,11 @@ final class ComputerUseEvidencePackTests: XCTestCase {
                 await confirmationRecorder.record(preview)
                 return false
             },
-            limits: RunLimits(maxSteps: 3, wallClockSeconds: 30),
+            // This case measures the gate boundary, not completion evidence:
+            // the static mock view never changes after the click, so the
+            // production done-verification gate is switched off here (it has
+            // its own coverage in `ComputerUseLoopRunTests`).
+            limits: RunLimits(maxSteps: 3, wallClockSeconds: 30, requireVerifiedChangeForDone: false),
             vision: .none,
             sessionId: "evidence-dangerous-open",
             nextAction: ComputerUseLoop.scriptedProvider([

@@ -31,20 +31,29 @@ final class ComputerUseLoopRunTests: XCTestCase {
     /// A driver with one focused app (so `currentPid` is non-nil from the
     /// start) serving a single steady-state snapshot.
     private func driver(_ elements: [CUElement], pid: Int32 = 4242) -> MockMacDriver {
-        let snap = CUSnapshot(
-            snapshotId: 1,
-            pid: pid,
-            app: "Demo",
-            focusedWindow: "Main",
-            tier: .ax,
-            truncated: false,
-            windows: [CUWindowSummary(id: 1, title: "Main", focused: true, x: 0, y: 0, w: 800, h: 600)],
-            elements: elements,
-            image: nil
-        )
+        driver(sequence: [elements], pid: pid)
+    }
+
+    /// A driver serving the given element sets in capture order (the last one
+    /// repeats), so a test can make the verify capture after an act differ
+    /// from the initial perceive — i.e. a "view changed" signal.
+    private func driver(sequence: [[CUElement]], pid: Int32 = 4242) -> MockMacDriver {
+        let snaps = sequence.enumerated().map { index, elements in
+            CUSnapshot(
+                snapshotId: index + 1,
+                pid: pid,
+                app: "Demo",
+                focusedWindow: "Main",
+                tier: .ax,
+                truncated: false,
+                windows: [CUWindowSummary(id: 1, title: "Main", focused: true, x: 0, y: 0, w: 800, h: 600)],
+                elements: elements,
+                image: nil
+            )
+        }
         return MockMacDriver(
             activeWindow: CUActiveWindow(pid: pid, app: "Demo", title: "Main", x: 0, y: 0, w: 800, h: 600),
-            snapshots: [pid: [snap]]
+            snapshots: [pid: snaps]
         )
     }
 
@@ -73,7 +82,12 @@ final class ComputerUseLoopRunTests: XCTestCase {
     // MARK: - Terminal verbs
 
     func testClickThenDoneSucceeds() async {
-        let d = driver([el("go", "button", "Go")])
+        // The verify capture after the click shows a changed view (a sheet
+        // appeared), so `done` has evidence behind it.
+        let d = driver(sequence: [
+            [el("go", "button", "Go")],
+            [el("go", "button", "Go"), el("ok", "button", "OK")],
+        ])
         let result = await run(
             d,
             provider: ComputerUseLoop.scriptedProvider([
@@ -85,6 +99,181 @@ final class ComputerUseLoopRunTests: XCTestCase {
         let clicks = await d.elementActions
         XCTAssertEqual(clicks.count, 1, "The click should have been executed exactly once")
         XCTAssertGreaterThanOrEqual(result.metrics.actsAttempted, 1)
+        XCTAssertEqual(result.metrics.verifyChanged, 1)
+        XCTAssertEqual(result.metrics.unverifiedActs, 0)
+    }
+
+    // MARK: - Done needs evidence
+
+    /// Synthesized input is fire-and-forget: a click whose verify capture
+    /// shows no change is unproven. The loop tells the model so, gives it one
+    /// challenge to look again, and a second unproven `done` ends as gaveUp —
+    /// never as success.
+    func testDoneWithoutVerifiedChangeIsChallengedThenGivesUp() async {
+        let d = driver([el("go", "button", "Go")])  // static view: nothing ever changes
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1), note: "click go"),
+                AgentAction(verb: .done, reason: "clicked it"),
+                AgentAction(verb: .done, reason: "really, clicked it"),
+            ])
+        )
+        guard case .gaveUp(let reason) = result.outcome else {
+            return XCTFail("An unverified done must not be reported as success; got \(result.outcome)")
+        }
+        XCTAssertTrue(reason.contains("could not be verified"), "got: \(reason)")
+        XCTAssertEqual(result.metrics.actsAttempted, 1)
+        XCTAssertEqual(result.metrics.verifyChanged, 0)
+        XCTAssertEqual(result.metrics.unverifiedActs, 1, "The posted-but-unchanged click is counted")
+    }
+
+    /// A late-rendering app: the verify capture right after the click is
+    /// unchanged, but the `observe` the challenge prompts shows the change.
+    /// That late evidence is enough for the second `done`.
+    func testDoneAfterLateObservedChangeSucceeds() async {
+        let d = driver(sequence: [
+            [el("go", "button", "Go")],  // initial perceive
+            [el("go", "button", "Go")],  // verify after click: unchanged yet
+            [el("go", "button", "Go"), el("ok", "button", "OK")],  // observe: rendered
+        ])
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1), note: "click go"),
+                AgentAction(verb: .done, reason: "clicked it"),
+                AgentAction(verb: .observe, note: "check"),
+                AgentAction(verb: .done, reason: "the sheet is up"),
+            ])
+        )
+        XCTAssertTrue(result.outcome.isSuccess, "Late-observed change should satisfy done; got \(result.outcome)")
+        XCTAssertEqual(result.metrics.unverifiedActs, 1)
+    }
+
+    /// A run that never acted (pure read task) is not subject to the gate.
+    func testObserveOnlyDoneIsNotChallenged() async {
+        let d = driver([el("title", "statictext", "Report")])
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .observe, note: "read it"),
+                AgentAction(verb: .done, reason: "The report title is Report."),
+            ])
+        )
+        XCTAssertTrue(result.outcome.isSuccess, "got \(result.outcome)")
+    }
+
+    /// Eval seam: scripted scenarios that only exercise gate/parse contracts
+    /// can switch the completion-evidence gate off.
+    func testRequireVerifiedChangeKnobOffAcceptsUnverifiedDone() async {
+        let d = driver([el("go", "button", "Go")])
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1), note: "click go"),
+                AgentAction(verb: .done, reason: "clicked"),
+            ]),
+            limits: RunLimits(wallClockSeconds: 30, requireVerifiedChangeForDone: false)
+        )
+        XCTAssertTrue(result.outcome.isSuccess, "got \(result.outcome)")
+    }
+
+    /// The verify tool-result must not call a posted-but-unobserved input a
+    /// success; the model reads that wording as "it worked".
+    func testUnverifiedActIsReportedHonestlyToTheModel() async {
+        let d = driver([el("go", "button", "Go")])
+        let recorder = ModelStepInputRecorder()
+        let result = await run(
+            d,
+            provider: { input in
+                let calls = await recorder.record(input)
+                if calls == 1 {
+                    return ModelActionCall(
+                        id: "c1",
+                        arguments: AgentAction(verb: .click, target: AgentTarget(mark: 1)).argumentsJSON()
+                    )
+                }
+                return ModelActionCall(
+                    id: "c\(calls)",
+                    arguments: AgentAction(verb: .giveUp, reason: "stop").argumentsJSON()
+                )
+            }
+        )
+        guard case .gaveUp = result.outcome else { return XCTFail("got \(result.outcome)") }
+        let inputs = await recorder.inputs
+        let toolResults = inputs.flatMap { $0.transcript.filter { $0.role == "tool" }.map(\.text) }
+        XCTAssertTrue(
+            toolResults.contains { $0.contains("Input was posted") },
+            "Expected the honest posted-but-unverified wording; got \(toolResults)"
+        )
+        XCTAssertFalse(toolResults.contains { $0.contains("Action succeeded") })
+    }
+
+    /// No surface can render the confirm card: the gated action fails fast
+    /// with the typed reason and the run ends as gaveUp instead of parking on
+    /// the card until the wall clock.
+    func testConfirmUnavailableFailsFastWithReason() async {
+        let d = driver([el("send", "button", "Send")])
+        let result = await ComputerUseLoop.run(
+            goal: "test goal",
+            modelId: "test-model",
+            driver: d,
+            gate: AlwaysConfirmGate(),
+            feed: SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "test goal"),
+            interrupt: InterruptToken(),
+            confirm: { _ in
+                XCTFail("confirm must not be awaited when no presenter exists")
+                return true
+            },
+            confirmUnavailable: { "no chat window is open to show the approval card" },
+            limits: RunLimits(wallClockSeconds: 30),
+            sessionId: "cu-test",
+            nextAction: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1), note: "send"),
+                AgentAction(verb: .done, reason: "sent"),
+            ])
+        )
+        guard case .gaveUp(let reason) = result.outcome else {
+            return XCTFail("Expected fail-fast gaveUp; got \(result.outcome)")
+        }
+        XCTAssertTrue(reason.contains("no chat window is open"), "got: \(reason)")
+        XCTAssertEqual(result.metrics.confirmsUnpresentable, 1)
+        XCTAssertEqual(result.metrics.confirmsRequested, 0)
+        let clicks = await d.elementActions
+        XCTAssertTrue(clicks.isEmpty, "The gated action must not run")
+    }
+
+    /// Time the user spends on a confirm card is credited back to the wall
+    /// clock: a slow approval does not turn into "Reached the time limit".
+    func testConfirmWaitDoesNotConsumeWallClock() async {
+        let d = driver(sequence: [
+            [el("send", "button", "Send")],
+            [el("send", "button", "Send"), el("sent", "statictext", "Sent")],
+        ])
+        let result = await ComputerUseLoop.run(
+            goal: "test goal",
+            modelId: "test-model",
+            driver: d,
+            gate: AlwaysConfirmGate(),
+            feed: SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "test goal"),
+            interrupt: InterruptToken(),
+            confirm: { _ in
+                // The user takes longer than the whole run budget to approve.
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                return true
+            },
+            limits: RunLimits(wallClockSeconds: 1),
+            sessionId: "cu-test",
+            nextAction: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1), note: "send"),
+                AgentAction(verb: .done, reason: "sent"),
+            ])
+        )
+        XCTAssertTrue(
+            result.outcome.isSuccess,
+            "The confirm wait must not count against the run; got \(result.outcome)"
+        )
+        XCTAssertEqual(result.metrics.confirmsApproved, 1)
     }
 
     func testGiveUpTerminatesWithReason() async {
@@ -246,8 +435,11 @@ final class ComputerUseLoopRunTests: XCTestCase {
     }
 
     func testDragResolvesBothEndpointsAndDrives() async {
-        // marks 1 (card) and 2 (trash).
-        let d = driver([el("card", "cell", "Card"), el("trash", "button", "Trash")])
+        // marks 1 (card) and 2 (trash); after the drag the card is gone.
+        let d = driver(sequence: [
+            [el("card", "cell", "Card"), el("trash", "button", "Trash")],
+            [el("trash", "button", "Trash")],
+        ])
         let result = await run(
             d,
             provider: ComputerUseLoop.scriptedProvider([
@@ -550,3 +742,24 @@ private actor ModelStepInputRecorder {
 }
 
 private struct TestInferenceError: Error {}
+
+/// Confirms every action, so tests can exercise the confirm seam with a
+/// read-effect click that `HardwiredGate` would otherwise auto-run.
+private struct AlwaysConfirmGate: ComputerUseGating {
+    func evaluate(
+        action: AgentAction,
+        effect: EffectClass,
+        appName: String?,
+        targetLabel: String?
+    ) async -> GateDecision {
+        .confirm(
+            ActionPreview(
+                appName: appName,
+                actionLabel: action.feedLabel,
+                targetLabel: targetLabel,
+                effect: effect,
+                note: action.note
+            )
+        )
+    }
+}

@@ -246,9 +246,59 @@ struct SubagentBatchAdmissionPlan: Sendable, Equatable {
     /// queued), so this wave deliberately submits only one request and lets
     /// BatchEngine own the queue.
     var engineQueuedAtAdmission = false
+    /// Preserve the exact sampled inputs with the decision. A later OS sample
+    /// must not be presented as the reason for an earlier refusal.
+    var memoryFacts: SubagentBatchMemoryFacts? = nil
+
+    var memoryDiagnostics: [String: Any] {
+        var result: [String: Any] = [
+            "engine_slots": engineSlots,
+            "ram_slots": ramSlots ?? NSNull(),
+            "limited_by": limitingFactors.map(\.rawValue).sorted(),
+        ]
+        guard let m = memoryFacts else { return result }
+        result["canonical_model"] = m.canonicalModelKey
+        result["target_already_resident"] = m.targetAlreadyResident
+        result["target_load_bytes"] = m.targetLoadFootprintBytes ?? NSNull()
+        result["per_child_bytes"] = m.effectiveChildHeadroomBytes ?? NSNull()
+        result["per_child_cap_bytes"] = m.perActiveChildHeadroomBytes ?? NSNull()
+        result["reclaimable_bytes"] = m.reclaimableBytes ?? NSNull()
+        result["releasable_parent_bytes"] = m.releasableParentBytes
+        result["os_reserve_bytes"] = m.osHeadroomBytes
+        result["load_budget_bytes"] = m.resolvedLoadBudgetBytes ?? NSNull()
+        return result
+    }
 }
 
 enum SubagentBatchAdmissionPlanner {
+    /// Resolve live facts at the single-child floor before a caller chooses
+    /// its wave width. Both direct spawns and batches use this boundary.
+    static func memoryFactsAfterReclaimingIfNeeded(
+        isolation: isolated (any Actor)? = #isolation,
+        ramSafetyEnabled: Bool,
+        sample: () async -> SubagentBatchMemoryFacts?,
+        reclaim: () async -> Bool
+    ) async -> SubagentBatchMemoryFacts? {
+        let initial = await sample()
+        guard ramSafetyEnabled, !Task.isCancelled,
+            let facts = initial,
+            let footprint = positive(facts.targetLoadFootprintBytes),
+            let perChild = positive(facts.effectiveChildHeadroomBytes),
+            let capacity = resolveMemoryCapacity(facts), capacity.slots == 0
+        else { return initial }
+        // Reclamation cannot make a request fit an explicit total budget.
+        // Nor do we trim just to widen a batch that can already serialize.
+        if let budget = facts.resolvedLoadBudgetBytes,
+            saturatingSubtract(budget, footprint) < perChild
+        { return initial }
+        guard await reclaim(), !Task.isCancelled else { return initial }
+        let refreshed = await sample()
+        log.info(
+            "[admission-recovery] model=\(facts.canonicalModelKey, privacy: .public) reclaimable_before=\(facts.reclaimableBytes ?? 0) reclaimable_after=\(refreshed?.reclaimableBytes ?? 0) fresh_estimate_available=\(refreshed != nil)"
+        )
+        return refreshed
+    }
+
     private static let log = Logger(
         subsystem: "ai.osaurus", category: "SubagentAdmission")
 
@@ -286,7 +336,8 @@ enum SubagentBatchAdmissionPlanner {
     }
 
     static func plan(_ input: SubagentBatchAdmissionInput) -> SubagentBatchAdmissionPlan {
-        let plan = planInternal(input)
+        var plan = planInternal(input)
+        plan.memoryFacts = input.memory
         logDiagnostics(input, plan)
         return plan
     }
@@ -488,7 +539,7 @@ enum SubagentBatchAdmissionPlanner {
             incrementalWeightChargeBytes: memory.flatMap { facts -> UInt64? in
                 facts.targetAlreadyResident ? 0 : facts.targetLoadFootprintBytes
             },
-            perActiveChildHeadroomBytes: memory?.perActiveChildHeadroomBytes,
+            perActiveChildHeadroomBytes: memory?.effectiveChildHeadroomBytes,
             projectedIncrementalPeakBytes: nil,
             projectedModelWorkingSetBytes: nil,
             limitingFactors: limitingFactors

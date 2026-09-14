@@ -42,6 +42,14 @@ public struct RunLimits: Sendable {
     /// where repetition is legitimate progress (scroll/observe/wait/find) are
     /// exempt.
     public var maxRepeatedActions: Int
+    /// When true (production default), a `done` after at least one acting
+    /// step is only accepted once some step's verify (or a later observe /
+    /// wait) saw the view change. Synthesized macOS input is fire-and-forget,
+    /// so without this a run whose every click was silently dropped could
+    /// still report success. The model gets ONE bounded challenge to observe
+    /// and confirm; a second unverified `done` ends the run as `gaveUp`.
+    /// Scripted evals that only exercise gate/parse contracts may turn it off.
+    public var requireVerifiedChangeForDone: Bool
 
     public init(
         maxSteps: Int = 24,
@@ -51,7 +59,8 @@ public struct RunLimits: Sendable {
         wallClockSeconds: TimeInterval = 300,
         modelStepTimeoutSeconds: TimeInterval = 90,
         maxInferenceRetries: Int = 2,
-        maxRepeatedActions: Int = 4
+        maxRepeatedActions: Int = 4,
+        requireVerifiedChangeForDone: Bool = true
     ) {
         self.maxSteps = max(1, maxSteps)
         self.maxConsecutiveInvalid = max(1, maxConsecutiveInvalid)
@@ -61,6 +70,7 @@ public struct RunLimits: Sendable {
         self.modelStepTimeoutSeconds = modelStepTimeoutSeconds
         self.maxInferenceRetries = max(0, maxInferenceRetries)
         self.maxRepeatedActions = maxRepeatedActions
+        self.requireVerifiedChangeForDone = requireVerifiedChangeForDone
     }
 }
 
@@ -202,6 +212,11 @@ public enum ComputerUseLoop {
         requestCloudVisionConsent: @escaping @Sendable () async -> CloudVisionConsentChoice = {
             .deny
         },
+        /// Returns a reason when no surface can show a confirm card right now
+        /// (e.g. the chat window is closed), so a gated action fails fast with
+        /// that reason instead of parking on `confirm` until the wall clock.
+        /// `nil` (the default) means confirms are presentable.
+        confirmUnavailable: @escaping @Sendable () async -> String? = { nil },
         limits: RunLimits = RunLimits(),
         policySummary: String = "",
         vision: VisionContext = .none,
@@ -209,7 +224,25 @@ public enum ComputerUseLoop {
         enableThinking: Bool? = nil,
         nextAction: AgentStepProvider? = nil
     ) async -> ComputerUseRunResult {
-        let deadline = Date().addingTimeInterval(limits.wallClockSeconds)
+        // The wall clock measures the RUN, not the user. Time spent inside a
+        // confirm card or a cloud-vision consent prompt is credited back, so a
+        // user who takes a few minutes to read a preview doesn't come back to
+        // "Reached the time limit" with nothing done.
+        let userWaitCredit = UserWaitCredit()
+        let baseDeadline = Date().addingTimeInterval(limits.wallClockSeconds)
+        var deadline: Date { baseDeadline.addingTimeInterval(userWaitCredit.total) }
+        let timedConfirm: @Sendable (ActionPreview) async -> Bool = { preview in
+            let began = Date()
+            let approved = await confirm(preview)
+            userWaitCredit.add(Date().timeIntervalSince(began))
+            return approved
+        }
+        let timedCloudVisionConsent: @Sendable () async -> CloudVisionConsentChoice = {
+            let began = Date()
+            let choice = await requestCloudVisionConsent()
+            userWaitCredit.add(Date().timeIntervalSince(began))
+            return choice
+        }
         // Default path drives the live ChatEngine; an injected `nextAction`
         // (tests / scripted-model evals) drives the loop deterministically and
         // never constructs an engine.
@@ -293,7 +326,7 @@ public enum ComputerUseLoop {
                 image: frame,
                 vision: vision,
                 consent: &runConsent,
-                requestConsent: requestCloudVisionConsent,
+                requestConsent: timedCloudVisionConsent,
                 availability: availability,
                 messages: &messages,
                 imageTokensInContext: &imageTokensInContext,
@@ -310,6 +343,18 @@ public enum ComputerUseLoop {
         var consecutiveReobserve = 0
         var lastActionSignature: String? = nil
         var repeatedActionCount = 0
+        // Completion evidence. `verifyChanged` counts changes seen by the
+        // verify capture right after an act; an app that renders late shows
+        // the change on a later observe/wait instead, which this flag records
+        // so a slow-but-real edit isn't mistaken for a dropped one.
+        var lateVerifiedChange = false
+        // The one bounded "prove it" re-ask a `done` with no verified change
+        // gets before the run is downgraded.
+        var doneChallengeIssued = false
+        // Told the model once that there is no screenshot rung to climb to
+        // (Screen Recording not granted) when a target failed to resolve, so
+        // it stops expecting pixels and works the AX list / `find` / gives up.
+        var screenRecordingNoticeGiven = false
 
         func terminate(_ outcome: RunOutcome) -> ComputerUseRunResult {
             metrics.steps = step
@@ -458,8 +503,50 @@ public enum ComputerUseLoop {
                 )
             )
 
-            // Terminal verbs end the run immediately.
+            // Terminal verbs end the run immediately — except a `done` that
+            // nothing observable backs up. Input posting carries no delivery
+            // proof, so "I clicked Send" is only trusted once a verify /
+            // observe saw the app change. One bounded challenge asks the model
+            // to look; a second unproven `done` is reported as such instead of
+            // as success.
             if action.verb == .done {
+                let acted = metrics.actsAttempted > 0
+                let verified = metrics.verifyChanged > 0 || lateVerifiedChange
+                if limits.requireVerifiedChangeForDone, acted, !verified {
+                    if doneChallengeIssued {
+                        return terminate(
+                            .gaveUp(
+                                reason:
+                                    "The model reported the task as done, but none of its "
+                                    + "\(metrics.actsAttempted) action(s) produced an observable "
+                                    + "change in the app, so completion could not be verified."
+                            )
+                        )
+                    }
+                    doneChallengeIssued = true
+                    feed.emit(
+                        SubagentActivityEvent(
+                            step: step,
+                            kind: .retry,
+                            title: "Unverified done",
+                            detail: "No action produced an observable change; asking the model to confirm."
+                        )
+                    )
+                    messages.append(
+                        ChatMessage(
+                            role: "tool",
+                            content:
+                                "You reported done, but none of your actions produced an observable "
+                                + "change in the app, so the result cannot be confirmed. Use `observe` "
+                                + "to check whether the intended state is actually present, then call "
+                                + "`done` only if it is; otherwise call `give_up` and say what did not "
+                                + "take effect.",
+                            tool_calls: nil,
+                            tool_call_id: callId
+                        )
+                    )
+                    continue
+                }
                 return terminate(.done(summary: action.reason ?? "Completed."))
             }
             if action.verb == .giveUp {
@@ -518,6 +605,7 @@ public enum ComputerUseLoop {
                 )
                 lastView = p.view
                 lastSnapshot = p.snapshot
+                if metrics.actsAttempted > 0, p.view?.hasChanges == true { lateVerifiedChange = true }
                 toolResult = augmentEmptyAX(p.render, view: p.view, availability: availability)
 
             case .wait:
@@ -544,6 +632,7 @@ public enum ComputerUseLoop {
                 )
                 lastView = p.view
                 lastSnapshot = p.snapshot
+                if metrics.actsAttempted > 0, p.view?.hasChanges == true { lateVerifiedChange = true }
                 toolResult =
                     "Waited \(seconds)s.\n"
                     + augmentEmptyAX(p.render, view: p.view, availability: availability)
@@ -577,14 +666,17 @@ public enum ComputerUseLoop {
                     appName: action.app,
                     targetLabel: action.app
                 )
+                var openAbort: RunOutcome? = nil
                 if await applyGate(
                     openDecision,
                     action: action,
                     effect: openEffect,
                     appName: action.app,
-                    confirm: confirm,
+                    confirm: timedConfirm,
+                    confirmUnavailable: confirmUnavailable,
                     toolResult: &toolResult,
                     advancedStep: &advancedStep,
+                    abort: &openAbort,
                     metrics: &metrics,
                     feed: feed,
                     step: step + 1
@@ -599,12 +691,38 @@ public enum ComputerUseLoop {
                     case .failure(let message):
                         toolResult = "Could not open app: \(message)"
                     }
+                } else if let openAbort {
+                    return terminate(openAbort)
                 }
 
             case .click, .doubleClick, .rightClick, .drag, .type, .setValue, .clear, .pressKey, .scroll:
                 guard let pid = currentPid else {
                     toolResult =
                         "No app is focused yet. Use `open` to launch or switch to an app first, then act."
+                    advancedStep = false
+                    break
+                }
+                // Re-seed the target before posting input at it. A quit or
+                // relaunched app leaves `currentPid` pointing at a dead (or
+                // recycled) process; per-pid posting into that "succeeds" and
+                // the model spends its step budget acting into a void.
+                if await driver.isRunning(pid: pid) == false {
+                    let name = currentApp ?? "The app"
+                    feed.emit(
+                        SubagentActivityEvent(
+                            step: step + 1,
+                            kind: .blocked,
+                            title: "\(name) is no longer running",
+                            detail: "pid \(pid) exited; input was not posted"
+                        )
+                    )
+                    currentPid = nil
+                    lastView = nil
+                    lastSnapshot = nil
+                    toolResult =
+                        "\(name) is no longer running (it quit or relaunched since it was opened), so "
+                        + "the action was not performed. Use `open` to attach to it again, then re-check "
+                        + "the view before continuing."
                     advancedStep = false
                     break
                 }
@@ -637,6 +755,7 @@ public enum ComputerUseLoop {
                         }
                         // Escalate the capture tier (ax→som→vision) when allowed, so the
                         // re-perception is richer than the one that just failed.
+                        var noPixelsNotice = ""
                         if CaptureRouter.canEscalate(from: currentTier, availability: availability) {
                             currentTier = CaptureRouter.nextTier(
                                 current: currentTier,
@@ -644,6 +763,16 @@ public enum ComputerUseLoop {
                                 availability: availability
                             )
                             metrics.raiseTier(to: currentTier)
+                        } else if !availability.screenRecording, !screenRecordingNoticeGiven {
+                            // The tool description promises a screenshot fallback;
+                            // without Screen Recording there is none. Say so once
+                            // instead of re-serving the same AX list until dead end.
+                            screenRecordingNoticeGiven = true
+                            noPixelsNotice =
+                                "\nNote: Screen Recording permission isn't granted, so there is no "
+                                + "screenshot fallback — only this accessibility list. Use `find` with a "
+                                + "query or `scroll` to locate the control, or `give_up` and ask the user "
+                                + "to grant Screen Recording in System Settings → Privacy & Security."
                         }
                         // Re-perceive so the next turn has a fresh view.
                         let p = await perceive(
@@ -668,10 +797,10 @@ public enum ComputerUseLoop {
                                 )
                             }
                             toolResult =
-                                "Still can't resolve that target after re-looking. \(reason)\nHere is the fresh view:\n"
-                                + p.render
+                                "Still can't resolve that target after re-looking. \(reason)\(noPixelsNotice)\n"
+                                + "Here is the fresh view:\n" + p.render
                         } else {
-                            toolResult = "\(reason)\nHere is the fresh view:\n" + p.render
+                            toolResult = "\(reason)\(noPixelsNotice)\nHere is the fresh view:\n" + p.render
                         }
                         break
                     case .deadEnd(let reason):
@@ -724,14 +853,17 @@ public enum ComputerUseLoop {
                     appName: currentApp,
                     targetLabel: targetLabel
                 )
+                var actAbort: RunOutcome? = nil
                 if await applyGate(
                     decision,
                     action: action,
                     effect: effect,
                     appName: currentApp,
-                    confirm: confirm,
+                    confirm: timedConfirm,
+                    confirmUnavailable: confirmUnavailable,
                     toolResult: &toolResult,
                     advancedStep: &advancedStep,
+                    abort: &actAbort,
                     metrics: &metrics,
                     feed: feed,
                     step: step + 1
@@ -752,6 +884,8 @@ public enum ComputerUseLoop {
                         step: step + 1
                     )
                     consecutiveDeadEnd = 0
+                } else if let actAbort {
+                    return terminate(actAbort)
                 }
 
             case .done, .giveUp:
@@ -771,7 +905,7 @@ public enum ComputerUseLoop {
                     image: frame,
                     vision: vision,
                     consent: &runConsent,
-                    requestConsent: requestCloudVisionConsent,
+                    requestConsent: timedCloudVisionConsent,
                     availability: availability,
                     messages: &messages,
                     imageTokensInContext: &imageTokensInContext,
@@ -796,8 +930,10 @@ public enum ComputerUseLoop {
         effect: EffectClass,
         appName: String?,
         confirm: (ActionPreview) async -> Bool,
+        confirmUnavailable: () async -> String? = { nil },
         toolResult: inout String,
         advancedStep: inout Bool,
+        abort: inout RunOutcome?,
         metrics: inout ComputerUseRunMetrics,
         feed: SubagentFeed,
         step: Int
@@ -826,6 +962,34 @@ public enum ComputerUseLoop {
                 appName: appName,
                 decision: "confirm"
             )
+            // Nobody can answer the card (chat window closed / headless
+            // dispatch). Parking here would burn the whole wall clock and end
+            // as "Reached the time limit" — end now with the real reason.
+            if let reason = await confirmUnavailable() {
+                ComputerUseTraceLog.recordGateResolution(
+                    step: step,
+                    action: action.feedLabel,
+                    approved: false
+                )
+                metrics.confirmsUnpresentable += 1
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .blocked,
+                        title: "Cannot ask for approval: \(action.feedLabel)",
+                        detail: reason
+                    )
+                )
+                toolResult = "Could not ask the user to approve that action: \(reason)."
+                advancedStep = false
+                abort = .gaveUp(
+                    reason:
+                        "\(action.feedLabel) needs the user's approval, but \(reason), so the run "
+                        + "cannot continue. Reopen the chat with this agent and try again, or lower "
+                        + "the autonomy policy's confirm threshold for this app."
+                )
+                return false
+            }
             metrics.confirmsRequested += 1
             feed.emit(
                 SubagentActivityEvent(
@@ -1058,15 +1222,42 @@ public enum ComputerUseLoop {
         case .success(let info):
             let snapshot = await driver.capture(pid: info.pid, tier: .ax)
             let view = AgentView.build(from: snapshot, previous: nil)
+            // The readiness poll gave up AND the follow-up capture is empty:
+            // the process exists but nothing is drivable yet. Reporting
+            // "Opened X" here made the model act into a void and then read the
+            // empty view as "X has no controls".
+            if !info.ready, view.items.isEmpty {
+                let message =
+                    "\(info.name) is running (pid \(info.pid)) but exposed no accessible window "
+                    + "within the readiness budget — it may still be starting, be hidden, or have "
+                    + "no open window. `wait` a few seconds and `open` it again, or ask the user "
+                    + "to bring one of its windows forward."
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .act,
+                        title: "Open \(info.name): not ready",
+                        detail: message,
+                        success: false
+                    )
+                )
+                return .failure(message)
+            }
             feed.emit(
                 SubagentActivityEvent(step: step, kind: .act, title: "Opened \(info.name)", success: true)
             )
+            var render = "Opened \(info.name).\n" + view.renderForModel()
+            if !info.ready {
+                render +=
+                    "\n(\(info.name) took longer than expected to become ready; this view may be "
+                    + "incomplete — `observe` before acting on anything that isn't listed.)"
+            }
             return .opened(
                 pid: info.pid,
                 app: info.name,
                 view: view,
                 snapshot: snapshot,
-                render: "Opened \(info.name).\n" + view.renderForModel()
+                render: render
             )
         case .failure(let error):
             feed.emit(
@@ -1263,16 +1454,36 @@ public enum ComputerUseLoop {
         // Stage any escalated frame for attachment after this step's tool result.
         if verifyTier != .ax { pendingFrameImage = snapshot.image }
         if view.hasChanges { metrics.verifyChanged += 1 }
+        metrics.recordRoute(result.routeUsed)
+        // A driver "success" only means the input was posted (or AXPress
+        // returned). Without an observed change it is unproven, and the
+        // model is told so — calling it "succeeded" here is what let stalled
+        // runs end in a confident `done`.
+        let unverified = result.success && !view.hasChanges
+        if unverified { metrics.unverifiedActs += 1 }
         feed.emit(
             SubagentActivityEvent(
                 step: step,
                 kind: .verify,
-                title: view.hasChanges ? "Change detected" : "No visible change",
-                success: result.success
+                title: view.hasChanges
+                    ? "Change detected"
+                    : (result.success ? "No visible change (input unverified)" : "No visible change"),
+                // Neutral (nil) for an unverified post: neither a proven
+                // landing nor a driver failure.
+                success: unverified ? nil : result.success
             )
         )
 
-        var out = result.success ? "Action succeeded." : "Action failed: \(result.error ?? "unknown")."
+        var out: String
+        if !result.success {
+            out = "Action failed: \(result.error ?? "unknown")."
+        } else if view.hasChanges {
+            out = "Action succeeded."
+        } else {
+            out =
+                "Input was posted, but no change was observed in the app afterwards, so it cannot "
+                + "be confirmed that it took effect."
+        }
         if result.stale { out += " (the element went stale)" }
         if result.removed { out += " (the element was removed)" }
         if let delta = result.delta?.focusedElement {
@@ -1286,7 +1497,15 @@ public enum ComputerUseLoop {
         case .skyLight, .none:
             break
         }
-        out += view.hasChanges ? " The view changed." : " The view looks unchanged."
+        if view.hasChanges {
+            out += " The view changed."
+        } else if unverified {
+            out +=
+                " The view looks unchanged. If the app may render late, `wait` or `observe` before "
+                + "retrying; do not report the task done unless the intended state is visible."
+        } else {
+            out += " The view looks unchanged."
+        }
         out += "\n\nCurrent view:\n" + view.renderForModel()
         return out
     }
@@ -1916,6 +2135,28 @@ private actor ScriptedActionCursor {
         let action = index < actions.count ? actions[index] : actions[actions.count - 1]
         index += 1
         return ModelActionCall(id: "scripted-\(index)", arguments: action.argumentsJSON())
+    }
+}
+
+/// Accumulated seconds the run spent waiting on the USER (confirm cards,
+/// cloud-vision consent). Credited back to the wall-clock deadline so those
+/// waits never count against the run's own budget. Lock-based rather than an
+/// actor because it is read synchronously at the loop boundary.
+final class UserWaitCredit: @unchecked Sendable {
+    private let lock = NSLock()
+    private var accumulated: TimeInterval = 0
+
+    var total: TimeInterval {
+        lock.lock()
+        defer { lock.unlock() }
+        return accumulated
+    }
+
+    func add(_ seconds: TimeInterval) {
+        guard seconds > 0 else { return }
+        lock.lock()
+        accumulated += seconds
+        lock.unlock()
     }
 }
 

@@ -24,6 +24,9 @@ public struct ComputerUseRunMetrics: Sendable, Equatable {
     public var confirmsRequested = 0
     public var confirmsApproved = 0
     public var confirmsDeclined = 0
+    /// Confirms that could not be shown at all (no chat surface mounted to
+    /// render the card). The run ends as `gaveUp` on the first one.
+    public var confirmsUnpresentable = 0
     /// Gate rejections (allowlist / deny disposition).
     public var blocked = 0
     /// Dead-end terminations encountered (resolution gave out).
@@ -35,6 +38,16 @@ public struct ComputerUseRunMetrics: Sendable, Equatable {
     /// retried as a coordinate click at the element's last-known center. High on
     /// Electron, whose element refs die between capture and click.
     public var coordinateFallbacks = 0
+    /// Mutating actions whose input was posted (the driver returned success)
+    /// but whose verify capture saw no view change. Synthesized input is
+    /// fire-and-forget on macOS — SkyLight / per-pid posting carries no
+    /// delivery acknowledgement — so this is the count of "we cannot prove it
+    /// landed" steps the model was told about honestly instead of as success.
+    public var unverifiedActs = 0
+    /// Per-route tally of synthesized input the driver reported, so the coarse
+    /// telemetry can name the dominant transport (`skyLight` on Chromium,
+    /// `perPid` on Cocoa, `hidFallback` when the cursor had to move).
+    public var routeCounts: [InputRoute: Int] = [:]
     /// Highest capture tier reached during the run.
     public var maxTier: CaptureTier = .ax
     /// Total model tokens (prompt + completion) consumed across all model
@@ -99,6 +112,66 @@ public struct ComputerUseRunMetrics: Sendable, Equatable {
     public mutating func raiseTier(to tier: CaptureTier) {
         if tier.rank > maxTier.rank { maxTier = tier }
     }
+
+    /// Tally the transport one action's input went through. `nil` (an AX
+    /// action such as `AXPress`, or a driver that doesn't report routes) is
+    /// not counted — it isn't a synthesized-input route.
+    public mutating func recordRoute(_ route: InputRoute?) {
+        guard let route else { return }
+        routeCounts[route, default: 0] += 1
+    }
+
+    /// Low-cardinality token for the run's dominant input transport: the
+    /// single route used when only one was, `mixed` when several were, and
+    /// `none` when no synthesized input was posted at all.
+    public var dominantRouteToken: String {
+        let used = routeCounts.filter { $0.value > 0 }
+        switch used.count {
+        case 0: return "none"
+        case 1: return used.keys.first!.telemetryToken
+        default: return "mixed"
+        }
+    }
+}
+
+extension InputRoute {
+    /// Stable snake_case analytics token, decoupled from the Swift case name.
+    var telemetryToken: String {
+        switch self {
+        case .skyLight: return "sky_light"
+        case .perPid: return "per_pid"
+        case .hidFallback: return "hid_fallback"
+        }
+    }
+}
+
+// MARK: - Pre-loop refusal stages (privacy-clean telemetry)
+
+/// Which pre-loop gate refused a `computer_use` invocation. Closed vocabulary:
+/// the dashboard segments `computer_use_refused` by this token, so adding a
+/// case is an analytics contract change. Order follows the entry path.
+public enum ComputerUseRefusalStage: String, Sendable, CaseIterable {
+    /// `ToolRegistry.runPermissionGate`: Accessibility not granted.
+    case permissionAccessibility = "permission_accessibility"
+    /// `ComputerUseKind.resolveModel`: Default agent, unknown agent, Tools
+    /// off, or the per-agent flag off.
+    case agentAuth = "agent_auth"
+    /// `SubagentModelResolution`: no model selected / configured override
+    /// not available.
+    case modelUnavailable = "model_unavailable"
+    /// Residency: a different local model is required but Local Orchestrator
+    /// Handoff is disabled.
+    case handoffDenied = "handoff_denied"
+    /// `SubagentSession` recursion guard: called from inside another subagent.
+    case recursion = "recursion"
+    /// `SubagentAdmission`: waited for the local GPU past the timeout.
+    case admissionTimeout = "admission_timeout"
+    /// Post-admission RAM-safety verdict: no capacity for a child run.
+    case ramSafety = "ram_safety"
+    /// Stopped by the user or cancelled before the loop started.
+    case cancelled
+    /// Any other pre-loop failure (kept so the funnel stays total).
+    case other
 }
 
 extension CaptureTier {

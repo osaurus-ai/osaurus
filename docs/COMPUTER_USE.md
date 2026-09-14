@@ -51,6 +51,23 @@ gate allows the action, and whether the action actually landed.
   ChatView can intercept its feed, but `SystemPromptComposer` strips it
   authoritatively unless the agent set `computerUseEnabled` (custom agents
   only; the Default agent cannot enable it).
+- **Runtime authorization (`#2258`).** `ComputerUseKind.resolveModel` re-checks
+  the owning agent on every invocation and refuses with a **stage-specific**
+  message: Default agent → "switch to a custom agent"; unknown agent; Tools off
+  → "turn Tools on"; flag off → "enable it under Agents → Configure → Subagents".
+  The agent comes from `SubagentScope.current()`, which falls back to the
+  Default agent when `ChatExecutionContext.currentAgentId` is unbound — so a
+  surface that wants Computer Use must bind the custom agent id (the chat turn,
+  `AgentDelegationDispatcher`, `AgentToolLoop`, and the Claude Code bridge
+  grant do; a bare `/v1` tool execution with no agent binding is refused).
+- **Readiness.** The agent editor's Computer Use card reports
+  `systemPermissionMissing` (Unavailable) when Accessibility is not granted, so
+  "Active" is only shown when the first call could actually start.
+- **Where the Orchestrator stands.** The built-in main chat never gets
+  `computer_use`, and an ephemeral spawned worker strips it too. The two paths
+  to drive apps are chatting with the custom agent directly, or adding that
+  agent to Settings → Delegation → Main Chat Spawn so the Orchestrator can
+  delegate to it (delegated runs keep the agent's full tool surface).
 - **Permissions.** Conforms to `PermissionedTool` and requires **Accessibility**
   (`SystemPermission.accessibility`). `ToolRegistry.runPermissionGate` preflights
   the permission before `execute` runs, failing cleanly (`kind: .unavailable`)
@@ -110,12 +127,43 @@ then runs only the phases the chosen verb needs:
 | `maxRepeatedActions` | 4 | Identical actions in a row before the run is treated as stalled. |
 | `maxInferenceRetries` | 2 | Retries for a failed inference call before the step errors. |
 | `modelStepTimeoutSeconds` | 90 | Per-step budget for the model's `agent_action` decision. |
-| `wallClockSeconds` | 300 | Wall-clock budget for the whole run. |
+| `wallClockSeconds` | 300 | Wall-clock budget for the run's own work. Time the user spends on a confirm card or cloud-vision consent prompt is credited back, so a slow approval never becomes "Reached the time limit". |
+| `requireVerifiedChangeForDone` | `true` | A `done` after at least one acting step is only accepted once a verify (or a later `observe` / `wait`) saw the view change. The model gets one challenge to look again; a second unproven `done` ends the run as `gaveUp`. Scripted evals that only exercise gate/parse contracts may turn it off. |
 
 ### Outcomes (`RunOutcome`)
 
 `done(summary)` · `gaveUp(reason)` · `stepCapReached` · `deadEnd(reason)` ·
 `interrupted` · `failed(reason)`.
+
+### Honest verify results
+
+Synthesized macOS input is fire-and-forget: `SLEventPostToPid` /
+`CGEvent.postToPid` return before the target processes the event and carry no
+delivery acknowledgement, so a driver "success" only means *the input was
+posted*. The verify step therefore reports three distinct states to the model:
+
+- **`Action succeeded.`** — the driver returned success **and** the re-perceive
+  saw the view change (`metrics.verifyChanged`).
+- **`Input was posted, but no change was observed …`** — the driver returned
+  success but nothing changed (`metrics.unverifiedActs`). The model is told to
+  `wait` / `observe` before retrying and never to report `done` on it alone.
+- **`Action failed: …`** — the driver itself failed (stale/removed element,
+  route error).
+
+Two more pre-act guards keep the model out of a void: the loop asks the driver
+whether `currentPid` is still alive before posting input (a quit or relaunched
+app is reported and `currentPid` cleared instead of "succeeding" into a dead
+pid), and `open` reports **not ready** — rather than "Opened X" — when the
+readiness poll exhausted its budget *and* the follow-up capture is empty.
+
+### Confirm cards need a surface
+
+The confirm/consent card is rendered by `ComputerUseConfirmOverlay`, mounted in
+`ChatView`. The overlay registers itself with `ComputerUsePromptQueue`
+(`presenterCount`); when no overlay is mounted (chat window closed, headless
+dispatch) a gated action fails fast — the run ends `gaveUp` with the reason
+"no chat window is open to show the approval card" — instead of parking on a
+card nobody can answer until the wall clock.
 
 ### The action envelope — `AgentAction`
 
@@ -385,18 +433,33 @@ Vivaldi / Opera).
 
 ## Telemetry
 
-`FeatureTelemetry.computerUseRun` emits one coarse, privacy-clean
-`computer_use_run` event per run — **no goal text, no app names, no per-step
-detail**:
+Three coarse, privacy-clean events form a funnel — **no goal text, no app
+names, no agent ids, no per-step detail** in any of them:
 
-`outcome`, `max_tier`, `steps_bucket` (`0` / `1-3` / `4-9` / `10+`),
-`confirms_bucket`, `ax_resolvable` (`na` / `low` / `med` / `high`),
-`verify_pass`, `had_dead_end`, `had_block`, `cloud_vision_used`.
+| Event | Fired from | Properties |
+|-------|-----------|------------|
+| `computer_use_attempt` | `ToolRegistry.runPermissionGate` — the one chokepoint every real `computer_use` invocation passes, *before* any refusal | none |
+| `computer_use_refused` | The Accessibility gate (registry) and `ComputerUseTool.execute` for every other pre-loop refusal | `stage` ∈ `permission_accessibility` · `agent_auth` · `model_unavailable` · `handoff_denied` · `recursion` · `admission_timeout` · `ram_safety` · `cancelled` · `other` |
+| `computer_use_run` | `ComputerUseKind.run`, after the loop | `outcome`, `max_tier`, `steps_bucket` (`0` / `1-3` / `4-9` / `10+`), `confirms_bucket`, `ax_resolvable` (`na` / `low` / `med` / `high`), `verify_pass`, `had_dead_end`, `had_block`, `cloud_vision_used`, `route_used` (`none` / `sky_light` / `per_pid` / `hid_fallback` / `mixed`), `done_without_change` (declared `done` after acting while no view change was ever observed), `unverified_acts_bucket` |
+
+Reading the funnel: `attempt − refused − run` should be ≈ 0. A drop in
+`attempt` is demand (the model stopped calling the tool); a rise in `refused`
+is a gate (segment by `stage`); a rise in `done_without_change` or a fall in
+`verify_pass` is driver/verify reliability. Before this funnel existed only
+`computer_use_run` was emitted, so every pre-loop refusal (Default-agent
+scope, `#2258` runtime deny, missing Accessibility, handoff/admission/RAM
+policy) was invisible and read as "usage dropped".
+
+`ComputerUseKind` tags its own refusals (`refusalStage`: agent auth, model,
+handoff); host-level refusals are attributed from **structured envelope
+fields** the host sets (`recursion: true`, `admission: timeout`,
+`admission: stable_memory_refusal`, `cancelled: true`) — never from message
+text — so the stage token is stable across copy edits.
 
 The full-fidelity `ComputerUseRunMetrics` — run-level counters, the highest
-capture tier reached (`maxTier`), and per-`EffectClass` counts — stays in-process
-and feeds the eval harness, which the shipped telemetry intentionally never
-sends.
+capture tier reached (`maxTier`), `unverifiedActs`, `routeCounts`,
+`confirmsUnpresentable`, and per-`EffectClass` counts — stays in-process and
+feeds the eval harness, which the shipped telemetry intentionally never sends.
 
 ## Storage & configuration
 
@@ -415,6 +478,15 @@ sends.
 - **Eval suite** — `Packages/OsaurusEvals/Suites/ComputerUse/` pins the gate
   end-to-end with pure data (no driver, no permissions, no model), so it runs
   CI-safe on every PR. See its [README](../Packages/OsaurusEvals/Suites/ComputerUse/README.md).
+- **Loop eval suite** — `Packages/OsaurusEvals/Suites/ComputerUseLoop/` runs
+  the real `ComputerUseLoop` against a scripted in-memory driver. Its scripted
+  (`scriptedActions`) cases are model-free and pin the reliability contracts
+  above — unverified `done` → `gaveUp`, honest unverified-input reporting,
+  not-ready `open`, confirm wait credited to the wall clock, fail-fast when no
+  confirm surface exists. Both suites are in `make evals-deterministic`
+  (`floors.json` pass rate 1.0); that lane sets
+  `OSAURUS_EVALS_SCRIPTED_ONLY=1` so the suite's live-model cases skip and no
+  model is loaded. See its [README](../Packages/OsaurusEvals/Suites/ComputerUseLoop/README.md).
 - **Local web-form proof** — `Packages/OsaurusCore/Tests/ComputerUse/Fixtures/WebForm/`
   plus `ComputerUseEvidencePackTests` prove a deterministic form-fill path
   through the real loop using `MockMacDriver`; evidence is generated by

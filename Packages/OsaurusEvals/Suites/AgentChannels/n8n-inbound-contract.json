@@ -1,0 +1,17 @@
+{
+  "id": "agent_channels.n8n-inbound-contract",
+  "domain": "agent_channels",
+  "label": "agent channels • n8n webhook ingress: verify-before-parse, fail-closed allowlists, dedupe, poll ownership",
+  "query": "deterministic policy pin — no model involved",
+  "notes": "n8n inbound contract over the REAL AgentChannelWebhookIngress with an in-memory store, a fixed secret resolver and a recording relay. Pins: a bad secret with an unparseable body is 401 before any parsing or storage; a verified, allowlisted envelope is 202 with task_id == session partition id and a poll_url; a replayed event_id is 200 duplicate with the same task_id and no second dispatch; unknown sender / conversation are 202 rejected with sender_not_allowlisted / room_not_allowlisted and no dispatch or rows; v:2 is 400 unsupported_envelope_version and a missing content is 400 invalid_payload; non-loopback plaintext is 426 secure_channel_required unless the call rides Secure Channel or the connection allows plaintext; polling an owned task returns sanitized output while foreign/unknown tasks are 404; the secret never appears in any response, activity event or audit row. CI-safe: no network, no model, no keychain.",
+  "fixtures": {},
+  "expect": {
+    "agentChannels": {
+      "scenario": "n8n_inbound_contract",
+      "allowedRoomIds": ["n8n-test"],
+      "deniedRoomId": "other-room",
+      "allowedSenderId": "tpae",
+      "deniedSenderId": "mallory"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "id": "computer_use_loop.done-without-verify-rejected",
+  "domain": "computer_use_loop",
+  "label": "CU loop • a done nothing observable backs up is not success",
+  "query": "Click Send.",
+  "notes": "Deterministic (scripted-model) case for the fire-and-forget input contract: the Send button accepts the click at the driver layer but has no effect (no onClick), so the verify capture sees no change. The model then declares done twice. The loop must challenge the first done, and end the run as gaveUp on the second — never report success for an act nobody observed landing. Pins RunLimits.requireVerifiedChangeForDone (production default) and metrics.unverifiedActs.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Mail",
+      "maxSteps": 6,
+      "elements": [
+        { "id": "send", "role": "button", "label": "Send" }
+      ],
+      "expectOutcome": ["gaveUp"],
+      "successClicked": ["send"],
+      "minUnverifiedActs": 1,
+      "finalSummaryContains": ["could not be verified"],
+      "feedTitleContains": ["No visible change (input unverified)", "Unverified done"],
+      "scriptedActions": [
+        "{\"verb\":\"click\",\"target\":{\"mark\":1},\"note\":\"send it\"}",
+        "{\"verb\":\"done\",\"reason\":\"sent the message\"}",
+        "{\"verb\":\"done\",\"reason\":\"really, it is sent\"}"
+      ]
+    }
+  }
+}

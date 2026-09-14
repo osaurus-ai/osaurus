@@ -2567,6 +2567,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             /// What a click on this element does (buttons / toggles). Omitted
             /// for plain fields and static text.
             public let onClick: ClickEffect?
+            /// What pressing Return does while this (editable) element is
+            /// focused — the conventional submit. Gives a type→press_key plan
+            /// an observable result to verify. Omitted → Return is a no-op.
+            public let onReturn: ClickEffect?
             /// Lowest capture tier at which this element is visible: `ax`
             /// (default), `som`, or `vision`. An element gated to `som`/`vision`
             /// is INVISIBLE in a plain AX capture — the Electron / custom-drawn
@@ -2595,6 +2599,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 editable: Bool? = nil,
                 hidden: Bool? = nil,
                 onClick: ClickEffect? = nil,
+                onReturn: ClickEffect? = nil,
                 minTier: String? = nil,
                 clickFailures: Int? = nil,
                 revealAfterCaptures: Int? = nil,
@@ -2608,6 +2613,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 self.editable = editable
                 self.hidden = hidden
                 self.onClick = onClick
+                self.onReturn = onReturn
                 self.minTier = minTier
                 self.clickFailures = clickFailures
                 self.revealAfterCaptures = revealAfterCaptures
@@ -2722,6 +2728,35 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// gate/verb scenarios run in CI with no model. When present, the model
         /// is never called; when nil, the case uses the live `modelId`.
         public let scriptedActions: [String]?
+        /// Wall-clock budget for the run (`RunLimits.wallClockSeconds`).
+        /// nil → 240. Set low together with `confirmDelaySeconds` to prove
+        /// that user confirm time is credited back to the deadline.
+        public let wallClockSeconds: Double?
+        /// Seconds the harness waits inside every confirm before approving —
+        /// a stand-in for a slow user on the card. nil → approve immediately.
+        public let confirmDelaySeconds: Double?
+        /// When true, the harness tells the loop no surface can render a
+        /// confirm card, so a gated action must fail fast (`gaveUp`) instead
+        /// of being approved.
+        public let confirmUnavailable: Bool?
+        /// When true, the scripted driver's `open` reports `ready: false` and
+        /// the capture right after it is empty — the "app launched but exposed
+        /// no window in time" shape the loop must report as a failed open.
+        public let openNotReady: Bool?
+        /// `RunLimits.requireVerifiedChangeForDone`. nil → the production
+        /// default (true). Set false only for scenes that intentionally
+        /// exercise gate/parse contracts with a static tree.
+        public let requireVerifiedChangeForDone: Bool?
+        /// Floor on `metrics.unverifiedActs` — actions the driver accepted
+        /// but whose verify saw no change. Scores that the loop counted (and
+        /// therefore reported) a posted-but-unobserved input. nil → not scored.
+        public let minUnverifiedActs: Int?
+        /// Floor on `metrics.verifyChanged`. nil → not scored.
+        public let minVerifyChanged: Int?
+        /// Case-insensitive substrings that must each appear in at least one
+        /// feed event title — how a case pins loop-side reporting (e.g. an
+        /// "Open X: not ready" event) that never lands in the tree or summary.
+        public let feedTitleContains: [String]?
 
         public init(
             app: String,
@@ -2739,7 +2774,15 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             expectVerbsInOrder: [String]? = nil,
             scoredMaxModelTokens: Int? = nil,
             redactEvidenceValues: Bool? = nil,
-            scriptedActions: [String]? = nil
+            scriptedActions: [String]? = nil,
+            wallClockSeconds: Double? = nil,
+            confirmDelaySeconds: Double? = nil,
+            confirmUnavailable: Bool? = nil,
+            openNotReady: Bool? = nil,
+            requireVerifiedChangeForDone: Bool? = nil,
+            minUnverifiedActs: Int? = nil,
+            minVerifyChanged: Int? = nil,
+            feedTitleContains: [String]? = nil
         ) {
             self.app = app
             self.elements = elements
@@ -2757,6 +2800,14 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.scoredMaxModelTokens = scoredMaxModelTokens
             self.redactEvidenceValues = redactEvidenceValues
             self.scriptedActions = scriptedActions
+            self.wallClockSeconds = wallClockSeconds
+            self.confirmDelaySeconds = confirmDelaySeconds
+            self.confirmUnavailable = confirmUnavailable
+            self.openNotReady = openNotReady
+            self.requireVerifiedChangeForDone = requireVerifiedChangeForDone
+            self.minUnverifiedActs = minUnverifiedActs
+            self.minVerifyChanged = minVerifyChanged
+            self.feedTitleContains = feedTitleContains
         }
     }
 
