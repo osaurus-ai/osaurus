@@ -3747,7 +3747,9 @@ extension FloatingInputCard {
     private func recentFoldersList(dismiss: @escaping () -> Void) -> AnyView {
         AnyView(
             RecentFoldersList(
-                activePath: folderState.rootPath?.standardizedFileURL.path,
+                // Stored string, not a URL: standardizing a file URL can stat
+                // the path, and this runs on the main actor during body.
+                activePath: folderState.lastKnownPath,
                 onPick: { entry in
                     dismiss()
                     applyRecentFolder(entry)

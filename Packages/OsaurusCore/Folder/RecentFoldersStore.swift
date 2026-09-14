@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Process-wide list of the folders the user most recently attached as a
-//  working folder, so the composer can offer them on hover instead of
+//  working folder, so the composer and agent editor can offer them instead of
 //  sending the user through the open panel for the same few folders again
 //  and again. Every explicit pick (chat folder chip, agent editor Working
 //  Folder row, project folder) records here; agent/project defaults being
@@ -27,7 +27,10 @@ public final class RecentFoldersStore: ObservableObject {
         public let bookmark: Data?
 
         public var id: String { path }
-        public var name: String { URL(fileURLWithPath: path).lastPathComponent }
+        /// String-only: `URL(fileURLWithPath:)` stats the path to decide whether
+        /// it is a directory, which is filesystem I/O on whatever thread renders
+        /// the row (a network volume could stall it).
+        public var name: String { (path as NSString).lastPathComponent }
 
         public init(path: String, bookmark: Data?) {
             self.path = path
@@ -49,9 +52,11 @@ public final class RecentFoldersStore: ObservableObject {
 
     // MARK: - Mutation
 
-    /// Move (or insert) a folder to the front of the list.
+    /// Move (or insert) a folder to the front of the list. Callers pass an
+    /// already-standardized path; only trailing slashes are trimmed here, with
+    /// pure string work so nothing touches the filesystem on the main actor.
     public func record(path: String, bookmark: Data?) {
-        let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
+        let normalized = Self.trimTrailingSlashes(path)
         guard !normalized.isEmpty else { return }
         var next = entries.filter { $0.path != normalized }
         next.insert(Entry(path: normalized, bookmark: bookmark), at: 0)
@@ -72,8 +77,8 @@ public final class RecentFoldersStore: ObservableObject {
 
     /// Drop entries whose directory is gone. The existence checks are
     /// filesystem I/O (possibly on a network volume), so they run detached
-    /// and apply on the main actor when done. Called when the hover panel
-    /// opens so a deleted folder disappears rather than failing on pick.
+    /// and apply on the main actor when done. Called when a recents list
+    /// appears so a deleted folder disappears rather than failing on pick.
     public func pruneMissing() {
         let snapshot = entries
         guard !snapshot.isEmpty else { return }
@@ -102,6 +107,12 @@ public final class RecentFoldersStore: ObservableObject {
             guard directoryExists(at: entry.path) else { return nil }
             return URL(fileURLWithPath: entry.path, isDirectory: true)
         }.value
+    }
+
+    private nonisolated static func trimTrailingSlashes(_ path: String) -> String {
+        var trimmed = Substring(path)
+        while trimmed.count > 1, trimmed.hasSuffix("/") { trimmed = trimmed.dropLast() }
+        return String(trimmed)
     }
 
     private nonisolated static func directoryExists(at path: String) -> Bool {
