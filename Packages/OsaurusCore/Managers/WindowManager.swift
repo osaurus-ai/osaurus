@@ -478,7 +478,15 @@ public final class WindowManager: NSObject, ObservableObject {
             let screen = window.screen ?? activeScreen
         else { return }
         pushMinimumContentSize(for: window, identifier: identifier, on: screen)
-        guard NSEvent.pressedMouseButtons == 0 else { return }
+        guard NSEvent.pressedMouseButtons == 0 else {
+            // A drag between displays is in progress. `windowDidChangeScreen`
+            // fires mid-drag and nothing re-runs this afterwards, so without
+            // a retry a window dragged onto a smaller display keeps its
+            // oversized frame until the next show. Re-fit once the button
+            // is released.
+            deferFitUntilMouseUp(identifier, repositions: repositions)
+            return
+        }
         let vf = screen.visibleFrame
         var frame = window.frame
         frame.size.width = min(frame.width, vf.width)
@@ -494,6 +502,45 @@ public final class WindowManager: NSObject, ObservableObject {
     fileprivate func windowDidChangeScreen(_ identifier: WindowIdentifier) {
         guard let window = windows[identifier] else { return }
         fitToScreen(window, identifier: identifier, repositions: false)
+    }
+
+    /// Windows whose fit was skipped mid-drag, keyed by identifier, with the
+    /// strongest `repositions` requested while the button was down.
+    private var pendingFits: [WindowIdentifier: Bool] = [:]
+    private var mouseUpMonitor: Any?
+
+    /// Arm a one-shot local monitor that re-runs `fitToScreen` for every
+    /// deferred window on the next mouse-up. Local monitors only see events
+    /// delivered to this app, which is the case for a drag of our own
+    /// window; the monitor is removed as soon as it fires so idle sessions
+    /// carry no observer.
+    private func deferFitUntilMouseUp(_ identifier: WindowIdentifier, repositions: Bool) {
+        pendingFits[identifier] = (pendingFits[identifier] ?? false) || repositions
+        guard mouseUpMonitor == nil else { return }
+        mouseUpMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseUp, .rightMouseUp, .otherMouseUp]
+        ) { [weak self] event in
+            // Let the window finish its own drag handling first; running the
+            // fit inside the event callback would move the window while
+            // AppKit is still committing the drag's final frame.
+            DispatchQueue.main.async { [weak self] in
+                self?.runPendingFits()
+            }
+            return event
+        }
+    }
+
+    private func runPendingFits() {
+        if let monitor = mouseUpMonitor {
+            NSEvent.removeMonitor(monitor)
+            mouseUpMonitor = nil
+        }
+        let fits = pendingFits
+        pendingFits = [:]
+        for (identifier, repositions) in fits {
+            guard let window = windows[identifier] else { continue }
+            fitToScreen(window, identifier: identifier, repositions: repositions)
+        }
     }
 
     private var screenParametersCancellable: AnyCancellable?
