@@ -8454,13 +8454,15 @@ private struct InputActionMenuButton: View {
         let action: () -> Void
         @Environment(\.theme) private var theme
         @State private var isHovering = false
+        @State private var showReason = false
 
         private var isDisabled: Bool { disabledReason != nil }
 
         var body: some View {
-            // Inert rather than `.disabled`: a disabled Button stops hover
-            // events reaching the trailing info icon, which would hide its
-            // tooltip, the only place the reason is shown.
+            // Inert rather than `.disabled` so the row still tracks hover.
+            // The info icon is an overlay sibling rather than part of the
+            // Button label: `.help` never fires inside a plain-style label
+            // in a popover, and a sibling receives its own hover events.
             Button(action: { if !isDisabled { action() } }) {
                 HStack(spacing: 10) {
                     Image(systemName: icon)
@@ -8473,11 +8475,9 @@ private struct InputActionMenuButton: View {
                         .foregroundColor(theme.primaryText)
                         .opacity(isDisabled ? 0.45 : 1)
                     Spacer(minLength: 0)
-                    if let disabledReason {
-                        Image(systemName: "info.circle")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                            .help(disabledReason)
+                    if isDisabled {
+                        // Reserve the trailing slot; the live icon is overlaid.
+                        Color.clear.frame(width: 14, height: 14)
                     }
                 }
                 .padding(.horizontal, 12)
@@ -8495,6 +8495,28 @@ private struct InputActionMenuButton: View {
             .onHover { hovering in
                 withAnimation(.easeOut(duration: 0.12)) {
                     isHovering = hovering && !isDisabled
+                }
+            }
+            .overlay(alignment: .trailing) {
+                if let disabledReason {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(showReason ? theme.primaryText : theme.secondaryText)
+                        .frame(width: 14, height: 14)
+                        .contentShape(Rectangle())
+                        .padding(.trailing, 18)
+                        .onHover { showReason = $0 }
+                        .popover(isPresented: $showReason, arrowEdge: .trailing) {
+                            disabledReason
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.primaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: 200, alignment: .leading)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 8)
+                                .background(theme.primaryBackground)
+                                .environment(\.theme, theme)
+                        }
                 }
             }
         }
