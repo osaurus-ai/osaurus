@@ -19,6 +19,23 @@ import Testing
 @MainActor
 struct ChatAttachmentSecurityTests {
 
+    @Test func switchingToTextModel_preservesDraftAttachments() async throws {
+        try await ChatHistoryTestStorage.run {
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+            let session = window.session
+            session.selectedModel = "vision-source"
+            let image = Attachment.image(Data([1, 2, 3]))
+            let document = Attachment.document(filename: "notes.txt", content: "Keep me", fileSize: 7)
+            session.pendingAttachments = [image, document]
+            session.selectedModel = "text-target"
+            #expect(session.pendingAttachments.map(\.id) == [image.id, document.id])
+            #expect(throws: ModelMediaCapabilities.UnsupportedAttachment.self) {
+                try ModelMediaCapabilities.validateAttachments(session.pendingAttachments, capabilities: .textOnly)
+            }
+        }
+    }
+
     @Test func audioPickerExtensions_areRoutedAsAudioAttachments() {
         let extensions = [
             "wav", "wave", "mp3", "mpeg", "m4a", "x-m4a", "flac", "ogg",

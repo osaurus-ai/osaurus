@@ -139,7 +139,7 @@ public final class SandboxAgentProvisioner {
 
         let removedMapping = SandboxAgentMap.unregister(agentId: agentId)
         let removedPluginState = SandboxPluginManager.shared.removeAgentState(for: agentId)
-        let removedHostWorkspace = removeHostWorkspace(at: hostWorkspace)
+        let removedHostWorkspace = await removeHostWorkspace(at: hostWorkspace)
         // Drop any tracked background-job pids — `removeAgentUser`
         // pkill's the user's processes a few lines below, so the pids
         // we still hold in memory are immediately invalid. Clearing
@@ -286,10 +286,20 @@ public final class SandboxAgentProvisioner {
         SandboxPackageManifest.shared.reconcile(agentId: agentId, apk: nil, pip: pip, npm: npm)
     }
 
-    private func removeHostWorkspace(at url: URL) -> Bool {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: url.path) else { return false }
-        try? fm.removeItem(at: url)
-        return true
+    /// Delete an agent's host workspace off the main actor.
+    ///
+    /// This type is `@MainActor`, so the removal used to walk and unlink the
+    /// whole workspace tree on the main thread. An agent workspace can hold a
+    /// populated virtual environment or node_modules, and that tree walk is
+    /// long enough to trip the app-hang watchdog. The existence check and the
+    /// delete both run on a detached task now; the caller still learns whether
+    /// there was anything to remove.
+    private func removeHostWorkspace(at url: URL) async -> Bool {
+        await Task.detached(priority: .utility) {
+            let fm = FileManager.default
+            guard fm.fileExists(atPath: url.path) else { return false }
+            try? fm.removeItem(at: url)
+            return true
+        }.value
     }
 }

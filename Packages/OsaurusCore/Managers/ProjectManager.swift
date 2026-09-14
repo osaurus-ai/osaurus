@@ -78,6 +78,7 @@ public final class ProjectManager: ObservableObject {
         project.folderBookmark = bookmark
         project.folderPath = path
         update(project)
+        RecentFoldersStore.shared.record(path: path, bookmark: bookmark)
         return path
     }
 

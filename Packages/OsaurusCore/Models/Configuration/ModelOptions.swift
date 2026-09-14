@@ -223,8 +223,30 @@ enum ModelProfileRegistry {
         AutoThinkingProfile.self,
     ]
 
+    /// Memoized `profile(for:)` results, keyed by model id.
+    ///
+    /// The lookup walks every registered profile and calls `matches`, and
+    /// those matchers lowercase the id and run family regexes. SwiftUI reads
+    /// this from composer and picker body getters on every evaluation, so the
+    /// scan showed up on the main thread in hang samples. The answer is a pure
+    /// function of the id (`profiles` is a compile-time list), so it can be
+    /// cached for the life of the process. A present key with a `nil` value is
+    /// a valid "no profile matches" hit.
+    private static let profileMemoLock = NSLock()
+    private nonisolated(unsafe) static var profileMemo: [String: (any ModelProfile.Type)?] = [:]
+
     static func profile(for modelId: String) -> (any ModelProfile.Type)? {
-        profiles.first { $0.matches(modelId: modelId) }
+        profileMemoLock.lock()
+        let cached = profileMemo[modelId]
+        profileMemoLock.unlock()
+        // Outer optional: was the id cached. Inner: did anything match.
+        if let cached { return cached }
+
+        let resolved = profiles.first { $0.matches(modelId: modelId) }
+        profileMemoLock.lock()
+        profileMemo[modelId] = resolved
+        profileMemoLock.unlock()
+        return resolved
     }
 
     static func defaults(for modelId: String) -> [String: ModelOptionValue] {

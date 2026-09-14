@@ -45,6 +45,42 @@ public final class ManagementStateManager: ObservableObject {
     /// Persists the last selected tab within the current app session.
     @Published public var selectedTab: ManagementTab = .settings
 
+    // MARK: - Minimum Window Size
+
+    /// The size below which the settings layout stops working: the sidebar
+    /// plus a content pane wide enough for the two-column panels, and
+    /// enough height that the tallest tabs don't scroll immediately.
+    /// Windows on screens that can show this much use it verbatim; see
+    /// `minimumContentSize`.
+    public static let designMinimumContentSize = CGSize(width: 940, height: 640)
+
+    /// The effective minimum content size for the settings window: the
+    /// design minimum, clamped to what its screen can actually show.
+    /// `ManagementView` applies it as `.frame(minWidth:minHeight:)`, which
+    /// the hosting controller mirrors into the window's `contentMinSize`.
+    /// Without the clamp, a screen whose visible area is smaller than the
+    /// design minimum (e.g. a 13" MacBook Air at "Larger Text", 1024x666)
+    /// gets a window AppKit cannot shrink to fit, so its title bar hides
+    /// under the menu bar and the bottom of the sidebar is cut off (#2761).
+    /// Pushed by `WindowManager` on creation and whenever the window
+    /// changes screen. Same scheme as `ChatWindowState.minimumContentSize`.
+    @Published public private(set) var minimumContentSize: CGSize =
+        ManagementStateManager.designMinimumContentSize
+
+    /// Clamp the design minimum to `availableContentSize`, the largest
+    /// content area the window's screen can show (visible frame minus the
+    /// window's own titlebar chrome). An axis at or below zero means "no
+    /// screen known" and keeps the design value, so a transient
+    /// measurement can't collapse the floor.
+    public func updateMinimumContentSize(availableContentSize available: CGSize) {
+        let design = Self.designMinimumContentSize
+        var next = design
+        if available.width > 0 { next.width = min(design.width, floor(available.width)) }
+        if available.height > 0 { next.height = min(design.height, floor(available.height)) }
+        guard next != minimumContentSize else { return }
+        minimumContentSize = next
+    }
+
     /// One-shot request to focus a specific sub-tab inside `VoiceView`.
     /// VoiceView observes this and resets it to nil after applying.
     @Published public var voiceSubTabRequest: String?

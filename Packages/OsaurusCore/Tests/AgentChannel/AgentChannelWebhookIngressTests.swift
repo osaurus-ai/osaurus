@@ -599,6 +599,73 @@ struct AgentChannelWebhookIngressTests {
         }
     }
 
+    // MARK: - Ping
+
+    @Test func pingVerifiesTheSecretAndReportsTransportWithoutTouchingTasks() async throws {
+        let limiter = PairingRateLimiter(window: 60, maxPerWindow: 100, denialCooldown: 60)
+        try await withHarness(connections: [Self.connection(method: .hmacSHA256)], rateLimiter: limiter) { harness in
+            let signature = AgentChannelAsyncSubstrate.hmacSHA256Hex(body: Data(), secret: Self.secret)
+            let headers = ["X-Osaurus-Channel-Signature": "sha256=\(signature)"]
+
+            let loopback = await harness.ingress.handlePing(Self.request(body: Data(), headers: headers))
+            #expect(loopback.status == 200)
+            let body = Self.json(loopback)
+            #expect(body["status"] as? String == "ok")
+            #expect(body["connection_id"] as? String == Self.connectionId)
+            #expect(body["verification"] as? String == "hmac_sha256")
+            #expect(body["header"] as? String == "X-Osaurus-Channel-Signature")
+            #expect(body["secure_channel"] as? Bool == false)
+            #expect(body["transport"] as? String == "loopback")
+            #expect(!loopback.penalizeSource)
+
+            // Remote plaintext is refused under the default policy...
+            let remote = await harness.ingress.handlePing(
+                Self.request(body: Data(), headers: headers, isLoopback: false, source: "172.17.0.2")
+            )
+            #expect(remote.status == 426)
+            #expect(Self.errorCode(remote) == "secure_channel_required")
+
+            // ...and accepted through Secure Channel, even when relay-origin.
+            let secure = await harness.ingress.handlePing(
+                Self.request(body: Data(), headers: headers, isLoopback: false, isSecureChannel: true)
+            )
+            #expect(secure.status == 200)
+            #expect(Self.json(secure)["secure_channel"] as? Bool == true)
+            #expect(Self.json(secure)["transport"] as? String == "secure_channel")
+
+            // A bad secret is 401 and penalized, exactly like inbound/poll.
+            let bad = await harness.ingress.handlePing(
+                Self.request(
+                    body: Data(),
+                    headers: ["X-Osaurus-Channel-Signature": "sha256=deadbeef"],
+                    source: "192.168.1.30"
+                )
+            )
+            #expect(bad.status == 401)
+            #expect(bad.penalizeSource)
+            let afterPenalty = await harness.ingress.handlePing(
+                Self.request(body: Data(), headers: headers, source: "192.168.1.30")
+            )
+            #expect(afterPenalty.status == 429)
+
+            // The probe never counts as a poll and never registers a task.
+            let health = await harness.ingress.healthSnapshot(connectionId: Self.connectionId)
+            #expect(health.pollRequests == 0)
+            #expect(health.signatureFailures == 1)
+        }
+    }
+
+    @Test func pingIsRefusedForUnknownDisabledAndForeignConnections() async throws {
+        try await withHarness(connections: [Self.connection(enabled: false)]) { harness in
+            let disabled = await harness.ingress.handlePing(Self.request(body: Data()))
+            #expect(disabled.status == 403)
+            let unknown = await harness.ingress.handlePing(Self.request(body: Data(), connectionId: "nope"))
+            #expect(unknown.status == 404)
+            let wrongKind = await harness.ingress.handlePing(Self.request(body: Data(), kind: "discord"))
+            #expect(wrongKind.status == 400)
+        }
+    }
+
     // MARK: - Rate limiting
 
     @Test func dedicatedRateLimiterReturns429AndPenalizesBadSecrets() async throws {
@@ -673,6 +740,12 @@ struct AgentChannelWebhookIngressTests {
             AgentChannelWebhookIngress.route(for: "/channels/n8n/n8n-main/inbound")
                 == .inbound(kind: "n8n", connectionId: "n8n-main")
         )
+        #expect(
+            AgentChannelWebhookIngress.route(for: "/channels/n8n/n8n-main/ping")
+                == .ping(kind: "n8n", connectionId: "n8n-main")
+        )
+        #expect(AgentChannelWebhookIngress.pingPath(kind: "n8n", connectionId: " n8n-main ") == "/channels/n8n/n8n-main/ping")
+        #expect(AgentChannelWebhookIngress.route(for: "/channels/n8n/n8n-main/ping/x") == nil)
         #expect(
             AgentChannelWebhookIngress.route(for: "/channels/n8n/n8n-main/tasks/abc")
                 == .taskPoll(kind: "n8n", connectionId: "n8n-main", taskId: "abc")

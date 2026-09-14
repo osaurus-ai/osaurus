@@ -16,7 +16,9 @@ import Testing
 @Suite("MLXService runtime policy gates")
 struct MLXServiceRuntimePolicyTests {
 
-    @Test func serverSettingRejectsVideoWhenDisabled() {
+    @Test func serverSettingRejectsVideoWhenDisabled() throws {
+        let bundle = try VisionBundleFixture.make(type: "qwen3_vl")
+        defer { try? FileManager.default.removeItem(at: bundle) }
         var runtime = VMLXServerRuntimeSettings()
         runtime.multimodal.enableVideo = false
 
@@ -36,7 +38,8 @@ struct MLXServiceRuntimePolicyTests {
                 messages: [message],
                 parameters: GenerationParameters(temperature: nil, maxTokens: 16),
                 tools: [],
-                runtime: runtime
+                runtime: runtime,
+                modelDirectory: bundle
             )
         }
     }
@@ -51,9 +54,7 @@ struct MLXServiceRuntimePolicyTests {
             ]
         )
 
-        // Dense text Gemma-4 (no `-it`): the `-it` instruct bundles are the
-        // Gemma-4 VLMs and map to image-only, while the dense LLM distillations
-        // such as `Gemma-4-31B-JANG_4M` are text-only and must reject images.
+        // A product name without installed component evidence cannot grant media.
         #expect(throws: MLXService.RuntimePolicyError.self) {
             try MLXService.validateRuntimePolicy(
                 modelName: "gemma-4-31b-jang_4m",
@@ -67,6 +68,8 @@ struct MLXServiceRuntimePolicyTests {
     }
 
     @Test func modelCapabilityAllowsQwenVLImageAndVideo() throws {
+        let bundle = try VisionBundleFixture.make(type: "qwen3_vl")
+        defer { try? FileManager.default.removeItem(at: bundle) }
         let message = ChatMessage(
             role: "user",
             content: "describe this",
@@ -83,11 +86,24 @@ struct MLXServiceRuntimePolicyTests {
             messages: [message],
             parameters: GenerationParameters(temperature: nil, maxTokens: 16),
             tools: [],
-            runtime: VMLXServerRuntimeSettings()
+            runtime: VMLXServerRuntimeSettings(),
+            modelDirectory: bundle
         )
+
+        // A previous positive inspection cannot admit a changed installation.
+        try FileManager.default.removeItem(at: bundle.appendingPathComponent("model.safetensors"))
+        #expect(throws: MLXService.RuntimePolicyError.self) {
+            try MLXService.validateRuntimePolicy(
+                modelName: "qwen3-vl-30b", modelId: "Qwen/Qwen3-VL-30B-MLX",
+                messages: [message], parameters: GenerationParameters(temperature: nil, maxTokens: 16),
+                tools: [], runtime: VMLXServerRuntimeSettings(), modelDirectory: bundle
+            )
+        }
     }
 
-    @Test func modelCapabilityRejectsAudioForQwenVL() {
+    @Test func modelCapabilityRejectsAudioForQwenVL() throws {
+        let bundle = try VisionBundleFixture.make(type: "qwen3_vl")
+        defer { try? FileManager.default.removeItem(at: bundle) }
         let message = ChatMessage(
             role: "user",
             content: "hear this",
@@ -104,7 +120,8 @@ struct MLXServiceRuntimePolicyTests {
                 messages: [message],
                 parameters: GenerationParameters(temperature: nil, maxTokens: 16),
                 tools: [],
-                runtime: VMLXServerRuntimeSettings()
+                runtime: VMLXServerRuntimeSettings(),
+                modelDirectory: bundle
             )
         }
     }
@@ -119,11 +136,8 @@ struct MLXServiceRuntimePolicyTests {
             ]
         )
 
-        // Name-only detection cannot see the weight map, so audio stays
-        // rejected with the per-bundle gating message — NOT a blanket
-        // "runtime unwired" claim. With an installed bundle directory,
-        // capability comes from the weight map itself: 12B unified and
-        // E-series checkpoints ship audio tensors; 26B-A4B/31B do not.
+        // No name-based audio grant: an installed config and actual projection
+        // header are required. Index strings alone are not component evidence.
         do {
             try MLXService.validateRuntimePolicy(
                 modelName: "gemma-4-12b-it-mxfp4",
@@ -136,7 +150,7 @@ struct MLXServiceRuntimePolicyTests {
             Issue.record("Gemma4 audio must stay rejected when bundle facts are unavailable.")
         } catch let error as MLXService.RuntimePolicyError {
             let description = error.errorDescription ?? ""
-            #expect(description.contains("Gemma4 audio is enabled per-bundle"))
+            #expect(description.contains("Audio input is not backed by the installed bundle"))
         } catch {
             Issue.record("Unexpected error type: \(error)")
         }
@@ -275,11 +289,8 @@ struct MLXServiceRuntimePolicyTests {
         }
     }
 
-    @Test func n2JANGTQMediaPreflightUsesBundleVisionConfig() throws {
-        let bundle = try Self.makeMediaCapabilityBundle(
-            modelType: "qwen3_5_moe",
-            hasVisionConfig: true
-        )
+    @Test func n2JANGTQMediaPreflightUsesConfigAndWeights() throws {
+        let bundle = try VisionBundleFixture.make(type: "qwen3_5_moe")
         defer { try? FileManager.default.removeItem(at: bundle) }
 
         let message = ChatMessage(
@@ -303,7 +314,7 @@ struct MLXServiceRuntimePolicyTests {
         )
     }
 
-    @Test func mimoJANGTQMediaPreflightStaysBlockedUntilVMLXHasMediaRuntime() {
+    @Test func mimoNameAloneCannotAdmitMedia() {
         let message = ChatMessage(
             role: "user",
             content: "describe this",
@@ -323,11 +334,11 @@ struct MLXServiceRuntimePolicyTests {
                 tools: [],
                 runtime: VMLXServerRuntimeSettings()
             )
-            Issue.record("MiMo media should remain blocked until vMLX ships MiMo media runtime support.")
+            Issue.record("Media must remain blocked without installed component evidence.")
         } catch let error as MLXService.RuntimePolicyError {
             let description = error.errorDescription ?? ""
             #expect(description.contains("Image input is not advertised"))
-            #expect(description.contains("Audio input is not advertised"))
+            #expect(description.contains("Audio input is not backed by the installed bundle"))
         } catch {
             Issue.record("Unexpected error type: \(error)")
         }
@@ -350,20 +361,4 @@ struct MLXServiceRuntimePolicyTests {
         )
     }
 
-    private static func makeMediaCapabilityBundle(
-        modelType: String,
-        hasVisionConfig: Bool
-    ) throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("osaurus-media-cap-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-
-        var config: [String: Any] = ["model_type": modelType]
-        if hasVisionConfig {
-            config["vision_config"] = ["image_size": 224]
-        }
-        let data = try JSONSerialization.data(withJSONObject: config, options: [.sortedKeys])
-        try data.write(to: directory.appendingPathComponent("config.json"))
-        return directory
-    }
 }

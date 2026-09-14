@@ -20,6 +20,17 @@ Osaurus runs open-weight models locally on Apple Silicon using MLX — no intern
 - The Models catalog is curated for Osaurus (tool calling, reasoning, and template support are validated), and the OsaurusAI page on Hugging Face hosts optimized bundles.
 - Generation defaults (temperature, top-k, etc.) come from each model bundle's own configuration unless you explicitly override them in Server → Settings → Generation defaults.
 
+## Speculative Depth
+
+Models with a supported native MTP head show **Speculative Depth** in the chat
+model picker's options: Off, Auto, 1, 2, and 3. Flash Next starts **Off**, across
+its quantizations; you can explicitly select Auto or a depth. Qwen3.8-27B keeps
+its existing eligible depth-3 default. An explicit choice is preserved when
+switching models or relaunching. A Flash Next default written automatically
+does not switch 27B Off. Headless bundles, including Flash Next JANG_1L, do not
+advertise MTP. Bundle safety blocks still apply. These controls do not override
+your configured sampling settings or guarantee a throughput floor.
+
 ## Apple Foundation Models
 
 On macOS 26+ with Apple Intelligence, the on-device Apple Foundation model is available as `foundation` — used out of the box as the "core model" for background jobs like memory distillation and chat titles (configurable in Settings → General → Core Model).

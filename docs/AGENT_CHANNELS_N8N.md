@@ -7,6 +7,7 @@ accepts the generic inbound webhook route on the Async Channel Substrate:
 ```
 POST http://<osaurus-host>:<port>/channels/n8n/<connection_id>/inbound
 GET  http://<osaurus-host>:<port>/channels/n8n/<connection_id>/tasks/<task_id>
+GET  http://<osaurus-host>:<port>/channels/n8n/<connection_id>/ping
 ```
 
 Replies are **pull-based**: the inbound call is acknowledged with `202` and a
@@ -24,6 +25,8 @@ Everything channel-specific lives in:
   polls.
 - `Services/AgentChannel/AgentChannelN8nPreset.swift` — projects the optional
   outbound webhook onto ordinary custom HTTP actions.
+- `Models/AgentChannel/N8nPairingCode.swift` — the one-string pairing code
+  the `n8n-nodes-osaurus` credential consumes.
 - `Views/Settings/N8nSettingsView.swift` — the Connection Center setup sheet.
 - `Networking/HTTPHandler.swift` — the `/channels/` shim (bearer-exempt).
 
@@ -174,6 +177,70 @@ header (HMAC callers sign the empty body).
   `agent-channel:<connection_id>:`). Unknown and foreign tasks both return
   `404 task_not_found` and penalize the source.
 
+## Ping Contract
+
+`GET /channels/n8n/<connection_id>/ping` is the credential-test probe for the
+n8n node. It runs the same gate order as a poll — rate limit, connection
+lookup, remote transport policy, secret verification on the empty body — and
+never touches tasks, so a health check no longer has to interpret
+`404 task_not_found` as success or spend rate-limit penalty budget.
+
+```json
+{
+  "status": "ok",
+  "connection_id": "n8n-local",
+  "verification": "hmac_sha256",
+  "header": "X-Osaurus-Channel-Signature",
+  "secure_channel": true,
+  "transport": "secure_channel" | "loopback" | "plaintext"
+}
+```
+
+A wrong secret is `401 unauthorized` (penalized), a remote plaintext caller
+under the default policy is `426 secure_channel_required`, exactly like
+inbound and poll.
+
+## Pairing Code
+
+The setup sheet's **Pair with n8n** card (step *Connect n8n*, the fourth of
+*Name this channel → Who may speak → How Osaurus replies → Connect n8n → Live
+check*, so the id and the bound agent are known before the code is issued)
+emits one copyable string that the `n8n-nodes-osaurus` **Osaurus Channel**
+credential decodes:
+
+```
+osrs-n8n-1.<base64url(compact JSON, sorted keys)>
+```
+
+```json
+{
+  "v": 1,
+  "urls": ["http://127.0.0.1:1337", "http://host.docker.internal:1337",
+           "http://192.168.1.20:1337", "https://0x….agent.osaurus.ai"],
+  "cid": "n8n-local",
+  "secret": "<channel secret>",
+  "vfy": "hmac_sha256" | "shared_secret_header",
+  "hdr": "<header override, only when set>",
+  "addr": "0x<pinned agent address, only when a local agent is bound>",
+  "name": "n8n"
+}
+```
+
+- `urls` are ordered candidates: loopback, the Docker Desktop host alias, the
+  LAN address (only when the server is exposed to the network), and the public
+  relay URL (only when the bound agent's relay reports the route live). The
+  node pings them in order and keeps the first that answers.
+- `addr` is the address of the local agent chosen in *How Osaurus replies*.
+  When present the node speaks **Secure Channel** to every candidate: it pins
+  `addr` in the `/secure/session` handshake and wraps ping, inbound and poll
+  in `/secure/call`. That satisfies `secure_channel_required` from anywhere —
+  including through the relay, which then carries only ciphertext — without
+  the *Remote callers* plaintext toggle. When `addr` is absent the node sends
+  plaintext HTTP and remote callers need `plaintext_allowed`.
+- The code contains the channel secret. Treat it as the secret; rotating the
+  secret invalidates every previously issued code.
+- `N8nPairingCode` (Swift) and `src/pairing.ts` (node) are the two decoders.
+
 ## Session Continuity
 
 The session partition is derived from
@@ -189,8 +256,8 @@ session.
 | --- | --- | --- | --- |
 | n8n on the same Mac (native process) | yes | accepted | `secure_channel_required` (loopback bypasses it) |
 | n8n in Docker Desktop on the same Mac (`host.docker.internal`) | **yes** on macOS — Docker Desktop's host forwarder delivers the connection from `127.0.0.1` | accepted | `secure_channel_required`; the secret still authenticates every request |
-| n8n on the LAN (or any request that reaches Osaurus on its LAN IP) | no | `426` | Secure Channel via the Osaurus relay, or `plaintext_allowed` behind a trusted network |
-| n8n anywhere via Osaurus relay + Secure Channel (`/secure/call`) | n/a | accepted | default; requires an agent-scoped `osk-v1` key from the Share Agent flow |
+| n8n on the LAN (or any request that reaches Osaurus on its LAN IP) | no | `426` | Pairing code with a bound agent (the node uses Secure Channel), or `plaintext_allowed` behind a trusted network |
+| n8n anywhere via Osaurus relay + Secure Channel (`/secure/call`) | n/a | accepted | default; the pairing code carries the relay URL and pinned agent address, no `osk-v1` key is involved — the inner request is still bearer-exempt and secret-verified |
 
 Two facts about "loopback" matter here:
 
@@ -285,13 +352,23 @@ service — posting through the custom runner alone skips the kill switch.
 With `shared_secret_header` the two signature headers become a single
 `X-Osaurus-Channel-Secret: <secret>` header on both requests.
 
-A dedicated [`n8n-nodes-osaurus`](https://github.com/osaurus-ai/n8n-nodes-osaurus)
+A dedicated [`@osaurus/n8n-nodes-osaurus`](https://github.com/osaurus-ai/n8n-nodes-osaurus)
 community node (operations: *Send message and wait*, *Poll task*, *Verify
 inbound push*, plus an HMAC-verified **Osaurus Trigger** for outbound push)
-replaces steps 2–6 and speaks exactly this contract. The stock HTTP recipe
+replaces steps 2–6 and speaks exactly this contract. Its **Osaurus Channel**
+credential takes the pairing code from the sheet (see *Pairing Code*), probes
+the URL candidates with `/ping`, and uses Secure Channel for every channel
+request whenever the code carries an agent address. The stock HTTP recipe
 above remains the no-install fallback. The package also offers a plaintext
 `osk-v1` credential for loopback `/agents/{id}/run`; that key is **not** the
-inbound channel secret, and the node does not implement Secure Channel.
+inbound channel secret, and the Agent resource does not go through Secure
+Channel.
+
+Both implementations of Secure Channel v1 are pinned to the same known-answer
+file: `Packages/OsaurusCore/Tests/Identity/Fixtures/secure-channel-v1-vectors.json`
+here (`SecureChannelVectorsTests`, regenerate with
+`OSAURUS_WRITE_SC_VECTORS=1`) and `test/vectors/secure-channel-v1-vectors.json`
+in the node repo.
 
 ## Observability
 
@@ -315,7 +392,13 @@ inbound channel secret, and the node does not implement Secure Channel.
   methods, fail-closed allowlists, dedupe, envelope errors, transport policy,
   poll ownership, redaction, route parsing, connection validation.
 - `HTTPChannelInboundRouteTests` — real NIO server: bearer exemption, 401,
-  404, 202 shape, 426, 429.
+  404, 202 shape, 426, 429, ping.
+- `SecureChannelE2ETests.secureCall_n8nPingAndInbound_relayOrigin_acceptedUnderDefaultPolicy`
+  — relay-origin ping/inbound wrapped in `/secure/call` accepted under
+  `secure_channel_required`; plaintext twin 426'd; wrong secret still 401
+  inside the ciphertext.
+- `N8nPairingCodeTests` — pairing code wire shape, URL ordering, decode errors.
+- `SecureChannelVectorsTests` — known-answer vectors shared with the node.
 - `CustomJSONAgentChannelRunnerTests` — body signature known-answer, preset
   shape, loopback outbound still refused.
 - `N8nConnectionDraftTests` — setup-sheet draft round-trip and badges.

@@ -4446,6 +4446,16 @@ public actor ModelRuntime {
                 throw CancellationError()
             }
             let isVLM = await container.isVLM
+            let constructedVision = await container.perform { context in
+                (context.model as? ModalityBearing)?.modalities.contains(.vision) ?? context.isVLM
+            }
+            if LocalVisionEvidence.inspect(localURL).hasVision && !constructedVision {
+                container.disableCaching()
+                throw NSError(domain: "OsaurusModelMedia", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "The installed bundle has vision configuration and weights, but its loaded runtime has no vision tower. The model was not admitted as text-only. Check the bundle's processor configuration and model-load diagnostics."
+                ])
+            }
             if Task.isCancelled {
                 container.disableCaching()
                 throw CancellationError()

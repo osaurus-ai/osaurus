@@ -12,7 +12,8 @@ import Foundation
 // MARK: - Topology
 
 /// Where the operator's n8n instance lives relative to this Mac. Drives
-/// which inbound URL the sheet shows; it is UI state, not a stored field.
+/// which inbound URL the manual HTTP Request recipe shows; the pairing code
+/// carries every candidate URL instead. UI state, not a stored field.
 enum N8nTopology: String, CaseIterable, Equatable, Hashable, Sendable {
     case thisMac
     case dockerDesktop
@@ -28,17 +29,6 @@ enum N8nTopology: String, CaseIterable, Equatable, Hashable, Sendable {
         }
     }
 
-    /// True when the operator should see the plaintext-HTTP toggle.
-    var revealsPlaintextToggle: Bool {
-        self == .lan || self == .remote
-    }
-
-    /// True when Share Agent / osk-v1 is relevant (and must be labeled as
-    /// not the inbound webhook secret).
-    var revealsSecureChannel: Bool {
-        self == .remote
-    }
-
     /// Sensible first pick when reopening a saved connection.
     static func inferred(plaintextAllowed: Bool) -> N8nTopology {
         plaintextAllowed ? .lan : .thisMac
@@ -47,42 +37,43 @@ enum N8nTopology: String, CaseIterable, Equatable, Hashable, Sendable {
 
 // MARK: - Setup sections
 
-/// The five n8n-shaped steps. Required rail IDs are `where`, `call`, and
-/// `who`; reply and live stay optional so a configured channel opens on
-/// Live check.
+/// The five n8n-shaped steps, ordered so every input the pairing code
+/// needs (connection id, bound agent) is collected before Connect n8n
+/// emits it. Required rail IDs are `basics`, `connect`, and `who`; reply
+/// and live stay optional so a configured channel opens on Live check.
 enum N8nSetupSection: String, CaseIterable, Sendable {
-    case whereIsN8n = "where"
-    case howN8nCalls = "call"
+    case basics = "basics"
     case whoMaySpeak = "who"
     case howOsaurusReplies = "reply"
+    case connect = "connect"
     case liveCheck = "live"
 
     var title: String {
         switch self {
-        case .whereIsN8n: return L("Where is n8n?")
-        case .howN8nCalls: return L("How n8n calls Osaurus")
+        case .basics: return L("Name this channel")
         case .whoMaySpeak: return L("Who may speak")
         case .howOsaurusReplies: return L("How Osaurus replies")
+        case .connect: return L("Connect n8n")
         case .liveCheck: return L("Live check")
         }
     }
 
     var icon: String {
         switch self {
-        case .whereIsN8n: return "desktopcomputer"
-        case .howN8nCalls: return "arrow.down.circle"
+        case .basics: return "tag"
         case .whoMaySpeak: return "person.2"
         case .howOsaurusReplies: return "arrow.uturn.left"
+        case .connect: return "link"
         case .liveCheck: return "checkmark.seal"
         }
     }
 
     var caption: String {
         switch self {
-        case .whereIsN8n: return L("Topology")
-        case .howN8nCalls: return L("Webhook")
+        case .basics: return L("Identity")
         case .whoMaySpeak: return L("Allowlists")
-        case .howOsaurusReplies: return L("Poll or push")
+        case .howOsaurusReplies: return L("Agent, poll or push")
+        case .connect: return L("Pairing code")
         case .liveCheck: return L("Verify")
         }
     }
@@ -96,7 +87,7 @@ enum N8nSetupSection: String, CaseIterable, Sendable {
     }
 
     static var requiredSectionIds: [String] {
-        [Self.whereIsN8n.rawValue, Self.howN8nCalls.rawValue, Self.whoMaySpeak.rawValue]
+        [Self.basics.rawValue, Self.connect.rawValue, Self.whoMaySpeak.rawValue]
     }
 
     static var fallbackSectionId: String {

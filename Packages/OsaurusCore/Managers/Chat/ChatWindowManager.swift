@@ -162,7 +162,12 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         ensureTaskRegistrationObserver()
         ensureScreenParametersObserver()
         if let state = windowStates[windowId] {
+            // Remembered tabs first (so a hibernated stand-in never shadows
+            // a live run: `restoreTabs` skips registry-owned ids), then the
+            // registry's own runs.
+            restoreRememberedTabs(into: state)
             attachRegistryRuns(to: state)
+            observeTabLayout(of: state)
         }
 
         // Show the window if requested
@@ -233,6 +238,17 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     /// Stop all active sessions (chat and work) across all windows.
     /// Called during app termination to prevent crashes from in-flight inference.
     public func stopAllSessions() {
+        // Quit path: record every window's tabs BEFORE the teardown below
+        // drops the inactive ones, and stop listening so the teardown's own
+        // change signals cannot overwrite that record with the lone
+        // survivor. Termination is deferred, so the windows stay on screen
+        // while this runs; order them out so the user does not watch the
+        // tabs disappear.
+        persistTabLayoutNow()
+        for (id, state) in windowStates {
+            state.onTabLayoutChanged = nil
+            nsWindows[id]?.orderOut(nil)
+        }
         for (_, state) in windowStates {
             state.cleanup()
         }
@@ -843,12 +859,71 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         windowStates[windowId] = windowState
         ensureTaskRegistrationObserver()
         ensureScreenParametersObserver()
+        // A window opened for a run ("View" on a toast) also brings the
+        // remembered tabs back: it is the window the user has now.
+        restoreRememberedTabs(into: windowState)
         attachRegistryRuns(to: windowState)
+        observeTabLayout(of: windowState)
 
         if showImmediately { showWindow(id: windowId) }
 
         print("[ChatWindowManager] Created window \(windowId) for context \(context.id)")
         return windowId
+    }
+
+    // MARK: - Remembered Tabs
+
+    /// Coalesces the per-window change signals into one write per run-loop
+    /// turn: `tabs` / `activeTabId` mutate several times inside a single
+    /// tab operation.
+    private var tabLayoutPersistScheduled = false
+
+    private func observeTabLayout(of state: ChatWindowState) {
+        state.onTabLayoutChanged = { [weak self] in
+            self?.scheduleTabLayoutPersist()
+        }
+    }
+
+    private func scheduleTabLayoutPersist() {
+        guard !tabLayoutPersistScheduled else { return }
+        tabLayoutPersistScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.tabLayoutPersistScheduled = false
+            self.persistTabLayoutNow()
+        }
+    }
+
+    /// Write every open window's tabs to `ChatTabLayoutStore`. Records of
+    /// windows that are no longer open are left as they are: they are what
+    /// the next window restores.
+    func persistTabLayoutNow() {
+        let store = ChatTabLayoutStore.shared
+        var layout = store.load()
+        for (id, state) in windowStates {
+            layout.windows[id] = state.tabLayoutSnapshot()
+        }
+        store.save(layout)
+    }
+
+    /// Adopt the tabs of every window that is not open any more (the
+    /// previous launch's windows, or one closed earlier in this run) into a
+    /// freshly created window, then forget those records so nothing is
+    /// restored twice.
+    private func restoreRememberedTabs(into state: ChatWindowState) {
+        let store = ChatTabLayoutStore.shared
+        let orphans = store.orphanRecords(openWindowIds: Set(windowStates.keys))
+        guard !orphans.isEmpty else { return }
+        // Oldest record first; the first record whose active chat comes
+        // back is the one the merged window opens on.
+        var restored = 0
+        for orphan in orphans {
+            restored += state.restoreTabs(from: orphan.record)
+        }
+        store.remove(windowIds: orphans.map(\.id))
+        if restored > 0 {
+            print("[ChatWindowManager] Restored \(restored) remembered tab(s) into window \(state.windowId)")
+        }
     }
 
     // MARK: - Background Runs as Tabs
@@ -1149,6 +1224,12 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     fileprivate func windowWillClose(id: UUID) {
         print("[ChatWindowManager] Window \(id) will close")
 
+        // Snapshot the tabs while they are all still here: the teardown
+        // below drops the inactive ones, and this record is what the next
+        // window (or the next launch) brings back.
+        persistTabLayoutNow()
+        windowStates[id]?.onTabLayoutChanged = nil
+
         // A window closing over a live run automatically detaches the
         // session into the registry (execution continues; the run comes back
         // as a tab of its agent in the next window that opens, and its
@@ -1313,13 +1394,14 @@ private final class ChatPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 
-    /// ⌘W (the Close menu item) closes the active TAB while the current
-    /// agent has more than one open, exactly like a browser; the agent's
-    /// last tab closes the window (other agents' tabs are saved; mid-run
-    /// ones keep executing in the registry).
+    /// ⌘W (the Close menu item) closes the active TAB, like a browser: the
+    /// agent's last conversation tab is replaced by a blank chat so the
+    /// window stays up (Osaurus is a menu-bar app, so closing its only
+    /// window reads as quitting). Only a lone blank tab closes the window;
+    /// the other agents' tabs are remembered and come back with the next
+    /// window, and mid-run ones keep executing in the registry.
     override func performClose(_ sender: Any?) {
-        if let state = chatWindowState, state.scopedTabs.count > 1 {
-            state.closeTab(id: state.activeTabId)
+        if let state = chatWindowState, state.closeActiveTabIfPossible() {
             return
         }
         super.performClose(sender)

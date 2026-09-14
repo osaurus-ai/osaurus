@@ -632,44 +632,6 @@ final class ServerController: ObservableObject {
     }
 
     private func getLocalIPAddress() -> String {
-        var address: String = "127.0.0.1"
-        var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddr) == 0 else { return address }
-        guard let firstAddr = ifaddr else { return address }
-
-        for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
-            let flags = Int32(ptr.pointee.ifa_flags)
-            let addr = ptr.pointee.ifa_addr.pointee
-
-            // Check for running IPv4 interface, and skip loopback
-            if (flags & (IFF_UP | IFF_RUNNING | IFF_LOOPBACK)) == (IFF_UP | IFF_RUNNING) {
-                if addr.sa_family == AF_INET {
-                    // Found an active IPv4 address
-                    var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-                    if getnameinfo(
-                        ptr.pointee.ifa_addr,
-                        socklen_t(addr.sa_len),
-                        &hostname,
-                        socklen_t(hostname.count),
-                        nil,
-                        socklen_t(0),
-                        NI_NUMERICHOST
-                    ) == 0 {
-                        // Trim at NUL terminator before decoding to avoid deprecated cString initializer.
-                        let nulTrimmed = hostname.prefix { $0 != 0 }
-                        let ip = String(decoding: nulTrimmed.map { UInt8(bitPattern: $0) }, as: UTF8.self)
-                        let name = String(cString: ptr.pointee.ifa_name)
-                        if name.starts(with: "en") {  // en0, en1, etc. are common for Wi-Fi/Ethernet on macOS
-                            address = ip
-                            break
-                        }
-                    }
-                }
-
-            }
-        }
-
-        freeifaddrs(ifaddr)
-        return address
+        LocalNetworkAddress.primaryIPv4()
     }
 }

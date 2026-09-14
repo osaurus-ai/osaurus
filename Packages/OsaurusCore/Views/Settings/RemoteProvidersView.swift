@@ -107,7 +107,7 @@ struct RemoteProvidersView: View {
         // are a status filter, not content categories, so they live behind a
         // funnel filter button in the header actions rather than a tab bar.
         ManagerHeaderWithActions(
-            title: L("Cloud Models"),
+            title: L("Providers"),
             subtitle: subtitleText
         ) {
             headerActions
@@ -127,7 +127,7 @@ struct RemoteProvidersView: View {
                 showReorderSheet = true
             }
         }
-        HeaderPrimaryButton("Add Cloud Provider", icon: "plus") {
+        HeaderPrimaryButton("Add Provider", icon: "plus") {
             addSheetConfig = AddSheetConfig(preset: nil)
         }
     }

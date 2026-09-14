@@ -213,6 +213,41 @@ struct ChatSessionStoreDeferredSaveTests {
         }
     }
 
+    /// #2736: `ensureOpen` used to set `didOpen = true` *before* `open()`,
+    /// so a failed migration left Retry calling `saveSessionAsync` against
+    /// a nil connection forever. A failed open must leave `didOpen` false;
+    /// the next retry must reopen and commit the pending snapshot.
+    @Test func failedOpenDoesNotStickDidOpenAndRetryCommits() async throws {
+        try await ChatHistoryTestStorage.run {
+            ChatSessionStore._resetForTesting()
+            ChatSessionStore._forceNextOpenFailureForTesting = true
+
+            let session = ChatSessionData(
+                id: UUID(),
+                title: "Unsaved after failed open",
+                turns: [
+                    ChatTurnData(role: .user, content: "keep me"),
+                    ChatTurnData(role: .assistant, content: "and me"),
+                ]
+            )
+            ChatSessionStore.saveAsync(session)
+
+            #expect(ChatSessionStore._didOpenForTesting == false)
+            #expect(ChatSessionStore._hasPendingSaveForTesting(session.id))
+            #expect(ChatPersistenceStatus.shared.unsaved.contains(session.id))
+            #expect(
+                ChatHistoryDatabase.shared.loadSession(id: session.id) == nil,
+                "failed open must not leave a half-written row"
+            )
+
+            ChatSessionStore.retryUnsaved()
+
+            #expect(ChatSessionStore._didOpenForTesting == true)
+            let stored = try #require(ChatHistoryDatabase.shared.loadSession(id: session.id))
+            #expect(stored.turns.map(\.content) == ["keep me", "and me"])
+        }
+    }
+
     @Test func loadHealsOrphanedTurnsBackToDisk() throws {
         try withOpenStores(memory: true) {
             let sessionId = UUID(uuidString: "44444444-5555-6666-7777-888888888888")!

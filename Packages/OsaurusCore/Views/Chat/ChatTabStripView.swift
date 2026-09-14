@@ -515,6 +515,9 @@ private struct ChatTabItemView: View {
 
     private var title: String {
         let stored = session.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A hibernated tab has no turns in memory but is a saved
+        // conversation: show its title, not "New Chat".
+        if isHibernated, !stored.isEmpty { return stored }
         // A dispatched run carries its task title (schedule name, channel
         // thread…) before its first turn lands; a user's untouched tab is a
         // "New Chat".

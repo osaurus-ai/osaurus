@@ -5353,7 +5353,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
-    /// `POST /channels/{kind}/{connection_id}/inbound` and
+    /// `POST /channels/{kind}/{connection_id}/inbound`,
+    /// `GET /channels/{kind}/{connection_id}/ping`, and
     /// `GET /channels/{kind}/{connection_id}/tasks/{task_id}` — the Agent
     /// Channel webhook ingress. Bearer-exempt: the connection's provider secret
     /// (shared header or HMAC over the raw body) is the authentication, and the
@@ -5373,7 +5374,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let expectedMethod: HTTPMethod
         switch route {
         case .inbound: expectedMethod = .POST
-        case .taskPoll: expectedMethod = .GET
+        case .ping, .taskPoll: expectedMethod = .GET
         }
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
@@ -5425,12 +5426,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let ingressRequest = AgentChannelWebhookIngressRequest(
             kind: {
                 switch route {
-                case .inbound(let kind, _), .taskPoll(let kind, _, _): return kind
+                case .inbound(let kind, _), .ping(let kind, _), .taskPoll(let kind, _, _): return kind
                 }
             }(),
             connectionId: {
                 switch route {
-                case .inbound(_, let id), .taskPoll(_, let id, _): return id
+                case .inbound(_, let id), .ping(_, let id), .taskPoll(_, let id, _): return id
                 }
             }(),
             headers: headerMap,
@@ -5450,6 +5451,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             switch route {
             case .inbound:
                 response = await AgentChannelWebhookIngress.shared.handleInbound(ingressRequest)
+            case .ping:
+                response = await AgentChannelWebhookIngress.shared.handlePing(ingressRequest)
             case .taskPoll(_, _, let taskId):
                 response = await AgentChannelWebhookIngress.shared.handleTaskPoll(ingressRequest, taskId: taskId)
             }
@@ -7775,6 +7778,32 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 responseStatus: 400,
                 startTime: startTime,
                 errorMessage: "Invalid request body"
+            )
+            return
+        }
+
+        do {
+            try EmbeddingService.validateAPIModel(request.model)
+        } catch {
+            let message = error.localizedDescription
+            let payload: [String: Any] = ollamaFormat
+                ? ["error": message]
+                : ["error": [
+                    "message": message, "type": "invalid_request_error",
+                    "param": "model", "code": "unsupported_embedding_model",
+                ]]
+            // Model IDs are caller-controlled; encode rather than interpolate
+            // so quotes, newlines and backslashes remain valid JSON.
+            let json = (try? JSONSerialization.data(withJSONObject: payload))
+                .map { String(decoding: $0, as: UTF8.self) }
+                ?? #"{"error":"Unsupported embedding model"}"#
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: stateRef.value.corsHeaders)
+            sendResponse(context: context, version: head.version, status: .badRequest, headers: headers, body: json)
+            logRequest(
+                method: "POST", path: logPath, userAgent: userAgent,
+                requestBody: requestBodyString, responseBody: json, responseStatus: 400,
+                startTime: startTime, errorMessage: message
             )
             return
         }

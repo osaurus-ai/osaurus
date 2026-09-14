@@ -865,8 +865,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                         },
                     ],
                     width: 420,
-                    onDismiss: {
+                    onDismiss: { [weak self] in
                         ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                        // On an upgrade launch this prompt precedes the
+                        // first-run announcements, which defer while it is up
+                        // and otherwise wait for the next activation. Chain
+                        // them so they land in the same session.
+                        self?.presentProductHuntLaunchDialogIfEligible()
+                        self?.presentWorkspacesIntroDialogIfEligible()
                     }
                 ),
                 scope: scope

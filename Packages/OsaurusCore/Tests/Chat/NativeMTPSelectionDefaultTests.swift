@@ -5,6 +5,107 @@ import Testing
 @testable import OsaurusCore
 
 @Suite struct NativeMTPSelectionDefaultTests {
+    @Test func offDefaultMatchesFlashArchitectureNotQuantOrDisplayName() {
+        for config in [
+            #"{"model_type":"qwen4_exp"}"#,
+            #"{"model_type":"vlm","text_config":{"model_type":"qwen4_exp"}}"#,
+        ] {
+            #expect(NativeMTPSelectionDefault.startsOff(configData: Data(config.utf8)))
+        }
+        for config in [
+            #"{"model_type":"qwen3_5"}"#,
+            #"{"model_type":"vlm","text_config":{"model_type":"qwen3_5"}}"#,
+            #"{"model_type":"qwen3_5","name":"Qwen3.8-Flash-Next-JANG_2L"}"#,
+            #"{"model_type":"qwen3_5_moe"}"#,
+            #"{"architectures":["qwen4_exp"]}"#,
+            "{}", "bad",
+        ] {
+            #expect(!NativeMTPSelectionDefault.startsOff(configData: Data(config.utf8)))
+        }
+    }
+
+    @Test func onlyFlashFactoryAutoAndOwnedD3StartOff() {
+        for eligible in [false, true] {
+            #expect(
+                NativeMTPSelectionDefault.action(
+                    settings: .init(mode: .auto), eligible: eligible, startsOff: true,
+                    userHasChosen: false, ownsCurrentValue: false
+                ) == .selectOff)
+            #expect(
+                NativeMTPSelectionDefault.action(
+                    settings: .init(mode: .forceOn, explicitDepth: 3),
+                    eligible: eligible, startsOff: true,
+                    userHasChosen: false, ownsCurrentValue: true
+                ) == .selectOff)
+        }
+        for settings in [
+            VMLXServerMTPSettings(mode: .off),
+            .init(mode: .forceOn, explicitDepth: 1),
+            .init(mode: .forceOn, explicitDepth: 2),
+            .init(mode: .forceOn, explicitDepth: 3),
+            .init(mode: .auto, draftTokenLimit: 1),
+            .init(mode: .auto, dflash2DrafterPath: "explicit-drafter"),
+        ] {
+            #expect(
+                NativeMTPSelectionDefault.action(
+                    settings: settings, eligible: true, startsOff: true,
+                    userHasChosen: false, ownsCurrentValue: false
+                ) == .keep)
+        }
+    }
+
+    @Test func explicitSelectionsSurviveBothArchitectures() {
+        for startsOff in [false, true] {
+            for settings in [
+                VMLXServerMTPSettings(mode: .off), .init(mode: .auto),
+                .init(mode: .forceOn, explicitDepth: 1),
+                .init(mode: .forceOn, explicitDepth: 2),
+                .init(mode: .forceOn, explicitDepth: 3),
+            ] {
+                #expect(
+                    NativeMTPSelectionDefault.action(
+                        settings: settings, eligible: true, startsOff: startsOff,
+                        userHasChosen: true, ownsCurrentValue: true
+                    ) == .keep)
+            }
+        }
+    }
+
+    @Test func flashOffDoesNotLeakInto27BAfterSavedSettingsReload() throws {
+        let name = "MTPChoiceProof-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        var settings = VMLXServerMTPSettings(mode: .auto)
+        // Flash -> 27B -> Flash -> unrelated. Encode/decode each saved section
+        // and read persisted provenance through a second UserDefaults instance.
+        let transitions: [(Bool, Bool, NativeMTPSelectionDefault.Action, VMLXServerMTPSettings)] = [
+            (true, true, .selectOff, .init(mode: .off)),
+            (false, true, .selectDepthThree, .init(mode: .forceOn, explicitDepth: 3)),
+            (true, true, .selectOff, .init(mode: .off)),
+            (false, false, .restoreAuto, .init(mode: .auto)),
+        ]
+        for (startsOff, eligible, action, next) in transitions {
+            let savedDefaults = try #require(UserDefaults(suiteName: name))
+            #expect(
+                NativeMTPSelectionDefault.action(
+                    settings: settings, eligible: eligible, startsOff: startsOff,
+                    userHasChosen: savedDefaults.bool(forKey: NativeMTPSelectionDefault.userChoseKey),
+                    ownsCurrentValue: savedDefaults.bool(forKey: NativeMTPSelectionDefault.familyDefaultKey)
+                ) == action)
+            NativeMTPSelectionDefault.recordSavedChoice(
+                previous: settings, next: next, isFamilyDefault: true, defaults: defaults)
+            settings = try JSONDecoder().decode(
+                VMLXServerMTPSettings.self, from: JSONEncoder().encode(next))
+            #expect(!defaults.bool(forKey: NativeMTPSelectionDefault.userChoseKey))
+        }
+        // An Off selected by the person is not a family default to reverse.
+        #expect(
+            NativeMTPSelectionDefault.action(
+                settings: .init(mode: .off), eligible: true, startsOff: false,
+                userHasChosen: false, ownsCurrentValue: false
+            ) == .keep)
+    }
+
     @Test func savedChoiceProvenancePreservesAutoWithoutClaimingUnrelatedEdits() throws {
         let name = "MTPChoiceProof-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: name))

@@ -283,6 +283,7 @@ struct FloatingInputCard: View {
 
     // Observe managers for reactive updates
     @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var recentFolders = RecentFoldersStore.shared
     // Deliberately NOT `@ObservedObject`: sandbox provisioning publishes
     // per-progress-tick during runtime downloads and the clipboard service
     // publishes on every copy, and an observing card re-ran its whole body
@@ -459,6 +460,8 @@ struct FloatingInputCard: View {
     /// showing the control there would advertise speculation it cannot do.
     /// Sourced from the engine's own per-model status, never from the name.
     @State private var nativeMTPCapableModels: Set<String> = []
+    /// Metadata-scoped default, independent of whether a real MTP head exists.
+    @State private var nativeMTPDefaultOffModels: Set<String> = []
     /// Resident models whose bundle metadata explicitly blocks manual MTP.
     /// Kept separate from capability: the head still exists, but presenting
     /// selectable depths would lie because the runtime must stay AR-only.
@@ -621,7 +624,8 @@ struct FloatingInputCard: View {
         // The chip still goes red, which is the advisory. A ceiling the user
         // chose must never refuse; if the request really cannot run, the
         // engine fails loudly and that is strictly better than a dead button.
-        guard !isContextHardOverflow || contextWindowIsUserCapped else { return false }
+        let budget = contextBudget
+        guard !budget.hardOverflow || budget.isUserCapped else { return false }
 
         // Configuration gate: the Default agent needs the configure tool
         // schema to do its job, but a too-small context window (e.g.
@@ -646,11 +650,6 @@ struct FloatingInputCard: View {
         localText.isEmpty && pendingAttachments.isEmpty && !isComposing
     }
 
-    /// Context tokens including what's currently being typed (localText may differ from text binding)
-    private var displayContextTokens: Int {
-        displayContextBreakdown.total
-    }
-
     /// Breakdown augmented with real-time typing tokens
     private var displayContextBreakdown: ContextBreakdown {
         var bd = contextBreakdown
@@ -667,74 +666,95 @@ struct FloatingInputCard: View {
         return bd
     }
 
-    /// Max context length for the selected model — the SAME resolution the
-    /// runtime loop uses (`AgentLoopBudget`), so the chip's denominator and
-    /// the trim budget never diverge.
-    private var contextWindowResolution: AgentLoopBudget.ContextWindowResolution? {
-        guard let model = selectedModel else { return nil }
-        return AgentLoopBudget.resolveContextWindowResolutionSync(modelId: model)
-    }
-
-    private var maxContextTokens: Int? {
-        contextWindowResolution?.tokens
-    }
-
-    /// The denominator the compactor and overflow gate actually use. The
-    /// model maximum remains visible in the popover, but showing it as the
-    /// chip denominator made an 85%-budget warning look early and made the
-    /// Chat metadata fallback look like a competing cap.
-    private var usableContextTokens: Int? {
-        maxContextTokens.map {
-            ContextBudgetManager(contextLength: $0).effectiveBudget
-        }
-    }
-
     // MARK: - Context budget gating
 
-    /// Shared UI/runtime budget math (`AgentLoopBudget.assess`): ratio and
-    /// thresholds are computed against the EFFECTIVE budget (window ×
-    /// safety margin) the runtime trims against, the hard gate excludes
-    /// compactable history, and the response reservation is included.
-    private var budgetAssessment: AgentLoopBudget.Assessment {
-        guard let maxCtx = maxContextTokens else { return .empty }
+    /// One pass over the context-budget chain.
+    ///
+    /// Everything here derives from the same two costly inputs: the context
+    /// window resolution and the typing-augmented breakdown. These used to be
+    /// separate computed properties that called each other, and SwiftUI
+    /// re-evaluates a computed property on every single access — so one
+    /// render of the context chip resolved the context window six times,
+    /// rebuilt the breakdown four times (running the token estimator over the
+    /// composer text on each rebuild) and ran the assessment three times,
+    /// with a per-agent `effectiveMaxTokens` lookup each time. That fan-out
+    /// is what put this chain in the hang reports on every keystroke.
+    ///
+    /// Callers must bind this to a local once and read fields off it; reading
+    /// `contextBudget` repeatedly reintroduces the same fan-out one level up.
+    private struct ContextBudgetSnapshot {
+        var resolution: AgentLoopBudget.ContextWindowResolution?
+        /// Breakdown including what is currently being typed.
+        var breakdown: ContextBreakdown
+        var assessment: AgentLoopBudget.Assessment
+
+        /// Max context length for the selected model — the SAME resolution
+        /// the runtime loop uses (`AgentLoopBudget`), so the chip's
+        /// denominator and the trim budget never diverge.
+        var maxTokens: Int? { resolution?.tokens }
+
+        /// Context tokens including what is currently being typed.
+        var displayTokens: Int { breakdown.total }
+
+        /// The denominator the compactor and overflow gate actually use. The
+        /// model maximum remains visible in the popover, but showing it as
+        /// the chip denominator made an 85%-budget warning look early and
+        /// made the Chat metadata fallback look like a competing cap.
+        var usableTokens: Int? {
+            maxTokens.map { ContextBudgetManager(contextLength: $0).effectiveBudget }
+        }
+
+        /// Whether the window in force came from the user's
+        /// `contextLengthCap` rather than from the model. The resolver
+        /// records this as `.userCap` precisely so surfaces can say WHY the
+        /// window is smaller than the bundle advertises; the send gate reads
+        /// it to keep a preference from behaving like a hardware limit.
+        var isUserCapped: Bool { resolution?.source == .userCap }
+
+        /// Estimated fraction of the effective budget the next send occupies
+        /// (typing included). nil when the window is unknown.
+        var usageRatio: Double? { assessment.usageRatio }
+
+        /// Soft warning threshold: at ≥85% of the effective budget the
+        /// context chip turns amber. Sends still go through — mid-run
+        /// compaction is the overflow handler — but the user should know
+        /// quality may degrade.
+        var nearLimit: Bool { assessment.nearLimit }
+
+        /// Hard overflow: the non-compactable prefix alone — everything
+        /// EXCEPT the conversation history (system prompt, tools, memory,
+        /// input) — plus the response reservation exceeds the effective
+        /// budget. History can be compacted mid-run; this can't, so the send
+        /// is blocked with a clear signal instead of a guaranteed model
+        /// failure.
+        var hardOverflow: Bool { assessment.hardOverflow }
+    }
+
+    /// Resolve the window, build the breakdown and run the shared UI/runtime
+    /// budget math (`AgentLoopBudget.assess`) exactly once. Ratio and
+    /// thresholds are computed against the EFFECTIVE budget (window × safety
+    /// margin) the runtime trims against, the hard gate excludes compactable
+    /// history, and the response reservation is included.
+    private var contextBudget: ContextBudgetSnapshot {
+        let resolution = selectedModel.map {
+            AgentLoopBudget.resolveContextWindowResolutionSync(modelId: $0)
+        }
+        let breakdown = displayContextBreakdown
         // Real per-agent max_tokens (not the 4096 default) so the chip's
         // hard-overflow gate reserves exactly what the runtime loop will.
-        return AgentLoopBudget.assess(
-            breakdown: displayContextBreakdown,
-            contextWindow: maxCtx,
-            maxResponseTokens: agentManager.effectiveMaxTokens(for: effectiveAgentId)
+        let assessment =
+            resolution.map {
+                AgentLoopBudget.assess(
+                    breakdown: breakdown,
+                    contextWindow: $0.tokens,
+                    maxResponseTokens: agentManager.effectiveMaxTokens(for: effectiveAgentId)
+                )
+            } ?? .empty
+        return ContextBudgetSnapshot(
+            resolution: resolution,
+            breakdown: breakdown,
+            assessment: assessment
         )
-    }
-
-    /// Estimated fraction of the effective budget the next send occupies
-    /// (typing included). nil when the window is unknown.
-    private var contextUsageRatio: Double? {
-        budgetAssessment.usageRatio
-    }
-
-    /// Soft warning threshold: at ≥85% of the effective budget the context
-    /// chip turns amber. Sends still go through — mid-run compaction is the
-    /// overflow handler — but the user should know quality may degrade.
-    private var isContextNearLimit: Bool {
-        budgetAssessment.nearLimit
-    }
-
-    /// Hard overflow: the non-compactable prefix alone — everything
-    /// EXCEPT the conversation history (system prompt, tools, memory,
-    /// input) — plus the response reservation exceeds the effective
-    /// budget. History can be compacted mid-run; this can't, so the send
-    /// is blocked with a clear signal instead of a guaranteed model failure.
-    private var isContextHardOverflow: Bool {
-        budgetAssessment.hardOverflow
-    }
-
-    /// Whether the window in force came from the user's `contextLengthCap`
-    /// rather than from the model. The resolver already records this as
-    /// `.userCap` precisely so surfaces can say WHY the window is smaller
-    /// than the bundle advertises; the send gate reads it to keep a
-    /// preference from behaving like a hardware limit.
-    private var contextWindowIsUserCapped: Bool {
-        contextWindowResolution?.source == .userCap
     }
 
     private var isVoiceConfigured: Bool {
@@ -771,7 +791,7 @@ struct FloatingInputCard: View {
         guard !remoteConnectionPending, composerLock == nil else { return false }
         return pickerItems.count > 1
             || isModelPinned
-            || (displayContextTokens > 0 && !isRemoteAgentRun)
+            || (contextBudget.displayTokens > 0 && !isRemoteAgentRun)
             || isSandboxAvailable
             || isDefaultConfigAgent
             || (appConfig.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent)
@@ -963,8 +983,15 @@ struct FloatingInputCard: View {
                 configContextErrorOverlay
             }
             .overlay(alignment: .top) {
+                // Cache-only lookup: this is a view body, and the blocking
+                // `findInstalledModel(named:)` parks on the cold-cache disk
+                // scan for up to ~10s, beachballing the app on launch. A miss
+                // just hides the preparation overlay until the scan lands and
+                // the next render picks it up.
                 if let progress = alignmentPreparation.progress(
-                    modelID: selectedModel.flatMap { ModelManager.findInstalledModel(named: $0)?.id },
+                    modelID: selectedModel.flatMap {
+                        ModelManager.findInstalledModelFromCache(named: $0)?.id
+                    },
                     sessionID: inputHistoryKey)
                 {
                     VStack(alignment: .leading, spacing: 8) {
@@ -1198,7 +1225,13 @@ struct FloatingInputCard: View {
                         string:
                             "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
                     ) {
-                        NSWorkspace.shared.open(url)
+                        // Completion-handler form: the plain `open(_:)` blocks
+                        // the main thread on the LaunchServices round-trip.
+                        NSWorkspace.shared.open(
+                            url,
+                            configuration: NSWorkspace.OpenConfiguration(),
+                            completionHandler: nil
+                        )
                     }
                 },
                 secondaryButton: .cancel("Cancel")
@@ -2551,6 +2584,8 @@ extension FloatingInputCard {
             // Depth controls speculation, not the user's sampling settings.
             help: manuallyBlocked
                 ? L("Speculative decoding is disabled for this bundle because its MTP head is not safe for production use.")
+                : nativeMTPDefaultOffModels.contains(identity)
+                ? L("Flash Next starts with speculative decoding Off. You can select Auto or a maximum depth of 1–3 explicitly. Your configured sampling stays in effect.")
                 : L(
                     "Auto activates from tuning or a supported family default and adapts up to depth 5. Depths 1–3 set a maximum; the runtime may lower the depth or use plain decoding when speculation stops paying. Your configured sampling stays in effect."
                 )
@@ -2632,20 +2667,23 @@ extension FloatingInputCard {
         }
     }
 
-    /// Both eligible Qwen27B and Flash-Next bundles start at D3. The layout
-    /// advisory remains Flash-Next-only; defaults use the activation contract.
+    /// Flash Next starts Off; eligible Qwen27B retains D3. Selectors remain
+    /// available for real heads, and an explicit choice always wins.
     /// Only a value owned by this default may be reverted on leaving the family.
-    private func applyNativeMTPDefaultDepthIfNeeded(eligible: Bool) {
+    private func applyNativeMTPDefaultDepthIfNeeded(eligible: Bool, startsOff: Bool) {
         let defaults = UserDefaults.standard
         let mtp = ServerController.runtimeSettingsForConfigureTool().settings.mtp
         switch NativeMTPSelectionDefault.action(
             settings: mtp,
             eligible: eligible,
+            startsOff: startsOff,
             userHasChosen: defaults.bool(forKey: Self.mtpSegmentUserChoseKey),
             ownsCurrentValue: defaults.bool(forKey: Self.mtpSegmentFamilyDefaultKey)
         ) {
         case .keep:
             return
+        case .selectOff:
+            applyNativeMTPSegment("off", userInitiated: false)
         case .selectDepthThree:
             applyNativeMTPSegment("3", userInitiated: false)
         case .restoreAuto:
@@ -2974,18 +3012,21 @@ extension FloatingInputCard {
     /// agent's budget.
     @ViewBuilder
     private var contextBudgetRing: some View {
-        if displayContextTokens > 0 && !isRemoteAgentRun {
+        // Bound once: every field below comes from this single pass, so the
+        // chip costs one window resolution and one breakdown per render.
+        let budget = contextBudget
+        if budget.displayTokens > 0 && !isRemoteAgentRun {
             FloatingContextChip(
-                displayTokens: displayContextTokens,
-                usableTokens: usableContextTokens,
-                modelMaxTokens: maxContextTokens,
-                windowResolution: contextWindowResolution,
+                displayTokens: budget.displayTokens,
+                usableTokens: budget.usableTokens,
+                modelMaxTokens: budget.maxTokens,
+                windowResolution: budget.resolution,
                 isStreaming: isStreaming,
-                isNearLimit: isContextNearLimit,
-                isHardOverflow: isContextHardOverflow,
-                usageRatio: contextUsageRatio,
+                isNearLimit: budget.nearLimit,
+                isHardOverflow: budget.hardOverflow,
+                usageRatio: budget.usageRatio,
                 formatTokenCount: formatTokenCount,
-                breakdown: { displayContextBreakdown },
+                breakdown: { budget.breakdown },
                 compactionState: compactionState,
                 canCompact: canCompactConversation && !isStreaming,
                 onCompact: onCompactConversation
@@ -3333,7 +3374,9 @@ extension FloatingInputCard {
             values[Self.nativeMTPOptionID] = .string(
                 nativeMTPManuallyBlockedModels.contains(identity) ? "off" : nativeMTPSelection
             )
-            displayDefaults[Self.nativeMTPOptionID] = .string("auto")
+            displayDefaults[Self.nativeMTPOptionID] = .string(
+                nativeMTPDefaultOffModels.contains(identity) ? "off" : "auto"
+            )
         }
 
         return ModelPickerOptionsControl(
@@ -3680,6 +3723,9 @@ extension FloatingInputCard {
     /// disables the VM for this agent. The folder picker is presented as a
     /// sheet on this chat's window so ownership remains unambiguous.
     private func selectFolder() {
+        // Defensive: the menu row is disabled for remote runs, but no folder
+        // context can reach a host-executed agent, so never open the picker.
+        guard !isRemoteAgentRun else { return }
         let window = windowId.flatMap { ChatWindowManager.shared.getNSWindow(id: $0) }
         let agentId = effectiveAgentId
         let manager = agentManager
@@ -3699,6 +3745,58 @@ extension FloatingInputCard {
                 forgetAgentWorkingFolder()
                 debugLog(
                     "[Workspace] Could not disable sandbox after folder selection: "
+                        + error.localizedDescription
+                )
+            }
+        }
+    }
+
+    /// Recent folders listed under the + menu's rows. `dismiss` closes
+    /// the menu before the pick runs, like any row.
+    private func recentFoldersList(dismiss: @escaping () -> Void) -> AnyView {
+        AnyView(
+            RecentFoldersList(
+                // Stored string, not a URL: standardizing a file URL can stat
+                // the path, and this runs on the main actor during body.
+                activePath: folderState.lastKnownPath,
+                onPick: { entry in
+                    dismiss()
+                    applyRecentFolder(entry)
+                }
+            )
+        )
+    }
+
+    /// Attach a remembered folder to this chat. Resolves the entry (bookmark
+    /// first, plain path second) off the main actor, then runs the exact
+    /// post-pick steps `selectFolder` does so the sandbox and the agent's
+    /// sticky folder stay consistent with a panel pick. A folder that no
+    /// longer resolves is dropped from the list and reported.
+    private func applyRecentFolder(_ entry: RecentFoldersStore.Entry) {
+        guard !isRemoteAgentRun else { return }
+        let agentId = effectiveAgentId
+        let manager = agentManager
+        Task {
+            guard let url = await RecentFoldersStore.resolveURL(for: entry) else {
+                recentFolders.remove(path: entry.path)
+                ToastManager.shared.error(
+                    L("Folder no longer available"),
+                    message: entry.path
+                )
+                return
+            }
+            guard await folderState.setFolder(url) != nil else {
+                ToastManager.shared.error(L("Failed to grant folder access"))
+                return
+            }
+            do {
+                try await manager.disableSandboxForHostFolder(agentId: agentId)
+                persistWorkingFolderToAgent()
+            } catch {
+                folderState.clearFolder()
+                forgetAgentWorkingFolder()
+                debugLog(
+                    "[Workspace] Could not disable sandbox after recent folder pick: "
                         + error.localizedDescription
                 )
             }
@@ -4616,9 +4714,18 @@ extension FloatingInputCard {
                     // host-wide condition, so the user gets the tool that
                     // shows the whole host.
                     swapTextButton(String(localized: "Activity Monitor", bundle: .module)) {
-                        NSWorkspace.shared.open(
-                            URL(fileURLWithPath:
-                                "/System/Applications/Utilities/Activity Monitor.app"))
+                        // `open(_:)` blocks the caller on the LaunchServices
+                        // XPC round-trip, and this fires from a button action
+                        // on the main thread while the host is already under
+                        // memory pressure — exactly when that round-trip is
+                        // slowest. The completion-handler form returns
+                        // immediately and launches in the background.
+                        NSWorkspace.shared.openApplication(
+                            at: URL(fileURLWithPath:
+                                "/System/Applications/Utilities/Activity Monitor.app"),
+                            configuration: NSWorkspace.OpenConfiguration(),
+                            completionHandler: nil
+                        )
                     }
                 }
             }
@@ -4732,10 +4839,16 @@ extension FloatingInputCard {
             let capability = ModelRuntime.inspectLoadingModelMTP(name: model)
             let defaultEligible = NativeMTPSelectionDefault.isEligible(
                 bundleDirectory: bundleDir)
+            let startsOff = NativeMTPSelectionDefault.startsOff(bundleDirectory: bundleDir)
             await MainActor.run {
                 // The selection may have moved while we were on disk.
                 guard selectedModel == model else { return }
                 let identity = Self.mtpIdentity(model)
+                if startsOff {
+                    nativeMTPDefaultOffModels.insert(identity)
+                } else {
+                    nativeMTPDefaultOffModels.remove(identity)
+                }
                 if let capability, capability.bundleHasMTP, capability.isTargetMTPFamily {
                     nativeMTPCapableModels.insert(identity)
                     if capability.isBlocked {
@@ -4747,7 +4860,7 @@ extension FloatingInputCard {
                     nativeMTPCapableModels.remove(identity)
                     nativeMTPManuallyBlockedModels.remove(identity)
                 }
-                applyNativeMTPDefaultDepthIfNeeded(eligible: defaultEligible)
+                applyNativeMTPDefaultDepthIfNeeded(eligible: defaultEligible, startsOff: startsOff)
                 // Shown once per bundle per improper-state fingerprint: a
                 // dismissed state stays quiet across relaunches, while a
                 // DIFFERENT improper state re-arms the notice.
@@ -5202,7 +5315,8 @@ extension FloatingInputCard {
             modelId: selectedModel,
             fallbackSupportsImages: supportsImages,
             localModelType: localModel?.modelType,
-            localHasAudioTensors: localModel?.hasAudioTensors ?? false
+            localHasAudioTensors: localModel?.hasAudioTensors ?? false,
+            localCapabilities: localModel?.mediaCapabilities
         )
     }
 
@@ -6185,13 +6299,30 @@ extension FloatingInputCard {
             icon: "plus",
             help: "Add folder or attach files",
             items: [
-                .init(icon: "folder", title: Text("Add Folder", bundle: .module)) {
-                    selectFolder()
-                },
                 .init(icon: "paperclip", title: Text("Attach Files", bundle: .module)) {
                     pickAttachment()
                 },
-            ]
+                // Mode 2 (remote agent run): the turn executes on the host's
+                // machine and no local system prompt or tools are sent, so a
+                // folder picked here would never reach the agent. Keep the row
+                // visible but disabled so the flow fails loudly instead of
+                // silently accepting a folder that is then dropped.
+                .init(
+                    icon: "folder",
+                    title: Text("Add Folder", bundle: .module),
+                    disabledReason: isRemoteAgentRun
+                        ? Text("Shared agents can't use folders on this Mac.", bundle: .module)
+                        : nil
+                ) {
+                    selectFolder()
+                },
+            ],
+            // Recently attached folders as a one-click list below a divider.
+            // Hidden for remote runs (same reason as Add Folder) and when
+            // there are none yet.
+            footer: isRemoteAgentRun || recentFolders.entries.isEmpty
+                ? nil
+                : { dismiss in recentFoldersList(dismiss: dismiss) }
         )
     }
 
@@ -8310,12 +8441,30 @@ private struct InputActionMenuButton: View {
     struct Item {
         let icon: String
         let title: Text
+        /// When non-nil the row is shown dimmed and inert, with a trailing
+        /// info icon whose tooltip explains why the action is unavailable.
+        let disabledReason: Text?
         let action: () -> Void
+
+        init(
+            icon: String,
+            title: Text,
+            disabledReason: Text? = nil,
+            action: @escaping () -> Void
+        ) {
+            self.icon = icon
+            self.title = title
+            self.disabledReason = disabledReason
+            self.action = action
+        }
     }
 
     let icon: String
     let help: String
     let items: [Item]
+    /// Optional content shown under a divider after the rows (recent folder
+    /// chips). Receives a closure that closes the menu.
+    var footer: ((@escaping () -> Void) -> AnyView)? = nil
 
     @State private var isHovered = false
     @State private var showPopover = false
@@ -8365,14 +8514,21 @@ private struct InputActionMenuButton: View {
         .popover(isPresented: $showPopover, arrowEdge: .top) {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    MenuItemRow(icon: item.icon, title: item.title) {
+                    MenuItemRow(icon: item.icon, title: item.title, disabledReason: item.disabledReason) {
                         showPopover = false
                         item.action()
                     }
                 }
+                if let footer {
+                    Divider()
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                    footer({ showPopover = false })
+                }
             }
             .padding(.vertical, 6)
-            .frame(width: 180)
+            // Wider with a footer so recent folder names have room.
+            .frame(width: footer != nil ? 240 : 180)
             .background(theme.primaryBackground)
             .environment(\.theme, theme)
         }
@@ -8383,21 +8539,35 @@ private struct InputActionMenuButton: View {
     private struct MenuItemRow: View {
         let icon: String
         let title: Text
+        var disabledReason: Text? = nil
         let action: () -> Void
         @Environment(\.theme) private var theme
         @State private var isHovering = false
+        @State private var showReason = false
+
+        private var isDisabled: Bool { disabledReason != nil }
 
         var body: some View {
-            Button(action: action) {
+            // Inert rather than `.disabled` so the row still tracks hover.
+            // The info icon is an overlay sibling rather than part of the
+            // Button label: `.help` never fires inside a plain-style label
+            // in a popover, and a sibling receives its own hover events.
+            Button(action: { if !isDisabled { action() } }) {
                 HStack(spacing: 10) {
                     Image(systemName: icon)
                         .font(.system(size: 12, weight: .medium))
                         .frame(width: 16)
                         .foregroundColor(theme.secondaryText)
+                        .opacity(isDisabled ? 0.45 : 1)
                     title
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.primaryText)
+                        .opacity(isDisabled ? 0.45 : 1)
                     Spacer(minLength: 0)
+                    if isDisabled {
+                        // Reserve the trailing slot; the live icon is overlaid.
+                        Color.clear.frame(width: 14, height: 14)
+                    }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -8413,7 +8583,29 @@ private struct InputActionMenuButton: View {
             .buttonStyle(.plain)
             .onHover { hovering in
                 withAnimation(.easeOut(duration: 0.12)) {
-                    isHovering = hovering
+                    isHovering = hovering && !isDisabled
+                }
+            }
+            .overlay(alignment: .trailing) {
+                if let disabledReason {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(showReason ? theme.primaryText : theme.secondaryText)
+                        .frame(width: 14, height: 14)
+                        .contentShape(Rectangle())
+                        .padding(.trailing, 18)
+                        .onHover { showReason = $0 }
+                        .popover(isPresented: $showReason, arrowEdge: .trailing) {
+                            disabledReason
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.primaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: 200, alignment: .leading)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 8)
+                                .background(theme.primaryBackground)
+                                .environment(\.theme, theme)
+                        }
                 }
             }
         }

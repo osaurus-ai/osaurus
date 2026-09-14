@@ -808,7 +808,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "67ccb4b347a23820b838a98f0c195b0c29c676d2"
+        let expectedRuntimeHardenedRevision = "5b0c8e6b8b29a7ead21fe785688bc0621580cc62"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -1143,11 +1143,10 @@ struct RuntimePolicySourceTests {
         )
         let mlxService = try Self.source("Services/Inference/MLXService.swift")
         #expect(
-            mlxService.contains("ModelFamilyNames.isStepFamily(modelId)")
-                && mlxService.contains("Step 3.7 currently runs through vMLX's Step text runtime")
-                && mlxService.contains("Step 3.7 tool parsing/template selection is owned by the pinned")
-                && mlxService.contains("return ModelMediaCapabilities.descriptor(modelId: modelId)"),
-            "Step 3.7 runtime policy must stay text-only/tool-capable and must not block preflight on external bundle metadata until Step VLM is wired and proven"
+            mlxService.contains("Step 3.7 tool parsing/template selection is owned by the pinned")
+                && mlxService.contains("refresh: true")
+                && !mlxService.contains("Step 3.7 currently runs through vMLX's Step text runtime"),
+            "Media policy must inspect actual bundle evidence; Step tool/parser handling stays unchanged"
         )
     }
 
@@ -2695,41 +2694,16 @@ struct RuntimePolicySourceTests {
         )
     }
 
-    @Test("MiMo and N2 text runtime metadata avoids VLM bundle reads")
+    @Test("Vision metadata uses bundle evidence while text runtime policies stay separate")
     func mimoAndN2TextRuntimeMetadataAvoidsVLMBundleReads() throws {
         let model = try Self.source("Models/Configuration/MLXModel.swift")
         let vlm = try Self.source("Models/Configuration/VLMDetection.swift")
         let runtime = try Self.source("Services/ModelRuntime.swift")
 
-        let isVLMStart = try #require(model.range(of: "var isVLM: Bool"))
-        let isDownloaded = try #require(
-            model.range(
-                of: "if isDownloaded { return VLMDetection.isVLM(at: localDirectory) }",
-                range: isVLMStart.lowerBound ..< model.endIndex
-            )
-        )
-        let modelFastPath = try #require(
-            model.range(
-                of: "ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily",
-                range: isVLMStart.lowerBound ..< isDownloaded.lowerBound
-            )
-        )
-        #expect(modelFastPath.lowerBound < isDownloaded.lowerBound)
-
-        let idStart = try #require(vlm.range(of: "static func isVLM(modelId: String)"))
-        let dirLookup = try #require(
-            vlm.range(
-                of: "findLocalModelDirectory(forModelId: modelId)",
-                range: idStart.lowerBound ..< vlm.endIndex
-            )
-        )
-        let vlmFastPath = try #require(
-            vlm.range(
-                of: "ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelId)",
-                range: idStart.lowerBound ..< dirLookup.lowerBound
-            )
-        )
-        #expect(vlmFastPath.lowerBound < dirLookup.lowerBound)
+        #expect(model.contains("VLMDetection.isVLM(at: localDirectory)"))
+        #expect(!vlm.contains("ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily"))
+        #expect(vlm.contains("LocalVisionEvidence.inspect(directory).hasVision"))
+        #expect(vlm.contains("ExternalModelLocator.path(forId: id)"))
 
         let compressionStart = try #require(runtime.range(of: "private static func isRoutedJANGTQCompressionLoad"))
         let jsonRead = try #require(
