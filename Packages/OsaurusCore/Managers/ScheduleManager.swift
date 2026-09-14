@@ -369,7 +369,7 @@ public final class ScheduleManager {
             do {
                 try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 guard !Task.isCancelled else { return }
-                self?.timerFired(scheduledFireDate: fireDate)
+                self?.timerFired()
             } catch {
                 // Task was cancelled
             }
@@ -377,7 +377,7 @@ public final class ScheduleManager {
     }
 
     /// Called when the timer fires
-    private func timerFired(scheduledFireDate: Date) {
+    private func timerFired() {
         let now = Date()
 
         // Find all schedules that should run now
@@ -388,9 +388,11 @@ public final class ScheduleManager {
         }
 
         // Timer fired on its own. Nobody is waiting on this, so it must not
-        // evict the model the user is actually chatting with.
+        // evict the model the user is actually chatting with. Stamp each
+        // schedule with its own slot — the shared soonest fireDate is only
+        // the wake time, not the identity of every due row.
         for schedule in schedulesToRun {
-            executeSchedule(schedule, loadIntent: .background, scheduledFireTime: scheduledFireDate)
+            executeSchedule(schedule, loadIntent: .background, scheduledFireTime: schedule.scheduledFireTime(asOf: now))
         }
 
         // Schedule the next timer
@@ -409,9 +411,7 @@ public final class ScheduleManager {
                     print("[Osaurus] Found missed once schedule: \(schedule.name)")
                     executeSchedule(schedule, loadIntent: .background, scheduledFireTime: date)
                 }
-            } else if schedule.hasMissedRecurringRun(asOf: now),
-                let slot = schedule.latestDueSlot(asOf: now)
-            {
+            } else if let slot = schedule.latestDueSlot(asOf: now) {
                 print("[Osaurus] Found missed recurring schedule: \(schedule.name)")
                 executeSchedule(schedule, loadIntent: .background, scheduledFireTime: slot)
             }

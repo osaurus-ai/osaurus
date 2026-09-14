@@ -246,6 +246,88 @@ struct ScheduleExecutionAnchorTests {
         #expect(frequency.alignedAnchor(from: slot.addingTimeInterval(1)) == slot.addingTimeInterval(1))
     }
 
+    @Test func timerStampUsesEachSchedulesOwnSlotNotTheSharedWake() {
+        let now = localDate(year: 2026, month: 9, day: 13, hour: 5, minute: 0)
+        let yesterdayOdd = localDate(year: 2026, month: 9, day: 13, hour: 4, minute: 59)
+
+        let daily = Schedule(
+            name: "Daily at 5",
+            instructions: "Daily",
+            frequency: .daily(hour: 5, minute: 0),
+            lastTriggeredAt: localDate(year: 2026, month: 9, day: 12, hour: 5, minute: 0)
+        )
+        let oddMinuteCron = Schedule(
+            name: "Odd minutes",
+            instructions: "Cron",
+            frequency: .cron(expression: "1-59/2 * * * *"),
+            lastTriggeredAt: yesterdayOdd
+        )
+
+        #expect(daily.shouldRunNow(asOf: now, toleranceSeconds: 60))
+        #expect(oddMinuteCron.shouldRunNow(asOf: now, toleranceSeconds: 60))
+        #expect(daily.scheduledFireTime(asOf: now) == now)
+        #expect(oddMinuteCron.scheduledFireTime(asOf: now) == now.addingTimeInterval(60))
+        #expect(oddMinuteCron.scheduledFireTime(asOf: now) != now)
+    }
+
+    @Test func staleAnchorTimerStampJumpsToLatestDueSlot() {
+        let threeDaysAgo = localDate(year: 2026, month: 9, day: 10, hour: 5, minute: 0)
+        let today = localDate(year: 2026, month: 9, day: 13, hour: 5, minute: 0)
+        let now = localDate(year: 2026, month: 9, day: 13, hour: 19, minute: 42)
+        let tomorrow = localDate(year: 2026, month: 9, day: 14, hour: 5, minute: 0)
+
+        let schedule = Schedule(
+            name: "Daily check",
+            instructions: "Run",
+            frequency: .daily(hour: 5, minute: 0),
+            lastTriggeredAt: threeDaysAgo
+        )
+
+        #expect(schedule.scheduledFireTime(asOf: now) == today)
+        #expect(schedule.nextRunDateAfterExecutionAnchor(asOf: now) == localDate(year: 2026, month: 9, day: 11, hour: 5, minute: 0))
+
+        var consumed = schedule
+        consumed.lastTriggeredAt = today
+        #expect(consumed.scheduledFireTime(asOf: now) == tomorrow)
+    }
+
+    @Test func cronFastWalkDoesNotSkipAMissedLaterSlot() {
+        let yesterdayNine = localDate(year: 2026, month: 9, day: 12, hour: 9, minute: 0)
+        let yesterdayTen = localDate(year: 2026, month: 9, day: 12, hour: 10, minute: 0)
+        let now = localDate(year: 2026, month: 9, day: 13, hour: 8, minute: 30)
+        let todayNine = localDate(year: 2026, month: 9, day: 13, hour: 9, minute: 0)
+
+        let schedule = Schedule(
+            name: "Nine and ten",
+            instructions: "Cron",
+            frequency: .cron(expression: "0 9,10 * * *"),
+            lastTriggeredAt: yesterdayNine
+        )
+
+        #expect(schedule.latestDueSlot(asOf: now) == yesterdayTen)
+        #expect(schedule.hasMissedRecurringRun(asOf: now))
+        #expect(schedule.scheduledFireTime(asOf: now) == yesterdayTen)
+
+        var consumed = schedule
+        consumed.lastTriggeredAt = yesterdayTen
+        #expect(!consumed.hasMissedRecurringRun(asOf: now))
+        #expect(consumed.nextRunDateAfterExecutionAnchor(asOf: now) == todayNine)
+    }
+
+    @Test func latestDueSlotCapReturnsNilInsteadOfAStaleMidWalkStamp() {
+        let stale = localDate(year: 2026, month: 3, day: 1, hour: 8, minute: 0)
+        let now = localDate(year: 2026, month: 9, day: 13, hour: 19, minute: 42)
+        let frequency = ScheduleFrequency.weekly(dayOfWeek: 1, hour: 8, minute: 0)
+
+        let capped = frequency.latestDueSlot(after: stale, asOf: now, maxIterations: 1)
+        #expect(capped.slot == nil)
+        #expect(capped.steps == 1)
+
+        let full = frequency.latestDueSlot(after: stale, asOf: now)
+        #expect(full.slot != nil)
+        #expect(full.slot! <= now)
+    }
+
     @Test func succeededHistoryClampsEndedAtToStartedAt() {
         let slot = localDate(year: 2026, month: 9, day: 13, hour: 5, minute: 0)
         var schedule = Schedule(

@@ -331,21 +331,46 @@ public enum ScheduleFrequency: Codable, Sendable, Equatable, Hashable {
     /// the slot we want. Weekly / monthly / yearly walk from the aligned
     /// anchor — their gaps can exceed the nominal period (monthly on the
     /// 31st: Jan 31 → Mar 31 is 59 days). Cron uses the observed next gap
-    /// only as a walk bound, not as "the real period." An iteration cap
-    /// falls back to the last candidate that was `<= now`.
+    /// only as a walk bound, not as "the real period."
+    ///
+    /// If that fast start returns `nil` but `nextRunDate(after: aligned)`
+    /// is already `<= now`, the start skipped a real miss (irregular cron
+    /// or DST). Walk again from the aligned anchor. Hitting the iteration
+    /// cap returns `nil` so the timer path can catch up from a live slot
+    /// rather than stamping a mid-walk leftover.
     public func latestDueSlot(
         after rawAnchor: Date,
         asOf now: Date,
         maxIterations: Int = 512
     ) -> LatestDueSlotWalk {
         let aligned = alignedAnchor(from: rawAnchor)
-        var cursor = walkStart(alignedAnchor: aligned, asOf: now)
+        let cap = max(1, maxIterations)
+        let fast = walkDueSlots(
+            from: walkStart(alignedAnchor: aligned, asOf: now),
+            asOf: now,
+            maxIterations: cap
+        )
+        if fast.slot != nil {
+            return fast
+        }
+        if let first = nextRunDate(after: aligned), first <= now {
+            return walkDueSlots(from: aligned, asOf: now, maxIterations: cap)
+        }
+        return LatestDueSlotWalk(slot: nil, steps: fast.steps)
+    }
+
+    private func walkDueSlots(
+        from start: Date,
+        asOf now: Date,
+        maxIterations: Int
+    ) -> LatestDueSlotWalk {
+        var cursor = start
         var lastDue: Date?
         var steps = 0
-        let cap = max(1, maxIterations)
-
-        while steps < cap {
-            guard let next = nextRunDate(after: cursor) else { break }
+        while steps < maxIterations {
+            guard let next = nextRunDate(after: cursor) else {
+                return LatestDueSlotWalk(slot: lastDue, steps: steps)
+            }
             if next > now {
                 return LatestDueSlotWalk(slot: lastDue, steps: steps)
             }
@@ -353,7 +378,7 @@ public enum ScheduleFrequency: Codable, Sendable, Equatable, Hashable {
             cursor = next
             steps += 1
         }
-        return LatestDueSlotWalk(slot: lastDue, steps: steps)
+        return LatestDueSlotWalk(slot: nil, steps: steps)
     }
 
     /// Actual slot spacing used to bound the latest-due walk.
@@ -660,9 +685,15 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
     /// Recurring catch-up: a slot after the consumed anchor is already past.
     /// Not `shouldRunNow` — a launch 1s before the slot is the timer's job.
     public func hasMissedRecurringRun(asOf now: Date = Date()) -> Bool {
-        guard isEnabled else { return false }
-        if case .once = frequency { return false }
-        return latestDueSlot(asOf: now) != nil
+        latestDueSlot(asOf: now) != nil
+    }
+
+    /// Slot to stamp when the timer selects this schedule. Prefer the most
+    /// recent overdue slot so a stale anchor does not cascade one skipped
+    /// fire at a time; otherwise the upcoming slot (`shouldRunNow` may be
+    /// true up to 60s early).
+    public func scheduledFireTime(asOf now: Date = Date()) -> Date? {
+        latestDueSlot(asOf: now) ?? nextRunDateAfterExecutionAnchor(asOf: now)
     }
 
     /// Human-readable description of when this will next run
