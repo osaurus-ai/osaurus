@@ -963,8 +963,15 @@ struct FloatingInputCard: View {
                 configContextErrorOverlay
             }
             .overlay(alignment: .top) {
+                // Cache-only lookup: this is a view body, and the blocking
+                // `findInstalledModel(named:)` parks on the cold-cache disk
+                // scan for up to ~10s, beachballing the app on launch. A miss
+                // just hides the preparation overlay until the scan lands and
+                // the next render picks it up.
                 if let progress = alignmentPreparation.progress(
-                    modelID: selectedModel.flatMap { ModelManager.findInstalledModel(named: $0)?.id },
+                    modelID: selectedModel.flatMap {
+                        ModelManager.findInstalledModelFromCache(named: $0)?.id
+                    },
                     sessionID: inputHistoryKey)
                 {
                     VStack(alignment: .leading, spacing: 8) {
