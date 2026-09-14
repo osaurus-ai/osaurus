@@ -1688,7 +1688,9 @@ final class ChatSession: ObservableObject {
     /// model rejects the image part with a visible provider error.
     static func modelSupportsImages(modelId: String, pickerItems: [ModelPickerItem]) -> Bool {
         if modelId.lowercased() == "foundation" { return false }
-        if ModelMediaCapabilities.from(modelId: modelId).supportsImage { return true }
+        if let local = ModelManager.findInstalledMLXModelFromCache(named: modelId) {
+            return local.mediaCapabilities.supportsImage
+        }
         guard let option = pickerItems.first(where: { $0.id == modelId }) else { return false }
         // Image-edit models accept image input (osaurus image-edit feature).
         if option.imageCapabilities?.imageEdit == true { return true }
@@ -1729,7 +1731,8 @@ final class ChatSession: ObservableObject {
             modelId: model,
             fallbackSupportsImages: selectedModelSupportsImages,
             localModelType: localModel?.modelType,
-            localHasAudioTensors: localModel?.hasAudioTensors ?? false
+            localHasAudioTensors: localModel?.hasAudioTensors ?? false,
+            localCapabilities: localModel?.mediaCapabilities
         )
     }
 
@@ -6638,6 +6641,13 @@ final class ChatSession: ObservableObject {
                         effectiveMaxTokensForAgent = delegationBudget
                             .clampedResponseTokens(agentConfigured: effectiveMaxTokensForAgent)
                     }
+
+                    // Validate the NEW payload before history filtering. A stale
+                    // capability must produce a visible failure, never a text-only
+                    // request that silently loses the user's attachment.
+                    try ModelMediaCapabilities.validateAttachments(attachments, capabilities: .init(
+                        supportsImage: turnSupportsImages, supportsVideo: turnSupportsVideo,
+                        supportsAudio: turnSupportsAudio))
 
                     // KV-cache-aware history compaction: shared window
                     // resolution + reservations via `AgentLoopBudget` (parity

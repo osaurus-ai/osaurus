@@ -1,0 +1,189 @@
+import Foundation
+import MLXVLM
+
+/// Installed-checkpoint evidence, not a claim about inference quality. Names are
+/// deliberately absent: the same directory must produce the same result under
+/// every catalog alias. Only bounded safetensors headers are read, never weights.
+enum LocalVisionEvidence {
+    struct Result: Sendable {
+        let modelType: String
+        let hasVision: Bool
+        let reason: String
+        let tensorNames: Set<String>
+    }
+
+    private static let lock = NSLock()
+    private nonisolated(unsafe) static var cache: [String: Result] = [:]
+    private nonisolated(unsafe) static var generation: UInt64 = 0
+    private nonisolated(unsafe) static let observer: NSObjectProtocol = NotificationCenter.default.addObserver(
+        forName: .localModelsChanged, object: nil, queue: nil
+    ) { _ in invalidate() }
+
+    static func invalidate() {
+        lock.lock()
+        generation &+= 1
+        cache.removeAll(keepingCapacity: true)
+        lock.unlock()
+    }
+
+    static func inspect(_ directory: URL, refresh: Bool = false) -> Result {
+        _ = observer
+        let key = directory.standardizedFileURL.path
+        lock.lock()
+        let version = generation
+        let cached = cache[key]
+        lock.unlock()
+        if !refresh, let cached { return cached }
+        let result = read(directory)
+        lock.lock()
+        // An invalidation while reading must not republish the old generation.
+        if version == generation { cache[key] = result }
+        lock.unlock()
+        return result
+    }
+
+    private static func object(_ url: URL) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: url),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return json
+    }
+
+    private static func read(_ directory: URL) -> Result {
+        var modelType = ""
+        var names = Set<String>()
+        func result(_ supported: Bool, _ reason: String) -> Result {
+            Result(modelType: modelType, hasVision: supported, reason: reason, tensorNames: names)
+        }
+        guard let config = object(directory.appendingPathComponent("config.json")) else {
+            return result(false, "The installed bundle has no readable config.json.")
+        }
+        let omni = object(directory.appendingPathComponent("config_omni.json"))
+        modelType = (omni?["model_type"] ?? config["model_type"]) as? String ?? ""
+        guard VLMTypeRegistry.supportedModelTypes.contains(modelType) else {
+            return result(false, "The configured architecture has no local vision runtime.")
+        }
+        guard let vision = (omni?["vision_config"] ?? config["vision_config"]) as? [String: Any],
+            !vision.isEmpty
+        else {
+            return result(false, "The installed bundle has no nonempty vision configuration.")
+        }
+        // Mirror the factory's file precedence. A declaration in a file the
+        // loader does not select is not proof of a usable processor.
+        let processorURL = ["preprocessor_config.json", "processor_config.json",
+            "audio_preprocessor/preprocessor_config.json"]
+            .map { directory.appendingPathComponent($0) }
+            .first { FileManager.default.fileExists(atPath: $0.path) }
+        guard let processorURL, let processor = object(processorURL), !processor.isEmpty else {
+            return result(false, "The installed bundle has no readable processor configuration.")
+        }
+        let processorClass = processor["processor_class"] as? String ?? ""
+        let hasFactoryOverride = ["mistral3", "ministral3", "nemotron_h_omni",
+                                  "NemotronH_Nano_Omni_Reasoning_V3"].contains(modelType)
+        guard !processorClass.isEmpty || hasFactoryOverride else {
+            return result(false, "The selected processor configuration has no processor_class.")
+        }
+        do {
+            names = try tensorNames(directory)
+        } catch {
+            return result(false, "Cannot verify the installed vision weights: \(error.localizedDescription)")
+        }
+        let weights = names.filter { $0.hasSuffix(".weight") || $0.hasSuffix(".weights") }
+        let visionWeights = weights.filter { key in
+            !Set(key.split(separator: ".").map(String.init))
+                .isDisjoint(with: ["visual", "vision_tower", "vision_model", "vision_encoder"])
+        }
+        guard !visionWeights.isEmpty else {
+            return result(false, "The configured vision encoder has no backing weight tensors.")
+        }
+        // Verify the Qwen and Gemma component roles and every declared encoder
+        // block. A lone visual weight or a stale index cannot grant vision.
+        let qwen = ["qwen2_vl", "qwen2_5_vl", "qwen3_vl", "qwen3_5", "qwen3_5_moe", "qwen4_exp"]
+            .contains(modelType)
+        let gemma4 = ["gemma4", "gemma4_unified", "diffusion_gemma"].contains(modelType)
+        let hasInput = visionWeights.contains {
+            $0.contains("patch_embed") || $0.contains("patch_embedding") || $0.contains("patch_generator") || $0.contains("conv1.weight")
+        }
+        let hasBlocks = visionWeights.contains { $0.contains(".blocks.") || $0.contains(".layers.") }
+        guard hasInput, hasBlocks else {
+            return result(false, "The vision encoder is missing input or encoder-block weights.")
+        }
+        if qwen || gemma4 {
+            guard let depth = (vision[qwen ? "depth" : "num_hidden_layers"] as? NSNumber)?.intValue,
+                depth > 0, depth <= 1024
+            else { return result(false, "The vision configuration has no valid encoder depth.") }
+            let block = qwen ? ".blocks." : ".encoder.layers."
+            guard (0..<depth).allSatisfy({ i in visionWeights.contains { $0.contains("\(block)\(i).") } }) else {
+                return result(false, "The installed weights are missing configured vision encoder blocks.")
+            }
+            let hasProjection = qwen
+                ? visionWeights.contains { $0.contains(".merger.") }
+                : weights.contains { $0.contains("embed_vision.embedding_projection.") }
+            guard hasProjection else {
+                return result(false, "The vision-to-language projection has no backing weights.")
+            }
+        }
+        return result(true, "Image input is backed by the installed configuration and vision weights.")
+    }
+
+    private struct InvalidWeights: LocalizedError {
+        let detail: String
+        var errorDescription: String? { detail }
+    }
+
+    private static func tensorNames(_ directory: URL) throws -> Set<String> {
+        let indexURL = directory.appendingPathComponent("model.safetensors.index.json")
+        let indexExists = FileManager.default.fileExists(atPath: indexURL.path)
+        let index = object(indexURL)?["weight_map"] as? [String: String]
+        if indexExists && (index == nil || index!.isEmpty) {
+            throw InvalidWeights(detail: "invalid safetensors index")
+        }
+        let files: [URL]
+        if let index {
+            files = try Set(index.values).sorted().map { name in
+                guard !name.contains("/"), name.hasSuffix(".safetensors") else {
+                    throw InvalidWeights(detail: "invalid shard path")
+                }
+                return directory.appendingPathComponent(name)
+            }
+        } else {
+            files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+                .filter { $0.pathExtension == "safetensors" && !$0.lastPathComponent.hasPrefix("jangtq_runtime") }
+        }
+        guard !files.isEmpty else { throw InvalidWeights(detail: "no safetensors weight files") }
+        var keys = Set<String>()
+        for file in files {
+            let handle = try FileHandle(forReadingFrom: file)
+            defer { try? handle.close() }
+            let fileSize = try handle.seekToEnd()
+            try handle.seek(toOffset: 0)
+            guard let prefix = try handle.read(upToCount: 8), prefix.count == 8 else {
+                throw InvalidWeights(detail: "truncated shard header")
+            }
+            let length = prefix.withUnsafeBytes { $0.loadUnaligned(as: UInt64.self).littleEndian }
+            guard fileSize >= 8, length > 0, length <= 64 * 1024 * 1024, length <= fileSize - 8,
+                let data = try handle.read(upToCount: Int(length)), data.count == Int(length),
+                let header = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { throw InvalidWeights(detail: "invalid shard header") }
+            var fileKeys = Set<String>()
+            for (name, value) in header where name != "__metadata__" {
+                guard let tensor = value as? [String: Any],
+                    let shape = tensor["shape"] as? [Int], shape.allSatisfy({ $0 > 0 }),
+                    let offsets = tensor["data_offsets"] as? [UInt64], offsets.count == 2,
+                    offsets[0] < offsets[1], offsets[1] <= fileSize - 8 - length
+                else { throw InvalidWeights(detail: "invalid tensor metadata: \(name)") }
+                fileKeys.insert(name)
+            }
+            if let index {
+                let declared = Set(index.filter { $0.value == file.lastPathComponent }.keys)
+                guard declared.isSubset(of: fileKeys) else {
+                    throw InvalidWeights(detail: "index names tensors absent from \(file.lastPathComponent)")
+                }
+                // Use the selected shard's actual header, including legitimate
+                // preserved tensors omitted by an older index.
+            }
+            keys.formUnion(fileKeys)
+        }
+        return keys
+    }
+}

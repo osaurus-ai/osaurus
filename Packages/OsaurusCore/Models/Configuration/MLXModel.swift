@@ -556,28 +556,12 @@ struct MLXModel: Identifiable, Codable {
         return value
     }
 
+    var mediaCapabilities: ModelMediaCapabilities.Capabilities {
+        ModelMediaCapabilities.from(directory: localDirectory, modelId: id)
+    }
+
     /// Direct (uncached) VLM detection used by `isVLM`.
     func computeIsVLM() -> Bool {
-        if ModelFamilyNames.isStepFamily(id) || ModelFamilyNames.isStepFamily(name) {
-            // Step 3.7 bundles can carry upstream vision metadata, but this
-            // Osaurus/vMLX path is the Step text runtime. Keep picker
-            // capability detection text-only until Step VLM is wired and
-            // proven, and avoid blocking picker rebuilds on large external
-            // bundle metadata reads.
-            return false
-        }
-        if (ModelFamilyNames.isNemotronThinkingFamily(id)
-            || ModelFamilyNames.isNemotronThinkingFamily(name))
-            && !(ModelFamilyNames.isNemotronOmniFamily(id)
-                || ModelFamilyNames.isNemotronOmniFamily(name))
-        {
-            return false
-        }
-        if ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(id)
-            || ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(name)
-        {
-            return false
-        }
         if isDownloaded { return VLMDetection.isVLM(at: localDirectory) }
         if let mt = modelType { return VLMDetection.isVLM(modelType: mt) }
         return VLMDetection.isVLM(modelId: id)
