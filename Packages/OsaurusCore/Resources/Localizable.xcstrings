@@ -143493,6 +143493,40 @@
         }
       }
     },
+    "Osaurus agents discovered on your local network": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus-Agenten, die in deinem lokalen Netzwerk gefunden wurden"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "로컬 네트워크에서 발견된 Osaurus 에이전트"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Агенты Osaurus, обнаруженные в вашей локальной сети"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在你的本地网络中发现的 Osaurus 代理"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在你的本機網路中發現的 Osaurus 代理"
+          }
+        }
+      }
+    },
     "Osaurus can send anonymous usage data to help us understand how it's used and improve it.": {
       "localizations": {
         "de": {
