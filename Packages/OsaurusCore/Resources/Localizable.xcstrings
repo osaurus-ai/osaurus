@@ -266823,6 +266823,40 @@
           }
         }
       }
+    },
+    "Shared agents run on their host's Mac, so a folder on this Mac can't be attached.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Geteilte Agenten laufen auf dem Mac ihres Hosts, daher kann kein Ordner von diesem Mac angehängt werden."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "공유 에이전트는 호스트의 Mac에서 실행되므로 이 Mac의 폴더를 첨부할 수 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Общие агенты работают на Mac их владельца, поэтому папку с этого Mac прикрепить нельзя."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "共享代理在其主机的 Mac 上运行，因此无法附加此 Mac 上的文件夹。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "共享代理程式在其主機的 Mac 上執行，因此無法附加此 Mac 上的資料夾。"
+          }
+        }
+      }
     }
   },
   "version": "1.1"
