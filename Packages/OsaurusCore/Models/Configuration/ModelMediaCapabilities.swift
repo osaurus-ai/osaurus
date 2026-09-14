@@ -377,6 +377,32 @@ public enum ModelMediaCapabilities {
     /// Use after the model is downloaded for the most accurate signal.
     /// Falls back to `from(modelId:)` if config.json is unreadable.
     public static func from(directory: URL, modelId: String) -> Capabilities {
+        installBundleAudioObserverIfNeeded()
+        let key = "\(directory.path)\u{0}\(modelId)"
+        bundleAudioLock.lock()
+        let cached = bundleCapabilitiesMemo[key]
+        bundleAudioLock.unlock()
+        if let cached { return cached }
+        let result = fromDirectoryImpl(directory: directory, modelId: modelId)
+        bundleAudioLock.lock()
+        bundleCapabilitiesMemo[key] = result
+        bundleAudioLock.unlock()
+        return result
+    }
+
+    /// Memo for bundle-derived capabilities, keyed by directory and model id.
+    ///
+    /// `fromDirectoryImpl` stats one file and reads plus JSON-decodes another.
+    /// Composer body getters call it per evaluation, putting that file I/O on
+    /// the main thread. Shares `bundleAudioLock` and the same
+    /// `.localModelsChanged` invalidation as the audio probe, so the two can
+    /// never disagree about a bundle that was just replaced.
+    private nonisolated(unsafe) static var bundleCapabilitiesMemo:
+        [String: Capabilities] = [:]
+
+    private static func fromDirectoryImpl(directory: URL, modelId: String)
+        -> Capabilities
+    {
         // Omni bundle gate: presence of config_omni.json flips the
         // VLMModelFactory dispatch to NemotronH_Nano_Omni_Reasoning_V3
         // and exposes Parakeet ASR + RADIO ViT.
@@ -465,7 +491,47 @@ public enum ModelMediaCapabilities {
     /// performs. The composer needs this fact and previously had no way to ask
     /// for it, so it decided audio from the model name instead.
     public static func bundleCarriesAudio(directory: URL) -> Bool {
-        gemma4BundleSupportsAudio(directory: directory)
+        installBundleAudioObserverIfNeeded()
+        bundleAudioLock.lock()
+        let cached = bundleAudioMemo[directory.path]
+        bundleAudioLock.unlock()
+        if let cached { return cached }
+        let result = gemma4BundleSupportsAudio(directory: directory)
+        bundleAudioLock.lock()
+        bundleAudioMemo[directory.path] = result
+        bundleAudioLock.unlock()
+        return result
+    }
+
+    /// Memo for the bundle audio probe, keyed by bundle directory.
+    ///
+    /// `gemma4BundleSupportsAudio` memory-maps a safetensors index that runs to
+    /// several megabytes and byte-scans it. The composer asks for this from a
+    /// view body, so it ran on the main thread on every evaluation and showed
+    /// up as hangs. An installed bundle's weights do not change in place, so
+    /// the answer is stable for as long as the bundle exists; the memo is
+    /// cleared on `.localModelsChanged`, which is posted whenever models are
+    /// installed or removed, so a re-downloaded bundle at the same path is
+    /// re-probed.
+    private static let bundleAudioLock = NSLock()
+    private nonisolated(unsafe) static var bundleAudioMemo: [String: Bool] = [:]
+    private nonisolated(unsafe) static var bundleAudioObserverInstalled = false
+
+    /// Installed once, lazily, by the first probe. Clears the memo so the next
+    /// probe re-reads the bundle.
+    private static func installBundleAudioObserverIfNeeded() {
+        bundleAudioLock.lock()
+        defer { bundleAudioLock.unlock() }
+        guard !bundleAudioObserverInstalled else { return }
+        bundleAudioObserverInstalled = true
+        NotificationCenter.default.addObserver(
+            forName: .localModelsChanged, object: nil, queue: nil
+        ) { _ in
+            bundleAudioLock.lock()
+            bundleAudioMemo.removeAll()
+            bundleCapabilitiesMemo.removeAll()
+            bundleAudioLock.unlock()
+        }
     }
 
     private static func gemma4BundleSupportsAudio(directory: URL) -> Bool {
