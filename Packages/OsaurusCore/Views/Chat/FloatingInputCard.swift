@@ -173,11 +173,6 @@ struct FloatingInputCard: View {
     /// they affect only the owning chat — never other windows.
     @ObservedObject var folderState: ChatFolderState
 
-    /// Hover-opened recent-folders panels on the folder chip and the + button.
-    /// Two flags because the anchors are separate views with separate popovers.
-    @State private var showRecentFoldersOnChip = false
-    @State private var showRecentFoldersOnPlus = false
-
     init(
         text: Binding<String>,
         selectedModel: Binding<String?>,
@@ -3747,19 +3742,17 @@ extension FloatingInputCard {
         }
     }
 
-    /// The hover panel shared by the folder chip and the + button. `dismiss`
-    /// closes whichever anchor's popover is showing before the pick runs.
-    private func recentFoldersPanel(dismiss: @escaping () -> Void) -> some View {
-        RecentFoldersPanel(
-            activePath: folderState.rootPath?.standardizedFileURL.path,
-            onPick: { entry in
-                dismiss()
-                applyRecentFolder(entry)
-            },
-            onChoose: {
-                dismiss()
-                selectFolder()
-            }
+    /// Recent folders listed under the + menu.s Add Folder row. `dismiss`
+    /// closes the menu before the pick runs, like any other row.
+    private func recentFoldersList(dismiss: @escaping () -> Void) -> AnyView {
+        AnyView(
+            RecentFoldersList(
+                activePath: folderState.rootPath?.standardizedFileURL.path,
+                onPick: { entry in
+                    dismiss()
+                    applyRecentFolder(entry)
+                }
+            )
         )
     }
 
@@ -5081,24 +5074,12 @@ extension FloatingInputCard {
         let hasFolder = folderState.hasActiveFolder
 
         return HStack(spacing: 4) {
-            Button {
-                // Click keeps opening the open panel; the hover panel is an
-                // extra affordance only, so drop it before the sheet appears.
-                showRecentFoldersOnChip = false
-                selectFolder()
-            } label: {
+            Button(action: selectFolder) {
                 folderChipContent(hasFolder: hasFolder, canEdit: true, compact: compact)
             }
             .buttonStyle(.plain)
             .pointingHandCursor()
             .help(folderChipHelp(hasFolder: hasFolder))
-            .hoverPopover(
-                isPresented: $showRecentFoldersOnChip,
-                enabled: !isRemoteAgentRun,
-                hasContent: { !recentFolders.entries.isEmpty }
-            ) {
-                recentFoldersPanel(dismiss: { showRecentFoldersOnChip = false })
-            }
             // The chip is icon-only in the compact state and its text is
             // decorative otherwise, so assistive tech (and the AX-driven
             // harness) saw an unnamed button. Name it and keep the folder
@@ -6300,14 +6281,6 @@ extension FloatingInputCard {
         InputActionMenuButton(
             icon: "plus",
             help: "Add folder or attach files",
-            hoverPanel: isRemoteAgentRun || recentFolders.entries.isEmpty
-                ? nil
-                : InputActionMenuButton.HoverPanel(
-                    isPresented: $showRecentFoldersOnPlus,
-                    content: AnyView(
-                        recentFoldersPanel(dismiss: { showRecentFoldersOnPlus = false })
-                    )
-                ),
             items: [
                 // Mode 2 (remote agent run): the turn executes on the host's
                 // machine and no local system prompt or tools are sent, so a
@@ -6319,7 +6292,13 @@ extension FloatingInputCard {
                     title: Text("Add Folder", bundle: .module),
                     disabledReason: isRemoteAgentRun
                         ? Text("Shared agents can't use folders on this Mac.", bundle: .module)
-                        : nil
+                        : nil,
+                    // Recently attached folders, one click each, right under
+                    // the row that opens the picker. Hidden for remote runs
+                    // (same reason as the row) and when there are none yet.
+                    detail: isRemoteAgentRun || recentFolders.entries.isEmpty
+                        ? nil
+                        : { dismiss in recentFoldersList(dismiss: dismiss) }
                 ) {
                     selectFolder()
                 },
@@ -8448,28 +8427,28 @@ private struct InputActionMenuButton: View {
         /// When non-nil the row is shown dimmed and inert, with a trailing
         /// info icon whose tooltip explains why the action is unavailable.
         let disabledReason: Text?
+        /// Optional content rendered directly beneath the row (e.g. recent
+        /// folders under Add Folder). Receives a closure that closes the menu.
+        let detail: ((@escaping () -> Void) -> AnyView)?
         let action: () -> Void
 
-        init(icon: String, title: Text, disabledReason: Text? = nil, action: @escaping () -> Void) {
+        init(
+            icon: String,
+            title: Text,
+            disabledReason: Text? = nil,
+            detail: ((@escaping () -> Void) -> AnyView)? = nil,
+            action: @escaping () -> Void
+        ) {
             self.icon = icon
             self.title = title
             self.disabledReason = disabledReason
+            self.detail = detail
             self.action = action
         }
     }
 
-    /// Optional hover-opened panel (recent folders). Presented while the
-    /// pointer rests on the button; the click popover always wins, so the
-    /// hover panel is closed before the menu opens and suppressed while the
-    /// menu is showing.
-    struct HoverPanel {
-        let isPresented: Binding<Bool>
-        let content: AnyView
-    }
-
     let icon: String
     let help: String
-    var hoverPanel: HoverPanel? = nil
     let items: [Item]
 
     @State private var isHovered = false
@@ -8477,10 +8456,7 @@ private struct InputActionMenuButton: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        Button(action: {
-            hoverPanel?.isPresented.wrappedValue = false
-            showPopover.toggle()
-        }) {
+        Button(action: { showPopover.toggle() }) {
             ZStack {
                 Circle()
                     .fill(theme.tertiaryBackground.opacity(isHovered ? 0.95 : 0.8))
@@ -8520,12 +8496,6 @@ private struct InputActionMenuButton: View {
         .pointingHandCursor()
         .help(help)
         .onHover { isHovered = $0 }
-        .hoverPopover(
-            isPresented: hoverPanel?.isPresented ?? .constant(false),
-            enabled: hoverPanel != nil && !showPopover
-        ) {
-            hoverPanel?.content
-        }
         .popover(isPresented: $showPopover, arrowEdge: .top) {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
@@ -8533,10 +8503,14 @@ private struct InputActionMenuButton: View {
                         showPopover = false
                         item.action()
                     }
+                    if let detail = item.detail {
+                        detail({ showPopover = false })
+                    }
                 }
             }
             .padding(.vertical, 6)
-            .frame(width: 180)
+            // Wider when a row carries detail content so folder names have room.
+            .frame(width: items.contains { $0.detail != nil } ? 240 : 180)
             .background(theme.primaryBackground)
             .environment(\.theme, theme)
         }
