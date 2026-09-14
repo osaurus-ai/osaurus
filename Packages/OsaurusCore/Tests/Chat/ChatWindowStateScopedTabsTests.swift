@@ -82,6 +82,36 @@ struct ChatWindowStateScopedTabsTests {
         }
     }
 
+    @Test func startNewChatWithAgent_opensFreshTab_insteadOfFocusingExistingOne() async throws {
+        try await ChatHistoryTestStorage.run {
+            let agentB = makeAgent("B")
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { Task { _ = await AgentManager.shared.delete(id: agentB.id) } }
+            defer { window.cleanup() }
+            addTurn(window.session, "default work")
+
+            // An existing B conversation that switchAgent would focus.
+            window.newTab(agentId: agentB.id)
+            let b1 = window.activeTabId
+            addTurn(window.session, "b1")
+            window.switchAgent(to: Agent.defaultId)
+            #expect(window.tabs.count == 2)
+
+            // The sidebar "+" always starts a fresh chat for that agent.
+            window.startNewChat(with: agentB.id)
+            #expect(window.activeScope == .local(agentB.id))
+            #expect(window.activeTabId != b1, "a new tab, not the existing B chat")
+            #expect(window.tabs.count == 3)
+            #expect(window.session.turns.isEmpty)
+
+            // Already on that agent: acts like New Chat (a blank tab is reused).
+            let fresh = window.activeTabId
+            window.startNewChat(with: agentB.id)
+            #expect(window.activeTabId == fresh)
+            #expect(window.tabs.count == 3)
+        }
+    }
+
     @Test func switchAgent_prefersTabAwaitingInput_thenMostRecentlyUsed() async throws {
         try await ChatHistoryTestStorage.run {
             let agentB = makeAgent("B")
