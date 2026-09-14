@@ -15,6 +15,13 @@ extension Notification.Name {
     public static let scheduleExecutionCompleted = Notification.Name("scheduleExecutionCompleted")
 }
 
+/// Outcome of a manual `runNow` press.
+public enum ScheduleRunNowResult: Sendable, Equatable {
+    case started
+    case alreadyRunning
+    case notFound
+}
+
 /// Manages scheduled AI tasks with precise timer-based execution
 @Observable
 @MainActor
@@ -238,14 +245,24 @@ public final class ScheduleManager {
         runningTasks[scheduleId] != nil
     }
 
-    /// Manually trigger a schedule to run now
-    public func runNow(_ scheduleId: UUID) {
-        guard let schedule = schedules.first(where: { $0.id == scheduleId }) else { return }
+    /// Manually trigger a schedule to run now. Overlapping a scheduled run
+    /// is a deliberate refuse — the UI should surface `.alreadyRunning`
+    /// rather than start a second turn or toast a fake Started.
+    @discardableResult
+    public func runNow(_ scheduleId: UUID) -> ScheduleRunNowResult {
+        guard let schedule = schedules.first(where: { $0.id == scheduleId }) else {
+            return .notFound
+        }
+        if isInFlight(schedule.id) { return .alreadyRunning }
         // A hand-pressed button. The user is watching this run, so it keeps the
         // normal right to load its model -- even though it arrives with the same
         // `source: .schedule` as the 3am cron fire below. That is exactly why the
         // intent is passed explicitly instead of inferred from `source`.
-        executeSchedule(schedule, loadIntent: .interactive)
+        return executeSchedule(schedule, loadIntent: .interactive) ? .started : .notFound
+    }
+
+    private func isInFlight(_ scheduleId: UUID) -> Bool {
+        runningTasks[scheduleId] != nil || executionTasks[scheduleId] != nil
     }
 
     // MARK: - Plugin Grouping
@@ -352,7 +369,7 @@ public final class ScheduleManager {
             do {
                 try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 guard !Task.isCancelled else { return }
-                self?.timerFired()
+                self?.timerFired(scheduledFireDate: fireDate)
             } catch {
                 // Task was cancelled
             }
@@ -360,20 +377,20 @@ public final class ScheduleManager {
     }
 
     /// Called when the timer fires
-    private func timerFired() {
+    private func timerFired(scheduledFireDate: Date) {
         let now = Date()
 
         // Find all schedules that should run now
         let schedulesToRun = schedules.filter { schedule in
             guard schedule.isEnabled else { return false }
-            guard !runningTasks.keys.contains(schedule.id) else { return false }  // Already running
+            guard !isInFlight(schedule.id) else { return false }
             return schedule.shouldRunNow(asOf: now)
         }
 
         // Timer fired on its own. Nobody is waiting on this, so it must not
         // evict the model the user is actually chatting with.
         for schedule in schedulesToRun {
-            executeSchedule(schedule, loadIntent: .background)
+            executeSchedule(schedule, loadIntent: .background, scheduledFireTime: scheduledFireDate)
         }
 
         // Schedule the next timer
@@ -385,35 +402,35 @@ public final class ScheduleManager {
         let now = Date()
 
         for schedule in schedules where schedule.isEnabled {
-            // Skip if already running
-            guard !runningTasks.keys.contains(schedule.id) else { continue }
+            guard !isInFlight(schedule.id) else { continue }
 
-            // For "once" schedules, check if the time has passed
             if case .once(let date) = schedule.frequency {
-                // If the once date is in the past but hasn't run yet
                 if date <= now && schedule.executionAnchor == nil {
                     print("[Osaurus] Found missed once schedule: \(schedule.name)")
-                    executeSchedule(schedule, loadIntent: .background)
+                    executeSchedule(schedule, loadIntent: .background, scheduledFireTime: date)
                 }
-            } else {
-                // For recurring schedules, check if we missed the last run
-                // Only run if an execution anchor exists and the next run after it is in the past.
-                if let anchor = schedule.executionAnchor {
-                    if let nextAfterAnchor = schedule.frequency.nextRunDate(after: anchor),
-                        nextAfterAnchor <= now
-                    {
-                        print("[Osaurus] Found missed recurring schedule: \(schedule.name)")
-                        executeSchedule(schedule, loadIntent: .background)
-                    }
-                }
+            } else if schedule.hasMissedRecurringRun(asOf: now),
+                let slot = schedule.latestDueSlot(asOf: now)
+            {
+                print("[Osaurus] Found missed recurring schedule: \(schedule.name)")
+                executeSchedule(schedule, loadIntent: .background, scheduledFireTime: slot)
             }
         }
     }
 
     // MARK: - Execution
 
-    /// Execute a schedule by dispatching to TaskDispatcher
-    private func executeSchedule(_ schedule: Schedule, loadIntent: ModelLoadIntent) {
+    /// Execute a schedule by dispatching to TaskDispatcher.
+    /// `scheduledFireTime` is the slot the timer or missed path was armed
+    /// for. `runNow` leaves it nil and stamps wall clock.
+    @discardableResult
+    private func executeSchedule(
+        _ schedule: Schedule,
+        loadIntent: ModelLoadIntent,
+        scheduledFireTime: Date? = nil
+    ) -> Bool {
+        if isInFlight(schedule.id) { return false }
+
         // Schedules MUST target an explicit custom agent. nil or built-in
         // agentIds were previously coerced to `Agent.defaultId`, silently
         // running anonymous schedules under the Default agent. Refuse the
@@ -430,13 +447,21 @@ public final class ScheduleManager {
             )
         {
             print("[Osaurus] Skipping schedule '\(schedule.name)': \(rejection.message)")
-            return
+            return false
         }
 
         var triggeredSchedule = schedule
-        triggeredSchedule.lastTriggeredAt = Date()
+        triggeredSchedule.lastTriggeredAt = scheduledFireTime ?? Date()
         applyLocal(triggeredSchedule)
         Self.persist { [triggeredSchedule] in ScheduleStore.save(triggeredSchedule) }
+
+        let runInfo = ScheduleRunInfo(
+            scheduleId: triggeredSchedule.id,
+            scheduleName: triggeredSchedule.name,
+            agentId: triggeredSchedule.agentId,
+            chatSessionId: UUID()
+        )
+        runningTasks[triggeredSchedule.id] = runInfo
 
         let request = DispatchRequest(
             prompt: triggeredSchedule.instructions,
@@ -465,21 +490,16 @@ public final class ScheduleManager {
                     print("[Osaurus] Failed to dispatch schedule: \(triggeredSchedule.name)")
                 }
                 self.executionTasks.removeValue(forKey: triggeredSchedule.id)
+                self.runningTasks.removeValue(forKey: triggeredSchedule.id)
                 return
             }
-
-            self.runningTasks[triggeredSchedule.id] = ScheduleRunInfo(
-                scheduleId: triggeredSchedule.id,
-                scheduleName: triggeredSchedule.name,
-                agentId: triggeredSchedule.agentId,
-                chatSessionId: UUID()
-            )
 
             let result = await TaskDispatcher.shared.awaitCompletion(handle)
             self.handleResult(result, schedule: triggeredSchedule, request: handle.request)
         }
 
         executionTasks[triggeredSchedule.id] = task
+        return true
     }
 
     // MARK: - Result Handling
@@ -496,8 +516,9 @@ public final class ScheduleManager {
         case .completed(let sessionId):
             let chatSessionId = sessionId ?? UUID()
 
-            var updatedSchedule = schedule
-            updatedSchedule.lastRunAt = Date()
+            var updatedSchedule = schedules.first(where: { $0.id == schedule.id }) ?? schedule
+            let completionTime = Date()
+            updatedSchedule.lastRunAt = max(completionTime, updatedSchedule.lastTriggeredAt ?? completionTime)
             updatedSchedule.lastChatSessionId = chatSessionId
             if case .once = schedule.frequency { updatedSchedule.isEnabled = false }
 

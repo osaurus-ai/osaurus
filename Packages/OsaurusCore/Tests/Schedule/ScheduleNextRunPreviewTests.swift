@@ -69,6 +69,24 @@ struct ScheduleNextRunPreviewTests {
         #expect(oneShot.nextRunPreview(asOf: now).nextRunAt == nil)
     }
 
+    @Test func earlySameDayAnchorPreviewIsScheduledForTomorrow() {
+        let now = localDate(year: 2026, month: 9, day: 13, hour: 19, minute: 42)
+        let slot = localDate(year: 2026, month: 9, day: 13, hour: 5, minute: 0)
+        let tomorrow = localDate(year: 2026, month: 9, day: 14, hour: 5, minute: 0)
+
+        let schedule = Schedule(
+            name: "Daily check",
+            instructions: "Run check",
+            frequency: .daily(hour: 5, minute: 0),
+            lastTriggeredAt: slot.addingTimeInterval(-1)
+        )
+
+        let preview = schedule.nextRunPreview(asOf: now)
+        #expect(preview.state == .scheduled)
+        #expect(preview.nextRunAt == tomorrow)
+        #expect(preview.state != .due)
+    }
+
     private func localDate(year: Int, month: Int, day: Int, hour: Int, minute: Int) -> Date {
         var components = DateComponents()
         components.calendar = Calendar.current

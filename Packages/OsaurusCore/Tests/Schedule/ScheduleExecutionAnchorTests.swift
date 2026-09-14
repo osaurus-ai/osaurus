@@ -103,6 +103,166 @@ struct ScheduleExecutionAnchorTests {
         #expect(selectedForDispatch.nextRunDateAfterExecutionAnchor(asOf: now) == nil)
     }
 
+    @Test func nextRunDateAfterSlotMinusOneSecondIsStillTodaysSlot() {
+        let slot = localDate(year: 2026, month: 9, day: 13, hour: 5, minute: 0)
+        let early = slot.addingTimeInterval(-1)
+        let frequency = ScheduleFrequency.daily(hour: 5, minute: 0)
+        #expect(frequency.nextRunDate(after: early) == slot)
+    }
+
+    @Test func earlyWallClockStampDoesNotReplayDailySlot() {
+        let slot = localDate(year: 2026, month: 9, day: 13, hour: 5, minute: 0)
+        let lastRunAt = localDate(year: 2026, month: 9, day: 13, hour: 5, minute: 3)
+        let now = localDate(year: 2026, month: 9, day: 13, hour: 19, minute: 42)
+        let tomorrow = localDate(year: 2026, month: 9, day: 14, hour: 5, minute: 0)
+
+        let schedule = Schedule(
+            name: "Daily check",
+            instructions: "Run the daily check",
+            frequency: .daily(hour: 5, minute: 0),
+            lastRunAt: lastRunAt,
+            lastTriggeredAt: slot.addingTimeInterval(-1)
+        )
+
+        #expect(schedule.consumedExecutionAnchor == slot)
+        #expect(!schedule.shouldRunNow(asOf: now, toleranceSeconds: 60))
+        #expect(schedule.nextRunDateAfterExecutionAnchor(asOf: now) == tomorrow)
+        #expect(!schedule.hasMissedRecurringRun(asOf: now))
+        #expect(schedule.latestDueSlot(asOf: now) == nil)
+    }
+
+    @Test func missedPredicateIsFalseOneSecondBeforeTodaysSlot() {
+        let yesterday = localDate(year: 2026, month: 9, day: 12, hour: 5, minute: 0)
+        let today = localDate(year: 2026, month: 9, day: 13, hour: 5, minute: 0)
+        let now = today.addingTimeInterval(-1)
+
+        let schedule = Schedule(
+            name: "Daily check",
+            instructions: "Run the daily check",
+            frequency: .daily(hour: 5, minute: 0),
+            lastTriggeredAt: yesterday
+        )
+
+        #expect(schedule.latestDueSlot(asOf: now) == nil)
+        #expect(!schedule.hasMissedRecurringRun(asOf: now))
+        #expect(schedule.shouldRunNow(asOf: now, toleranceSeconds: 60))
+        #expect(schedule.nextRunDateAfterExecutionAnchor(asOf: now) == today)
+    }
+
+    @Test func missedPredicateIsTrueAfterTodaysSlotWhenAnchorIsYesterday() {
+        let yesterday = localDate(year: 2026, month: 9, day: 12, hour: 5, minute: 0)
+        let today = localDate(year: 2026, month: 9, day: 13, hour: 5, minute: 0)
+        let now = localDate(year: 2026, month: 9, day: 13, hour: 19, minute: 42)
+
+        let schedule = Schedule(
+            name: "Daily check",
+            instructions: "Run the daily check",
+            frequency: .daily(hour: 5, minute: 0),
+            lastTriggeredAt: yesterday
+        )
+
+        #expect(schedule.latestDueSlot(asOf: now) == today)
+        #expect(schedule.hasMissedRecurringRun(asOf: now))
+    }
+
+    @Test func latestDueSlotCatchesUpToMostRecentDayNotFirstMissedDay() {
+        let threeDaysAgo = localDate(year: 2026, month: 9, day: 10, hour: 5, minute: 0)
+        let today = localDate(year: 2026, month: 9, day: 13, hour: 5, minute: 0)
+        let now = localDate(year: 2026, month: 9, day: 13, hour: 19, minute: 42)
+        let tomorrow = localDate(year: 2026, month: 9, day: 14, hour: 5, minute: 0)
+
+        let schedule = Schedule(
+            name: "Daily check",
+            instructions: "Run the daily check",
+            frequency: .daily(hour: 5, minute: 0),
+            lastTriggeredAt: threeDaysAgo
+        )
+
+        #expect(schedule.latestDueSlot(asOf: now) == today)
+        #expect(schedule.hasMissedRecurringRun(asOf: now))
+
+        var consumed = schedule
+        consumed.lastTriggeredAt = today
+        #expect(!consumed.hasMissedRecurringRun(asOf: now))
+        #expect(consumed.nextRunDateAfterExecutionAnchor(asOf: now) == tomorrow)
+    }
+
+    @Test func staleEveryFiveMinutesWalkDoesNotStepFromMonthsOldAnchor() throws {
+        let now = localDate(year: 2026, month: 9, day: 13, hour: 19, minute: 42)
+        let stale = localDate(year: 2026, month: 3, day: 1, hour: 8, minute: 0)
+        let frequency = ScheduleFrequency.everyNMinutes(minutes: 5)
+
+        let walk = frequency.latestDueSlot(after: stale, asOf: now)
+        #expect(walk.steps <= 8)
+        let slot = try #require(walk.slot)
+        #expect(slot <= now)
+        #expect(frequency.nextRunDate(after: slot)! > now)
+
+        var schedule = Schedule(
+            name: "Five minute check",
+            instructions: "Check",
+            frequency: frequency,
+            lastTriggeredAt: stale
+        )
+        #expect(schedule.latestDueSlot(asOf: now) == slot)
+
+        schedule.lastTriggeredAt = slot
+        #expect(!schedule.hasMissedRecurringRun(asOf: now))
+        #expect(schedule.nextRunDateAfterExecutionAnchor(asOf: now) == frequency.nextRunDate(after: slot))
+    }
+
+    @Test func oneMinuteSnapToleranceDoesNotConsumeTheFollowingMinute() {
+        let slot = localDate(year: 2026, month: 9, day: 13, hour: 10, minute: 0)
+        let interval: TimeInterval = 60
+        let next = slot.addingTimeInterval(interval)
+
+        #expect(ScheduleFrequency.slotSnapTolerance(interval: interval) == 30)
+        #expect(
+            ScheduleFrequency.shouldConsumeNextSlot(
+                raw: slot.addingTimeInterval(-1),
+                next: slot,
+                interval: interval
+            )
+        )
+        #expect(
+            !ScheduleFrequency.shouldConsumeNextSlot(
+                raw: slot,
+                next: next,
+                interval: interval
+            )
+        )
+        #expect(
+            !ScheduleFrequency.shouldConsumeNextSlot(
+                raw: slot.addingTimeInterval(1),
+                next: next,
+                interval: interval
+            )
+        )
+
+        let frequency = ScheduleFrequency.everyNMinutes(minutes: 1)
+        #expect(frequency.slotSnapToleranceSeconds(around: slot) == 30)
+        #expect(frequency.alignedAnchor(from: slot.addingTimeInterval(-1)) == slot)
+        #expect(frequency.alignedAnchor(from: slot) == slot)
+        #expect(frequency.alignedAnchor(from: slot.addingTimeInterval(1)) == slot.addingTimeInterval(1))
+    }
+
+    @Test func succeededHistoryClampsEndedAtToStartedAt() {
+        let slot = localDate(year: 2026, month: 9, day: 13, hour: 5, minute: 0)
+        var schedule = Schedule(
+            name: "Daily check",
+            instructions: "Run the daily check",
+            frequency: .daily(hour: 5, minute: 0),
+            lastTriggeredAt: slot
+        )
+        schedule.recordRunStarted(at: slot)
+        schedule.recordRunSucceeded(endedAt: slot.addingTimeInterval(-0.5), chatSessionId: nil)
+
+        #expect(schedule.runHistory.count == 1)
+        #expect(schedule.runHistory[0].startedAt == slot)
+        #expect(schedule.runHistory[0].endedAt == slot)
+        #expect(schedule.runHistory[0].endedAt! >= schedule.runHistory[0].startedAt)
+    }
+
     private func localDate(year: Int, month: Int, day: Int, hour: Int, minute: Int) -> Date {
         var components = DateComponents()
         components.calendar = Calendar.current

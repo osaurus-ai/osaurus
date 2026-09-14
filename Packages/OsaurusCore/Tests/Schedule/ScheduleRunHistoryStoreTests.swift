@@ -64,6 +64,30 @@ struct ScheduleRunHistoryStoreTests {
         }
     }
 
+    @Test func storeClampsEndedAtWhenCompletionPrecedesSlotStamp() async throws {
+        try await Self.withIsolatedRoot(label: "store-clamp-ended") {
+            let scheduleId = UUID(uuidString: "55555555-5555-5555-5555-555555555555")!
+            let slot = Self.localDate(year: 2026, month: 9, day: 13, hour: 5, minute: 0)
+            let earlyEnd = slot.addingTimeInterval(-0.5)
+
+            var schedule = Schedule(
+                id: scheduleId,
+                name: "Daily summary",
+                instructions: "Summarize",
+                frequency: .daily(hour: 5, minute: 0),
+                lastTriggeredAt: slot
+            )
+            ScheduleStore.save(schedule)
+            schedule.lastRunAt = earlyEnd
+            ScheduleStore.save(schedule)
+
+            let loaded = try #require(ScheduleStore.load(id: scheduleId))
+            #expect(loaded.runHistory.count == 1)
+            #expect(loaded.runHistory[0].startedAt == slot)
+            #expect(loaded.runHistory[0].endedAt == slot)
+        }
+    }
+
     @Test func runHistoryIsBoundedNewestFirst() async throws {
         try await Self.withIsolatedRoot(label: "store-bounds") {
             var schedule = Schedule(
