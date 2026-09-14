@@ -411,7 +411,9 @@ public final class ScheduleManager {
                     print("[Osaurus] Found missed once schedule: \(schedule.name)")
                     executeSchedule(schedule, loadIntent: .background, scheduledFireTime: date)
                 }
-            } else if let slot = schedule.latestDueSlot(asOf: now) {
+            } else if schedule.executionAnchor != nil,
+                let slot = schedule.latestDueSlot(asOf: now)
+            {
                 print("[Osaurus] Found missed recurring schedule: \(schedule.name)")
                 executeSchedule(schedule, loadIntent: .background, scheduledFireTime: slot)
             }

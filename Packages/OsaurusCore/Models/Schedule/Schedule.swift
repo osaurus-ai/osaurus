@@ -673,19 +673,31 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
     /// Most recent slot that is already `<= now`. `nil` when nothing is
     /// overdue — including when the next slot is in the 60s `shouldRunNow`
     /// window but still in the future.
-    public func latestDueSlot(asOf now: Date = Date()) -> Date? {
+    ///
+    /// With no execution anchor (never run), walk from
+    /// `now - initialLookbackSeconds` so a late first fire stamps today's
+    /// slot instead of `nextRunDate(after: now)` (tomorrow). The missed
+    /// path still requires an anchor and will not use this lookback.
+    public func latestDueSlot(
+        asOf now: Date = Date(),
+        initialLookbackSeconds: TimeInterval = 3600
+    ) -> Date? {
         guard isEnabled else { return nil }
         if case .once(let date) = frequency {
             return date <= now && executionAnchor == nil ? date : nil
         }
-        guard let raw = executionAnchor else { return nil }
+        let raw = executionAnchor ?? now.addingTimeInterval(-initialLookbackSeconds)
         return frequency.latestDueSlot(after: raw, asOf: now).slot
     }
 
-    /// Recurring catch-up: a slot after the consumed anchor is already past.
-    /// Not `shouldRunNow` — a launch 1s before the slot is the timer's job.
+    /// Recurring catch-up: a prior trigger exists and a later slot is
+    /// already past. One-shots and never-run schedules are not missed
+    /// replays — the timer / one-shot path owns those.
     public func hasMissedRecurringRun(asOf now: Date = Date()) -> Bool {
-        latestDueSlot(asOf: now) != nil
+        guard isEnabled else { return false }
+        if case .once = frequency { return false }
+        guard executionAnchor != nil else { return false }
+        return latestDueSlot(asOf: now) != nil
     }
 
     /// Slot to stamp when the timer selects this schedule. Prefer the most

@@ -328,6 +328,38 @@ struct ScheduleExecutionAnchorTests {
         #expect(full.slot! <= now)
     }
 
+    @Test func firstFireLateWakeStampsTodaysSlotNotTomorrow() {
+        let today = localDate(year: 2026, month: 9, day: 13, hour: 5, minute: 0)
+        let now = today.addingTimeInterval(2)
+        let tomorrow = localDate(year: 2026, month: 9, day: 14, hour: 5, minute: 0)
+
+        let schedule = Schedule(
+            name: "Daily check",
+            instructions: "Run the daily check",
+            frequency: .daily(hour: 5, minute: 0)
+        )
+
+        #expect(schedule.executionAnchor == nil)
+        #expect(schedule.latestDueSlot(asOf: now) == today)
+        #expect(schedule.scheduledFireTime(asOf: now) == today)
+        #expect(schedule.scheduledFireTime(asOf: now) != tomorrow)
+        #expect(schedule.nextRunDateAfterExecutionAnchor(asOf: now) == tomorrow)
+        #expect(!schedule.hasMissedRecurringRun(asOf: now))
+    }
+
+    @Test func dueOneShotIsNotAMissedRecurringRun() {
+        let fireDate = localDate(year: 2026, month: 9, day: 13, hour: 5, minute: 0)
+        let now = fireDate.addingTimeInterval(2)
+        let schedule = Schedule(
+            name: "One shot",
+            instructions: "Run once",
+            frequency: .once(date: fireDate)
+        )
+
+        #expect(schedule.latestDueSlot(asOf: now) == fireDate)
+        #expect(!schedule.hasMissedRecurringRun(asOf: now))
+    }
+
     @Test func succeededHistoryClampsEndedAtToStartedAt() {
         let slot = localDate(year: 2026, month: 9, day: 13, hour: 5, minute: 0)
         var schedule = Schedule(
