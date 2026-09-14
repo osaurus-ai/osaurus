@@ -1326,14 +1326,61 @@ extension ContentBlock {
 
     /// Chat-settings toggle gating `rollupActivityBlocks`. Default off —
     /// opt-in like "Expand Thinking While Streaming". Read per display
-    /// rebuild (cheap UserDefaults hit) so flipping the toggle applies to
-    /// open chats without relaunch.
+    /// rebuild, served from a memo that the toggle's change notification
+    /// clears, so flipping it still applies to open chats without relaunch.
     enum ActivityRollupSetting {
         static let defaultsKey = "chatActivityRollupEnabled"
+
+        /// Memoized value plus the observers that clear it.
+        ///
+        /// This is read once per display rebuild, which during streaming means
+        /// several times a second on the main thread. The `UserDefaults` read
+        /// is not free: when cfprefsd is busy it blocks on an XPC round-trip,
+        /// which showed up as main-thread hangs on the streaming path. The
+        /// memo holds the value between changes instead.
+        ///
+        /// It cannot go stale: the toggle is the only writer, and both the
+        /// app's own change notification and the system-wide
+        /// `UserDefaults.didChangeNotification` clear the memo, so the next
+        /// read re-reads `UserDefaults`.
+        private static let lock = NSLock()
+        nonisolated(unsafe) private static var memo: Bool?
+        nonisolated(unsafe) private static var observersInstalled = false
+
         static var isEnabled: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            installObserversLocked()
+            if let memo { return memo }
             // Default ON: absent key reads as enabled, so only an explicit
             // user opt-out (stored false) disables the rollup.
-            UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+            let value =
+                UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+            memo = value
+            return value
+        }
+
+        /// Drop the memo so the next read hits `UserDefaults` again.
+        static func invalidate() {
+            lock.lock()
+            memo = nil
+            lock.unlock()
+        }
+
+        private static func installObserversLocked() {
+            guard !observersInstalled else { return }
+            observersInstalled = true
+            let center = NotificationCenter.default
+            for name in [
+                ContentBlock.activityRollupSettingChanged,
+                UserDefaults.didChangeNotification,
+            ] {
+                center.addObserver(
+                    forName: name, object: nil, queue: nil
+                ) { _ in
+                    invalidate()
+                }
+            }
         }
     }
 

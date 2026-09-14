@@ -84,7 +84,31 @@ public final class CrashReportingService {
     /// Whether crash reporting is enabled. Opt-out: true unless the user has
     /// explicitly turned it off, so a fresh install (absent key) reports on.
     public var isEnabled: Bool {
-        defaults.object(forKey: Self.consentKey) as? Bool ?? true
+        if let enabledOverride { return enabledOverride }
+        return defaults.object(forKey: Self.consentKey) as? Bool ?? true
+    }
+
+    /// Consent value written this process, authoritative over `defaults`.
+    ///
+    /// `setEnabled` blocked the main thread here: writing the key goes through
+    /// cfprefsd over XPC, and a busy prefs daemon stalls the caller for seconds
+    /// while the toggle sits mid-layout. The write is now deferred to
+    /// `writeQueue`, so the value has to stay in memory as well: `isEnabled`
+    /// and `startIfConsented()` read it back immediately after `setEnabled`,
+    /// and a `defaults` read racing the queued write would see the old value.
+    /// The cache cannot go stale because `setEnabled` is the only writer of
+    /// the key and it updates both sides.
+    private var enabledOverride: Bool?
+
+    /// Serial queue owning the consent write, so two rapid toggles land in the
+    /// order they were made and the last one also wins in `defaults`.
+    private let writeQueue = DispatchQueue(
+        label: "com.dinoki.osaurus.crash-consent-write")
+
+    /// Blocks until any queued consent write has reached `defaults`. Tests and
+    /// shutdown paths use this to observe the persisted value.
+    public func flushPendingWrites() {
+        writeQueue.sync {}
     }
 
     // MARK: - Lifecycle
@@ -112,7 +136,10 @@ public final class CrashReportingService {
     /// further is sent. Called from the onboarding consent step and
     /// Settings → Privacy.
     public func setEnabled(_ enabled: Bool) {
-        defaults.set(enabled, forKey: Self.consentKey)
+        enabledOverride = enabled
+        let defaults = self.defaults
+        let key = Self.consentKey
+        writeQueue.async { defaults.set(enabled, forKey: key) }
         if enabled {
             startIfConsented()
         } else {
