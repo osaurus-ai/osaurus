@@ -1222,7 +1222,13 @@ struct FloatingInputCard: View {
                         string:
                             "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
                     ) {
-                        NSWorkspace.shared.open(url)
+                        // Completion-handler form: the plain `open(_:)` blocks
+                        // the main thread on the LaunchServices round-trip.
+                        NSWorkspace.shared.open(
+                            url,
+                            configuration: NSWorkspace.OpenConfiguration(),
+                            completionHandler: nil
+                        )
                     }
                 },
                 secondaryButton: .cancel("Cancel")
@@ -4643,9 +4649,18 @@ extension FloatingInputCard {
                     // host-wide condition, so the user gets the tool that
                     // shows the whole host.
                     swapTextButton(String(localized: "Activity Monitor", bundle: .module)) {
-                        NSWorkspace.shared.open(
-                            URL(fileURLWithPath:
-                                "/System/Applications/Utilities/Activity Monitor.app"))
+                        // `open(_:)` blocks the caller on the LaunchServices
+                        // XPC round-trip, and this fires from a button action
+                        // on the main thread while the host is already under
+                        // memory pressure — exactly when that round-trip is
+                        // slowest. The completion-handler form returns
+                        // immediately and launches in the background.
+                        NSWorkspace.shared.openApplication(
+                            at: URL(fileURLWithPath:
+                                "/System/Applications/Utilities/Activity Monitor.app"),
+                            configuration: NSWorkspace.OpenConfiguration(),
+                            completionHandler: nil
+                        )
                     }
                 }
             }
