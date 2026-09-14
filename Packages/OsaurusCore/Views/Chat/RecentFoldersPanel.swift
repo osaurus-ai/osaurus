@@ -12,6 +12,11 @@ import SwiftUI
 
 // MARK: - Hover popover
 
+/// Rest time before a hover panel opens, and grace period after the pointer
+/// leaves the anchor (long enough to cross into the popover) before it closes.
+private let hoverPopoverShowDelay: UInt64 = 350_000_000
+private let hoverPopoverHideDelay: UInt64 = 250_000_000
+
 /// Present a popover while the pointer rests on the anchor or inside the
 /// popover itself. A plain `.onHover { show = $0 }` dismisses the moment the
 /// pointer leaves the anchor to enter the popover, so both sides debounce
@@ -28,9 +33,6 @@ struct HoverPopover<PopoverContent: View>: ViewModifier {
 
     @State private var showTask: Task<Void, Never>?
     @State private var hideTask: Task<Void, Never>?
-
-    private static let showDelay: UInt64 = 350_000_000
-    private static let hideDelay: UInt64 = 250_000_000
 
     func body(content: Content) -> some View {
         content
@@ -52,7 +54,7 @@ struct HoverPopover<PopoverContent: View>: ViewModifier {
         cancelHide()
         guard enabled, !isPresented, showTask == nil else { return }
         showTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: Self.showDelay)
+            try? await Task.sleep(nanoseconds: hoverPopoverShowDelay)
             guard !Task.isCancelled else { return }
             showTask = nil
             guard enabled, hasContent() else { return }
@@ -65,7 +67,7 @@ struct HoverPopover<PopoverContent: View>: ViewModifier {
         showTask = nil
         guard isPresented, hideTask == nil else { return }
         hideTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: Self.hideDelay)
+            try? await Task.sleep(nanoseconds: hoverPopoverHideDelay)
             guard !Task.isCancelled else { return }
             hideTask = nil
             isPresented = false
