@@ -1,9 +1,10 @@
 import Foundation
+import MLX
 import MLXVLM
 import Testing
 @testable import OsaurusCore
 
-@Suite("Vision admission processor and payload validation")
+@Suite("Vision admission processor and payload validation", .serialized)
 struct VisionAdmissionPayloadTests {
     @Test("an unknown configured processor cannot advertise image input")
     func unknownProcessor() throws {
@@ -45,6 +46,13 @@ struct VisionAdmissionPayloadTests {
         let evidence = LocalVisionEvidence.inspect(root, refresh: true)
         #expect(!evidence.hasVision)
         #expect(evidence.reason.contains("invalid tensor metadata"))
+        if kind != "overflow" {
+            // Confirm the real pinned reader also refuses the reproduced files.
+            // Overflow is admission-only: never send unbounded dimensions to a loader.
+            #expect(throws: (any Error).self) {
+                _ = try MLX.loadArrays(url: root.appendingPathComponent("model.safetensors"), stream: .cpu)
+            }
+        }
     }
 
     @Test("packed integer and floating payloads retain their stored byte sizes",
@@ -60,6 +68,14 @@ struct VisionAdmissionPayloadTests {
         try VisionBundleFixture.writeWeights(names, dtype: dtype, shape: [2, 3],
             payloadBytesPerTensor: 6 * bytes, to: root.appendingPathComponent("model.safetensors"))
         #expect(LocalVisionEvidence.inspect(root, refresh: true).hasVision)
+        // The backend is an independent oracle for the fixture's storage width.
+        // These are tiny CPU arrays, not model weights or generation.
+        let arrays = try MLX.loadArrays(url: root.appendingPathComponent("model.safetensors"), stream: .cpu)
+        #expect(arrays.count == names.count)
+        for array in arrays.values {
+            #expect(array.shape == [2, 3])
+            array.eval()
+        }
     }
 
     @Test("payload arithmetic handles scalars, empty shapes and overflow without allocation")
