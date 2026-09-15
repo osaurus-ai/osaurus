@@ -6551,6 +6551,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     var stepCompletionTokens: Int?
                     var stepPromptTokens: Int?
                     var stepTokensPerSecond: Double?
+                    var stepStopReason: String?
                     defer {
                         runUsage.append(
                             promptTokens: stepPromptTokens ?? Self.estimatePromptTokens(msgs),
@@ -6626,6 +6627,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 stepCompletionTokens = stats.tokenCount
                                 stepPromptTokens = stats.inputTokenCount
                                 stepTokensPerSecond = stats.tokensPerSecond
+                                stepStopReason = stats.stopReason
                                 continue
                             }
                             if StreamingToolHint.isSentinel(delta) { continue }
@@ -6702,6 +6704,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                         return .toolCalls([inv])
                     }
+
+                    // Preserve the runtime's incomplete terminal state. A
+                    // visible fragment at the output cap is not a final answer.
+                    if stepStopReason == "length" { return .lengthExhausted }
 
                     // Empty turn (0-token / EOS-first, no tool call): don't
                     // record a blank assistant message or end the run on

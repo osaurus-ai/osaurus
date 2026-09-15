@@ -20,8 +20,8 @@ fileprivate extension URLRequest {
 struct HTTPHandlerChatStreamingTests {
 
     @MainActor
-    @Test(arguments: [true, false])
-    func agentRunRelaysFinalRuntimeUsageOnlyWhenRequested(includeUsage: Bool) async throws {
+    @Test(arguments: [true, false], ["stop", "length"])
+    func agentRunRelaysFinalRuntimeUsageOnlyWhenRequested(includeUsage: Bool, stopReason: String) async throws {
         try await SandboxTestLock.runWithStoragePaths {
             let agent = Agent(name: "Runtime usage fixture", defaultModel: "fake",
                               toolsEnabled: false, memoryEnabled: false)
@@ -31,7 +31,7 @@ struct HTTPHandlerChatStreamingTests {
                 "red",
                 StreamingStatsHint.encode(tokenCount: 20, tokensPerSecond: 10),
                 StreamingStatsHint.encode(tokenCount: 40, tokensPerSecond: 20,
-                                          stopReason: "stop", inputTokenCount: 7),
+                                          stopReason: stopReason, inputTokenCount: 7),
             ], completeText: "", model: "fake")
             let server = try await startTestServer(with: engine, trustLoopback: true)
             defer { Task { await server.shutdown() } }
@@ -54,8 +54,11 @@ struct HTTPHandlerChatStreamingTests {
                 (try? JSONSerialization.jsonObject(with: Data($0.utf8))) as? [String: Any]
             }
             let usage = chunks.compactMap { $0["usage"] as? [String: Any] }
-            #expect(usage.count == (includeUsage ? 1 : 0))
-            if includeUsage {
+            #expect(usage.count == (includeUsage && stopReason == "stop" ? 1 : 0))
+            if stopReason == "length" {
+                #expect(chunks.contains { $0["error"] != nil })
+                #expect(!String(decoding: data, as: UTF8.self).contains("\"finish_reason\":\"stop\""))
+            } else if includeUsage {
                 #expect(usage.first?["completion_tokens"] as? Int == 40)
                 #expect(usage.first?["prompt_tokens"] as? Int == 7)
                 #expect(usage.first?["tokens_per_second"] as? Double == 20)
