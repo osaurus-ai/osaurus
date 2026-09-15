@@ -92,10 +92,12 @@ struct OsaurusIDSection: View {
             message: L(
                 "Your Osaurus ID is permanent and public. It cannot be changed or released later, so make sure this is the handle you want."
             ),
-            primaryButton: .primary(L("Claim")) {
-                guard let handle = pendingClaimHandle else { return }
+            // The handle is captured when the alert is built rather than read
+            // back on confirm, so the claim does not depend on whether the
+            // dialog clears `pendingClaimHandle` before or after its action.
+            primaryButton: .primary(L("Claim")) { [handle = pendingClaimHandle] in
                 pendingClaimHandle = nil
-                claim(handle)
+                if let handle { claim(handle) }
             },
             secondaryButton: .cancel(L("Cancel"))
         )
