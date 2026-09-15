@@ -133,6 +133,12 @@ enum ChatResidencyHandoff {
     /// free+inactive+purgeable made the exact same resident model look as if it
     /// had lost all child capacity after its first delegated turn.
     static func availableMemoryBytes() -> Int64 {
+        sampledAvailableMemoryBytes() ?? 0
+    }
+
+    /// Preserve failure separately from a successful zero-headroom sample.
+    /// Legacy load callers fail closed through availableMemoryBytes().
+    static func sampledAvailableMemoryBytes() -> Int64? {
         var vmInfo = vm_statistics64()
         var count = mach_msg_type_number_t(
             MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size
@@ -144,9 +150,9 @@ enum ChatResidencyHandoff {
                 host_statistics64(host, HOST_VM_INFO64, $0, &count)
             }
         }
-        guard kr == KERN_SUCCESS else { return 0 }
+        guard kr == KERN_SUCCESS else { return nil }
         var rawPage: vm_size_t = 0
-        host_page_size(host, &rawPage)
+        guard host_page_size(host, &rawPage) == KERN_SUCCESS, rawPage > 0 else { return nil }
         return reclaimableMemoryBytes(
             physicalBytes: Int64(ProcessInfo.processInfo.physicalMemory),
             pageSize: Int64(rawPage),
@@ -191,6 +197,7 @@ enum ChatResidencyHandoff {
     static func memoryPreflight(
         requiredBytes: Int64,
         enabled: Bool,
+        physicalCapacityOnly: Bool = false,
         onPhase: (_ phase: String, _ detail: String) -> Void = { _, _ in }
     ) async throws {
         guard enabled, requiredBytes > 0 else { return }
@@ -199,9 +206,11 @@ enum ChatResidencyHandoff {
         let inflation = 1.3
         let headroom: Int64 = 3 * 1024 * 1024 * 1024  // keep 3 GB for the OS/app
         let needed = Int64(Double(requiredBytes) * inflation) + headroom
-        let residentChatBytes = await ModelRuntime.shared.chatOwnedCachedModelSummaries()
-            .reduce(Int64(0)) { $0 + $1.bytes }
-        let projected = availableMemoryBytes() + residentChatBytes
+        // Disk shard sizes are not resident/releasable bytes. The host sample
+        // already includes reclaimable file-backed pages, and a handoff may
+        // release only its exact parent. Never add all chat-owned shard sizes.
+        let projected = physicalCapacityOnly
+            ? Int64(ProcessInfo.processInfo.physicalMemory) : availableMemoryBytes()
         if projected < needed {
             let neededGB = Double(needed) / 1_073_741_824
             let availableGB = Double(projected) / 1_073_741_824

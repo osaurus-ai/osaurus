@@ -134,6 +134,9 @@ public enum SystemPromptTemplates {
     /// at the TAIL of the injected prefix (see
     /// `composeInjectedUserPrefix`) so the stabler memory/screen blocks
     /// sit adjacent to the shared static prefix and only the tail diverges.
+    /// Keep this block factual: an imperative with example dates is part of
+    /// the user-role prefix and can be mistaken for an additional task by
+    /// the delegating model, even when the real request has no date work.
     public static func timeContext(now: Date, timeZone: TimeZone) -> String {
         let readable = DateFormatter()
         readable.locale = Locale(identifier: "en_US_POSIX")
@@ -146,7 +149,6 @@ public enum SystemPromptTemplates {
         return """
             [Current Time]
             \(readable.string(from: now)) — \(iso.string(from: now)) (\(timeZone.identifier))
-            Resolve relative dates ("today", "tomorrow at 8 AM") against this, and pass absolute date-times with this UTC offset in tool arguments.
             [/Current Time]
             """
     }

@@ -1,7 +1,8 @@
 # Core utilities must preserve resident ownership
 
-Status: regression reproduced; focused correction tests passed. Native verification of
-the correction and reporter-hardware confirmation remain pending.
+Status: regression reproduced; focused correction tests passed. Native source
+ownership checks completed on a755, with a failed history continuation retained.
+Combined RAM-branch verification and reporter-hardware confirmation remain pending.
 
 ## Failure mechanism
 
@@ -88,3 +89,45 @@ Both saved image attachments decode to exactly the original fixture pixels;
 reply remains a failed row pending matched cold versus restored requests.
 Neither the ownership correction nor a successful disk restore proves media
 history correctness.
+
+## Corrected native ownership comparison
+
+Release app `a755a8a1ca21f2d6a05ad7d4de8bf224f804675f`, engine441, binary
+SHA-256 `5e61e8dbc35c4f93f9b1ef23b8b1cd9ecd04c1fa3196e5d93182a9e59d0ab06b`.
+Exact cached Gemma4 E2B 8-bit snapshot433003a1e3fbfd10819ad15179d5e3c4d02d7ea7
+on Apple M5 Max128GiB. Core Model displayed Use chat model. Both utility
+toggles were changed in Settings, revisited, and visually captured.
+
+- Utilities off: exact initial and follow-up replies; 97.4/94.0tok/s. A
+  regeneration returned the same code at96.1tok/s. Close All at12:32:11Z
+  unloaded the model before its12:32:18Z idle deadline.
+- Utilities on: exact initial reply at88.3tok/s; actual title and suggestion
+  requests completed and their results were visible. Close at12:34:10.632Z
+  unloaded by12:34:11.006Z, before the12:34:21Z deadline.
+- The enabled follow-up returned200 instead ofUTILITY-ON-OK at94.0tok/s.
+  This is a failed history row. Initial status strings differed between the
+  two configurations and no random seed was fixed, so it is not causal proof
+  of utility-induced corruption. Preserve and investigate it.
+- Genuine API request: API-OWNER-OK, stop,95.2744tok/s. Closing chat at
+  12:36:34.113Z did not accelerate its12:36:43Z idle deadline; unloaded at
+  12:36:43.718Z.
+- The UI displayed Thinking Off throughout; do not describe this as an
+  independently verified default-thinking contract. Sampling and utility
+  generation parameters are retained in the runtime log.
+
+Evidence: `utility-a755-native-comparison-progress.json`,
+`combined-ui-run3-measurements.jsonl`, `combined-ui-run3.oslog`,
+`utility-a755-{off,on}-settings*.png`, corresponding turn/follow-up captures,
+and `utility-a755-api-owner-response.json`. No screenshot is committed.
+The bounded process exited0; tracked footprint peaked2.29GiB and cleanup
+found zero owned processes. These are small-turn rates, not benchmarks.
+
+## Integration boundary
+
+The a755 build did not contain PR#2752. Its source8229e5e05971bdb921f75860331a84dc835a17b7
+adds fresh host sampling, capacity/budget/cancellation fixes and13 deterministic
+RAM eval cases. It is now being integrated for combined qualification.
+Neither a755's ownership results nor #2752's earlier standalone results replace
+tests/evals/native delegation on that combined source. The reporter's measured
+2,442,035,200bytes remain below the documented reserve-plus-child cutoff;
+preserving source ownership alone does not change that arithmetic.

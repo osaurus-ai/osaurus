@@ -86,6 +86,7 @@ struct GenerationParameters: Sendable {
     /// user/API control and is consumed only by local MLX as a validated SSD
     /// prefix-boundary hint.
     let cacheStableSystemPrefix: String?
+    let admissionPositionLimit: Int?
     /// Where the request originated (chat UI, HTTP API, plugin, P2P).
     /// `ModelRuntime` records this per model so chat-window close can
     /// accelerate idle unload of chat-sourced models without touching models
@@ -164,6 +165,7 @@ struct GenerationParameters: Sendable {
         suppressProgressUI: Bool = false,
         warmupPrefill: Bool = false,
         cacheStableSystemPrefix: String? = nil,
+        admissionPositionLimit: Int? = nil,
         requestSource: RequestSource = .httpAPI,
         loadIntent: ModelLoadIntent = .interactive,
         alignmentRepairModel: String? = nil,
@@ -195,6 +197,7 @@ struct GenerationParameters: Sendable {
         self.suppressProgressUI = suppressProgressUI
         self.warmupPrefill = warmupPrefill
         self.cacheStableSystemPrefix = cacheStableSystemPrefix
+        self.admissionPositionLimit = admissionPositionLimit
         self.requestSource = requestSource
         self.loadIntent = loadIntent
         self.alignmentRepairModel = alignmentRepairModel

@@ -131,6 +131,15 @@ final diff review and PR promotion.
 
 ## Resume handles
 
+September15 combined-lane update: the user explicitly authorized replacing the
+local build-only absolute swap cutoff with available-RAM/normal-pressure
+checks. Isolated supervisors retain the24GiBfree minimum,1GiBswap-growth
+limit,28GiBfootprint cap,1800-second timeout and process-identity ownership
+guards. Existing swap is observational; app admission and macOS swap settings
+were not changed. This supersedes the absolute-swap preservation instruction
+in the historical handles below. Current utility/close proof and remaining
+combined-RAM gaps are in `CORE_UTILITY_RESIDENCY_2026_09_15.md`.
+
 - App worktree: `/Users/eric/osaurus-mtp-calibration-app`, branch
   `fix/model-idle-unload-no-swap-warning`. Preserve untracked
   `build-mtp-calibration/`; no changes to `/Users/eric/vmlx-swift` are in scope.

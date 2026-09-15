@@ -1118,3 +1118,41 @@ cases never breaks them — only deletions or schema drift do.
 Implemented (see "Optimization loop" above): `osaurus-evals diff` (all-domain
 regression check), cross-model scoreboards (`osaurus-evals matrix`), and the
 one-command `make evals-loop` pipeline.
+
+## RAM admission regression lanes
+
+`RAMAdmission` is a deterministic, token-free suite included in the 1.0 floors
+and `make evals-deterministic`. Explicit host facts drive the production memory
+planner, delayed recovery sample and a single reservation actor across all
+steps. It covers the 0.25.2 reporter values, three admissions followed by low
+headroom, repeated recovery, the one-byte reserve boundary, missing/busy
+recovery, explicit load budgets, RAM off, same-model widths, engine occupancy,
+and batching disabled. It does not emulate physical 16 GB hardware or execute
+model children.
+
+`AgentLoopRAMAdmission` runs real parent and worker inference. Its fixtures set
+RAM safety ON, local handoff ON, coexistence OFF, continuous batching ON with
+one concurrent sequence, and per-agent batch limit one. Child budgets are
+2048 output tokens, two turns and 120 seconds, with worker tools disabled.
+`maxToolCalls: 0` retains the default budget of eight; it does not itself disable
+tools. Sampling remains
+bundle-driven. Single and sequential cases each require all four trials; the
+reporter-order case first runs three fresh single-child chats, then a fresh
+sequential pair in the same process without unloading/resetting the runtime.
+The warmups are scored and persisted as separate transcripts. Every actual
+single-child digest must match exactly and in order; parent echoes, previews,
+missing children, failures and deduped results cannot satisfy the contract.
+
+Run against the exact installed reporter model:
+
+```sh
+swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+  --suite Packages/OsaurusEvals/Suites/AgentLoopRAMAdmission \
+  --model gemma-4-e2b-it-8bit --transcripts --out /tmp/ram-live.json
+```
+
+Delegation settings fixtures save and restore the production settings store;
+run these global-setting scenarios serially in the CLI's isolated storage.
+A local 128 GB result does not qualify the reporter's M4 16 GB machine. Retain
+refusals and full `memory_decision` fields instead of lowering safety thresholds
+to make an eval pass.

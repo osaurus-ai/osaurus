@@ -53,6 +53,24 @@ extension EvalRunner {
         }
 
         switch exp.lane {
+        case "ram_admission":
+            guard let fixture = exp.ramAdmission,
+                !fixture.scenario.steps.isEmpty,
+                fixture.scenario.steps.count == fixture.expected.count
+            else {
+                return .terminal(id: testCase.id, label: label, domain: testCase.domain,
+                    outcome: .errored, notes: ["ram_admission needs nonempty steps and one expected observation per step"],
+                    modelId: modelId)
+            }
+            let started = Date()
+            let observed = await SubagentAdmissionEvaluator.run(fixture.scenario)
+            let notes = zip(observed, fixture.expected).enumerated().map { index, pair in
+                "step \(index + 1): \(pair.0 == pair.1 ? "PASS" : "FAIL") observed=\(pair.0) expected=\(pair.1)"
+            }
+            return EvalCaseReport(id: testCase.id, label: label, domain: testCase.domain,
+                query: testCase.query, outcome: observed == fixture.expected ? .passed : .failed,
+                notes: ["Injected host facts; production planner/recovery/reservation lifecycle. No hardware or inference qualification."] + notes,
+                modelId: modelId, latencyMs: Date().timeIntervalSince(started) * 1000)
         case "scripted":
             return await scoreScriptedLane(testCase, exp: exp, modelId: modelId, label: label)
         case "spawn":

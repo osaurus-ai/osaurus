@@ -632,8 +632,11 @@ public final class BackgroundTaskManager: ObservableObject {
         queuedOrder.removeAll { $0 == backgroundId }
         pendingStarts.removeValue(forKey: backgroundId)
 
-        state.chatSession?.stop()
+        // stop() synchronously publishes isStreaming=false. Mark cancellation
+        // first so the streaming observer cannot resume a delegation waiter
+        // with .completed and promote its buffered partial answer to success.
         state.status = .cancelled
+        state.chatSession?.stop()
         state.captureContextPreview()
         // Mirror the markCompleted finalisation for the agent_runs row
         // so cancelled runs don't sit in `running` forever in the
