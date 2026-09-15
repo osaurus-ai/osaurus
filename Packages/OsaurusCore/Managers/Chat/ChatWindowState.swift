@@ -1084,7 +1084,7 @@ final class ChatWindowState: ObservableObject {
     /// ⌘N: ALWAYS open a new tab (like ⌘T), staying in the current project
     /// context: the current chat's project, if any, is stamped on the new
     /// tab along with the project folder, the same way `startNewChat(in:)`
-    /// does. An untouched blank active tab is reused (see `newTab`).
+    /// does.
     func newTabInCurrentProject() {
         let project = ProjectManager.shared.project(for: openProjectId ?? session.projectId)
         openProjectId = nil
@@ -1254,22 +1254,9 @@ final class ChatWindowState: ObservableObject {
     /// outgoing tab keeps its session untouched (no detach — the tab still
     /// owns it).
     func newTab(agentId newAgentId: UUID? = nil, startsConversation: Bool = true, restoresDraft: Bool = true) {
-        // An untouched blank tab (no turns, nothing typed, no project) is
-        // reused in place rather than joined by a second identical blank:
-        // repeated ⌘T / ⌘N / + presses otherwise litter the strip with
-        // "New Chat" tabs that nothing ever prunes.
-        if let idx = tabs.firstIndex(where: { $0.id == activeTabId }),
-            newAgentId == nil || newAgentId == agentId,
-            !tabs[idx].isHibernated, isBlank(session),
-            session.unsentComposerText.isEmpty, session.projectId == nil
-        {
-            tabs[idx].lastActivatedAt = Date()
-            refreshSessions()
-            if startsConversation {
-                FeatureTelemetry.chatSessionStarted()
-            }
-            return
-        }
+        // Browser-style: every ⌘T / ⌘N / + press opens another tab, even
+        // when the active one is still blank. Blank tabs are never
+        // persisted, so extras cost nothing across a relaunch.
         persistActiveSessionForTabSwitch()
         // A new tab from a team-agent tab stays with that agent, same as
         // sidebar New Chat (`startNewChat`). Without the carried context the

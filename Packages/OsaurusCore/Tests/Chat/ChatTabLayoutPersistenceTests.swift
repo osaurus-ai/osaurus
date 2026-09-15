@@ -5,8 +5,8 @@
 //  Open chat tabs survive window close and relaunch: a window's persisted
 //  conversations are recorded in `ChatTabLayoutStore` (ids only), records
 //  of windows that are no longer open are orphans, and a new window adopts
-//  them as hibernated tabs. Blank tabs are never recorded, an untouched
-//  blank tab is reused by ⌘T / ⌘N rather than duplicated, and ⌘W on the
+//  them as hibernated tabs. Blank tabs are never recorded, ⌘T / ⌘N always
+//  open another tab (browser-style, even on a blank one), and ⌘W on the
 //  last conversation tab leaves a blank chat instead of closing the window.
 //
 
@@ -264,29 +264,28 @@ struct ChatTabLayoutPersistenceTests {
         }
     }
 
-    // MARK: Blank tab reuse
+    // MARK: Unlimited blank tabs
 
-    @Test func newTab_reusesAnUntouchedBlankActiveTab() async throws {
+    @Test func newTab_alwaysOpensAnotherTab() async throws {
         try await ChatHistoryTestStorage.run {
             let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
             defer { window.cleanup() }
             let blank = window.activeTabId
 
+            // Browser-style: ⌘T / ⌘N / + on a blank tab still open a new one.
             window.newTab()
             window.newTab()
             window.newTabInCurrentProject()
-            #expect(window.tabs.count == 1, "⌘T / ⌘N on a blank tab stay on it")
-            #expect(window.activeTabId == blank)
+            #expect(window.tabs.count == 4, "every press opens a tab, blank or not")
+            #expect(window.activeTabId != blank)
+            #expect(window.tabs.allSatisfy { $0.session.turns.isEmpty })
 
-            // Anything typed makes the tab worth keeping.
-            window.session.noteComposerDraft("half a thought")
-            window.newTab()
-            #expect(window.tabs.count == 2)
-
-            // A conversation always gets a fresh tab.
+            // A conversation gets a fresh tab too, and keeps its own.
             addTurn(window.session, "work")
+            let conversation = window.activeTabId
             window.newTab()
-            #expect(window.tabs.count == 3)
+            #expect(window.tabs.count == 5)
+            #expect(window.tabs.contains { $0.id == conversation && !$0.session.turns.isEmpty })
         }
     }
 
