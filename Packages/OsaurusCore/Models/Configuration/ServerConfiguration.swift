@@ -376,7 +376,7 @@ public enum ModelIdleResidencyPolicy: Codable, Equatable, Hashable, Sendable {
             )
         case .afterSeconds(let seconds):
             return String(
-                format: L("Keeps model memory resident for %d minutes after the last generation finishes."),
+                format: L("Unloads after %d minutes without a request, or when the last chat window using the model closes. Active requests finish first."),
                 max(1, seconds / 60)
             )
         case .never:
@@ -419,7 +419,7 @@ public enum ModelEvictionPolicy: String, Codable, CaseIterable, Sendable {
         case .strictSingleModel:
             return L("Automatically unloads other models. Recommended for standard use.")
         case .manualMultiModel:
-            return L("Keeps models loaded until manually unloaded. Requires 32GB+ RAM.")
+            return L("Allows multiple resident models. The idle-unload setting still applies.")
         }
     }
 }

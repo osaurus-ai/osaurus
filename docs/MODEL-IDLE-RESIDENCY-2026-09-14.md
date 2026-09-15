@@ -42,3 +42,23 @@ diff review and PR.
   navigation and relaunch; off re-arms an already-loaded model; next Send reloads.
 - Active stream/window-close protection and no lease underflow. No destructive
   swap-pressure stress or unrelated model/cache changes for this checkpoint.
+- Critical swap emulation with an actual sampled-state log receipt and inspected
+  screenshots while loading, generating, delegating, and continuing the chat.
+- Same-model spawning and different-model delegation: actual child results,
+  parent resumption, final Stop/input state, per-generation rates, and residency
+  ownership through completion and cancellation.
+
+## Validation progress
+
+- Initial source `e3d1dbf06b0431d5d17add2d149b6f4bf9a965ae`: the local
+  whole-module test build was interrupted at 17:32 PDT after app-core compilation
+  while the test target was still compiling. No tests executed; this is not a
+  passing test result. Supervisor cleanup recorded zero remaining owned processes.
+  Log: `SWIFTTEST_ModelIdleResidencyTests0914__171034.log` under the retained
+  `mtp-swift-2026-09-04/logs` evidence directory.
+- Cross-reference review found two obsolete warning-UI tests and one
+  whitespace-sensitive event-name assertion. Update those contracts and use the
+  repository's incremental CI test lane before promotion.
+- Local live profile: `post-1653-qwen38-audit/mtp-default-off-live.VJzhhW/mlx0322/model-idle-residency-0914.Rf3bEw`.
+  Only symlinks to existing LFM2.5-2.6B-JANG_6M and SmolLM2-135M-Instruct-8bit
+  bundles; no weight or generation-config edits. Live proof is still pending.

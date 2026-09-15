@@ -37,7 +37,8 @@ final class MemoryPressureWiringTests: XCTestCase {
         XCTAssertTrue(monitor.contains("FeatureTelemetry.observeModelMemory(memoryObservation)"))
         let telemetry = try source("Services/FeatureTelemetry.swift")
         XCTAssertTrue(telemetry.contains("modelMemoryLimiter.shouldRecord(state)"))
-        XCTAssertTrue(telemetry.contains("service.track(\"model_memory_sample\""))
+        XCTAssertTrue(telemetry.contains("service.track("))
+        XCTAssertTrue(telemetry.contains("\"model_memory_sample\""))
     }
 
     func testFocusIsReadOnlyAndSavingRefreshesIdlePolicy() throws {

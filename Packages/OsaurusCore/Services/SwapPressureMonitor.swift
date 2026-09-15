@@ -250,6 +250,9 @@ public final class SwapPressureMonitor: @unchecked Sendable {
     /// sampled by the off-main system resource tick, independently of chat UI.
     public func currentState(dataRoot: URL? = nil) -> State {
         if let override = Self.emulationOverride(dataRoot: dataRoot) {
+            swapLog.debug(
+                "swap-pressure emulation sampled severity=\(override.rawValue, privacy: .public) phase=resident telemetry_excluded=true"
+            )
             let growth: Int64 = override == .critical ? (5 << 30) : (2 << 30)
             return State(
                 severity: override,
@@ -461,13 +464,13 @@ public final class SwapPressureMonitor: @unchecked Sendable {
 
     // MARK: - Team/designer emulation
 
-    /// Deterministic states for the design/QA loop, so the banner can be
-    /// seen and iterated without actually thrashing a Mac:
+    /// Deterministic states for verifying silent diagnostics and warning-free
+    /// UI behavior without actually thrashing a Mac:
     /// - launch env `OSAURUS_SWAP_EMULATE=elevated|critical`
     /// - OR a live-flippable flag file `debug/swap-emulate` in the data root
     ///   containing `elevated` or `critical` (re-read every sample; delete
     ///   the file or write `none` to end the simulation without relaunch).
-    /// Emulated states are tagged so the banner shows "(simulated)".
+    /// Emulated states are tagged and excluded from usage telemetry.
     static func emulationOverride(dataRoot: URL?) -> Severity? {
         if let raw = ProcessInfo.processInfo.environment["OSAURUS_SWAP_EMULATE"],
             let severity = parseEmulation(raw)
@@ -475,10 +478,9 @@ public final class SwapPressureMonitor: @unchecked Sendable {
             return severity
         }
         // The flag file is read on a background queue and memoized:
-        // `currentState()` runs on the caller's thread — in practice the chat
-        // card's main-thread 2s tick — and a synchronous read here can park
-        // for seconds on exactly the swap-thrashed disk this monitor exists
-        // to detect. The memo means a flag edit lands one tick late, which
+        // `currentState()` can run on any caller's thread. A synchronous read
+        // could park that caller on a busy disk. The memo means a flag edit
+        // lands one tick late, which
         // the "re-read every sample" contract tolerates.
         if let dataRoot {
             // Explicit roots come from tests; keep them synchronous and

@@ -2743,10 +2743,9 @@ public actor ModelRuntime {
         public let gpuBudgetBytes: Int64
         public let timestamp: Date
 
-        /// The load doesn't fit the GPU working set, so macOS pages the
-        /// weights on every decode step. Distinct from ordinary RAM pressure:
-        /// the budget is a fixed fraction of installed memory, so closing
-        /// other apps cannot make room — only a smaller model can.
+        /// Whether the estimated load footprint exceeds the recommended GPU
+        /// working set. This diagnostic is not evidence of actual paging or
+        /// decode cost, and it does not drive a composer warning.
         ///
         /// Judged on the **weights**, not weights + KV headroom. The weights
         /// are what must stay resident for every decode step; the KV cache
@@ -2758,20 +2757,19 @@ public actor ModelRuntime {
             gpuBudgetBytes > 0 && incomingLoadFootprintBytes > gpuBudgetBytes
         }
 
-        /// UI severity for the chat input's tight-fit disclaimer.
+        /// Legacy diagnostic classification; no composer warning consumes it.
         public enum LoadPressureSeverity: String, Sendable, Equatable {
-            /// Comfortably within budget — no banner.
+            /// Estimate within the diagnostic thresholds.
             case none
-            /// Elevated load estimate: show an advisory acknowledgement.
+            /// Elevated estimate, not a user acknowledgement gate.
             case warn
-            /// High-risk estimate (legacy case name). The composer offers
-            /// Use Anyway; independent runtime admission still applies.
+            /// High-risk estimate (legacy case name). Independent runtime
+            /// admission still applies.
             case block
         }
 
-        /// Maps the assessment to advisory severity, not a runtime refusal.
-        /// The composer also surfaces the existing low-available tight verdict;
-        /// neither presentation changes the runtime's independent load policy.
+        /// Maps the assessment to diagnostic severity, not a runtime refusal
+        /// or UI confirmation. Runtime admission owns the actual load policy.
         public var loadPressureSeverity: LoadPressureSeverity {
             // Judge the hard ceiling on the resident working set (weights of
             // everything resident plus the incoming footprint), NOT on the
