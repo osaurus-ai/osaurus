@@ -23,32 +23,46 @@ import Testing
 
     @Test func belowLimitUnknownAndDisabledDoNotConsumeNotice() {
         var policy = DiskCacheQuotaNoticePolicy()
-        #expect(!policy.claim(snapshot(used: 99)))
-        #expect(!policy.claim(snapshot(used: 100, limit: 0, evictions: 1)))
-        #expect(!policy.claim(snapshot(used: 100, evictions: 1, disabled: true)))
-        #expect(policy.claim(snapshot(used: 100)))
+        let claimed1 = policy.claim(snapshot(used: 99))
+        #expect(!claimed1)
+        let claimed2 = policy.claim(snapshot(used: 100, limit: 0, evictions: 1))
+        #expect(!claimed2)
+        let claimed3 = policy.claim(snapshot(used: 100, evictions: 1, disabled: true))
+        #expect(!claimed3)
+        let claimed4 = policy.claim(snapshot(used: 100))
+        #expect(claimed4)
     }
 
     @Test func janitorEvictionStillNotifiesAfterUsageDropsBelowLimit() {
         var policy = DiskCacheQuotaNoticePolicy()
-        #expect(policy.claim(snapshot(used: 40, evictions: 1)))
-        #expect(!policy.claim(snapshot(used: 20, evictions: 2)))
-        #expect(!policy.claim(snapshot(used: 101, evictions: 3)))
+        let claimed5 = policy.claim(snapshot(used: 40, evictions: 1))
+        #expect(claimed5)
+        let claimed6 = policy.claim(snapshot(used: 20, evictions: 2))
+        #expect(!claimed6)
+        let claimed7 = policy.claim(snapshot(used: 101, evictions: 3))
+        #expect(!claimed7)
     }
 
     @Test func sharedRootDeduplicatesAcrossViewsAndModelsAfterClearAndRefill() {
         var policy = DiskCacheQuotaNoticePolicy()
-        #expect(policy.claim(snapshot(used: 100)))
-        #expect(!policy.claim(snapshot(used: 0)))
-        #expect(!policy.claim(snapshot(used: 100, root: "/cache/other/../shared")))
-        #expect(policy.claim(snapshot(used: 200, limit: 200)))
-        #expect(policy.claim(snapshot(used: 100, root: "/cache/second")))
+        let claimed8 = policy.claim(snapshot(used: 100))
+        #expect(claimed8)
+        let claimed9 = policy.claim(snapshot(used: 0))
+        #expect(!claimed9)
+        let claimed10 = policy.claim(snapshot(used: 100, root: "/cache/other/../shared"))
+        #expect(!claimed10)
+        let claimed11 = policy.claim(snapshot(used: 200, limit: 200))
+        #expect(claimed11)
+        let claimed12 = policy.claim(snapshot(used: 100, root: "/cache/second"))
+        #expect(claimed12)
     }
 
     @Test func aNewAppSessionCanRemindAgain() {
         var oldSession = DiskCacheQuotaNoticePolicy()
         var newSession = DiskCacheQuotaNoticePolicy()
-        #expect(oldSession.claim(snapshot(used: 100)))
-        #expect(newSession.claim(snapshot(used: 100)))
+        let claimed13 = oldSession.claim(snapshot(used: 100))
+        #expect(claimed13)
+        let claimed14 = newSession.claim(snapshot(used: 100))
+        #expect(claimed14)
     }
 }
