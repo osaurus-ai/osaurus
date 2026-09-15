@@ -4,6 +4,33 @@ import Testing
 
 @Suite("ModelMediaCapabilities — config and weight evidence")
 struct ModelMediaCapabilitiesMCDCTests {
+    @Test(arguments: ["qwen3_5", "qwen3_5_moe"])
+    func renamedDerivativeWithPreservedVisionTower(type: String) throws {
+        let root = try VisionBundleFixture.make(type: type)
+        defer { try? FileManager.default.removeItem(at: root) }
+        // Actual Ornith dense/MoE layout: 27 blocks, vision_tower rather
+        // than visual, with the selected preprocessor_config.json sidecar.
+        try VisionBundleFixture.writeJSON(["model_type": type, "vision_config": ["depth": 27]],
+            to: root.appendingPathComponent("config.json"))
+        try VisionBundleFixture.writeJSON(["processor_class": "Qwen3VLProcessor", "patch_size": 16],
+            to: root.appendingPathComponent("preprocessor_config.json"))
+        let names = ["vision_tower.patch_embed.proj.weight", "vision_tower.merger.linear_fc2.weight"]
+            + (0..<27).map { "vision_tower.blocks.\($0).attn.qkv.weight" }
+        try VisionBundleFixture.writeWeights(names, to: root.appendingPathComponent("model.safetensors"))
+        for alias in ["Ornith-1.5", "ordinary-renamed-model", "Qwen3-VL"] {
+            let row = InstalledVisionEvaluation.inspect(directory: root, modelID: alias)
+            #expect(row.supportsImage)
+            #expect(row.declaresVision)
+            #expect(row.modelType == type)
+        }
+        try VisionBundleFixture.writeWeights(names.filter { !$0.contains(".blocks.26.") },
+            to: root.appendingPathComponent("model.safetensors"))
+        let incomplete = InstalledVisionEvaluation.inspect(directory: root, modelID: "Ornith-1.5")
+        #expect(incomplete.declaresVision)
+        #expect(!incomplete.supportsImage)
+        #expect(incomplete.reason.contains("missing configured"))
+    }
+
     @Test(arguments: ["qwen2_vl", "qwen2_5_vl", "qwen3_vl", "qwen3_5", "qwen3_5_moe", "qwen4_exp", "gemma4", "gemma4_unified"])
     func installedFamilies(type: String) throws {
         let root = try VisionBundleFixture.make(type: type)

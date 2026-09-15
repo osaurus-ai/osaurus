@@ -602,6 +602,9 @@
       "tool_result_grounding.spawn-batch-second-tool-then-final",
       "tool_result_grounding.stale-result-not-cited",
       "tool_result_grounding.unit-preserved-from-result"
+    ],
+    "Vision": [
+      "vision.image-runtime-history"
     ]
   }
 }

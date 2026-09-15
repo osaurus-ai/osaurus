@@ -1214,6 +1214,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// `concurrent_isolation`: the two echo tokens (default
         /// ["ALPHA-7391", "BRAVO-2648"]).
         public let echoTokens: [String]?
+        /// Vision qualification must fail on unsupported media, never skip it.
+        public let requireMediaSupport: Bool?
 
         public init(
             scenario: String,
@@ -1226,7 +1228,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             responseContains: [String]? = nil,
             outputSchema: JSONValue? = nil,
             prefixProbe: Bool? = nil,
-            echoTokens: [String]? = nil
+            echoTokens: [String]? = nil,
+            requireMediaSupport: Bool? = nil
         ) {
             self.scenario = scenario
             self.prompt = prompt
@@ -1239,6 +1242,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.outputSchema = outputSchema
             self.prefixProbe = prefixProbe
             self.echoTokens = echoTokens
+            self.requireMediaSupport = requireMediaSupport
         }
     }
 

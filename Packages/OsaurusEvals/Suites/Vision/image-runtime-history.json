@@ -1,0 +1,15 @@
+{
+  "id": "vision.image-runtime-history",
+  "domain": "http_api",
+  "label": "Vision: real pixels, repeat-cache, changed image, and multimodal history",
+  "query": "Qualify the installed model's image path through the real Osaurus HTTP runtime.",
+  "notes": "Model-independent. Require image support: refusals, load failures and server errors fail rather than skip. Seven real-media requests (including streaming chat and a custom agent endpoint) score exact background colors, normal termination, visible answers, measured throughput, repeated-image cache hits and changed-media history. Sampling comes from the bundle; only the output budget is explicit. This is bounded image qualification, not OCR/video or general caption quality.",
+  "fixtures": {},
+  "expect": {
+    "httpAPI": {
+      "scenario": "multimodal_image",
+      "maxTokens": 1024,
+      "requireMediaSupport": true
+    }
+  }
+}

@@ -268,6 +268,16 @@ evals: evals-prep
 		$(if $(MODEL),--model $(MODEL),) \
 		$(if $(FILTER),--filter $(FILTER),)
 
+# Discover installed bundles using the same Core scanner as the app; each
+# image-capable bundle runs the strict real-media suite in an isolated process.
+VISION_EVALS_OUT ?= build/evals/vision-$(shell date -u +%Y%m%dT%H%M%SZ)
+VISION_EVALS_OUT := $(VISION_EVALS_OUT)
+.PHONY: evals-vision-installed
+evals-vision-installed: evals-prep
+	swift build --package-path Packages/OsaurusEvals --product osaurus-evals
+	bash scripts/live-proof/run-installed-vision-evals.sh \
+		Packages/OsaurusEvals/.build/debug/osaurus-evals "$(VISION_EVALS_OUT)"
+
 evals-verbose: evals-prep
 	@echo "Running OsaurusEvals (verbose) against $(EVALS_SUITE)…"
 	swift run --package-path Packages/OsaurusEvals osaurus-evals run \

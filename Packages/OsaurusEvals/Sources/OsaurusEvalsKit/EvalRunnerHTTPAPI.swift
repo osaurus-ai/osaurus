@@ -272,8 +272,8 @@ extension EvalRunner {
                 )
             case "multimodal_image":
                 if let skip = try await runMultimodalImage(
-                    port: port, maxTokens: maxTokens, check: check,
-                    note: { notes.append($0) }
+                    port: port, maxTokens: maxTokens, requireMediaSupport: exp.requireMediaSupport ?? false,
+                    check: check, note: { notes.append($0) }
                 ) {
                     return .terminal(
                         id: testCase.id, label: label, domain: testCase.domain,
@@ -282,8 +282,8 @@ extension EvalRunner {
                 }
             case "multimodal_video":
                 if let skip = try await runMultimodalVideo(
-                    port: port, maxTokens: maxTokens, check: check,
-                    note: { notes.append($0) }
+                    port: port, maxTokens: maxTokens, requireMediaSupport: exp.requireMediaSupport ?? false,
+                    check: check, note: { notes.append($0) }
                 ) {
                     return .terminal(
                         id: testCase.id, label: label, domain: testCase.domain,
@@ -833,7 +833,6 @@ extension EvalRunner {
                 ]
             ],
             "max_tokens": maxTokens,
-            "temperature": 0,
             "stream": false,
         ]
     }
@@ -853,88 +852,122 @@ extension EvalRunner {
     ///      must flip to blue. A stale cross-media cache hit (the failure
     ///      media salts exist to prevent) surfaces here as image B being
     ///      answered with image A's colors.
-    /// Cache-stats aggregates are recorded around the sequence for triage.
-    /// Returns a skip reason when the route/model has no image support.
+    /// Then exercise streamed chat, the agent route, retained image history,
+    /// and a changed image after history. Identical replay must hit the cache;
+    /// full responses and cache telemetry are retained for triage. Only a known
+    /// unsupported bundle's typed rejection can skip an optional media case.
     private static func runMultimodalImage(
         port: Int,
         maxTokens: Int,
+        requireMediaSupport: Bool,
         check: (Bool, String, String) -> Void,
         note: (String) -> Void
     ) async throws -> String? {
-        guard
-            let imageA = EvalMediaFixtures.pngDataURL(background: .red, square: .blue),
+        guard let imageA = EvalMediaFixtures.pngDataURL(background: .red, square: .blue),
             let imageB = EvalMediaFixtures.pngDataURL(background: .blue, square: .red)
         else {
             check(false, "", "PNG fixture generation failed (CoreGraphics)")
             return nil
         }
-        let prompt =
-            "Look at the image. What color is the background (not the small centered square)? "
-            + "Answer with exactly one word."
-
-        // 1. Image A, cold.
-        let (statusA, jsonA, rawA) = try await httpJSON(
-            port: port, path: "/v1/chat/completions",
-            body: multimodalBody(
-                prompt: prompt, mediaType: "image_url", dataURL: imageA, maxTokens: maxTokens
-            )
-        )
+        let model = evalRequestModel()
+        let installed = InstalledVisionEvaluation.inspect(modelID: model)
+        if let installed {
+            note("installed model=\(installed.modelID) architecture=\(installed.modelType) "
+                 + "image=\(installed.supportsImage) tensors=\(installed.tensorCount): \(installed.reason)")
+        }
+        let prompt = "What color is the background, excluding the small centered square? Answer with exactly one word."
+        let bodyA = multimodalBody(prompt: prompt, mediaType: "image_url", dataURL: imageA, maxTokens: maxTokens)
+        let bodyB = multimodalBody(prompt: prompt, mediaType: "image_url", dataURL: imageB, maxTokens: maxTokens)
+        func validate(_ label: String, _ status: Int, _ json: [String: Any]?, _ raw: String, _ color: String) {
+            note("\(label) HTTP \(status): \(raw)")
+            check(status == 200, "\(label) status 200", "\(label) HTTP \(status)")
+            let problems = HTTPMediaContract.terminalProblems(json)
+            check(problems.isEmpty, "\(label) complete visible response with throughput",
+                  "\(label): \(problems.joined(separator: "; "))")
+            check(HTTPMediaContract.exactColor(chatContent(json), expected: color),
+                  "\(label) exact color \(color)", "\(label) expected only \(color), got: \(chatContent(json))")
+        }
+        let (statusA, jsonA, rawA) = try await httpJSON(port: port, path: "/v1/chat/completions", body: bodyA)
         if statusA != 200 {
-            // Typed unsupported-media errors are a capability boundary, not
-            // an HTTP-contract failure: SKIP with the server's reason.
-            return "image request returned \(statusA): \(String(rawA.prefix(200)))"
+            let errorType = (jsonA?["error"] as? [String: Any])?["type"] as? String
+            if HTTPMediaContract.maySkipUnsupported(status: statusA, errorType: errorType,
+                installedSupportsMedia: installed?.supportsImage, required: requireMediaSupport) {
+                return "installed bundle does not support images: \(rawA)"
+            }
+            validate("image A", statusA, jsonA, rawA, "red")
+            return nil
         }
-        let answerA = chatContent(jsonA)
-        note("image A answer: \(String(answerA.prefix(120)))")
-        check(!answerA.isEmpty, "image A answer non-empty", "image A answer empty")
-        check(
-            answerA.lowercased().contains("red"),
-            "image A: background identified as red",
-            "image A: expected 'red' in answer, got: \(String(answerA.prefix(120)))"
-        )
-
-        // 2. Identical request — the media-salted replay.
-        let (statusA2, jsonA2, _) = try await httpJSON(
-            port: port, path: "/v1/chat/completions",
-            body: multimodalBody(
-                prompt: prompt, mediaType: "image_url", dataURL: imageA, maxTokens: maxTokens
-            )
-        )
-        check(statusA2 == 200, "image A replay status 200", "image A replay status \(statusA2)")
-        let answerA2 = chatContent(jsonA2)
-        note("image A replay answer: \(String(answerA2.prefix(120)))")
-        check(
-            answerA2.lowercased().contains("red"),
-            "image A replay: still red (cache replay stayed correct)",
-            "image A replay: expected 'red', got: \(String(answerA2.prefix(120)))"
-        )
-
-        // 3. Inverted twin — must NOT be served image A's answer.
-        let (statusB, jsonB, _) = try await httpJSON(
-            port: port, path: "/v1/chat/completions",
-            body: multimodalBody(
-                prompt: prompt, mediaType: "image_url", dataURL: imageB, maxTokens: maxTokens
-            )
-        )
-        check(statusB == 200, "image B status 200", "image B status \(statusB)")
-        let answerB = chatContent(jsonB)
-        note("image B answer: \(String(answerB.prefix(120)))")
-        check(
-            answerB.lowercased().contains("blue"),
-            "image B: background identified as blue (no stale cross-media reuse)",
-            "image B: expected 'blue' in answer, got: \(String(answerB.prefix(120))) "
-                + "— a 'red' answer here is the media-salt cache failure"
-        )
-
-        let (_, statsAfter, _) = try await httpJSON(
-            port: port, path: "/admin/cache-stats", method: "GET"
-        )
-        if let aggregate = statsAfter?["aggregate"] as? [String: Any] {
-            let hits = aggregate["prefix_hits"] as? Int ?? 0
-            let l2Hits = aggregate["disk_l2_hits"] as? Int ?? 0
-            let l2Stores = aggregate["disk_l2_stores"] as? Int ?? 0
-            note("cache-stats after sequence: prefix_hits=\(hits) disk_l2_hits=\(l2Hits) disk_l2_stores=\(l2Stores)")
+        validate("image A", statusA, jsonA, rawA, "red")
+        let (_, cacheA, _) = try await httpJSON(port: port, path: "/admin/cache-stats", method: "GET")
+        let (statusA2, jsonA2, rawA2) = try await httpJSON(port: port, path: "/v1/chat/completions", body: bodyA)
+        validate("image A replay", statusA2, jsonA2, rawA2, "red")
+        let (_, cacheA2, cacheRawA2) = try await httpJSON(port: port, path: "/admin/cache-stats", method: "GET")
+        if installed != nil {
+            func hits(_ stats: [String: Any]?) -> Int? {
+                guard let aggregate = stats?["aggregate"] as? [String: Any],
+                    let prefix = aggregate["prefix_hits"] as? Int,
+                    let disk = aggregate["disk_l2_hits"] as? Int else { return nil }
+                return prefix + disk
+            }
+            let before = hits(cacheA), after = hits(cacheA2)
+            check(before != nil && after != nil && after! > before!,
+                  "identical image replay increased cache hits",
+                  "image replay cache hit unproved: before=\(String(describing: before)) after=\(String(describing: after))")
         }
+        note("cache after identical replay: \(cacheRawA2)")
+        let (statusB, jsonB, rawB) = try await httpJSON(port: port, path: "/v1/chat/completions", body: bodyB)
+        validate("different image B", statusB, jsonB, rawB, "blue")
+
+        func streamAndValidate(_ label: String, path: String, body: [String: Any], color: String) async throws {
+            var streamed = body
+            streamed["stream"] = true
+            streamed["stream_options"] = ["include_usage": true]
+            let (status, events) = try await httpSSE(port: port, path: path, body: streamed)
+            let dataEvents = events.filter { $0.data != "[DONE]" }
+            let chunks = dataEvents.compactMap { jsonObject($0.data) }
+            note("\(label) raw SSE: \(events.map(\.data).joined(separator: "\n"))")
+            check(chunks.count == dataEvents.count && !chunks.isEmpty,
+                  "\(label) all chunks parse", "\(label) malformed or empty stream")
+            check(events.last?.data == "[DONE]", "\(label) DONE", "\(label) missing DONE")
+            let choices = chunks.flatMap { $0["choices"] as? [[String: Any]] ?? [] }
+            let content = choices.compactMap { ($0["delta"] as? [String: Any])?["content"] as? String }.joined()
+            let reasons = choices.compactMap { $0["finish_reason"] as? String }
+            check(reasons == ["stop"], "\(label) one normal finish", "\(label) terminal reasons: \(reasons)")
+            let usage = chunks.compactMap { $0["usage"] as? [String: Any] }.last ?? [:]
+            // Project actual deltas/usage into the same assertion shape as a
+            // non-streaming response. Preserve raw SSE above for inspection.
+            let projected: [String: Any] = ["choices": [["finish_reason": reasons.last ?? "",
+                "message": ["content": content]]], "usage": usage]
+            validate(label, status, projected, "content=\(content) usage=\(usage)", color)
+        }
+        try await streamAndValidate("streamed image", path: "/v1/chat/completions", body: bodyB, color: "blue")
+        let agent = Agent(id: UUID(), name: "Osaurus Vision Eval",
+            description: "Temporary real-media parity fixture.", defaultModel: model,
+            toolsEnabled: false, memoryEnabled: false)
+        AgentStore.save(agent)
+        AgentManager.shared.refresh()
+        defer {
+            AgentStore.delete(id: agent.id)
+            AgentManager.shared.refresh()
+        }
+        try await streamAndValidate("agent image", path: "/agents/\(agent.id.uuidString)/run", body: bodyA, color: "red")
+
+        // Real multimodal history: preserve the image payload, actual assistant
+        // answer and follow-up. Then replace media in a subsequent user turn.
+        var historyBody = bodyA
+        var history = bodyA["messages"] as? [[String: Any]] ?? []
+        history.append(["role": "assistant", "content": chatContent(jsonA)])
+        history.append(["role": "user", "content": "What was the background color in my image? Answer with exactly one word."])
+        historyBody["messages"] = history
+        let (statusH, jsonH, rawH) = try await httpJSON(port: port, path: "/v1/chat/completions", body: historyBody)
+        validate("image history follow-up", statusH, jsonH, rawH, "red")
+        history.append(["role": "assistant", "content": chatContent(jsonH)])
+        history.append(contentsOf: bodyB["messages"] as? [[String: Any]] ?? [])
+        historyBody["messages"] = history
+        let (statusHB, jsonHB, rawHB) = try await httpJSON(port: port, path: "/v1/chat/completions", body: historyBody)
+        validate("changed image after history", statusHB, jsonHB, rawHB, "blue")
+        let (_, _, finalCache) = try await httpJSON(port: port, path: "/admin/cache-stats", method: "GET")
+        note("cache after media history: \(finalCache)")
         return nil
     }
 
@@ -944,6 +977,7 @@ extension EvalRunner {
     private static func runMultimodalVideo(
         port: Int,
         maxTokens: Int,
+        requireMediaSupport: Bool,
         check: (Bool, String, String) -> Void,
         note: (String) -> Void
     ) async throws -> String? {
@@ -965,8 +999,21 @@ extension EvalRunner {
             )
         )
         if status != 200 {
-            return "video request returned \(status): \(String(raw.prefix(200)))"
+            let installed = InstalledVisionEvaluation.inspect(modelID: evalRequestModel())
+            let errorType = (json?["error"] as? [String: Any])?["type"] as? String
+            let supportsVideo = installed.map {
+                ModelMediaCapabilities.from(directory: URL(fileURLWithPath: $0.directory), modelId: $0.modelID).supportsVideo
+            }
+            if HTTPMediaContract.maySkipUnsupported(status: status, errorType: errorType,
+                installedSupportsMedia: supportsVideo, required: requireMediaSupport) {
+                return "installed bundle does not support video: \(raw)"
+            }
+            check(false, "", "video request failed HTTP \(status): \(raw)")
+            return nil
         }
+        let problems = HTTPMediaContract.terminalProblems(json)
+        check(problems.isEmpty, "video complete with throughput", problems.joined(separator: "; "))
+        note("video response: \(raw)")
         let answer = chatContent(json)
         note("video answer: \(String(answer.prefix(160)))")
         check(!answer.isEmpty, "video answer non-empty", "video answer empty")
