@@ -34,7 +34,7 @@ result=0
 while IFS=$'\t' read -r row_id model_id; do
   echo "Vision qualification: $model_id"
   if ! "$eval_bin" run --suite "$repo_root/Packages/OsaurusEvals/Suites/Vision" \
-    --model "$model_id" --no-bootstrap-plugins --transcripts \
+    --model "$model_id" --no-plugin-bootstrap --transcripts \
     --out "$proof_dir/$row_id.json" > "$proof_dir/$row_id.log" 2>&1; then
     result=1
   fi
