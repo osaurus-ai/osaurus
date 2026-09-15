@@ -9229,7 +9229,7 @@ struct ChatView: View {
             // the request into this window's ThemedAlertHost, and takes the
             // scope explicitly because the environment doesn't reach
             // overlay level.
-            .overlay { ConfigPlanApprovalCard(scope: .chat(windowState.windowId)) }
+            .overlay { ConfigApprovalModal(scope: .chat(windowState.windowId)) }
             .sheet(isPresented: $showTopUpSheet) {
                 CreditsTopUpSheet()
                     .environment(\.theme, theme)

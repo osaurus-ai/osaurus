@@ -1,5 +1,5 @@
 //
-//  ConfigPlanApprovalCard.swift
+//  ConfigApprovalModal.swift
 //  OsaurusCore
 //
 //  The dedicated in-chat approval dialog for `osaurus_config` applies.
@@ -21,7 +21,7 @@ import SwiftUI
 /// itself: it routes the pending request into `ThemedAlertCenter` as a
 /// `customContent` alert, so the per-window `ThemedAlertHost` renders it
 /// exactly like every other modal.
-struct ConfigPlanApprovalCard: View {
+struct ConfigApprovalModal: View {
     /// The window's alert scope, passed explicitly by the mounting chat
     /// view. The scope environment doesn't reach this overlay level (see
     /// the note in `ThemedAlertHost`), so it can't be read from there.
