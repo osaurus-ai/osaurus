@@ -7611,6 +7611,7 @@ final class ChatSession: ObservableObject {
                                 tool_choice: requestedToolChoice,
                                 session_id: self.sessionId?.uuidString
                             )
+                            req.admissionPositionLimit = self.delegationBudget?.contextPositions
                             req.samplingParametersAreImplicit = true
                             req.claudeCodeOptions = self.claudeCodeRunOptions(for: turnAgentId)
                             // Mode 2 routing signal: tells `RemoteProviderService`
@@ -8187,6 +8188,7 @@ final class ChatSession: ObservableObject {
                                     tool_choice: nil,
                                     session_id: sessionId?.uuidString
                                 )
+                                finalReq.admissionPositionLimit = self.delegationBudget?.contextPositions
                                 finalReq.samplingParametersAreImplicit = true
                                 finalReq.claudeCodeOptions = claudeCodeRunOptions(for: turnAgentId)
                                 finalReq.runAsRemoteAgent = isRemoteAgentTarget

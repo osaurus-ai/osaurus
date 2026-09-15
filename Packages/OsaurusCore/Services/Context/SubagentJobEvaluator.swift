@@ -332,6 +332,35 @@ public struct ScriptedSpawnBatchJobSpec: Sendable {
 
 public enum SubagentJobEvaluator {
 
+    /// Eval fixture for the actual global delegation controls. Apply only in an
+    /// isolated, serialized eval process; save and restore use the same store as UI.
+    public struct DelegationSettings: Sendable, Codable, Equatable {
+        public let ramSafety: Bool
+        public let handoff: Bool
+        public let coexistence: Bool
+
+        public init(ramSafety: Bool, handoff: Bool, coexistence: Bool) {
+            self.ramSafety = ramSafety
+            self.handoff = handoff
+            self.coexistence = coexistence
+        }
+    }
+
+    public static func withDelegationSettings<T: Sendable>(
+        _ settings: DelegationSettings,
+        isolation: isolated (any Actor)? = #isolation,
+        operation: () async -> T
+    ) async -> T {
+        let previous = SubagentConfigurationStore.snapshot()
+        var updated = previous
+        updated.ramSafetyPreflightEnabled = settings.ramSafety
+        updated.localTextDelegationEnabled = settings.handoff
+        updated.subagentCoexistenceEnabled = settings.coexistence
+        SubagentConfigurationStore.save(updated)
+        defer { SubagentConfigurationStore.save(previous) }
+        return await operation()
+    }
+
     /// Run the model-free scripted lane: build a `ScriptedSubagentKind` from
     /// `spec`, drive it through the real `SubagentSession` host, and read back
     /// the envelope + feed + handoff/recursion observations. No tokens, no

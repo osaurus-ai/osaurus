@@ -1613,6 +1613,16 @@ struct MLXBatchAdapter {
             cacheTopology: cacheTopology,
             stage: "submitted_to_batch_engine"
         )
+        do {
+            try AdmissionPositionLimit.validate(
+                promptTokens: prepared.promptTokens.count,
+                outputTokens: effective.maxTokens,
+                limit: generation.admissionPositionLimit
+            )
+        } catch {
+            if let soloLease { await soloLease.release() }
+            throw error
+        }
         if Self.shouldRecordAsLastEffectiveGeneration(generation) {
             await Registry.shared.recordEffectiveGenerationSettings(
                 modelName: modelName,

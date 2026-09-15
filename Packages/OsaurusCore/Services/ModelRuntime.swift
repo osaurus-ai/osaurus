@@ -1233,6 +1233,15 @@ public actor ModelRuntime {
         }
         let before = Memory.cacheMemory
         Stream.gpu.synchronize()
+        if waitForGenerationDrain {
+            // The exclusive gate has drained every producer. Optional RAM
+            // cache tiers can be rebuilt; model weights and persistent disk
+            // entries stay intact. Clearing only the allocator's freed pool
+            // cannot recover arrays still retained by paged/SSM caches.
+            for holder in modelCache.values {
+                holder.container.cacheCoordinator?.releaseVolatile()
+            }
+        }
         Memory.clearCache()
         Stream.gpu.synchronize()
         let after = Memory.cacheMemory
@@ -2823,7 +2832,8 @@ public actor ModelRuntime {
         forWeights weights: Int64,
         modelDirectory: URL? = nil,
         modelName: String? = nil,
-        kvRetentionCap: Int? = ServerRuntimeSettingsStore.resolvedKVRetentionCap()
+        kvRetentionCap: Int? = ServerRuntimeSettingsStore.resolvedKVRetentionCap(),
+        requestPositionLimit: Int? = nil
     ) -> Int64 {
         if let knownHeadroom = Self.knownMiMoOrN2JANGTQKVHeadroomBytes(modelName: modelName) {
             return knownHeadroom
@@ -2831,7 +2841,8 @@ public actor ModelRuntime {
         if let modelDirectory,
             let architectureHeadroom = estimatedArchitectureKVHeadroomBytes(
                 at: modelDirectory,
-                kvRetentionCap: kvRetentionCap
+                kvRetentionCap: kvRetentionCap,
+                requestPositionLimit: requestPositionLimit
             )
         {
             return architectureHeadroom
@@ -2867,7 +2878,8 @@ public actor ModelRuntime {
 
     private static func estimatedArchitectureKVHeadroomBytes(
         at directory: URL,
-        kvRetentionCap: Int?
+        kvRetentionCap: Int?,
+        requestPositionLimit: Int? = nil
     ) -> Int64? {
         let configURL = directory.appendingPathComponent("config.json")
         guard let data = try? Data(contentsOf: configURL),
@@ -2926,8 +2938,8 @@ public actor ModelRuntime {
         // loaded coordinator receives. The old raw-field lookup used 8K when
         // the saved override was blank even though Safe Auto actually loaded
         // a 64K cap, materially under-reporting projected KV headroom.
-        let maxPositions =
-            kvRetentionCap.map { min(declaredPositions, max($0, 4096)) }
+        let maxPositions = requestPositionLimit
+            ?? kvRetentionCap.map { min(declaredPositions, max($0, 4096)) }
             ?? declaredPositions
         guard let kvHeads, let headDim, kvHeads > 0, headDim > 0, maxPositions > 0 else {
             return nil
@@ -2955,10 +2967,19 @@ public actor ModelRuntime {
         // the 8 full layers. Price each class at what it can actually retain.
         let slidingWindow = layerMix.slidingWindow ?? maxPositions
         let slidingPositions = min(maxPositions, max(1, slidingWindow))
+        // Gemma's global attention can use different heads/dimensions from
+        // sliding attention. Both K and V remain in the cache even when their
+        // projections share weights (attention_k_eq_v).
+        let fullAttentionDims: Int64
+        if let globalHeadDim = intValue(config["global_head_dim"]), globalHeadDim > 0 {
+            let globalHeads = intValue(config["num_global_key_value_heads"]) ?? kvHeads
+            fullAttentionDims = 2 * Int64(max(1, globalHeads)) * Int64(globalHeadDim)
+        } else {
+            fullAttentionDims = perTokenCacheDims
+        }
         let kvBytes =
-            (Int64(layerMix.fullAttention) * Int64(maxPositions)
-                + Int64(layerMix.slidingAttention) * Int64(slidingPositions))
-            * perTokenCacheDims
+            (Int64(layerMix.fullAttention) * Int64(maxPositions) * fullAttentionDims
+                + Int64(layerMix.slidingAttention) * Int64(slidingPositions) * perTokenCacheDims)
             * Int64(dtypeBytes)
 
         // SSM companion state is much smaller than full KV but still real.
@@ -3026,7 +3047,12 @@ public actor ModelRuntime {
         if let types = config["layer_types"] as? [Any] {
             // Gemma4 / qwen3_5-style explicit per-layer topology.
             mix.declaredPerLayer = true
-            for raw in types {
+            // The shared suffix reads earlier layers' KV; Gemma creates no
+            // independent cache for those layers. Count only actual owners.
+            let shared = max(0, intValue(config["num_kv_shared_layers"]) ?? 0)
+            let owners = shared > 0 && shared < types.count
+                ? Array(types.prefix(types.count - shared)) : types
+            for raw in owners {
                 switch stringValue(raw)?.lowercased() ?? "" {
                 case "full_attention", "attention", "attn":
                     mix.fullAttention += 1
@@ -3495,30 +3521,23 @@ public actor ModelRuntime {
                 forWeights: $0,
                 modelDirectory: localURL,
                 modelName: canonicalName,
-                kvRetentionCap: preliminaryPlan.cache.defaultMaxKVSize
+                kvRetentionCap: nil
             )
         }
-        // Request-bounded price: the SAME estimator, clamped to what this
-        // delegation can actually allocate. A bounded 2K-output child must
-        // not be charged the full retention-cap envelope — on a 16 GB Mac
-        // that difference alone drives ramSlots to 0 for an affordable
-        // same-resident-model spawn. Estimate stays conservative: seed
-        // chars/4 ×1.5, plus the child's max output, plus a 1024-token
-        // margin for the child system prompt and template overhead, never
-        // below 4096 and never above the policy cap (the planner's
-        // `effectiveChildHeadroomBytes` additionally clamps to the
-        // cap-priced value, so this can only shrink the charge).
+        // Price the exact ceiling forwarded to child execution. The runtime
+        // rejects tokenized prompts plus output allowance above that ceiling.
+        // defaultMaxKVSize is a conditional policy, not a guaranteed bound.
         let requestBoundedChildHeadroomBytes: Int64? = {
             guard let estimate = requestEstimate,
                 let footprint = targetLoadFootprintBytes,
-                let boundedPositions = estimate.boundedPositionBudget(
-                    policyCap: preliminaryPlan.cache.defaultMaxKVSize)
+                let boundedPositions = estimate.boundedPositionBudget()
             else { return nil }
             return Self.estimatedKVHeadroomBytes(
                 forWeights: footprint,
                 modelDirectory: localURL,
                 modelName: canonicalName,
-                kvRetentionCap: boundedPositions
+                kvRetentionCap: nil,
+                requestPositionLimit: boundedPositions
             )
         }()
         let estimatedWorkingSetBytes = targetLoadFootprintBytes.flatMap {
@@ -3588,22 +3607,9 @@ public actor ModelRuntime {
         else {
             return nil
         }
-        let releasableParentBytes: Int64 =
-            residencyPlan.shouldUnload
-            ? profile.summaries.reduce(Int64(0)) { partial, summary in
-                let residentName =
-                    ModelManager.findInstalledModel(named: summary.name)?.name
-                    ?? summary.name
-                guard
-                    residentName.caseInsensitiveCompare(profile.canonicalName)
-                        != .orderedSame
-                else {
-                    return partial
-                }
-                let (sum, overflow) = partial.addingReportingOverflow(summary.bytes)
-                return overflow ? Int64.max : sum
-            }
-            : 0
+        // Handoff planning runs after the exact parent is released. Its freed
+        // bytes are already reflected in the host sample; disk sizes and
+        // unrelated residents must never become hypothetical credit.
 
         return SubagentBatchMemoryFacts(
             canonicalModelKey: profile.canonicalName,
@@ -3617,12 +3623,12 @@ public actor ModelRuntime {
             requestBoundedChildHeadroomBytes: profile.requestBoundedChildHeadroomBytes
                 .flatMap(Self.nonnegativeUInt64),
             // Normal loading and handoff use this same host estimator. After
-            // allocator recovery this is a fresh OS sample, not an arithmetic
-            // credit for buffers that might still be resident.
-            reclaimableBytes: Self.nonnegativeUInt64(
-                ChatResidencyHandoff.availableMemoryBytes()
-            ),
-            releasableParentBytes: Self.nonnegativeUInt64(releasableParentBytes) ?? 0,
+            // allocator recovery the planner waits out the kernel's cached
+            // statistics window before sampling again. Never credit freed
+            // buffers arithmetically: other work may have consumed the RAM.
+            reclaimableBytes: ChatResidencyHandoff.sampledAvailableMemoryBytes()
+                .flatMap(Self.nonnegativeUInt64),
+            releasableParentBytes: 0,
             resolvedLoadBudgetBytes: profile.resolvedLoadBudgetBytes,
             osHeadroomBytes: Self.nonnegativeUInt64(SubagentCoexistence.headroomBytes) ?? 0
         )
