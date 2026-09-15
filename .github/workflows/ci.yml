@@ -701,6 +701,9 @@ jobs:
           OSAURUS_TEST_ROOT: /tmp/osaurus-evals-test
         run: swift test --package-path Packages/OsaurusEvals
 
+      - name: Test installed vision matrix driver
+        run: python3 -m unittest discover -s scripts/evals/tests -p test_vision_matrix_driver.py
+
       - name: Run deterministic eval suites (floors gate)
         # The token-free suites (pure-data scorers — no model load, no
         # embedder, no network) with `--fail-on-floor`: Config/floors.json

@@ -67,6 +67,16 @@ public enum EvalRunner {
         }
 
         let modelLabel = ModelOverride.describe(model)
+        // A headless media run does not necessarily construct ModelManager's
+        // UI singleton, which normally starts external discovery. Complete the
+        // same installed scan before warm-up/routing; a cached empty snapshot
+        // is not evidence that an inventoried model is absent.
+        if suite.cases.contains(where: {
+            EvalCaseFilter.matches(caseID: $0.id, filter: filter)
+                && ["multimodal_image", "multimodal_video"].contains($0.expect.httpAPI?.scenario ?? "")
+        }) {
+            _ = await InstalledVisionEvaluation.inventory()
+        }
         let startedAt = isoNow()
         var rows: [EvalCaseReport] = []
 
