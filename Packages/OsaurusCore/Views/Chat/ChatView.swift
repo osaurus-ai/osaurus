@@ -8038,13 +8038,11 @@ final class ChatSession: ObservableObject {
                         hooks: loopHooks
                     )
 
-                    let loopElapsedMs: Int = Int(Date().timeIntervalSince(loopStartedAt) * 1000)
-                    let loopExit: AgentToolLoop.Exit = runResult.exit
                     print(
-                        "[Osaurus][Loop] exit=\(loopExit) iterations=\(runResult.iterations) "
-                            + "elapsedMs=\(loopElapsedMs)"
+                        "[Osaurus][Loop] exit=\(runResult.exit) iterations=\(runResult.iterations) "
+                            + "elapsedMs=\(Int(Date().timeIntervalSince(loopStartedAt) * 1000))"
                     )
-                    if loopExit == .toolRejected {
+                    if runResult.exit == .toolRejected {
                         // A rejected/failed tool row is already recorded in
                         // history for the user and for the model-visible
                         // transcript. Classify the run as errored for
@@ -8073,7 +8071,7 @@ final class ChatSession: ObservableObject {
                         }
                     }
 
-                    if loopExit == .overBudget {
+                    if runResult.exit == .overBudget {
                         // Even fully-compacted history can't fit the model
                         // window — the driver ended the run before sending a
                         // doomed request. Surface the distinct failure on the
@@ -8094,7 +8092,7 @@ final class ChatSession: ObservableObject {
                         rebuildVisibleBlocks()
                     }
 
-                    if loopExit == .lengthExhausted {
+                    if runResult.exit == .lengthExhausted {
                         // The driver already appended a visible, truthful
                         // incomplete-state message. Mark lifecycle cleanup as
                         // failed so this capped reasoning-only turn cannot be
@@ -8102,14 +8100,14 @@ final class ChatSession: ObservableObject {
                         lastStreamError = AgentToolLoop.lengthExhaustedFallback
                     }
 
-                    if loopExit == .emptyResponseExhausted {
+                    if runResult.exit == .emptyResponseExhausted {
                         // The driver already emitted a visible, honest message
                         // after repeated empty post-tool completions. Do not
                         // warm or index that incomplete tool run as success.
                         lastStreamError = AgentToolLoop.emptyToolTaskFallback
                     }
 
-                    if loopExit == .incompleteReasoningExhausted {
+                    if runResult.exit == .incompleteReasoningExhausted {
                         // The typed exit owns no cross-surface text. Append the
                         // honest chat-native fallback here after the one
                         // bounded retry failed (or visible partial content made
@@ -8226,7 +8224,7 @@ final class ChatSession: ObservableObject {
                             rebuildVisibleBlocks()
                         }
                     }
-                    if loopExit == .iterationCapReached, isRunActive(runId) {
+                    if runResult.exit == .iterationCapReached && isRunActive(runId) {
                         if let pending = runResult.unfinishedTodoCount, pending > 0 {
                             // A current-run Todo hit the hard step cap. Do not
                             // launch the generic tool-free wrap-up stream: it
