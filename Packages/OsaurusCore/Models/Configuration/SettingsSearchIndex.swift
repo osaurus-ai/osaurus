@@ -844,8 +844,86 @@ public enum SettingsSearchIndex {
                 "hmac signature", "shared secret header", "poll url", "task poll",
                 "host.docker.internal", "plaintext allowed", "secure channel required",
                 "http request", "conversation_id", "topology", "docker desktop",
-                "connect n8n", "remote callers", "name this channel", "who may speak",
-            ]
+                "name it", "who answers", "pair", "prove it", "display name", "connection id",
+                "who may speak", "connect n8n", "remote callers",
+            ],
+            disambiguation:
+                "The n8n channel sheet (Settings → Channels → n8n): Name it → Where is your n8n? → Who answers? → Pair → Prove it. n8n calls Osaurus; the only n8n URL Osaurus stores is the optional Outbound Webhook URL under Who answers?."
+        ),
+        .init(
+            id: "agentChannels.n8n.enabled",
+            tab: .agentChannels,
+            section: "Native Integrations",
+            title: "n8n channel on/off",
+            keywords: [
+                "enable n8n channel", "disable n8n channel", "channel enabled", "pause n8n",
+                "connection_disabled", "turn off n8n", "turn on n8n",
+            ],
+            disambiguation:
+                "The switch on the n8n card in Settings → Channels. Off answers every inbound, poll and ping with 403 connection_disabled. It is no longer inside the setup sheet."
+        ),
+        .init(
+            id: "agentChannels.n8n.callerLocation",
+            tab: .agentChannels,
+            section: "Native Integrations",
+            title: "Where is your n8n?",
+            keywords: [
+                "where is n8n", "n8n location", "caller location", "this mac", "docker desktop on this mac",
+                "another machine on my network", "remote (hosted or another network)", "lan n8n", "remote n8n",
+                "hosted n8n",
+                "n8n cloud", "relay", "expose to network", "allow plaintext http",
+                "plaintext from other machines", "remote callers", "426",
+            ],
+            disambiguation:
+                "Step 2 of the n8n sheet. Picks which URL the pairing code carries (127.0.0.1, host.docker.internal, LAN address, or relay URL), whether Relay is required, and whether the plaintext toggle is shown (LAN only)."
+        ),
+        .init(
+            id: "agentChannels.n8n.plaintextAllowed",
+            tab: .agentChannels,
+            section: "Native Integrations",
+            title: "Allow plaintext HTTP from other machines",
+            keywords: [
+                "plaintext http", "remote callers", "plaintext allowed", "secure channel required",
+                "426", "trusted lan", "lan plaintext", "n8n plaintext",
+            ],
+            disambiguation:
+                "Shown only when Where is your n8n? is 'Another machine on my network'. Off: non-loopback callers must speak Secure Channel or get 426. Remote uses Secure Channel via Relay and never needs this."
+        ),
+        .init(
+            id: "agentChannels.n8n.relay",
+            tab: .agentChannels,
+            section: "Native Integrations",
+            title: "Relay for the bound agent",
+            keywords: [
+                "enable relay", "n8n relay", "relay connected", "public url", "agent.osaurus.ai",
+                "hosted n8n relay", "expose agent to internet", "take over relay",
+            ],
+            disambiguation:
+                "Under Who answers? in the n8n sheet, shown for Remote (required) and LAN (optional). Enables Relay on the agent picked as the default target; the pairing code is issued once the relay reports connected."
+        ),
+        .init(
+            id: "agentChannels.n8n.outboundWebhookURL",
+            tab: .agentChannels,
+            section: "Native Integrations",
+            title: "Outbound Webhook URL",
+            keywords: [
+                "n8n url", "n8n webhook url", "push replies to n8n", "osaurus trigger", "webhook trigger",
+                "sign outbound bodies", "reply automatically", "where do i enter my n8n url",
+            ],
+            disambiguation:
+                "Under Who answers? → Push replies to n8n (optional). The only place an n8n URL is entered; must be public https. Leave empty for poll-only replies."
+        ),
+        .init(
+            id: "agentChannels.n8n.channelSecret",
+            tab: .agentChannels,
+            section: "Native Integrations",
+            title: "Channel Secret",
+            keywords: [
+                "channel secret", "rotate secret", "generate secret", "n8n secret", "hmac key",
+                "keychain secret", "webhook secret",
+            ],
+            disambiguation:
+                "Under Pair → Advanced in the n8n sheet. Generated automatically for a new channel and carried inside the pairing code; rotating it invalidates every issued code."
         ),
         .init(
             id: "agentChannels.n8n.pairingCode",
@@ -853,13 +931,27 @@ public enum SettingsSearchIndex {
             section: "Native Integrations",
             title: "Pair with n8n",
             keywords: [
-                "pairing code", "pair n8n", "n8n node", "n8n credential", "osaurus channel credential",
+                "pairing code", "pair n8n", "pair", "n8n node", "n8n credential", "osaurus channel credential",
                 "n8n-nodes-osaurus", "@osaurus/n8n-nodes-osaurus", "remote n8n", "hosted n8n",
-                "relay url", "secure channel",
-                "end-to-end encrypted", "osrs-n8n", "ping", "credential test",
+                "relay url", "secure channel", "channel secret", "rotate secret",
+                "end-to-end encrypted", "osrs-n8n", "ping", "credential test", "no pairing code yet",
             ],
             disambiguation:
-                "Inside the n8n channel sheet (Settings → Channels → n8n → Connect n8n). One copyable string the Osaurus n8n community node decodes; it contains the channel secret. Not the osk-v1 access key from Share Agent."
+                "Inside the n8n channel sheet (Settings → Channels → n8n → Pair). One copyable string the Osaurus n8n community node decodes; it contains the channel secret and only the URL valid for Where is your n8n?. Withheld until it can work (e.g. Relay connected for Remote). Not the osk-v1 access key from Share Agent."
+        ),
+        .init(
+            id: "agentChannels.n8n.pendingApprovals",
+            tab: .agentChannels,
+            section: "Native Integrations",
+            title: "Who may speak",
+            keywords: [
+                "approve workflow", "allow workflow", "deny workflow", "pending approval", "first contact",
+                "waiting for approval", "wants to use", "allowed conversations", "allowed senders",
+                "allowlist", "edit allowlists by hand", "conversation_id", "sender.id", "accept bot senders",
+                "prove it",
+            ],
+            disambiguation:
+                "Step 5 (Prove it) of the n8n sheet. The first run of a workflow appears here as 'Workflow X (sender Y) wants to use <channel> — Allow / Deny'; Allow adds its ids to the allowlists. Manual allowlist editing is under Advanced in the same step."
         ),
         .init(
             id: "agentChannels.customJSON",

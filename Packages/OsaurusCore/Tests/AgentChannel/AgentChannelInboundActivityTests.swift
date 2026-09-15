@@ -65,6 +65,7 @@ struct AgentChannelInboundActivityTests {
 
     @Test func guidanceExistsForEveryKnownRejectionAndSuppressionReason() {
         let reasons = [
+            "pending_approval",
             "sender_not_allowlisted",
             "channel_not_readable",
             "room_not_allowlisted",

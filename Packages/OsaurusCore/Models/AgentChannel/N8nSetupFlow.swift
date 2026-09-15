@@ -2,67 +2,42 @@
 //  N8nSetupFlow.swift
 //  osaurus
 //
-//  n8n-only setup rail, topology, and copyable workflow recipe. Kept out of
-//  the shared Discord/Slack/Telegram section enum so those sheets stay
-//  unchanged.
+//  n8n-only setup rail, pairing readiness, and copyable workflow recipe.
+//  Kept out of the shared Discord/Slack/Telegram section enum so those
+//  sheets stay unchanged.
 //
 
 import Foundation
 
-// MARK: - Topology
-
-/// Where the operator's n8n instance lives relative to this Mac. Drives
-/// which inbound URL the manual HTTP Request recipe shows; the pairing code
-/// carries every candidate URL instead. UI state, not a stored field.
-enum N8nTopology: String, CaseIterable, Equatable, Hashable, Sendable {
-    case thisMac
-    case dockerDesktop
-    case lan
-    case remote
-
-    var title: String {
-        switch self {
-        case .thisMac: return L("This Mac")
-        case .dockerDesktop: return L("Docker Desktop on this Mac")
-        case .lan: return L("Another machine on the LAN")
-        case .remote: return L("Remote (Secure Channel)")
-        }
-    }
-
-    /// Sensible first pick when reopening a saved connection.
-    static func inferred(plaintextAllowed: Bool) -> N8nTopology {
-        plaintextAllowed ? .lan : .thisMac
-    }
-}
-
 // MARK: - Setup sections
 
-/// The five n8n-shaped steps, ordered so every input the pairing code
-/// needs (connection id, bound agent) is collected before Connect n8n
-/// emits it. Required rail IDs are `basics`, `connect`, and `who`; reply
-/// and live stay optional so a configured channel opens on Live check.
+/// The five n8n-shaped steps in the order a first-time operator thinks:
+/// name it, say where n8n runs, pick who answers, pair, prove it. Every
+/// input the pairing code needs (id, location, bound agent, relay) is
+/// collected before Pair issues it. Live check stays optional so a
+/// configured channel opens on Prove it.
 enum N8nSetupSection: String, CaseIterable, Sendable {
     case basics = "basics"
-    case whoMaySpeak = "who"
+    case location = "location"
     case howOsaurusReplies = "reply"
     case connect = "connect"
     case liveCheck = "live"
 
     var title: String {
         switch self {
-        case .basics: return L("Name this channel")
-        case .whoMaySpeak: return L("Who may speak")
-        case .howOsaurusReplies: return L("How Osaurus replies")
-        case .connect: return L("Connect n8n")
-        case .liveCheck: return L("Live check")
+        case .basics: return L("Name it")
+        case .location: return L("Where is your n8n?")
+        case .howOsaurusReplies: return L("Who answers?")
+        case .connect: return L("Pair")
+        case .liveCheck: return L("Prove it")
         }
     }
 
     var icon: String {
         switch self {
         case .basics: return "tag"
-        case .whoMaySpeak: return "person.2"
-        case .howOsaurusReplies: return "arrow.uturn.left"
+        case .location: return "network"
+        case .howOsaurusReplies: return "person.crop.circle"
         case .connect: return "link"
         case .liveCheck: return "checkmark.seal"
         }
@@ -70,11 +45,11 @@ enum N8nSetupSection: String, CaseIterable, Sendable {
 
     var caption: String {
         switch self {
-        case .basics: return L("Identity")
-        case .whoMaySpeak: return L("Allowlists")
-        case .howOsaurusReplies: return L("Agent, poll or push")
+        case .basics: return L("Display name and id")
+        case .location: return L("This Mac, Docker, LAN, or remote")
+        case .howOsaurusReplies: return L("Agent, encryption, optional push")
         case .connect: return L("Pairing code")
-        case .liveCheck: return L("Verify")
+        case .liveCheck: return L("Approve workflows, verify")
         }
     }
 
@@ -87,11 +62,41 @@ enum N8nSetupSection: String, CaseIterable, Sendable {
     }
 
     static var requiredSectionIds: [String] {
-        [Self.basics.rawValue, Self.connect.rawValue, Self.whoMaySpeak.rawValue]
+        [Self.basics.rawValue, Self.location.rawValue, Self.howOsaurusReplies.rawValue, Self.connect.rawValue]
     }
 
     static var fallbackSectionId: String {
         Self.liveCheck.rawValue
+    }
+}
+
+// MARK: - Connection id slug
+
+enum N8nConnectionSlug {
+    static let prefix = "n8n-"
+
+    /// `"Accounting Channel"` -> `"n8n-accounting-channel"`. Lowercase ASCII
+    /// letters and digits survive; every other run collapses to one dash.
+    /// Empty input yields an empty slug so the field stays blank until the
+    /// operator types a name.
+    static func make(from name: String) -> String {
+        let folded = name.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .init(identifier: "en"))
+            .lowercased()
+        var out = ""
+        var pendingDash = false
+        for scalar in folded.unicodeScalars {
+            let isAlnum = (scalar >= "a" && scalar <= "z") || (scalar >= "0" && scalar <= "9")
+            if isAlnum {
+                if pendingDash, !out.isEmpty { out.append("-") }
+                pendingDash = false
+                out.unicodeScalars.append(scalar)
+            } else {
+                pendingDash = true
+            }
+        }
+        guard !out.isEmpty else { return "" }
+        if out.hasPrefix("n8n-") || out == "n8n" { return out }
+        return prefix + out
     }
 }
 
@@ -100,23 +105,38 @@ enum N8nSetupSection: String, CaseIterable, Sendable {
 /// Copyable HTTP Request / HMAC / curl fragments that match the wire
 /// contract. Pure functions so the sheet and tests share one source.
 enum N8nSetupRecipe {
-    static func origin(port: Int, topology: N8nTopology) -> String {
-        switch topology {
+    static func origin(port: Int, location: AgentChannelN8nCallerLocation, relayURL: String? = nil) -> String {
+        switch location {
         case .thisMac:
             return "http://127.0.0.1:\(port)"
         case .dockerDesktop:
             return "http://host.docker.internal:\(port)"
-        case .lan, .remote:
+        case .lan:
             return "http://<this-mac-ip>:\(port)"
+        case .remote:
+            if let relayURL, !relayURL.isEmpty {
+                return relayURL.hasSuffix("/") ? String(relayURL.dropLast()) : relayURL
+            }
+            return "https://<relay-url>"
         }
     }
 
-    static func inboundURL(connectionId: String, port: Int, topology: N8nTopology) -> String {
-        "\(origin(port: port, topology: topology))/channels/n8n/\(connectionId)/inbound"
+    static func inboundURL(
+        connectionId: String,
+        port: Int,
+        location: AgentChannelN8nCallerLocation,
+        relayURL: String? = nil
+    ) -> String {
+        "\(origin(port: port, location: location, relayURL: relayURL))/channels/n8n/\(connectionId)/inbound"
     }
 
-    static func pollURL(connectionId: String, port: Int, topology: N8nTopology) -> String {
-        "\(origin(port: port, topology: topology))/channels/n8n/\(connectionId)/tasks/{task_id}"
+    static func pollURL(
+        connectionId: String,
+        port: Int,
+        location: AgentChannelN8nCallerLocation,
+        relayURL: String? = nil
+    ) -> String {
+        "\(origin(port: port, location: location, relayURL: relayURL))/channels/n8n/\(connectionId)/tasks/{task_id}"
     }
 
     /// Compact v1 envelope the HTTP Request node can paste as JSON.

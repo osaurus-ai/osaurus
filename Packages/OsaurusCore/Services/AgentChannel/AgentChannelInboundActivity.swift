@@ -138,6 +138,10 @@ enum AgentChannelInboundActivityPresentation {
     /// stage is self-explanatory.
     static func guidance(stage: AgentChannelInboundActivityStage, reason: String?) -> String? {
         switch reason {
+        case "pending_approval":
+            return L(
+                "This workflow is waiting for your approval. Press Allow for it under Prove it in the channel settings, then run the workflow again."
+            )
         case "sender_not_allowlisted", "sender_not_authorized":
             return L("The sender is not in the Authorized Senders list. Add them in the channel settings.")
         case "channel_not_readable", "room_not_allowlisted":

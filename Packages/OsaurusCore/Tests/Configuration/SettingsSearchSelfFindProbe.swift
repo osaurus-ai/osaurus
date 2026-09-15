@@ -89,8 +89,26 @@ struct SettingsSearchSelfFindProbe {
             ("macos permissions", "permissions.tools"),
             ("pair with n8n", "agentChannels.n8n.pairingCode"),
             ("pairing code", "agentChannels.n8n.pairingCode"),
-            ("connect n8n", "agentChannels.n8n"),
-            ("remote callers", "agentChannels.n8n"),
+            // n8n sheet rail: Name it → Where is your n8n? → Who answers? → Pair → Prove it.
+            ("name it", "agentChannels.n8n"),
+            ("where is your n8n", "agentChannels.n8n.callerLocation"),
+            ("docker desktop on this mac", "agentChannels.n8n.callerLocation"),
+            ("another machine on my network", "agentChannels.n8n.callerLocation"),
+            ("remote", "agentChannels.n8n.callerLocation"),
+            ("who answers", "agentChannels.n8n"),
+            ("prove it", "agentChannels.n8n"),
+            ("allow plaintext http from other machines", "agentChannels.n8n.plaintextAllowed"),
+            ("relay for", "agentChannels.n8n.relay"),
+            ("enable relay", "agentChannels.n8n.relay"),
+            ("outbound webhook url", "agentChannels.n8n.outboundWebhookURL"),
+            ("push replies to n8n", "agentChannels.n8n.outboundWebhookURL"),
+            ("channel secret", "agentChannels.n8n.channelSecret"),
+            ("who may speak", "agentChannels.n8n.pendingApprovals"),
+            ("waiting for approval", "agentChannels.n8n.pendingApprovals"),
+            ("allowed conversations", "agentChannels.n8n.pendingApprovals"),
+            ("allowed senders", "agentChannels.n8n.pendingApprovals"),
+            ("edit allowlists by hand", "agentChannels.n8n.pendingApprovals"),
+            ("channel enabled", "agentChannels.n8n.enabled"),
         ]
 
         let missed = labels.filter { label in

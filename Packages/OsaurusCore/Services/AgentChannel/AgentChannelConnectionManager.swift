@@ -28,11 +28,20 @@ enum AgentChannelConnectionManagerError: LocalizedError, Equatable, Sendable {
     case emptyBindingId
     case duplicateBindingId(String)
     case invalidBinding(String)
+    case connectionNotFound(String)
+    case unsupportedKind(AgentChannelKind)
+    case emptyContactIdentity
 
     var errorDescription: String? {
         switch self {
         case .emptyConnectionId:
             return "Agent channel connection id is required."
+        case .connectionNotFound(let id):
+            return "Agent channel connection `\(id)` was not found."
+        case .unsupportedKind(let kind):
+            return "This operation does not apply to `\(kind.rawValue)` connections."
+        case .emptyContactIdentity:
+            return "A conversation id and sender id are required to approve a workflow."
         case .reservedConnectionId(let id):
             return "`\(id)` is reserved for a native Agent Channel connection."
         case .emptyName:
@@ -156,6 +165,64 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
         }
         configuration.connections.append(validated)
         try AgentChannelConfigurationStore.save(configuration)
+    }
+
+    /// Approve-on-first-contact: adds the identity a verified n8n event
+    /// arrived with to the connection's allowlists. Goes through
+    /// `upsertConnection` so the save-time n8n projection (outbound
+    /// `writeRoomAllowlist` mirroring) runs exactly as for a manual edit.
+    @discardableResult
+    func approveN8nContact(
+        connectionId: String,
+        conversationId rawConversationId: String,
+        senderId rawSenderId: String
+    ) throws -> AgentChannelConnection {
+        let conversationId = AgentChannelConnection.normalizedId(rawConversationId)
+        let senderId = AgentChannelConnection.normalizedId(rawSenderId)
+        guard !conversationId.isEmpty, !senderId.isEmpty else {
+            throw AgentChannelConnectionManagerError.emptyContactIdentity
+        }
+        guard var connection = connection(id: connectionId) else {
+            throw AgentChannelConnectionManagerError.connectionNotFound(
+                AgentChannelConnection.normalizedId(connectionId)
+            )
+        }
+        guard connection.kind == .n8n else {
+            throw AgentChannelConnectionManagerError.unsupportedKind(connection.kind)
+        }
+        var rooms = connection.inboundAuthorization.roomAllowlist
+        if !rooms.contains(conversationId) { rooms.append(conversationId) }
+        var senders = connection.inboundAuthorization.senderAllowlist
+        if !senders.contains(senderId) { senders.append(senderId) }
+        connection.inboundAuthorization.roomAllowlist = rooms
+        connection.inboundAuthorization.senderAllowlist = senders
+        try upsertConnection(connection, replacingOriginalId: connection.id)
+        return connection
+    }
+
+    /// Reverse of `approveN8nContact` for the removable chips in the sheet.
+    @discardableResult
+    func revokeN8nAllowlistEntry(
+        connectionId: String,
+        conversationId: String? = nil,
+        senderId: String? = nil
+    ) throws -> AgentChannelConnection {
+        guard var connection = connection(id: connectionId) else {
+            throw AgentChannelConnectionManagerError.connectionNotFound(
+                AgentChannelConnection.normalizedId(connectionId)
+            )
+        }
+        guard connection.kind == .n8n else {
+            throw AgentChannelConnectionManagerError.unsupportedKind(connection.kind)
+        }
+        if let conversationId = conversationId.map(AgentChannelConnection.normalizedId) {
+            connection.inboundAuthorization.roomAllowlist.removeAll { $0 == conversationId }
+        }
+        if let senderId = senderId.map(AgentChannelConnection.normalizedId) {
+            connection.inboundAuthorization.senderAllowlist.removeAll { $0 == senderId }
+        }
+        try upsertConnection(connection, replacingOriginalId: connection.id)
+        return connection
     }
 
     func deleteConnection(id: String) throws {

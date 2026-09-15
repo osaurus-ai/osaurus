@@ -52,17 +52,21 @@ physical transport, not the `trustLoopback` auth flag.
    development app from the branch SHA, launch it, and confirm `/health`
    reports the new build.
 2. Settings → Channels → Add Channel → **n8n**:
-   - id `n8n-local`, name of your choice;
-   - paste a fresh random secret (stored to Keychain by the sheet);
-   - verification `hmac_sha256` (repeat later with `shared_secret_header`);
-   - remote transport policy `secure_channel_required` (default; Docker
-     Desktop on macOS is a loopback caller — see Live Topology);
-   - dispatch target: a disposable custom agent with a loaded local model,
+   - *Name it*: display name of your choice; confirm the Connection ID
+     auto-fills as a slug (edit it to `n8n-local`);
+   - *Where is your n8n?*: **Docker Desktop on this Mac** (a loopback caller —
+     see Live Topology; the plaintext toggle must not be shown for it);
+   - *Who answers?*: a disposable custom agent with a loaded local model,
      auto-reply **off** (pull mode);
-   - allowed conversations `["n8n-test"]`, allowed senders `["tpae"]`.
+   - *Pair*: the secret was generated silently (visible under Advanced);
+     verification `hmac_sha256` (repeat later with `shared_secret_header`);
+     the pairing code must show exactly one URL, `http://host.docker.internal:1337`;
+   - *Prove it*: leave the allowlists empty — they fill by approving the first
+     workflow run (or add `n8n-test` / `tpae` under Advanced for the curl rows).
    Save, navigate away and back, **relaunch**, re-open the card and confirm
-   every field persisted. Confirm `agent-channels.json` contains the `n8n`
-   block and does **not** contain the secret.
+   every field persisted, including `callerLocation`. Confirm
+   `agent-channels.json` contains the `n8n` block and does **not** contain the
+   secret. The channel's on/off switch is on its card in the channel list.
 3. Author the bridge workflow JSON under `/tmp` (never in the repo) using the
    stock-node recipe in `docs/AGENT_CHANNELS_N8N.md`, then import and activate
    it through the container CLI so runs are real n8n executions:
@@ -89,9 +93,12 @@ reported as proven / partial / failed; a source-wired control is not proof.
 | Dedupe | Replay an identical envelope (same `event_id`) | `200 {"status":"duplicate"}`, no new task, no new store row. |
 | Verify-before-parse | Wrong secret with a syntactically invalid body | `401 unauthorized`; no activity row; `signature_failures` increments on the card. |
 | Rate limit | 5+ rapid wrong-secret attempts | `429 rate_limited` and cooldown; `rate_limited` increments. |
-| Fail-closed sender | `sender.id: "mallory"` | `202 {"status":"rejected","reason":"sender_not_allowlisted"}`, no dispatch, audit row present. |
-| Fail-closed conversation | `conversation_id: "other-room"` | `202 rejected`, `reason: room_not_allowlisted`, no dispatch. |
-| Remote policy (426) | With *Expose to Network* on and policy `secure_channel_required`, POST the envelope to `http://<lan-ip>:1337/channels/n8n/n8n-local/inbound` and GET the poll URL on the LAN IP | Both `426 secure_channel_required`. Toggle **Allow plaintext HTTP from non-loopback callers** on, save → same calls return `202`/`200`; toggle off, save → `426` again. |
+| First contact | Run the workflow with a `conversation_id` / `sender.id` not yet allowlisted | `202 {"status":"rejected","reason":"pending_approval"}`, no dispatch; the n8n card shows "1 waiting for approval"; *Prove it* shows the Allow / Deny row with both ids. Press **Allow** → allowlists updated without a separate Save; re-run → happy path. |
+| Deny | Repeat with a second identity and press **Deny** | Row disappears; the next event from that identity returns the bare `sender_not_allowlisted` / `room_not_allowlisted`, no new prompt this session. |
+| Fail-closed sender (denied) | `sender.id: "mallory"` after denying it | `202 {"status":"rejected","reason":"sender_not_allowlisted"}`, no dispatch, audit row present. |
+| Fail-closed conversation (denied) | `conversation_id: "other-room"` after denying it | `202 rejected`, `reason: room_not_allowlisted`, no dispatch. |
+| Remote policy (426) | Switch *Where is your n8n?* to **Another machine on my network**, *Expose to Network* on, policy `secure_channel_required`; POST the envelope to `http://<lan-ip>:1337/channels/n8n/n8n-local/inbound` and GET the poll URL on the LAN IP | Both `426 secure_channel_required`. Toggle **Allow plaintext HTTP from other machines** on, save → same calls return `202`/`200`; toggle off, save → `426` again. Switching back to Docker Desktop hides the toggle and resets the policy. |
+| Remote gating | Switch *Where is your n8n?* to **Remote** with no local agent, then with a local agent whose Relay is off | *Pair* shows the `needsBoundAgent`, then `needsRelay` blocker instead of a code; **Enable Relay** in *Who answers?* → once connected the code shows only the relay URL. |
 | Loopback exemption | Same payload via `curl` to `127.0.0.1` while policy is `secure_channel_required` **and** *Expose to Network* is on | `202 accepted` (physical loopback is exempt even though `trustLoopback` is off). |
 | Docker origin | Same payload from inside `n8n-n8n-1` via `host.docker.internal` while policy is `secure_channel_required` | `202 accepted` on macOS (host forwarder is loopback); record the observed status. |
 | Envelope version | `v: 2` | `400 unsupported_envelope_version`. |
@@ -100,7 +107,7 @@ reported as proven / partial / failed; a source-wired control is not proof.
 | Shared-secret mode | Switch verification to `shared_secret_header`, save, repeat happy path with `X-Osaurus-Channel-Secret` | `202 accepted` and completed poll. |
 | Outbound C2 refusal | Enter `http://localhost:5678/webhook/...` as the outbound URL and save | Save is refused inline with the HTTPS/public-host message; `agent-channels.json` is unchanged. |
 | Outbound push | Public HTTPS webhook URL (e.g. `ngrok http 5678`) with auto-reply on, pointing at a sink workflow that recomputes the HMAC | n8n Webhook trigger receives the signed envelope; the sink's signature check passes and responds `200 {"id": …}`; Osaurus Outbox / `outbound_sent` reflect it. **PARTIAL** when no public URL is available. |
-| Disable | Toggle the connection `enabled` off | `403 connection_disabled`; toggle back on restores. |
+| Disable | Flip the switch on the n8n card in the channel list off | `403 connection_disabled`; toggle back on restores. |
 | Kill switch | Global channel write switch off | Pull mode unaffected (poll still returns output); outbound push (if configured) denied. Covered in-unit by `n8nReplyHandlerIsOnlyInstalledWhenOutboundAndAutoReplyAreConfigured` (`globalWritesDisabled` → `outbound_failed`, no HTTP). Live UI re-proof of the fixed binary is deferred. |
 
 ## App-Surface Proof Checklist
@@ -138,5 +145,6 @@ text verbatim.
 
 - Outbound push to a local n8n cannot be proven without a public HTTPS URL; it
   is reported PARTIAL until a tunnel or hosted n8n is available.
-- The `n8n-nodes-osaurus` community node is a separate repository and does not
-  gate this channel kind.
+- The `@osaurus/n8n-nodes-osaurus` community node is a separate repository and
+  does not gate this channel kind. Install it in n8n under exactly that scoped
+  name (Settings → Community nodes → `@osaurus/n8n-nodes-osaurus`).

@@ -60,7 +60,9 @@ struct N8nConnectionDraftTests {
         #expect(draft.verificationMethod == .sharedSecretHeader)
         #expect(draft.verificationHeaderName == "X-Custom-Secret")
         #expect(draft.plaintextAllowed)
-        #expect(draft.topology == .lan)
+        // Legacy row without a stored location: plaintext implies LAN.
+        #expect(draft.callerLocation == .lan)
+        #expect(draft.idWasEdited)
         #expect(draft.conversationAllowlistText == "n8n-test")
         #expect(draft.senderAllowlistText == "tpae\nworkflow")
         #expect(draft.allowBotMessages)
@@ -81,6 +83,8 @@ struct N8nConnectionDraftTests {
         #expect(rebuilt.inboundAuthorization.allowBotMessages)
         #expect(rebuilt.n8n?.inboundVerification == original.n8n?.inboundVerification)
         #expect(rebuilt.n8n?.remoteTransportPolicy == .plaintextAllowed)
+        // The inferred location is persisted on the next save.
+        #expect(rebuilt.n8n?.callerLocation == .lan)
         #expect(rebuilt.n8n?.outbound == original.n8n?.outbound)
         #expect(rebuilt.n8n?.inboundDispatch.target == .local(Self.agentId))
         #expect(rebuilt.n8n?.inboundDispatch.autoReplyEnabled == true)
@@ -107,9 +111,87 @@ struct N8nConnectionDraftTests {
         #expect(built.n8n?.inboundVerification.method == .hmacSHA256)
         #expect(built.n8n?.inboundVerification.headerName == nil)
         #expect(built.n8n?.remoteTransportPolicy == .secureChannelRequired)
+        // No location chosen yet: a new, non-plaintext draft is This Mac.
+        #expect(built.n8n?.callerLocation == .thisMac)
         #expect(built.n8n?.outbound.isConfigured == false)
         #expect(built.n8n?.outbound.signBodies == true)
         #expect(built.n8n?.inboundDispatch.enabled == false)
+    }
+
+    @Test func callerLocationRoundTripsAndOwnsThePlaintextDecision() throws {
+        var draft = N8nConnectionDraft()
+        draft.id = "n8n-remote"
+        draft.callerLocation = .remote
+        // The sheet clears this when leaving LAN; the model also refuses to
+        // persist plaintext for a non-LAN location.
+        draft.plaintextAllowed = true
+        let remote = draft.connection()
+        #expect(remote.n8n?.callerLocation == .remote)
+        #expect(remote.n8n?.remoteTransportPolicy == .secureChannelRequired)
+
+        let reopened = N8nConnectionDraft(connection: remote)
+        #expect(reopened.callerLocation == .remote)
+        #expect(!reopened.plaintextAllowed)
+
+        draft.callerLocation = .lan
+        let lan = draft.connection()
+        #expect(lan.n8n?.callerLocation == .lan)
+        #expect(lan.n8n?.remoteTransportPolicy == .plaintextAllowed)
+
+        // Persisted JSON carries the field and older rows decode without it.
+        let data = try JSONEncoder().encode(remote)
+        let json = String(decoding: data, as: UTF8.self)
+        #expect(json.contains("\"callerLocation\":\"remote\""))
+        let legacy = try JSONDecoder().decode(
+            AgentChannelN8nConfiguration.self,
+            from: Data(#"{"inboundVerification":{"method":"hmac_sha256"},"remoteTransportPolicy":"plaintext_allowed"}"#.utf8)
+        )
+        #expect(legacy.callerLocation == nil)
+        #expect(legacy.effectiveCallerLocation == .lan)
+        #expect(AgentChannelN8nConfiguration().effectiveCallerLocation == .thisMac)
+    }
+
+    /// A pre-redesign Secure-Channel row could have been This Mac, Docker
+    /// or a relay-only Remote setup; the draft must not guess, or a Remote
+    /// user reopening the sheet would be handed a loopback-only code.
+    @Test func legacySecureChannelConnectionLeavesTheLocationUnanswered() {
+        var stored = Self.connection()
+        stored.n8n?.remoteTransportPolicy = .secureChannelRequired
+        stored.n8n?.callerLocation = nil
+
+        let draft = N8nConnectionDraft(connection: stored)
+        #expect(!draft.isNew)
+        #expect(draft.callerLocation == nil)
+        #expect(!draft.plaintextAllowed)
+
+        // Plaintext is only ever offered for LAN, so that legacy signal is safe to pre-select.
+        var lanLegacy = Self.connection()
+        lanLegacy.n8n?.callerLocation = nil
+        #expect(lanLegacy.n8n?.remoteTransportPolicy == .plaintextAllowed)
+        #expect(N8nConnectionDraft(connection: lanLegacy).callerLocation == .lan)
+
+        // A stored location always wins over inference.
+        var remote = Self.connection()
+        remote.n8n?.remoteTransportPolicy = .secureChannelRequired
+        remote.n8n?.callerLocation = .remote
+        #expect(N8nConnectionDraft(connection: remote).callerLocation == .remote)
+    }
+
+    @Test func connectionIdSlugFollowsTheDisplayName() {
+        #expect(N8nConnectionSlug.make(from: "Accounting Channel") == "n8n-accounting-channel")
+        #expect(N8nConnectionSlug.make(from: "  Café  Ops!!  ") == "n8n-cafe-ops")
+        #expect(N8nConnectionSlug.make(from: "n8n-already-prefixed") == "n8n-already-prefixed")
+        #expect(N8nConnectionSlug.make(from: "N8N") == "n8n")
+        #expect(N8nConnectionSlug.make(from: "") == "")
+        #expect(N8nConnectionSlug.make(from: "!!!") == "")
+        // Every slug is a valid, already-normalized connection id.
+        for name in ["Accounting Channel", "Café Ops", "a__b--c"] {
+            let slug = N8nConnectionSlug.make(from: name)
+            #expect(AgentChannelConnection.normalizedId(slug) == slug)
+        }
+        // A fresh draft has an untouched id; a loaded one is considered edited.
+        #expect(!N8nConnectionDraft().idWasEdited)
+        #expect(N8nConnectionDraft(connection: Self.connection()).idWasEdited)
     }
 
     @Test func connectionCenterBadgeReflectsAuthorizationDispatchAndPush() {
@@ -125,18 +207,29 @@ struct N8nConnectionDraftTests {
                 == "\(L("Header")) · \(L("Enabled (poll replies)"))"
         )
 
+        // Empty allowlists are the expected state before the first workflow
+        // is approved, so they read as waiting rather than as a warning.
+        connection.inboundAuthorization.senderAllowlist = []
+        let noSenders = AgentChannelConnectionCenterView.customBadge(for: connection)
+        #expect(noSenders.label == L("Waiting for first workflow"))
+        #expect(noSenders.tone == .neutral)
+
+        // A pending first-contact request outranks everything but Disabled.
+        let pending = AgentChannelConnectionCenterView.customBadge(for: connection, pendingApprovals: 2)
+        // The view formats `L("\(n) waiting for approval")`; the English render is pinned here.
+        #expect(pending.label == "2 waiting for approval")
+        #expect(pending.tone == .warning)
+
         connection.n8n?.inboundDispatch = AgentChannelInboundDispatchConfiguration()
         let noAgent = AgentChannelConnectionCenterView.customBadge(for: connection)
         #expect(noAgent.label == L("No agent assigned"))
         #expect(noAgent.tone == .warning)
 
-        connection.inboundAuthorization.senderAllowlist = []
-        let noSenders = AgentChannelConnectionCenterView.customBadge(for: connection)
-        #expect(noSenders.label == L("No allowed senders"))
-        #expect(noSenders.tone == .warning)
-
         connection.enabled = false
         #expect(AgentChannelConnectionCenterView.customBadge(for: connection).label == L("Disabled"))
+        #expect(
+            AgentChannelConnectionCenterView.customBadge(for: connection, pendingApprovals: 1).label == L("Disabled")
+        )
     }
 
     @Test func connectionCenterBadgeIncludesVerifyModeAndKillSwitch() {
@@ -161,16 +254,19 @@ struct N8nConnectionDraftTests {
 
     @Test func setupRailIsN8nShapedAndDoesNotReuseDiscordCaptions() {
         let ids = N8nSetupSection.sections.map(\.id)
-        // Everything the pairing code needs (id, bound agent) precedes Connect n8n.
-        #expect(ids == ["basics", "who", "reply", "connect", "live"])
-        #expect(N8nSetupSection.requiredSectionIds == ["basics", "connect", "who"])
+        // Everything the pairing code needs (id, location, bound agent + relay)
+        // precedes Pair; allowlists are filled by first contact in Prove it.
+        #expect(ids == ["basics", "location", "reply", "connect", "live"])
+        #expect(N8nSetupSection.requiredSectionIds == ["basics", "location", "reply", "connect"])
         #expect(N8nSetupSection.fallbackSectionId == "live")
-        #expect(N8nSetupSection.basics.title == L("Name this channel"))
-        #expect(N8nSetupSection.connect.title == L("Connect n8n"))
+        #expect(N8nSetupSection.basics.title == L("Name it"))
+        #expect(N8nSetupSection.location.title == L("Where is your n8n?"))
+        #expect(N8nSetupSection.howOsaurusReplies.title == L("Who answers?"))
+        #expect(N8nSetupSection.connect.title == L("Pair"))
+        #expect(N8nSetupSection.liveCheck.title == L("Prove it"))
         #expect(N8nSetupSection.connect.caption == L("Pairing code"))
-        #expect(N8nSetupSection.whoMaySpeak.caption == L("Allowlists"))
-        #expect(N8nSetupSection.howOsaurusReplies.caption == L("Agent, poll or push"))
-        #expect(N8nSetupSection.liveCheck.caption == L("Verify"))
+        #expect(N8nSetupSection.location.caption == L("This Mac, Docker, LAN, or remote"))
+        #expect(N8nSetupSection.liveCheck.caption == L("Approve workflows, verify"))
         // Discord/Telegram captions must not appear on the n8n rail.
         for section in N8nSetupSection.sections {
             #expect(section.caption != L("Bot and tokens"))
@@ -178,7 +274,16 @@ struct N8nConnectionDraftTests {
         }
     }
 
-    @Test func recipeMatchesTopologyAndAllowlists() {
+    @Test func callerLocationCopyExplainsTheConsequence() {
+        #expect(AgentChannelN8nCallerLocation.allCases.map(\.rawValue) == ["this_mac", "docker_desktop", "lan", "remote"])
+        #expect(AgentChannelN8nCallerLocation.remote.summary.contains("relay"))
+        #expect(AgentChannelN8nCallerLocation.lan.summary.contains("exposed"))
+        #expect(AgentChannelN8nCallerLocation.dockerDesktop.summary.contains("host.docker.internal"))
+        #expect(AgentChannelN8nCallerLocation.inferred(plaintextAllowed: true) == .lan)
+        #expect(AgentChannelN8nCallerLocation.inferred(plaintextAllowed: false) == .thisMac)
+    }
+
+    @Test func recipeMatchesLocationAndAllowlists() {
         let envelope = N8nSetupRecipe.sampleEnvelope(conversationId: "n8n-test", senderId: "tpae")
         #expect(envelope.contains("\"conversation_id\":\"n8n-test\""))
         #expect(envelope.contains("\"sender\":{\"id\":\"tpae\"}"))
@@ -186,16 +291,26 @@ struct N8nConnectionDraftTests {
         let docker = N8nSetupRecipe.inboundURL(
             connectionId: "n8n-local",
             port: 1337,
-            topology: .dockerDesktop
+            location: .dockerDesktop
         )
         #expect(docker == "http://host.docker.internal:1337/channels/n8n/n8n-local/inbound")
 
         let lan = N8nSetupRecipe.inboundURL(
             connectionId: "n8n-local",
             port: 1337,
-            topology: .lan
+            location: .lan
         )
         #expect(lan == "http://<this-mac-ip>:1337/channels/n8n/n8n-local/inbound")
+
+        let remote = N8nSetupRecipe.pollURL(
+            connectionId: "n8n-local",
+            port: 1337,
+            location: .remote,
+            relayURL: "https://0xabc.agent.osaurus.ai/"
+        )
+        #expect(remote == "https://0xabc.agent.osaurus.ai/channels/n8n/n8n-local/tasks/{task_id}")
+        let remotePlaceholder = N8nSetupRecipe.inboundURL(connectionId: "n8n-local", port: 1337, location: .remote)
+        #expect(remotePlaceholder == "https://<relay-url>/channels/n8n/n8n-local/inbound")
 
         let hmac = N8nSetupRecipe.httpRequestRecipe(
             inboundURL: docker,

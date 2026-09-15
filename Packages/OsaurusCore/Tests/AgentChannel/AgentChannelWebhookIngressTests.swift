@@ -43,12 +43,28 @@ struct AgentChannelWebhookIngressTests {
         }
     }
 
+    private final class AnnounceRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: [String] = []
+        func record(_ id: String) {
+            lock.lock()
+            defer { lock.unlock() }
+            stored.append(id)
+        }
+        var ids: [String] {
+            lock.lock()
+            defer { lock.unlock() }
+            return stored
+        }
+    }
+
     private struct Harness {
         let ingress: AgentChannelWebhookIngress
         let store: AgentChannelMessageStore
         let activity: AgentChannelInboundActivityCenter
         let relay: RelayRecorder
         let health: AgentChannelTransportHealthCenter
+        let pending: AgentChannelN8nPendingContactCenter
     }
 
     private static func connection(
@@ -106,16 +122,27 @@ struct AgentChannelWebhookIngressTests {
             let activity = AgentChannelInboundActivityCenter()
             let health = AgentChannelTransportHealthCenter()
             let relay = RelayRecorder()
+            let pending = AgentChannelN8nPendingContactCenter(notify: {})
             let ingress = AgentChannelWebhookIngress(
                 secretResolver: FixedSecretResolver(secret: resolverSecret),
                 messageStore: store,
                 activityCenter: activity,
+                pendingContacts: pending,
                 transportHealth: health,
                 relaySubmit: { request in relay.record(request) },
                 taskLookup: taskLookup,
                 rateLimiter: rateLimiter
             )
-            try await body(Harness(ingress: ingress, store: store, activity: activity, relay: relay, health: health))
+            try await body(
+                Harness(
+                    ingress: ingress,
+                    store: store,
+                    activity: activity,
+                    relay: relay,
+                    health: health,
+                    pending: pending
+                )
+            )
         }
     }
 
@@ -293,7 +320,10 @@ struct AgentChannelWebhookIngressTests {
 
     // MARK: - Fail-closed authorization
 
-    @Test func unlistedSenderIsRejectedWithoutDispatchButAudited() async throws {
+    /// Approve-on-first-contact: a verified event from an identity the
+    /// operator has not approved is still rejected (no dispatch, audited),
+    /// but it is surfaced as `pending_approval` and recorded for the sheet.
+    @Test func unlistedSenderIsRejectedWithoutDispatchButAuditedAndPending() async throws {
         try await withHarness(connections: [Self.connection()]) { harness in
             let response = await harness.ingress.handleInbound(
                 Self.request(body: Self.envelope(senderId: "intruder"))
@@ -301,9 +331,10 @@ struct AgentChannelWebhookIngressTests {
             #expect(response.status == 202)
             let body = Self.json(response)
             #expect(body["status"] as? String == "rejected")
-            #expect(body["reason"] as? String == "sender_not_allowlisted")
+            #expect(body["reason"] as? String == "pending_approval")
             #expect(body["task_id"] == nil)
             #expect(harness.relay.all.isEmpty)
+            // The audit row keeps the exact policy verdict.
             let audit = try harness.store.recentAuditEvents(connectionId: Self.connectionId, limit: 10)
             #expect(audit.count == 1)
             #expect(audit.first?.reason == "sender_not_allowlisted")
@@ -311,23 +342,280 @@ struct AgentChannelWebhookIngressTests {
             try #expect(
                 harness.store.recentMessages(connectionId: Self.connectionId, roomId: "conv-1", limit: 5).isEmpty
             )
-            let stages = await harness.activity.recent(connectionId: Self.connectionId).map(\.stage)
-            #expect(stages == [.rejected, .received])
+            let events = await harness.activity.recent(connectionId: Self.connectionId)
+            #expect(events.map(\.stage) == [.rejected, .received])
+            #expect(events.first?.reason == "pending_approval")
+
+            let pending = await harness.pending.pending(connectionId: Self.connectionId)
+            #expect(pending.count == 1)
+            #expect(pending.first?.conversationId == "conv-1")
+            #expect(pending.first?.senderId == "intruder")
+            #expect(pending.first?.senderDisplay == "Ada")
+            #expect(pending.first?.eventCount == 1)
+            #expect(pending.first?.lastEventId == "evt-1")
+            let snapshot = await harness.ingress.healthSnapshot(connectionId: Self.connectionId)
+            #expect(snapshot.lastFailureReason == "pending_approval")
         }
     }
 
-    @Test func unlistedConversationAndBotSendersAreRejected() async throws {
+    @Test func unlistedConversationIsPendingButBotSendersAreDeniedOutright() async throws {
         try await withHarness(connections: [Self.connection()]) { harness in
             let room = await harness.ingress.handleInbound(
                 Self.request(body: Self.envelope(eventId: "evt-room", conversationId: "conv-other"))
             )
-            #expect(Self.json(room)["reason"] as? String == "room_not_allowlisted")
+            #expect(Self.json(room)["reason"] as? String == "pending_approval")
+            // Bot denial is a policy choice, not a missing approval.
             let bot = await harness.ingress.handleInbound(
                 Self.request(body: Self.envelope(eventId: "evt-bot", isBot: true))
             )
             #expect(Self.json(bot)["reason"] as? String == "bot_message_denied")
             #expect(harness.relay.all.isEmpty)
+            let pending = await harness.pending.pending(connectionId: Self.connectionId)
+            #expect(pending.map(\.conversationId) == ["conv-other"])
         }
+    }
+
+    @Test func pendingContactsCoalesceRepeatsAndAreNotRecordedForBadSecrets() async throws {
+        try await withHarness(connections: [Self.connection()]) { harness in
+            for index in 1...3 {
+                _ = await harness.ingress.handleInbound(
+                    Self.request(body: Self.envelope(eventId: "evt-\(index)", senderId: "newbie"))
+                )
+            }
+            // Wrong secret never reaches authorization, so nothing is pending.
+            let unauthorized = await harness.ingress.handleInbound(
+                Self.request(
+                    body: Self.envelope(eventId: "evt-bad", senderId: "mallory"),
+                    headers: ["X-Osaurus-Channel-Secret": "wrong"]
+                )
+            )
+            #expect(unauthorized.status == 401)
+
+            let pending = await harness.pending.pending(connectionId: Self.connectionId)
+            #expect(pending.count == 1)
+            #expect(pending.first?.senderId == "newbie")
+            #expect(pending.first?.eventCount == 3)
+            #expect(pending.first?.lastEventId == "evt-3")
+            #expect(harness.relay.all.isEmpty)
+        }
+    }
+
+    @Test func deniedIdentityFallsBackToBareReasonAndIsNotReprompted() async throws {
+        try await withHarness(connections: [Self.connection()]) { harness in
+            _ = await harness.ingress.handleInbound(
+                Self.request(body: Self.envelope(eventId: "evt-1", senderId: "spam"))
+            )
+            let contact = try #require(await harness.pending.pending(connectionId: Self.connectionId).first)
+            await harness.pending.deny(contact)
+            let after = await harness.ingress.handleInbound(
+                Self.request(body: Self.envelope(eventId: "evt-2", senderId: "spam"))
+            )
+            #expect(Self.json(after)["reason"] as? String == "sender_not_allowlisted")
+            let pending = await harness.pending.pending(connectionId: Self.connectionId)
+            #expect(pending.isEmpty)
+        }
+    }
+
+    @Test func approvingAContactAppendsAllowlistsAndUnblocksTheNextRun() async throws {
+        try await withHarness(connections: [Self.connection()]) { harness in
+            let first = await harness.ingress.handleInbound(
+                Self.request(body: Self.envelope(eventId: "evt-1", conversationId: "invoices", senderId: "wf-42"))
+            )
+            #expect(Self.json(first)["reason"] as? String == "pending_approval")
+            let contact = try #require(await harness.pending.pending(connectionId: Self.connectionId).first)
+
+            let updated = try AgentChannelConnectionManager.shared.approveN8nContact(
+                connectionId: contact.connectionId,
+                conversationId: contact.conversationId,
+                senderId: contact.senderId
+            )
+            #expect(updated.inboundAuthorization.roomAllowlist == ["conv-1", "invoices"])
+            #expect(updated.inboundAuthorization.senderAllowlist == ["user-1", "wf-42"])
+            await harness.pending.resolve(contact)
+            let pending = await harness.pending.pending(connectionId: Self.connectionId)
+            #expect(pending.isEmpty)
+
+            let second = await harness.ingress.handleInbound(
+                Self.request(body: Self.envelope(eventId: "evt-2", conversationId: "invoices", senderId: "wf-42"))
+            )
+            #expect(Self.json(second)["status"] as? String == "accepted")
+            #expect(harness.relay.all.count == 1)
+
+            // Idempotent: approving again does not duplicate entries.
+            let again = try AgentChannelConnectionManager.shared.approveN8nContact(
+                connectionId: contact.connectionId,
+                conversationId: contact.conversationId,
+                senderId: contact.senderId
+            )
+            #expect(again.inboundAuthorization.roomAllowlist == ["conv-1", "invoices"])
+            #expect(again.inboundAuthorization.senderAllowlist == ["user-1", "wf-42"])
+
+            // Revoke reverses it.
+            let revoked = try AgentChannelConnectionManager.shared.revokeN8nAllowlistEntry(
+                connectionId: contact.connectionId,
+                senderId: "wf-42"
+            )
+            #expect(revoked.inboundAuthorization.senderAllowlist == ["user-1"])
+            #expect(revoked.inboundAuthorization.roomAllowlist == ["conv-1", "invoices"])
+        }
+    }
+
+    @Test func approveAndRevokeRefuseUnknownConnectionsForeignKindsAndEmptyIdentities() async throws {
+        var slack = AgentChannelConnection(id: "slack-ops", name: "Ops", kind: .slack)
+        slack.inboundAuthorization.roomAllowlist = ["C1"]
+        try await withHarness(connections: [Self.connection(), slack]) { _ in
+            let manager = AgentChannelConnectionManager.shared
+
+            #expect(throws: AgentChannelConnectionManagerError.connectionNotFound("nope")) {
+                try manager.approveN8nContact(connectionId: " nope ", conversationId: "c", senderId: "s")
+            }
+            #expect(throws: AgentChannelConnectionManagerError.connectionNotFound("nope")) {
+                try manager.revokeN8nAllowlistEntry(connectionId: "nope", senderId: "s")
+            }
+            #expect(throws: AgentChannelConnectionManagerError.unsupportedKind(.slack)) {
+                try manager.approveN8nContact(connectionId: "slack-ops", conversationId: "C1", senderId: "U1")
+            }
+            #expect(throws: AgentChannelConnectionManagerError.unsupportedKind(.slack)) {
+                try manager.revokeN8nAllowlistEntry(connectionId: "slack-ops", conversationId: "C1")
+            }
+            // Slack's allowlists were not touched by the refused calls.
+            #expect(manager.connection(id: "slack-ops")?.inboundAuthorization.roomAllowlist == ["C1"])
+
+            #expect(throws: AgentChannelConnectionManagerError.emptyContactIdentity) {
+                try manager.approveN8nContact(connectionId: Self.connectionId, conversationId: "  ", senderId: "wf")
+            }
+            #expect(throws: AgentChannelConnectionManagerError.emptyContactIdentity) {
+                try manager.approveN8nContact(connectionId: Self.connectionId, conversationId: "room", senderId: "")
+            }
+            let untouched = try #require(manager.connection(id: Self.connectionId))
+            #expect(untouched.inboundAuthorization.roomAllowlist == ["conv-1"])
+            #expect(untouched.inboundAuthorization.senderAllowlist == ["user-1"])
+
+            // Revoking an id that is not listed is a no-op, not an error.
+            let same = try manager.revokeN8nAllowlistEntry(connectionId: Self.connectionId, conversationId: "ghost")
+            #expect(same.inboundAuthorization.roomAllowlist == ["conv-1"])
+        }
+    }
+
+    @Test func pendingContactCenterAnnouncesOnlyNewIdentitiesAndClearForgetsDenials() async {
+        let announced = AnnounceRecorder()
+        let center = AgentChannelN8nPendingContactCenter(
+            notify: {},
+            announce: { contact in announced.record(contact.id) }
+        )
+        for eventId in ["e1", "e2", "e3"] {
+            await center.record(
+                connectionId: "n8n-a",
+                conversationId: "room",
+                senderId: "wf",
+                senderDisplay: nil,
+                eventId: eventId
+            )
+        }
+        await center.record(connectionId: "n8n-a", conversationId: "room", senderId: "other", senderDisplay: nil, eventId: "e4")
+        // Three repeats of one identity announce once; a second identity announces once more.
+        #expect(announced.ids.count == 2)
+        #expect(await center.pending(connectionId: "n8n-a").first?.eventCount == 3)
+
+        // Deny suppresses the identity for the session...
+        let denied = await center.pending(connectionId: "n8n-a").first { $0.senderId == "wf" }!
+        await center.deny(denied)
+        let suppressed = await center.record(
+            connectionId: "n8n-a",
+            conversationId: "room",
+            senderId: "wf",
+            senderDisplay: nil,
+            eventId: "e5"
+        )
+        #expect(!suppressed)
+        #expect(announced.ids.count == 2)
+
+        // ...until the connection is cleared (deleted); a recreated id starts clean.
+        await center.clear(connectionId: "n8n-a")
+        #expect(await center.pendingCount(connectionId: "n8n-a") == 0)
+        let recorded = await center.record(
+            connectionId: "n8n-a",
+            conversationId: "room",
+            senderId: "wf",
+            senderDisplay: nil,
+            eventId: "e6"
+        )
+        #expect(recorded)
+        #expect(announced.ids.count == 3)
+
+        // Clearing one connection leaves another connection's denials alone.
+        await center.record(connectionId: "n8n-b", conversationId: "room", senderId: "wf", senderDisplay: nil, eventId: "b1")
+        let deniedB = await center.pending(connectionId: "n8n-b").first!
+        await center.deny(deniedB)
+        await center.clear(connectionId: "n8n-a")
+        let stillDenied = await center.record(
+            connectionId: "n8n-b",
+            conversationId: "room",
+            senderId: "wf",
+            senderDisplay: nil,
+            eventId: "b2"
+        )
+        #expect(!stillDenied)
+    }
+
+    @Test @MainActor func firstContactToastNamesTheChannelAndTheIdsToApprove() {
+        let notifier = AgentChannelN8nFirstContactNotifier(connectionName: { id in id == "n8n-local" ? "Accounting" : nil })
+        let contact = AgentChannelN8nPendingContact(
+            connectionId: "n8n-local",
+            conversationId: "invoices",
+            senderId: "wf-42",
+            senderDisplay: nil,
+            firstSeenAt: Date(),
+            lastSeenAt: Date(),
+            eventCount: 1,
+            lastEventId: "evt-1"
+        )
+        let text = notifier.message(for: contact)
+        #expect(text.title.contains("'invoices'"))
+        #expect(text.title.contains("Accounting"))
+        #expect(text.body.contains("'wf-42'"))
+        #expect(text.body.contains("Prove it"))
+        #expect(text.body.contains("Accounting"))
+
+        // Unknown or unnamed connections fall back to the id.
+        var orphan = contact
+        orphan.connectionId = "n8n-gone"
+        #expect(notifier.message(for: orphan).title.contains("n8n-gone"))
+    }
+
+    @Test func pendingContactCenterCapsAtTwentyPerConnectionAndReconciles() async {
+        let center = AgentChannelN8nPendingContactCenter(notify: {})
+        for index in 0..<25 {
+            await center.record(
+                connectionId: "n8n-a",
+                conversationId: "room-\(index)",
+                senderId: "wf",
+                senderDisplay: nil,
+                eventId: "evt-\(index)"
+            )
+        }
+        var pending = await center.pending(connectionId: "n8n-a")
+        #expect(pending.count == AgentChannelN8nPendingContactCenter.maxPendingPerConnection)
+        // Oldest evicted first.
+        #expect(pending.first?.conversationId == "room-5")
+        #expect(pending.last?.conversationId == "room-24")
+        let counts = await center.pendingCounts()
+        #expect(counts == ["n8n-a": 20])
+
+        // A manual allowlist edit that covers an identity clears its prompt.
+        await center.reconcile(connectionId: "n8n-a", roomAllowlist: ["room-5", "room-6"], senderAllowlist: ["wf"])
+        pending = await center.pending(connectionId: "n8n-a")
+        #expect(pending.count == 18)
+        #expect(!pending.contains { $0.conversationId == "room-5" || $0.conversationId == "room-6" })
+
+        // Partial coverage (room only) keeps the prompt.
+        await center.reconcile(connectionId: "n8n-a", roomAllowlist: ["room-7"], senderAllowlist: [])
+        pending = await center.pending(connectionId: "n8n-a")
+        #expect(pending.contains { $0.conversationId == "room-7" })
+
+        await center.clear(connectionId: "n8n-a")
+        let cleared = await center.pendingCount(connectionId: "n8n-a")
+        #expect(cleared == 0)
     }
 
     // MARK: - Dedupe

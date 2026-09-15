@@ -600,6 +600,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Initialize WatcherManager to start file system watchers
         _ = WatcherManager.shared
 
+        // Surface the first run of an n8n workflow as a toast even when
+        // Settings is closed (approve-on-first-contact).
+        AgentChannelN8nFirstContactNotifier.shared.install()
+
         if !keychainDisabledTestMode {
             Task.detached(priority: .utility) {
                 await AgentChannelTransportSupervisor.shared.startFromLaunch()

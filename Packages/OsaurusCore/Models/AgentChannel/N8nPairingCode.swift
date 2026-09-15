@@ -105,6 +105,8 @@ struct N8nPairingCode: Codable, Equatable, Sendable {
     /// Everything the sheet knows about how this Mac can be reached.
     struct Reachability: Equatable, Sendable {
         var port: Int
+        /// Where the operator said n8n runs; scopes the URL list.
+        var callerLocation: AgentChannelN8nCallerLocation
         /// Server bound to 0.0.0.0 (Server settings → Expose to network).
         var exposedToNetwork: Bool
         /// LAN address when exposed; ignored otherwise.
@@ -114,50 +116,104 @@ struct N8nPairingCode: Codable, Equatable, Sendable {
         var relayURL: String?
         /// Address of the local agent bound as the inbound dispatch target.
         var agentAddress: String?
+        /// Connection allows plaintext HTTP from other machines.
+        var plaintextAllowed: Bool
 
         init(
             port: Int,
+            callerLocation: AgentChannelN8nCallerLocation = .thisMac,
             exposedToNetwork: Bool = false,
             lanAddress: String? = nil,
             relayURL: String? = nil,
-            agentAddress: String? = nil
+            agentAddress: String? = nil,
+            plaintextAllowed: Bool = false
         ) {
             self.port = port
+            self.callerLocation = callerLocation
             self.exposedToNetwork = exposedToNetwork
             self.lanAddress = lanAddress
             self.relayURL = relayURL
             self.agentAddress = agentAddress
+            self.plaintextAllowed = plaintextAllowed
         }
     }
 
-    /// Ordered candidates: loopback, Docker Desktop host alias, LAN address
-    /// (only when the server is exposed), relay (only when live).
+    /// Why the sheet cannot issue a working code yet. Each case names the
+    /// step that unblocks it so the UI can jump there.
+    enum Blocker: Equatable, Sendable {
+        /// Remote needs a bound local agent for Secure Channel + relay.
+        case needsBoundAgent
+        /// Remote: the bound agent's relay is not connected yet.
+        case needsRelay
+        /// LAN: server is not bound to the network / no LAN address.
+        case needsExposeToNetwork
+        /// LAN without a bound agent: plaintext from other machines is off,
+        /// so a remote caller would be refused with 426.
+        case needsPlaintextOrAgent
+    }
+
+    enum Readiness: Equatable, Sendable {
+        case ready
+        case blocked(Blocker)
+
+        var blocker: Blocker? {
+            if case .blocked(let blocker) = self { return blocker }
+            return nil
+        }
+    }
+
+    /// Only the URLs that can reach this Mac from the chosen location. An
+    /// empty list means the code must not be issued yet (see `readiness`).
     static func urlCandidates(_ reachability: Reachability) -> [String] {
-        var urls = [
-            "http://127.0.0.1:\(reachability.port)",
-            "http://host.docker.internal:\(reachability.port)",
-        ]
-        if reachability.exposedToNetwork,
-            let lan = normalized(reachability.lanAddress),
-            lan != "127.0.0.1", lan != "0.0.0.0"
-        {
-            urls.append("http://\(lan):\(reachability.port)")
+        switch reachability.callerLocation {
+        case .thisMac:
+            return ["http://127.0.0.1:\(reachability.port)"]
+        case .dockerDesktop:
+            return ["http://host.docker.internal:\(reachability.port)"]
+        case .lan:
+            guard reachability.exposedToNetwork,
+                let lan = normalized(reachability.lanAddress),
+                lan != "127.0.0.1", lan != "0.0.0.0"
+            else { return [] }
+            return ["http://\(lan):\(reachability.port)"]
+        case .remote:
+            guard let relay = normalized(reachability.relayURL) else { return [] }
+            return [relay.hasSuffix("/") ? String(relay.dropLast()) : relay]
         }
-        if let relay = normalized(reachability.relayURL) {
-            urls.append(relay.hasSuffix("/") ? String(relay.dropLast()) : relay)
-        }
-        return urls
     }
 
+    /// Whether a code built from `reachability` would work from the chosen
+    /// location, and if not, what the operator must do first.
+    static func readiness(_ reachability: Reachability) -> Readiness {
+        switch reachability.callerLocation {
+        case .thisMac, .dockerDesktop:
+            return .ready
+        case .lan:
+            if urlCandidates(reachability).isEmpty { return .blocked(.needsExposeToNetwork) }
+            if normalized(reachability.agentAddress) == nil, !reachability.plaintextAllowed {
+                return .blocked(.needsPlaintextOrAgent)
+            }
+            return .ready
+        case .remote:
+            if normalized(reachability.agentAddress) == nil { return .blocked(.needsBoundAgent) }
+            if urlCandidates(reachability).isEmpty { return .blocked(.needsRelay) }
+            return .ready
+        }
+    }
+
+    /// Nil when there is no URL that can work from the chosen location; the
+    /// sheet shows the blocker instead of a code that can never connect.
     static func make(
         connectionId: String,
         name: String,
         secret: String,
         verification: AgentChannelN8nInboundVerification,
         reachability: Reachability
-    ) -> N8nPairingCode {
-        N8nPairingCode(
-            urls: urlCandidates(reachability),
+    ) -> N8nPairingCode? {
+        let urls = urlCandidates(reachability)
+        guard !urls.isEmpty else { return nil }
+        return N8nPairingCode(
+            urls: urls,
             cid: AgentChannelConnection.normalizedId(connectionId),
             secret: secret,
             vfy: verification.method,

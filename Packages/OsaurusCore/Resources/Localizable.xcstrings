@@ -268055,6 +268055,2582 @@
           }
         }
       }
+    },
+    "1 event so far · last event id %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Bisher 1 Ereignis · letzte Ereignis-ID %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "目前 1 个事件 · 最后事件 ID %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "지금까지 1개 이벤트 · 마지막 이벤트 ID %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Пока 1 событие · последний идентификатор события %@"
+          }
+        }
+      }
+    },
+    "%lld events so far · last event id %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Bisher %lld Ereignisse · letzte Ereignis-ID %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "目前 %lld 个事件 · 最后事件 ID %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "지금까지 %lld개 이벤트 · 마지막 이벤트 ID %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Пока %lld событий · последний идентификатор события %@"
+          }
+        }
+      }
+    },
+    "1 waiting for approval": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "1 wartet auf Freigabe"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "1 个等待批准"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "1개 승인 대기 중"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "1 ожидает одобрения"
+          }
+        }
+      }
+    },
+    "%lld waiting for approval": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%lld warten auf Freigabe"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%lld 个等待批准"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%lld개 승인 대기 중"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%lld ожидают одобрения"
+          }
+        }
+      }
+    },
+    "1 workflow is waiting for your approval": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "1 Workflow wartet auf deine Freigabe"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "1 个工作流正在等待你的批准"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "워크플로 1개가 승인을 기다리고 있습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "1 рабочий процесс ожидает вашего одобрения"
+          }
+        }
+      }
+    },
+    "%lld workflows are waiting for your approval": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%lld Workflows warten auf deine Freigabe"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%lld 个工作流正在等待你的批准"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "워크플로 %lld개가 승인을 기다리고 있습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%lld рабочих процессов ожидают вашего одобрения"
+          }
+        }
+      }
+    },
+    "A local agent is bound, so n8n speaks Secure Channel and plaintext is never needed.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ein lokaler Agent ist gebunden, daher spricht n8n Secure Channel und Klartext wird nie benötigt."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "已绑定本地智能体，因此 n8n 使用 Secure Channel，无需明文。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "로컬 에이전트가 바인딩되어 n8n이 Secure Channel을 사용하므로 평문은 필요하지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Локальный агент привязан, поэтому n8n использует Secure Channel и открытый текст не нужен."
+          }
+        }
+      }
+    },
+    "A name you will recognize in the channel list. The id below follows it and appears in the webhook URL.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ein Name, den du in der Kanalliste wiedererkennst. Die ID darunter folgt ihm und erscheint in der Webhook-URL."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "你在频道列表中能认出的名称。下方的 ID 会跟随它，并出现在 Webhook URL 中。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "채널 목록에서 알아볼 수 있는 이름입니다. 아래 ID는 이름을 따르며 웹훅 URL에 표시됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Имя, которое вы узнаете в списке каналов. Идентификатор ниже следует за ним и появляется в URL вебхука."
+          }
+        }
+      }
+    },
+    "Accounting Channel": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Buchhaltungskanal"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "会计频道"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "회계 채널"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Канал бухгалтерии"
+          }
+        }
+      }
+    },
+    "Agent, encryption, optional push": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Agent, Verschlüsselung, optionaler Push"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "智能体、加密、可选推送"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "에이전트, 암호화, 선택적 푸시"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Агент, шифрование, необязательный push"
+          }
+        }
+      }
+    },
+    "Allowed '%@' from '%@'. Run the workflow again — it will reach the agent now.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "„%@“ von „%@“ erlaubt. Führe den Workflow erneut aus – er erreicht jetzt den Agenten."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "已允许来自“%2$@”的“%1$@”。再次运行工作流，现在它会到达智能体。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "'%2$@'의 '%1$@'을(를) 허용했습니다. 워크플로를 다시 실행하세요. 이제 에이전트에 도달합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Разрешено «%@» от «%@». Запустите рабочий процесс снова — теперь он дойдёт до агента."
+          }
+        }
+      }
+    },
+    "Allowed conversations": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Erlaubte Unterhaltungen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "允许的对话"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "허용된 대화"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Разрешённые беседы"
+          }
+        }
+      }
+    },
+    "Allowed senders": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Erlaubte Absender"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "允许的发送者"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "허용된 발신자"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Разрешённые отправители"
+          }
+        }
+      }
+    },
+    "Another device is serving this agent's address on the relay. Re-enable here to take it back.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ein anderes Gerät bedient die Adresse dieses Agenten über das Relay. Hier erneut aktivieren, um sie zurückzuholen."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "另一台设备正在中继上提供此智能体的地址。在此重新启用以收回。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "다른 기기가 릴레이에서 이 에이전트의 주소를 제공하고 있습니다. 여기서 다시 활성화하여 되찾으세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Другое устройство обслуживает адрес этого агента через реле. Включите здесь снова, чтобы вернуть его."
+          }
+        }
+      }
+    },
+    "Another machine on my network": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ein anderer Rechner in meinem Netzwerk"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "我网络中的另一台机器"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "내 네트워크의 다른 컴퓨터"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Другой компьютер в моей сети"
+          }
+        }
+      }
+    },
+    "Approve workflows, verify": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Workflows freigeben, prüfen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "批准工作流、验证"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "워크플로 승인, 확인"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Одобрить рабочие процессы, проверить"
+          }
+        }
+      }
+    },
+    "Channel disabled — turn on to accept requests again": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Kanal deaktiviert – einschalten, um wieder Anfragen anzunehmen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "频道已停用 — 开启以再次接受请求"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "채널 비활성화됨 — 요청을 다시 받으려면 켜세요"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Канал отключён — включите, чтобы снова принимать запросы"
+          }
+        }
+      }
+    },
+    "Channel enabled — turn off to refuse every request with 403": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Kanal aktiviert – ausschalten, um jede Anfrage mit 403 abzulehnen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "频道已启用 — 关闭后将以 403 拒绝所有请求"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "채널 활성화됨 — 끄면 모든 요청을 403으로 거부합니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Канал включён — выключите, чтобы отклонять каждый запрос с кодом 403"
+          }
+        }
+      }
+    },
+    "Choose the agent in Who answers?": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Agent unter „Wer antwortet?“ wählen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "在“谁来回答？”中选择智能体"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "'누가 답하나요?'에서 에이전트 선택"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Выберите агента в разделе «Кто отвечает?»"
+          }
+        }
+      }
+    },
+    "Confirm the n8n credential holds the current pairing code from Pair and its Test passes.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Prüfe, dass die n8n-Anmeldedaten den aktuellen Kopplungscode aus „Koppeln“ enthalten und der Test besteht."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "确认 n8n 凭据中保存的是“配对”里当前的配对码，并且其测试通过。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n 자격 증명에 '페어링'의 현재 페어링 코드가 있고 테스트가 통과하는지 확인하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Убедитесь, что в учётных данных n8n актуальный код сопряжения из «Сопряжения» и его тест проходит."
+          }
+        }
+      }
+    },
+    "Denied '%@' from '%@' for this session. Its events stay rejected.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "„%@“ von „%@“ für diese Sitzung abgelehnt. Seine Ereignisse bleiben abgewiesen."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "本次会话已拒绝来自“%2$@”的“%1$@”。其事件将继续被拒绝。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "이 세션에서 '%2$@'의 '%1$@'을(를) 거부했습니다. 해당 이벤트는 계속 거부됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Отклонено «%@» от «%@» на эту сессию. Его события остаются отклонёнными."
+          }
+        }
+      }
+    },
+    "Display name and id": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Anzeigename und ID"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "显示名称和 ID"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "표시 이름 및 ID"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Отображаемое имя и идентификатор"
+          }
+        }
+      }
+    },
+    "Docker Desktop forwards the container's request from 127.0.0.1, so it counts as this Mac.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Docker Desktop leitet die Anfrage des Containers von 127.0.0.1 weiter, sie zählt daher als dieser Mac."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Docker Desktop 会从 127.0.0.1 转发容器的请求，因此视同这台 Mac。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Docker Desktop이 컨테이너의 요청을 127.0.0.1에서 전달하므로 이 Mac으로 간주됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Docker Desktop передаёт запрос контейнера с 127.0.0.1, поэтому он считается этим Mac."
+          }
+        }
+      }
+    },
+    "Edit allowlists by hand": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Zulassungslisten manuell bearbeiten"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "手动编辑允许列表"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "허용 목록 직접 편집"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Редактировать списки разрешений вручную"
+          }
+        }
+      }
+    },
+    "Enable Relay in Who answers?": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Relay unter „Wer antwortet?“ aktivieren"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "在“谁来回答？”中启用中继"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "'누가 답하나요?'에서 릴레이 활성화"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Включите реле в разделе «Кто отвечает?»"
+          }
+        }
+      }
+    },
+    "Enable Relay on %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Relay auf %@ aktivieren"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "在 %@ 上启用中继"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@에서 릴레이 활성화"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Включить реле на %@"
+          }
+        }
+      }
+    },
+    "Enable Relay on %@ in Who answers?": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Relay auf %@ unter „Wer antwortet?“ aktivieren"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "在“谁来回答？”中为 %@ 启用中继"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "'누가 답하나요?'에서 %@의 릴레이 활성화"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Включите реле на %@ в разделе «Кто отвечает?»"
+          }
+        }
+      }
+    },
+    "Enabling Relay on %@… the pairing code appears in Pair once it connects.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Relay auf %@ wird aktiviert… der Kopplungscode erscheint unter „Koppeln“, sobald es verbunden ist."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在为 %@ 启用中继… 连接后配对码会出现在“配对”中。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@에서 릴레이를 활성화하는 중… 연결되면 페어링 코드가 '페어링'에 표시됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Включаем реле на %@… код сопряжения появится в «Сопряжении» после подключения."
+          }
+        }
+      }
+    },
+    "Expose %@ to the Internet?": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ ins Internet freigeben?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "将 %@ 暴露到互联网？"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@을(를) 인터넷에 노출하시겠습니까?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Выставить %@ в Интернет?"
+          }
+        }
+      }
+    },
+    "Expose the server to the network in Server settings first.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Gib den Server zuerst in den Server-Einstellungen im Netzwerk frei."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "请先在服务器设置中将服务器暴露到网络。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "먼저 서버 설정에서 서버를 네트워크에 노출하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Сначала откройте сервер для сети в настройках сервера."
+          }
+        }
+      }
+    },
+    "Filled from the name; edit if you like. Lowercase letters, digits and dashes. Locked after Save.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Aus dem Namen gefüllt; bei Bedarf bearbeiten. Kleinbuchstaben, Ziffern und Bindestriche. Nach dem Sichern gesperrt."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "由名称自动填充；可按需编辑。小写字母、数字和连字符。保存后锁定。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "이름에서 자동으로 채워집니다. 원하면 편집하세요. 소문자, 숫자, 하이픈만 가능합니다. 저장 후 잠깁니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Заполняется из имени; при желании отредактируйте. Строчные буквы, цифры и дефисы. Блокируется после сохранения."
+          }
+        }
+      }
+    },
+    "Generate a channel secret under Advanced and the pairing code appears here.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Erzeuge unter „Erweitert“ ein Kanalgeheimnis, dann erscheint hier der Kopplungscode."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "在“高级”中生成频道密钥后，配对码会显示在这里。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "'고급'에서 채널 시크릿을 생성하면 페어링 코드가 여기에 표시됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Создайте секрет канала в разделе «Дополнительно», и код сопряжения появится здесь."
+          }
+        }
+      }
+    },
+    "Generate the channel secret under Pair → Advanced before saving.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Erzeuge vor dem Sichern das Kanalgeheimnis unter „Koppeln → Erweitert“."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "保存前请在“配对 → 高级”中生成频道密钥。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "저장하기 전에 '페어링 → 고급'에서 채널 시크릿을 생성하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Перед сохранением создайте секрет канала в «Сопряжение → Дополнительно»."
+          }
+        }
+      }
+    },
+    "Give the channel a name.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Gib dem Kanal einen Namen."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "为频道命名。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "채널에 이름을 지정하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Дайте каналу имя."
+          }
+        }
+      }
+    },
+    "Gives the agent a public URL via agent.osaurus.ai. The pairing code is issued once the relay is connected.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Gibt dem Agenten eine öffentliche URL über agent.osaurus.ai. Der Kopplungscode wird ausgegeben, sobald das Relay verbunden ist."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "通过 agent.osaurus.ai 为智能体提供公共 URL。中继连接后即发放配对码。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "agent.osaurus.ai를 통해 에이전트에 공개 URL을 제공합니다. 릴레이가 연결되면 페어링 코드가 발급됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Даёт агенту публичный URL через agent.osaurus.ai. Код сопряжения выдаётся после подключения реле."
+          }
+        }
+      }
+    },
+    "Go to Name it": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Zu „Benennen“"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "前往“命名”"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "'이름 지정'으로 이동"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Перейти к «Назовите»"
+          }
+        }
+      }
+    },
+    "Go to Where is your n8n?": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Zu „Wo läuft dein n8n?“"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "前往“你的 n8n 在哪里？”"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "'n8n은 어디에 있나요?'로 이동"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Перейти к «Где ваш n8n?»"
+          }
+        }
+      }
+    },
+    "Human-readable name shown in the channel list and in n8n's credential.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Lesbarer Name, der in der Kanalliste und in den n8n-Anmeldedaten angezeigt wird."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "显示在频道列表和 n8n 凭据中的易读名称。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "채널 목록과 n8n 자격 증명에 표시되는 읽기 쉬운 이름입니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Понятное имя, отображаемое в списке каналов и в учётных данных n8n."
+          }
+        }
+      }
+    },
+    "If Where is your n8n? changed since you copied the code, copy it again.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Falls sich „Wo läuft dein n8n?“ seit dem Kopieren des Codes geändert hat, kopiere ihn erneut."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "如果复制配对码后更改了“你的 n8n 在哪里？”，请重新复制。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "코드를 복사한 뒤 'n8n은 어디에 있나요?'가 바뀌었다면 다시 복사하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Если «Где ваш n8n?» изменилось после копирования кода, скопируйте его снова."
+          }
+        }
+      }
+    },
+    "Loopback traffic never leaves this Mac. Encryption is optional; binding a local agent in Who answers? adds it.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Loopback-Verkehr verlässt diesen Mac nie. Verschlüsselung ist optional; ein lokaler Agent unter „Wer antwortet?“ fügt sie hinzu."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "回环流量不会离开这台 Mac。加密为可选；在“谁来回答？”中绑定本地智能体即可加上。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "루프백 트래픽은 이 Mac을 벗어나지 않습니다. 암호화는 선택 사항이며 '누가 답하나요?'에서 로컬 에이전트를 바인딩하면 추가됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Loopback-трафик не покидает этот Mac. Шифрование необязательно; его добавляет привязка локального агента в «Кто отвечает?»."
+          }
+        }
+      }
+    },
+    "Name it": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Benennen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "命名"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "이름 지정"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Назовите"
+          }
+        }
+      }
+    },
+    "Name the channel first and the pairing code appears here.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Benenne zuerst den Kanal, dann erscheint hier der Kopplungscode."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "先为频道命名，配对码会显示在这里。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "먼저 채널 이름을 지정하면 페어링 코드가 여기에 표시됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Сначала назовите канал, и код сопряжения появится здесь."
+          }
+        }
+      }
+    },
+    "No workflows approved yet.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Noch keine Workflows freigegeben."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "尚未批准任何工作流。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "아직 승인된 워크플로가 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Пока нет одобренных рабочих процессов."
+          }
+        }
+      }
+    },
+    "No workflows approved yet. Waiting for the first run…": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Noch keine Workflows freigegeben. Warte auf den ersten Lauf…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "尚未批准任何工作流。等待首次运行…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "아직 승인된 워크플로가 없습니다. 첫 실행을 기다리는 중…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Пока нет одобренных рабочих процессов. Ожидание первого запуска…"
+          }
+        }
+      }
+    },
+    "Once the event arrives, allow the workflow above if it asks.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Sobald das Ereignis eintrifft, erlaube oben den Workflow, falls er danach fragt."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "事件到达后，如果上方的工作流请求批准，请允许它。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "이벤트가 도착하면 위의 워크플로가 요청할 경우 허용하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Когда событие придёт, разрешите рабочий процесс выше, если он запросит."
+          }
+        }
+      }
+    },
+    "Optional for LAN: with Relay on, the same pairing code also works when n8n moves off your network.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Optional für LAN: Mit aktivem Relay funktioniert derselbe Kopplungscode auch, wenn n8n dein Netzwerk verlässt."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "局域网可选：开启中继后，即使 n8n 离开你的网络，同一配对码仍然可用。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "LAN에서는 선택 사항: 릴레이를 켜면 n8n이 네트워크를 벗어나도 같은 페어링 코드가 작동합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Необязательно для LAN: с включённым реле тот же код сопряжения работает и когда n8n покидает вашу сеть."
+          }
+        }
+      }
+    },
+    "Pairing code URL: http://127.0.0.1:%lld": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Kopplungscode-URL: http://127.0.0.1:%lld"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "配对码 URL：http://127.0.0.1:%lld"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "페어링 코드 URL: http://127.0.0.1:%lld"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "URL кода сопряжения: http://127.0.0.1:%lld"
+          }
+        }
+      }
+    },
+    "Pairing code URL: http://host.docker.internal:%lld": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Kopplungscode-URL: http://host.docker.internal:%lld"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "配对码 URL：http://host.docker.internal:%lld"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "페어링 코드 URL: http://host.docker.internal:%lld"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "URL кода сопряжения: http://host.docker.internal:%lld"
+          }
+        }
+      }
+    },
+    "Plain HTTP from the LAN needs Allow plaintext HTTP in Where is your n8n?, unless the node speaks Secure Channel.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Reines HTTP aus dem LAN braucht „Klartext-HTTP erlauben“ unter „Wo läuft dein n8n?“, sofern der Node nicht Secure Channel spricht."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "来自局域网的明文 HTTP 需要在“你的 n8n 在哪里？”中开启“允许明文 HTTP”，除非节点使用 Secure Channel。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "LAN에서 오는 평문 HTTP는 노드가 Secure Channel을 사용하지 않는 한 'n8n은 어디에 있나요?'에서 '평문 HTTP 허용'이 필요합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Обычный HTTP из LAN требует «Разрешить открытый HTTP» в «Где ваш n8n?», если узел не использует Secure Channel."
+          }
+        }
+      }
+    },
+    "Prove it": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Beweisen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "验证"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "확인"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Проверка"
+          }
+        }
+      }
+    },
+    "Relay connected — %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Relay verbunden – %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "中继已连接 — %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "릴레이 연결됨 — %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Реле подключено — %@"
+          }
+        }
+      }
+    },
+    "Relay error: %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Relay-Fehler: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "中继错误：%@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "릴레이 오류: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ошибка реле: %@"
+          }
+        }
+      }
+    },
+    "Relay for %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Relay für %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ 的中继"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@의 릴레이"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Реле для %@"
+          }
+        }
+      }
+    },
+    "Remote (hosted or another network)": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Entfernt (gehostet oder anderes Netzwerk)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "远程（托管或其他网络）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "원격(호스팅 또는 다른 네트워크)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Удалённо (хостинг или другая сеть)"
+          }
+        }
+      }
+    },
+    "Remote n8n needs a local agent as the default: it is the endpoint the relay serves and the key n8n encrypts to.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Entferntes n8n braucht einen lokalen Agenten als Standard: Er ist der Endpunkt, den das Relay bedient, und der Schlüssel, für den n8n verschlüsselt."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "远程 n8n 需要将本地智能体设为默认：它是中继提供的端点，也是 n8n 加密所用的密钥。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "원격 n8n은 로컬 에이전트를 기본값으로 필요로 합니다. 릴레이가 제공하는 엔드포인트이자 n8n이 암호화하는 대상 키입니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Удалённому n8n нужен локальный агент по умолчанию: это конечная точка, которую обслуживает реле, и ключ, для которого n8n шифрует."
+          }
+        }
+      }
+    },
+    "Remove %@ from the allowlist": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ aus der Zulassungsliste entfernen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "从允许列表中移除 %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "허용 목록에서 %@ 제거"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Удалить %@ из списка разрешений"
+          }
+        }
+      }
+    },
+    "Removed. Events with that id are rejected until you allow it again.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Entfernt. Ereignisse mit dieser ID werden abgewiesen, bis du sie wieder erlaubst."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "已移除。带有该 ID 的事件将被拒绝，直到你再次允许。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "제거되었습니다. 해당 ID의 이벤트는 다시 허용할 때까지 거부됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Удалено. События с этим идентификатором отклоняются, пока вы не разрешите его снова."
+          }
+        }
+      }
+    },
+    "Requires a local agent in Who answers? with Relay enabled. The pairing code carries only the relay URL and is end-to-end encrypted.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Erfordert einen lokalen Agenten unter „Wer antwortet?“ mit aktivem Relay. Der Kopplungscode enthält nur die Relay-URL und ist Ende-zu-Ende verschlüsselt."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "需要在“谁来回答？”中设置已启用中继的本地智能体。配对码只包含中继 URL，并且端到端加密。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "'누가 답하나요?'에서 릴레이가 활성화된 로컬 에이전트가 필요합니다. 페어링 코드에는 릴레이 URL만 포함되며 종단 간 암호화됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Требуется локальный агент в «Кто отвечает?» с включённым реле. Код сопряжения содержит только URL реле и зашифрован сквозным шифрованием."
+          }
+        }
+      }
+    },
+    "Retry Relay": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Relay erneut versuchen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "重试中继"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "릴레이 다시 시도"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Повторить реле"
+          }
+        }
+      }
+    },
+    "Review Where is your n8n?": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "„Wo läuft dein n8n?“ prüfen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "检查“你的 n8n 在哪里？”"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "'n8n은 어디에 있나요?' 확인"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Проверьте «Где ваш n8n?»"
+          }
+        }
+      }
+    },
+    "Run the n8n workflow (or the curl example under Pair → Advanced) and each stage appears here.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Führe den n8n-Workflow aus (oder das curl-Beispiel unter „Koppeln → Erweitert“), dann erscheint hier jede Stufe."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "运行 n8n 工作流（或“配对 → 高级”中的 curl 示例），每个阶段都会显示在这里。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n 워크플로(또는 '페어링 → 고급'의 curl 예시)를 실행하면 각 단계가 여기에 표시됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Запустите рабочий процесс n8n (или пример curl в «Сопряжение → Дополнительно»), и каждый этап появится здесь."
+          }
+        }
+      }
+    },
+    "Saved. Paste the pairing code into n8n, run the workflow, then allow it below.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Gesichert. Füge den Kopplungscode in n8n ein, führe den Workflow aus und erlaube ihn dann unten."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "已保存。将配对码粘贴到 n8n，运行工作流，然后在下方允许它。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "저장되었습니다. 페어링 코드를 n8n에 붙여 넣고 워크플로를 실행한 뒤 아래에서 허용하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Сохранено. Вставьте код сопряжения в n8n, запустите рабочий процесс, затем разрешите его ниже."
+          }
+        }
+      }
+    },
+    "Saved. The pairing code is not ready yet — see Pair for what unblocks it.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Gesichert. Der Kopplungscode ist noch nicht bereit – unter „Koppeln“ steht, was ihn freigibt."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "已保存。配对码尚未就绪 — 请查看“配对”了解如何解除阻塞。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "저장되었습니다. 페어링 코드가 아직 준비되지 않았습니다. 무엇이 필요한지는 '페어링'을 확인하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Сохранено. Код сопряжения ещё не готов — в «Сопряжении» указано, что его разблокирует."
+          }
+        }
+      }
+    },
+    "Say where your n8n runs and the pairing code appears here.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Gib an, wo dein n8n läuft, dann erscheint hier der Kopplungscode."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "说明你的 n8n 运行在哪里，配对码会显示在这里。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n이 어디에서 실행되는지 알려주면 페어링 코드가 여기에 표시됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Укажите, где работает ваш n8n, и код сопряжения появится здесь."
+          }
+        }
+      }
+    },
+    "Say where your n8n runs.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Gib an, wo dein n8n läuft."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "说明你的 n8n 运行在哪里。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n이 어디에서 실행되는지 알려주세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Укажите, где работает ваш n8n."
+          }
+        }
+      }
+    },
+    "Secret generated — the pairing code includes it": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Geheimnis erzeugt – der Kopplungscode enthält es"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "已生成密钥 — 配对码中已包含"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "시크릿이 생성되었습니다 — 페어링 코드에 포함됩니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Секрет создан — он включён в код сопряжения"
+          }
+        }
+      }
+    },
+    "Server is exposed to the network. Pairing code URL: http://%@:%lld": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Server ist im Netzwerk freigegeben. Kopplungscode-URL: http://%@:%lld"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "服务器已暴露到网络。配对码 URL：http://%@:%lld"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "서버가 네트워크에 노출되어 있습니다. 페어링 코드 URL: http://%@:%lld"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Сервер открыт для сети. URL кода сопряжения: http://%@:%lld"
+          }
+        }
+      }
+    },
+    "Stable id used in the webhook URL and by agent_channel tools. Cannot change after Save.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Stabile ID, die in der Webhook-URL und von agent_channel-Werkzeugen verwendet wird. Nach dem Sichern nicht mehr änderbar."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "用于 Webhook URL 和 agent_channel 工具的稳定 ID。保存后无法更改。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "웹훅 URL과 agent_channel 도구에서 사용하는 고정 ID입니다. 저장 후 변경할 수 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Постоянный идентификатор, используемый в URL вебхука и инструментами agent_channel. Нельзя изменить после сохранения."
+          }
+        }
+      }
+    },
+    "Take over Relay on %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Relay auf %@ übernehmen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "接管 %@ 上的中继"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@의 릴레이 넘겨받기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Перехватить реле на %@"
+          }
+        }
+      }
+    },
+    "The server is not exposed to the network yet. Turn on Expose to Network in Server settings, then come back.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Der Server ist noch nicht im Netzwerk freigegeben. Schalte „Im Netzwerk freigeben“ in den Server-Einstellungen ein und komm dann zurück."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "服务器尚未暴露到网络。请在服务器设置中开启“暴露到网络”，然后返回。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "서버가 아직 네트워크에 노출되지 않았습니다. 서버 설정에서 '네트워크에 노출'을 켠 뒤 돌아오세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Сервер ещё не открыт для сети. Включите «Открыть для сети» в настройках сервера и вернитесь."
+          }
+        }
+      }
+    },
+    "The workflow reached Osaurus and is asking for approval. Press Allow above, then run it again.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Der Workflow hat Osaurus erreicht und bittet um Freigabe. Drücke oben „Erlauben“ und führe ihn erneut aus."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "工作流已到达 Osaurus 并请求批准。点击上方“允许”，然后再次运行。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "워크플로가 Osaurus에 도달하여 승인을 요청하고 있습니다. 위의 '허용'을 누른 뒤 다시 실행하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Рабочий процесс дошёл до Osaurus и запрашивает одобрение. Нажмите «Разрешить» выше, затем запустите его снова."
+          }
+        }
+      }
+    },
+    "This Mac, Docker, LAN, or remote": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Dieser Mac, Docker, LAN oder entfernt"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "这台 Mac、Docker、局域网或远程"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "이 Mac, Docker, LAN 또는 원격"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Этот Mac, Docker, LAN или удалённо"
+          }
+        }
+      }
+    },
+    "This code uses the new secret. Save, then re-paste it into n8n.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Dieser Code verwendet das neue Geheimnis. Sichern und dann erneut in n8n einfügen."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "此配对码使用新密钥。保存后请重新粘贴到 n8n。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "이 코드는 새 시크릿을 사용합니다. 저장한 뒤 n8n에 다시 붙여 넣으세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Этот код использует новый секрет. Сохраните, затем снова вставьте его в n8n."
+          }
+        }
+      }
+    },
+    "Waiting for an n8n event. Run the workflow now with the current pairing code.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Warte auf ein n8n-Ereignis. Führe den Workflow jetzt mit dem aktuellen Kopplungscode aus."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "等待 n8n 事件。现在使用当前配对码运行工作流。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n 이벤트를 기다리는 중입니다. 현재 페어링 코드로 지금 워크플로를 실행하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ожидание события n8n. Запустите рабочий процесс сейчас с текущим кодом сопряжения."
+          }
+        }
+      }
+    },
+    "Waiting for first workflow": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Warte auf ersten Workflow"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "等待首个工作流"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "첫 워크플로 대기 중"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ожидание первого рабочего процесса"
+          }
+        }
+      }
+    },
+    "What this means": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Was das bedeutet"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "这意味着什么"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "이것의 의미"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Что это значит"
+          }
+        }
+      }
+    },
+    "Where is your n8n?": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Wo läuft dein n8n?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "你的 n8n 在哪里？"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n은 어디에 있나요?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Где ваш n8n?"
+          }
+        }
+      }
+    },
+    "Who answers?": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Wer antwortet?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "谁来回答？"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "누가 답하나요?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Кто отвечает?"
+          }
+        }
+      }
+    },
+    "Without a bound agent, another machine can only reach this channel over plaintext HTTP. Bind a local agent in Who answers?, or allow plaintext below.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ohne gebundenen Agenten erreicht ein anderer Rechner diesen Kanal nur über Klartext-HTTP. Binde unter „Wer antwortet?“ einen lokalen Agenten oder erlaube unten Klartext."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "未绑定智能体时，另一台机器只能通过明文 HTTP 访问此频道。请在“谁来回答？”中绑定本地智能体，或在下方允许明文。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "바인딩된 에이전트가 없으면 다른 컴퓨터는 평문 HTTP로만 이 채널에 접근할 수 있습니다. '누가 답하나요?'에서 로컬 에이전트를 바인딩하거나 아래에서 평문을 허용하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Без привязанного агента другой компьютер может достичь этого канала только по открытому HTTP. Привяжите локального агента в «Кто отвечает?» или разрешите открытый текст ниже."
+          }
+        }
+      }
+    },
+    "%@ disabled": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ deaktiviert"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ 已停用"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ 비활성화됨"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ отключён"
+          }
+        }
+      }
+    },
+    "%@ enabled": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ aktiviert"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ 已启用"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ 활성화됨"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ включён"
+          }
+        }
+      }
+    },
+    "n8n calls 127.0.0.1. Nothing leaves this Mac.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n ruft 127.0.0.1 auf. Nichts verlässt diesen Mac."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n 调用 127.0.0.1。没有任何数据离开这台 Mac。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n이 127.0.0.1을 호출합니다. 아무것도 이 Mac을 벗어나지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n обращается к 127.0.0.1. Ничего не покидает этот Mac."
+          }
+        }
+      }
+    },
+    "n8n calls host.docker.internal; Docker Desktop delivers it as a same-Mac request.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n ruft host.docker.internal auf; Docker Desktop liefert es als Anfrage vom selben Mac aus."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n 调用 host.docker.internal；Docker Desktop 将其作为同一台 Mac 的请求送达。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n이 host.docker.internal을 호출하며 Docker Desktop이 이를 같은 Mac의 요청으로 전달합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n обращается к host.docker.internal; Docker Desktop доставляет его как запрос с того же Mac."
+          }
+        }
+      }
+    },
+    "n8n calls this Mac's LAN address. The server must be exposed to the network.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n ruft die LAN-Adresse dieses Macs auf. Der Server muss im Netzwerk freigegeben sein."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n 调用这台 Mac 的局域网地址。服务器必须暴露到网络。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n이 이 Mac의 LAN 주소를 호출합니다. 서버가 네트워크에 노출되어 있어야 합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n обращается к LAN-адресу этого Mac. Сервер должен быть открыт для сети."
+          }
+        }
+      }
+    },
+    "n8n reaches this Mac through the Osaurus relay, end-to-end encrypted. No ports to open.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n erreicht diesen Mac über das Osaurus-Relay, Ende-zu-Ende verschlüsselt. Keine Ports zu öffnen."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n 通过 Osaurus 中继访问这台 Mac，端到端加密。无需开放端口。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n이 Osaurus 릴레이를 통해 종단 간 암호화로 이 Mac에 접근합니다. 열어야 할 포트가 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n достигает этого Mac через реле Osaurus со сквозным шифрованием. Порты открывать не нужно."
+          }
+        }
+      }
+    },
+    "n8n reaches this Mac through the Osaurus relay. No ports to open, no plaintext from the internet.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n erreicht diesen Mac über das Osaurus-Relay. Keine Ports zu öffnen, kein Klartext aus dem Internet."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n 通过 Osaurus 中继访问这台 Mac。无需开放端口，互联网上没有明文。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n이 Osaurus 릴레이를 통해 이 Mac에 접근합니다. 열어야 할 포트도, 인터넷에서 오는 평문도 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n достигает этого Mac через реле Osaurus. Никаких открытых портов и открытого текста из интернета."
+          }
+        }
+      }
+    },
+    "n8n reads the reply by polling. Pick a local agent as the default to make the pairing code end-to-end encrypted.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n liest die Antwort per Polling. Wähle einen lokalen Agenten als Standard, damit der Kopplungscode Ende-zu-Ende verschlüsselt ist."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n 通过轮询读取回复。将本地智能体设为默认，可使配对码端到端加密。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n은 폴링으로 응답을 읽습니다. 로컬 에이전트를 기본값으로 선택하면 페어링 코드가 종단 간 암호화됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n читает ответ опросом. Выберите локального агента по умолчанию, чтобы код сопряжения был зашифрован сквозным шифрованием."
+          }
+        }
+      }
+    },
+    "n8n reads the reply by polling. The default agent is local, so the pairing code is end-to-end encrypted.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n liest die Antwort per Polling. Der Standardagent ist lokal, daher ist der Kopplungscode Ende-zu-Ende verschlüsselt."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n 通过轮询读取回复。默认智能体是本地的，因此配对码是端到端加密的。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n은 폴링으로 응답을 읽습니다. 기본 에이전트가 로컬이므로 페어링 코드가 종단 간 암호화됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n читает ответ опросом. Агент по умолчанию локальный, поэтому код сопряжения зашифрован сквозным шифрованием."
+          }
+        }
+      }
+    },
+    "this channel": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "diesen Kanal"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "此频道"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "이 채널"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "этот канал"
+          }
+        }
+      }
+    },
+    "This channel was saved before Osaurus asked where n8n runs. Pick it once so the pairing code carries the right URL; your existing n8n credential keeps working meanwhile.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Dieser Kanal wurde gesichert, bevor Osaurus gefragt hat, wo n8n läuft. Wähle es einmal aus, damit der Kopplungscode die richtige URL enthält; deine bestehenden n8n-Anmeldedaten funktionieren weiterhin."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "此频道是在 Osaurus 询问 n8n 运行位置之前保存的。请选择一次，以便配对码携带正确的 URL；在此期间你现有的 n8n 凭据仍然可用。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "이 채널은 Osaurus가 n8n 위치를 묻기 전에 저장되었습니다. 페어링 코드에 올바른 URL이 담기도록 한 번만 선택하세요. 기존 n8n 자격 증명은 그동안 계속 작동합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Этот канал был сохранён до того, как Osaurus стал спрашивать, где работает n8n. Выберите один раз, чтобы код сопряжения содержал правильный URL; ваши текущие учётные данные n8n пока продолжают работать."
+          }
+        }
+      }
+    },
+    "n8n workflow '%@' wants to use %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n-Workflow „%@“ möchte %@ verwenden"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n 工作流“%@”想要使用 %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "n8n 워크플로 '%@'이(가) %@을(를) 사용하려고 합니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Рабочий процесс n8n «%@» хочет использовать %@"
+          }
+        }
+      }
+    },
+    "Sender '%@'. Nothing reached the agent yet. Allow or deny it under Channels → %@ → Prove it, then run the workflow again.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Absender „%@“. Noch nichts hat den Agenten erreicht. Erlaube oder verweigere es unter „Kanäle → %@ → Beweisen“ und führe den Workflow dann erneut aus."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "发送者“%@”。尚无内容到达智能体。请在“频道 → %@ → 验证”中允许或拒绝，然后再次运行工作流。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "발신자 '%@'. 아직 에이전트에 도달한 것은 없습니다. '채널 → %@ → 확인'에서 허용 또는 거부한 뒤 워크플로를 다시 실행하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Отправитель «%@». До агента пока ничего не дошло. Разрешите или отклоните в «Каналы → %@ → Проверка», затем запустите рабочий процесс снова."
+          }
+        }
+      }
     }
   },
   "version": "1.1"

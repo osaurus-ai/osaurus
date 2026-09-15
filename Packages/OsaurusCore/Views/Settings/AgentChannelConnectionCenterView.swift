@@ -55,6 +55,8 @@ struct AgentChannelConnectionCenterView: View {
     @State private var nativeBadgesResolved = false
     @State private var anyNativeConfigured = false
     @State private var connections: [AgentChannelConnection] = []
+    /// n8n workflows waiting for approve-on-first-contact, per connection id.
+    @State private var n8nPendingCounts: [String: Int] = [:]
     /// Effective posting rooms: stored bindings plus automatic ones derived
     /// from the channel setup (writable rooms × assigned agents).
     @State private var destinationBindings: [AgentChannelBinding] = []
@@ -122,6 +124,13 @@ struct AgentChannelConnectionCenterView: View {
                 .receive(on: DispatchQueue.main)
         ) { _ in
             reloadPendingOutboxCount()
+        }
+        .onReceive(
+            NotificationCenter.default
+                .publisher(for: .agentChannelN8nPendingContactsChanged)
+                .receive(on: DispatchQueue.main)
+        ) { _ in
+            reloadN8nPendingCounts()
         }
         .task {
             routeForLandingTarget(landingPending)
@@ -344,6 +353,7 @@ struct AgentChannelConnectionCenterView: View {
 
                 VStack(spacing: 10) {
                     ForEach(connections) { connection in
+                        let pendingCount = connection.kind == .n8n ? (n8nPendingCounts[connection.id] ?? 0) : 0
                         AgentChannelCard(
                             icon: connection.kind.icon,
                             gradient: connection.kind.brandGradient,
@@ -352,8 +362,24 @@ struct AgentChannelConnectionCenterView: View {
                                 ? L("n8n HTTP Request in, poll or webhook out")
                                 : connection.id,
                             subtitleIsMonospaced: connection.kind != .n8n,
-                            badge: Self.customBadge(for: connection, writesEnabled: globalWritesEnabled),
-                            anchorId: connection.kind == .n8n ? "agentChannels.n8n" : nil
+                            badge: Self.customBadge(
+                                for: connection,
+                                writesEnabled: globalWritesEnabled,
+                                pendingApprovals: pendingCount
+                            ),
+                            detail: pendingCount > 0
+                                ? (pendingCount == 1
+                                    ? L("1 workflow is waiting for your approval")
+                                    : L("\(pendingCount) workflows are waiting for your approval"))
+                                : nil,
+                            anchorId: connection.kind == .n8n ? "agentChannels.n8n" : nil,
+                            enabledToggle: connection.kind == .n8n
+                                ? AgentChannelCardEnabledToggle(
+                                    isOn: connection.enabled,
+                                    anchorId: "agentChannels.n8n.enabled",
+                                    onChange: { setConnectionEnabled($0, for: connection) }
+                                )
+                                : nil
                         ) {
                             activeSheet = connection.kind == .n8n ? .editN8n(connection) : .editCustom(connection)
                         }
@@ -838,13 +864,14 @@ struct AgentChannelConnectionCenterView: View {
     /// channel needs defined HTTP actions before agents can do anything.
     static func customBadge(
         for connection: AgentChannelConnection,
-        writesEnabled: Bool = true
+        writesEnabled: Bool = true,
+        pendingApprovals: Int = 0
     ) -> AgentChannelStatusPresentation {
         guard connection.enabled else {
             return AgentChannelStatusPresentation(label: L("Disabled"), tone: .neutral)
         }
         if connection.kind == .n8n {
-            return n8nBadge(for: connection, writesEnabled: writesEnabled)
+            return n8nBadge(for: connection, writesEnabled: writesEnabled, pendingApprovals: pendingApprovals)
         }
         let actionCount = connection.customHTTP?.actions.count ?? 0
         guard actionCount > 0 else {
@@ -857,17 +884,25 @@ struct AgentChannelConnectionCenterView: View {
     }
 
     /// n8n rows are inbound-first: usable once a dispatch target exists and
-    /// authorization can admit something (both allowlists are fail-closed).
+    /// at least one workflow identity has been approved (both allowlists are
+    /// fail-closed; approve-on-first-contact fills them).
     static func n8nBadge(
         for connection: AgentChannelConnection,
-        writesEnabled: Bool = true
+        writesEnabled: Bool = true,
+        pendingApprovals: Int = 0
     ) -> AgentChannelStatusPresentation {
-        let authorization = connection.inboundAuthorization
-        guard !authorization.senderAllowlist.isEmpty, !authorization.roomAllowlist.isEmpty else {
-            return AgentChannelStatusPresentation(label: L("No allowed senders"), tone: .warning)
+        if pendingApprovals > 0 {
+            return AgentChannelStatusPresentation(
+                label: pendingApprovals == 1 ? L("1 waiting for approval") : L("\(pendingApprovals) waiting for approval"),
+                tone: .warning
+            )
         }
         guard connection.n8n?.inboundDispatch.isConfigured == true else {
             return AgentChannelStatusPresentation(label: L("No agent assigned"), tone: .warning)
+        }
+        let authorization = connection.inboundAuthorization
+        guard !authorization.senderAllowlist.isEmpty, !authorization.roomAllowlist.isEmpty else {
+            return AgentChannelStatusPresentation(label: L("Waiting for first workflow"), tone: .neutral)
         }
         let mode = N8nSetupRecipe.verifyModeChip(
             for: connection.n8n?.inboundVerification.method ?? .hmacSHA256
@@ -913,8 +948,32 @@ struct AgentChannelConnectionCenterView: View {
         return .diagnostics(status: "configured")
     }
 
+    private func reloadN8nPendingCounts() {
+        Task {
+            let counts = await AgentChannelN8nPendingContactCenter.shared.pendingCounts()
+            await MainActor.run { n8nPendingCounts = counts }
+        }
+    }
+
+    /// Card-level on/off for stored connections. Persists through the
+    /// manager so validation and the n8n projection run as on Save.
+    private func setConnectionEnabled(_ enabled: Bool, for connection: AgentChannelConnection) {
+        var updated = connection
+        updated.enabled = enabled
+        do {
+            try manager.upsertConnection(updated, replacingOriginalId: connection.id)
+            reloadConnections()
+            _ = ToastManager.shared.success(
+                enabled ? L("\(updated.name) enabled") : L("\(updated.name) disabled")
+            )
+        } catch {
+            _ = ToastManager.shared.error(error.localizedDescription)
+        }
+    }
+
     private func reloadConnections() {
         connections = manager.editableConnections()
+        reloadN8nPendingCounts()
         storedDestinationIds = Set(manager.bindings().map(\.id))
         destinationBindings = AgentChannelAutoDestinationResolver.effectiveConfiguration()
             .bindings
