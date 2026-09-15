@@ -298,9 +298,11 @@ let package = Package(
         // vmlx-swift#408 pins quantized-embedding output to bf16 under the
         // Gemma-4/DSV4 jang_affine mmap preserve branches (the last audited
         // f16 seed into bf16 streams; dequant math keeps exact f16 metadata).
+        // vmlx-swift#475 corrects GLM media prefill and ordered image history,
+        // and validates complete model-owned disk state before live restore.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "5b0c8e6b8b29a7ead21fe785688bc0621580cc62"
+            revision: "ffee904d4f4f0680aa6a2c39c3dedff9cedae010"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
