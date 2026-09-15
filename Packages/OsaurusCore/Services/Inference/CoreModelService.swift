@@ -74,9 +74,7 @@ public enum CoreModelStatus: Sendable, Equatable {
 public actor CoreModelService {
     public static let shared = CoreModelService()
 
-    private let localServices: [ModelService] = [
-        FoundationModelService(), ClaudeCodeService(), MLXService.shared,
-    ]
+    private let localServices: [ModelService]
 
     private static let maxRetries = 3
     private static let baseRetryDelayNanoseconds: UInt64 = 1_000_000_000
@@ -100,7 +98,13 @@ public actor CoreModelService {
     private static let circuitBreakerCooldownSeconds: TimeInterval = 60
     private static let circuitBreakerMaxCooldownSeconds: TimeInterval = 30 * 60
 
-    private init() {}
+    private init() {
+        localServices = [FoundationModelService(), ClaudeCodeService(), MLXService.shared]
+    }
+
+    init(localServices: [ModelService]) {
+        self.localServices = localServices
+    }
 
     /// One-shot generation using the core model configured in ChatConfiguration.
     /// - Parameters:
@@ -195,6 +199,9 @@ public actor CoreModelService {
             // later actor hop is a check-then-act race: whatever the probe saw can
             // change before the load runs.
             loadIntent: intent == .background ? .background : .interactive,
+            // Utilities borrow a resident model; they must not overwrite the
+            // chat/API/agent owner used by window-close cleanup and handoff.
+            preserveExistingResidencyOwner: true,
             // Every CoreModelService one-shot is an internal utility (title,
             // follow-ups, memory distillation, transcript cleanup) whose prompt
             // is never resumed — the engine must not persist its boundaries.
