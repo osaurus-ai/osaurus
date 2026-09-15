@@ -4,6 +4,25 @@ import Testing
 
 @Suite("ModelMediaCapabilities — config and weight evidence")
 struct ModelMediaCapabilitiesMCDCTests {
+    @Test func visionEvidenceMatchesFormatPreflightAndRefreshesChangedHeaders() throws {
+        let root = try VisionBundleFixture.make()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let names = Array(LocalVisionEvidence.inspect(root).tensorNames)
+        #expect(ModelFormatDetection.isMLXFormat(at: root))
+        try VisionBundleFixture.writeWeights(names, metadata: ["format": "pt"],
+            to: root.appendingPathComponent("model.safetensors"))
+        for alias in ["OsaurusAI/renamed", "other/renamed", "vision-looking-name"] {
+            let row = InstalledVisionEvaluation.inspect(directory: root, modelID: alias)
+            #expect(!row.supportsImage)
+            #expect(row.reason.contains("weight format"))
+        }
+        #expect(!ModelFormatDetection.isMLXFormat(at: root))
+        try VisionBundleFixture.writeWeights(names, metadata: ["format": "mlx"],
+            to: root.appendingPathComponent("model.safetensors"))
+        #expect(InstalledVisionEvaluation.inspect(directory: root, modelID: "neutral").supportsImage)
+        #expect(ModelFormatDetection.isMLXFormat(at: root))
+    }
+
     @Test(arguments: ["qwen3_5", "qwen3_5_moe"])
     func renamedDerivativeWithPreservedVisionTower(type: String) throws {
         let root = try VisionBundleFixture.make(type: type)

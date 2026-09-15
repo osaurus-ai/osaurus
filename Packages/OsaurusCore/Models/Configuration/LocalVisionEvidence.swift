@@ -83,6 +83,9 @@ enum LocalVisionEvidence {
         } catch {
             return result(false, "Cannot verify the installed vision weights: \(error.localizedDescription)")
         }
+        guard ModelFormatDetection.isMLXFormat(at: directory, refresh: true) else {
+            return result(false, "The installed weight format is rejected by the local runtime preflight.")
+        }
         // Retain independent audio tensor evidence even when this configured
         // multimodal architecture has no vision tower. Gemma supports optional
         // vision and audio components; one missing modality must not hide another.

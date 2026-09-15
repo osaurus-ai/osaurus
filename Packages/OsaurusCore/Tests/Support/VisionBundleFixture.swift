@@ -35,8 +35,9 @@ enum VisionBundleFixture {
         return root
     }
 
-    static func writeWeights(_ names: [String], to path: URL) throws {
+    static func writeWeights(_ names: [String], metadata: [String: String]? = nil, to path: URL) throws {
         var header: [String: Any] = [:]
+        if let metadata { header["__metadata__"] = metadata }
         for (i, name) in names.enumerated() {
             header[name] = ["shape": [1], "dtype": "F32", "data_offsets": [i * 4, (i + 1) * 4]]
         }

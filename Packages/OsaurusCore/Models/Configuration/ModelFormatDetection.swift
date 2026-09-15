@@ -30,10 +30,10 @@ enum ModelFormatDetection {
     private nonisolated(unsafe) static var verdictCache: [String: Bool] = [:]
     private nonisolated(unsafe) static var didInstallObserver = false
 
-    private static func cachedVerdict(_ key: String, compute: () -> Bool) -> Bool {
+    private static func cachedVerdict(_ key: String, refresh: Bool = false, compute: () -> Bool) -> Bool {
         ensureCacheObserverInstalled()
         cacheLock.lock()
-        if let cached = verdictCache[key] {
+        if !refresh, let cached = verdictCache[key] {
             cacheLock.unlock()
             return cached
         }
@@ -78,8 +78,8 @@ enum ModelFormatDetection {
     /// `__metadata__`). This keeps a working MLX model from ever being hidden;
     /// the cost is that a non-MLX bundle with no framework tag isn't greyed and
     /// instead fails at load as before — no regression.
-    static func isMLXFormat(at directory: URL) -> Bool {
-        cachedVerdict("dir:\(directory.path)") {
+    static func isMLXFormat(at directory: URL, refresh: Bool = false) -> Bool {
+        cachedVerdict("dir:\(directory.path)", refresh: refresh) {
             if configHasMLXQuantization(at: directory) { return true }
 
             let formats = safetensorsFormatTags(at: directory)
