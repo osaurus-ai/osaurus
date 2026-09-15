@@ -242,6 +242,16 @@ fallbacks (`prepared-positive-lfm.json`). `prepared-image-receipt.json` records
 the binary, adapter hash, and unchanged engine pin. The explicit negative
 `typed_error` eval also passed (`missing-pixels-fixture/typed-error.json`).
 
+An exact-parent comparison removes the earlier diagnostic prototype from the
+baseline: unmodified parent `07c61e37e0721f6e7cb866aef711b3017b73501f` and
+patched source `03cd12278a0e6aa16d90d7b771b1ed2ccd75c388` use the same stock
+engine pin and fixture. The parent returned HTTP 200 with an invented white
+background; the patch returned the expected explicit HTTP 500 error with no
+image-request cache activity. `missing-pixels-fixture/exact-parent-ab-receipt.json`
+records both binary hashes, fixture hashes, identical diagnostic environment,
+and raw reports. This is a malformed-processor contract test, not a model
+quality or throughput row.
+
 The refreshed Release build (`release-prepared-image-build.log`, identity in
 `release-prepared-image-receipt.json`) completed a native file-picker sequence:
 Red → Red → Blue, with visible one-token rates of 269.5, 276.9 and 329.9 token/s.
@@ -269,6 +279,14 @@ not recur; the original failed row remains recorded. Declared-but-rejected
 bundles remain visible in `unqualified-declarations.json`, and the overall
 matrix correctly exits nonzero while failures or unqualified declarations
 remain.
+
+A final driver regression caught a false-success edge case: an admitted bundle
+with an independent header-audit failure was retained as `not_run`, but did not
+make the overall command fail if other rows passed. The driver now writes
+`unqualified-header-audits.json` and fails on those exclusions too. The new test
+failed before this correction; all five driver tests pass afterward
+(`header-audit-driver-before.log`, `header-audit-driver-after.log`). This changes
+coverage accounting only; the production app and engine remain unchanged.
 
 ## Attention diagnostic retained outside this PR
 

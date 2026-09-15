@@ -78,10 +78,16 @@ root = pathlib.Path(sys.argv[1])
 rejected = json.loads((root / 'unqualified-declarations.json').read_text())
 print(f'{len(rejected)} declared-vision bundles rejected by installed evidence; see unqualified-declarations.json.')
 PY
-# A fully qualified inventory cannot silently omit declared-but-broken bundles.
-if ! python3 - "$proof_dir/unqualified-declarations.json" <<'PY'
-import json, sys
-raise SystemExit(1 if json.load(open(sys.argv[1])) else 0)
+# A fully qualified inventory cannot silently omit declared-but-broken bundles
+# or an admitted bundle whose independent header audit prevented execution.
+if ! python3 - "$proof_dir" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+rejected = json.loads((root / 'unqualified-declarations.json').read_text())
+plan = json.loads((root / 'coverage-plan.json').read_text())
+audit_failures = [row for row in plan['bundles'] if row['supportsImage'] and row['header_errors']]
+(root / 'unqualified-header-audits.json').write_text(json.dumps(audit_failures, indent=2) + '\n')
+raise SystemExit(1 if rejected or audit_failures else 0)
 PY
 then
   result=1

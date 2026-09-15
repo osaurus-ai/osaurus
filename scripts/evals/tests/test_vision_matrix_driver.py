@@ -9,7 +9,7 @@ import unittest
 
 
 class VisionMatrixDriverTests(unittest.TestCase):
-    def run_driver(self, outcome="passed", representatives=False, admitted=True):
+    def run_driver(self, outcome="passed", representatives=False, admitted=True, corrupt_header=False):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             bundles = []
@@ -19,6 +19,8 @@ class VisionMatrixDriverTests(unittest.TestCase):
                 (directory / "config.json").write_text(json.dumps({"model_type": "fixture", "vision_config": {"depth": 1}}))
                 header = json.dumps({"weight": {"dtype": "F16", "shape": [1], "data_offsets": [0, 2]}}).encode()
                 (directory / "model.safetensors").write_bytes(struct.pack("<Q", len(header)) + header + b"\0\0")
+                if corrupt_header and name == "renamed-copy":
+                    (directory / "model.safetensors").write_bytes(b"broken")
                 bundles.append({"modelID": name, "directory": str(directory), "modelType": "fixture",
                                 "supportsImage": admitted, "declaresVision": admitted, "reason": "fixture", "tensorCount": 1})
             (root / "input.json").write_text(json.dumps(bundles))
@@ -68,6 +70,14 @@ else:
     def test_empty_admission_inventory_cannot_pass(self):
         result, _ = self.run_driver(admitted=False)
         self.assertNotEqual(result.returncode, 0)
+
+    def test_header_audit_failure_cannot_silently_omit_an_admitted_bundle(self):
+        result, report = self.run_driver(corrupt_header=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(report["selected_count"], 1)
+        broken = next(row for row in report["bundles"] if row["modelID"] == "renamed-copy")
+        self.assertTrue(broken["header_errors"])
+        self.assertEqual(broken["runtime_status"], "not_run")
 
 
 if __name__ == "__main__":
