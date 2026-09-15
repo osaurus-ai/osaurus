@@ -6232,30 +6232,13 @@ final class ChatSession: ObservableObject {
             // mode). Interactive chats never set this.
             let folderIsDispatchTarget =
                 self.folderContextFromDispatchBookmark && turnFolderRoot != nil
-            await ChatExecutionContext.$currentFolderRoot.withValue(turnFolderRoot) { [self] in
-            await ChatExecutionContext.$hostFolderIsDispatchTarget.withValue(folderIsDispatchTarget) { [self] in
-            // Typed run provenance for the whole turn. The session's own
-            // persisted `source` is authoritative here (a dispatched
-            // schedule/watcher/self-schedule run re-binds the same value the
-            // dispatcher already bound; a UI chat turn binds `.chat`).
-            // Source-scoped capabilities (proactive channel publishing) read
-            // this instead of inferring provenance from surface flags.
-            await ChatExecutionContext.$currentSessionSource.withValue(source) { [self] in
-            // Weak handle to THIS session for the whole turn, so a
-            // `background: true` spawn dispatch can deliver its report-back
-            // digest to the exact launching conversation later.
-            await ChatExecutionContext.$currentChatSessionBox.withValue(WeakChatSessionBox(self)) { [self] in
-            await ChatExecutionContext.$currentAgentId.withValue(turnAgentId) { [self] in
-            await ChatExecutionContext.$currentProjectId.withValue(self.projectId) { [self] in
-            await ChatExecutionContext.$currentUserRequest.withValue(
-                trimmed.isEmpty ? nil : trimmed
-            ) { [self] in
-            await ChatExecutionContext.$currentModelName.withValue(
-                turnModelId
-            ) { [self] in
-            await ChatExecutionContext.$currentEnableThinking.withValue(
-                turnGenerationControls.enableThinking
-            ) { [self] in
+            // The turn body is a local function rather than the innermost
+            // closure literal: the eight nested `withValue` calls form ONE
+            // expression, and Swift 6.3 folds every closure body into that
+            // expression's constraint system, which blows the type-checker
+            // budget ("unable to type-check this expression in reasonable
+            // time"). A declaration is checked on its own.
+            func runTurn() async {
                 debugLog("send: task started runId=\(runId) model=\(turnModelId ?? "nil")")
                 // A Stop can land between beginRun (synchronous in send) and
                 // this task's first line: stop() has then already finalized
@@ -8356,6 +8339,33 @@ final class ChatSession: ObservableObject {
                     lastStreamError = error.localizedDescription
                     noteInsufficientFundsIfNeeded(error: error, blockedTurn: assistantTurn)
                 }
+            }
+
+            await ChatExecutionContext.$currentFolderRoot.withValue(turnFolderRoot) { [self] in
+            await ChatExecutionContext.$hostFolderIsDispatchTarget.withValue(folderIsDispatchTarget) { [self] in
+            // Typed run provenance for the whole turn. The session's own
+            // persisted `source` is authoritative here (a dispatched
+            // schedule/watcher/self-schedule run re-binds the same value the
+            // dispatcher already bound; a UI chat turn binds `.chat`).
+            // Source-scoped capabilities (proactive channel publishing) read
+            // this instead of inferring provenance from surface flags.
+            await ChatExecutionContext.$currentSessionSource.withValue(source) { [self] in
+            // Weak handle to THIS session for the whole turn, so a
+            // `background: true` spawn dispatch can deliver its report-back
+            // digest to the exact launching conversation later.
+            await ChatExecutionContext.$currentChatSessionBox.withValue(WeakChatSessionBox(self)) { [self] in
+            await ChatExecutionContext.$currentAgentId.withValue(turnAgentId) { [self] in
+            await ChatExecutionContext.$currentProjectId.withValue(self.projectId) { [self] in
+            await ChatExecutionContext.$currentUserRequest.withValue(
+                trimmed.isEmpty ? nil : trimmed
+            ) { [self] in
+            await ChatExecutionContext.$currentModelName.withValue(
+                turnModelId
+            ) { [self] in
+            await ChatExecutionContext.$currentEnableThinking.withValue(
+                turnGenerationControls.enableThinking
+            ) { [self] in
+                await runTurn()
             }  // ChatExecutionContext.$currentEnableThinking.withValue
             }  // ChatExecutionContext.$currentModelName.withValue
             }  // ChatExecutionContext.$currentUserRequest.withValue
