@@ -412,6 +412,22 @@ struct ModelManagerSuggestedTests {
         )
     }
 
+    @Test func chatCatalogEligibility_rejectsGGUFRepos() {
+        // GGUF builds ship for Windows; the Mac app cannot run them.
+        #expect(ModelManager.isGGUFRepo(id: "OsaurusAI/Qwen3-8B-GGUF"))
+        #expect(ModelManager.isGGUFRepo(id: "someone/model-gguf-q4"))
+        #expect(ModelManager.isGGUFRepo(id: "OsaurusAI/model", tags: ["GGUF", "llama"]))
+        #expect(!ModelManager.isGGUFRepo(id: "mlx-community/Qwen3-8B-4bit", tags: ["mlx"]))
+        #expect(
+            !ModelManager.isChatCatalogEligible(
+                id: "OsaurusAI/Qwen3-8B-GGUF", pipelineTag: "text-generation")
+        )
+        #expect(
+            !ModelManager.isChatCatalogEligible(
+                id: "OsaurusAI/Qwen3-8B", pipelineTag: "text-generation", tags: ["gguf"])
+        )
+    }
+
     @Test @MainActor func panelOwnedRepos_droppedFromAutoFetchMerge() async {
         await withIsolatedModelSizeCache {
             let manager = ModelManager()

@@ -363,7 +363,7 @@ public final class ModelManager: NSObject, ObservableObject {
 
         // If user pasted a direct HF URL or "org/repo", immediately surface it without requiring SDK allowlist
         if let directId = Self.parseHuggingFaceRepoId(from: query), !directId.isEmpty,
-            !findExistingModel(id: directId).found
+            !Self.isGGUFRepo(id: directId), !findExistingModel(id: directId).found
         {
             let probe = MLXModel(id: directId, name: "", description: "", downloadURL: "")
             let model = MLXModel(
@@ -414,7 +414,9 @@ public final class ModelManager: NSObject, ObservableObject {
 
             let allow = Self.sdkSupportedModelIds()
             let allowedMapped: [MLXModel] = byId.values.compactMap { hf in
-                guard allow.contains(hf.id.lowercased()) else { return nil }
+                guard allow.contains(hf.id.lowercased()), !Self.isGGUFRepo(id: hf.id, tags: hf.tags) else {
+                    return nil
+                }
                 return MLXModel(
                     id: hf.id,
                     name: ModelMetadataParser.friendlyName(from: hf.id),
@@ -1369,12 +1371,21 @@ extension ModelManager {
         ]
     }
 
+    /// GGUF repos are published for the Windows build. The Mac app has no
+    /// GGUF inference engine, so they never belong in this catalog, however
+    /// they were found (org listing, search, or a pasted repo id).
+    nonisolated static func isGGUFRepo(id: String, tags: [String]? = nil) -> Bool {
+        if id.lowercased().contains("gguf") { return true }
+        return tags?.contains { $0.lowercased() == "gguf" } ?? false
+    }
+
     /// True when an OsaurusAI org repo may appear in the LLM catalog.
     /// Untagged repos pass (MLX conversions frequently omit `pipeline_tag`,
     /// so `nil` is not evidence of a non-chat repo) unless they are owned by
     /// another Settings panel.
-    nonisolated static func isChatCatalogEligible(id: String, pipelineTag: String?) -> Bool {
+    nonisolated static func isChatCatalogEligible(id: String, pipelineTag: String?, tags: [String]? = nil) -> Bool {
         if panelOwnedOrgIds.contains(id.lowercased()) { return false }
+        if isGGUFRepo(id: id, tags: tags) { return false }
         guard let tag = pipelineTag?.lowercased(), !tag.isEmpty else { return true }
         return chatCapablePipelineTags.contains(tag)
     }
@@ -1747,7 +1758,7 @@ extension ModelManager {
         // cards. Curated entries never pass through this gate — they merge
         // from `curatedSuggestedModels` directly.
         let raw = fetched.filter {
-            Self.isChatCatalogEligible(id: $0.id, pipelineTag: $0.pipeline_tag)
+            Self.isChatCatalogEligible(id: $0.id, pipelineTag: $0.pipeline_tag, tags: $0.tags)
         }
         guard !raw.isEmpty else { return }
 
