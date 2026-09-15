@@ -86,10 +86,16 @@ struct SchedulesView: View {
                                         )
                                     },
                                     onRunNow: {
-                                        scheduleManager.runNow(schedule.id)
-                                        scheduleManager.refresh()
-                                        reloadHistorySummaries()
-                                        showSuccess("Started \"\(schedule.name)\"")
+                                        switch scheduleManager.runNow(schedule.id) {
+                                        case .started:
+                                            scheduleManager.refresh()
+                                            reloadHistorySummaries()
+                                            showSuccess("Started \"\(schedule.name)\"")
+                                        case .alreadyRunning:
+                                            showSuccess("\"\(schedule.name)\" is already running")
+                                        case .notFound:
+                                            break
+                                        }
                                     },
                                     onShowHistory: {
                                         historySchedule = schedule

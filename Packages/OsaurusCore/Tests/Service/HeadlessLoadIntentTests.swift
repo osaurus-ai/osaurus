@@ -67,7 +67,7 @@ struct HeadlessLoadIntentTests {
         // silently stops being able to load its model whenever another model is
         // resident — and it will look like a hang, not a refusal.
         #expect(src.contains("executeSchedule(schedule, loadIntent: .interactive)"))
-        #expect(src.contains("executeSchedule(schedule, loadIntent: .background)"))
+        #expect(src.contains("executeSchedule(schedule, loadIntent: .background"))
         #expect(
             !src.contains("executeSchedule(schedule)\n"),
             "every executeSchedule call must state its intent explicitly"
