@@ -25,6 +25,14 @@ struct ConfigPlanApprovalCard: View {
     var body: some View {
         ZStack {
             if let request = queue.pending.first {
+                // Modal scrim: dims the chat and swallows clicks while the
+                // plan review is pending. No tap-to-dismiss; a decision this
+                // consequential resolves only through the buttons.
+                Color.black.opacity(0.35)
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture {}
+                    .transition(.opacity)
                 card(for: request)
                     .padding(16)
                     .transition(.scale(scale: 0.96).combined(with: .opacity))
