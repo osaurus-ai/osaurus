@@ -88,10 +88,13 @@ public struct MasterKey: Sendable {
     /// (what every shipped build reads — a Mac still on an older build has
     /// no entitlement for the shared group and must keep seeing the master),
     /// then a copy in the shared group when it resolves. Within a group the
-    /// first successful attempt wins (iCloud sync, then device-only);
-    /// `errSecMissingEntitlement` on the shared group is expected for dev
-    /// signing and simply leaves that copy out. Succeeds when at least one
-    /// group took the item.
+    /// first successful attempt wins (iCloud sync, then device-only); every
+    /// attempt is tried, because an unentitled process (xctest, the CLI, dev
+    /// signing) gets `errSecMissingEntitlement` for the *synchronizable* add
+    /// and must still fall through to the device-only login-keychain write —
+    /// that fall-through is the pre-existing contract this path replaced.
+    /// A shared-group attempt that fails the same way simply leaves that copy
+    /// out. Succeeds when at least one group took the item.
     ///
     /// `delete()` queries carry no group, so a Reset removes every copy.
     static func addGenericPassword(service: String, account: String, label: String, data: Data) -> Bool {
@@ -110,7 +113,6 @@ public struct MasterKey: Sendable {
                     wroteAny = true
                     break
                 }
-                if status == OsaurusKeychainGroup.missingEntitlementStatus { break }
             }
         }
         return wroteAny
