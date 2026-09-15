@@ -699,13 +699,19 @@ enum ExternalModelLocator {
         var skipped: [Skipped] = []
 
         func walk(_ dir: URL, prefix: [String], depth: Int) {
-            guard depth > 0,
-                let entries = try? fm.contentsOfDirectory(
+            guard depth > 0 else { return }
+            let entries: [URL]
+            do {
+                entries = try fm.contentsOfDirectory(
                     at: dir,
                     includingPropertiesForKeys: [.isDirectoryKey],
                     options: [.skipsHiddenFiles]
                 )
-            else { return }
+            } catch {
+                skipped.append(Skipped(repoId: nil, path: prefix.isEmpty ? root.path : dir.path,
+                    reason: .unreadableRoot, detail: "Could not enumerate model folder: \(error.localizedDescription)"))
+                return
+            }
             for entry in entries {
                 if skipTopLevelHuggingFaceCacheFolders, prefix.isEmpty,
                     entry.lastPathComponent.hasPrefix("models--")
@@ -745,7 +751,10 @@ enum ExternalModelLocator {
                 }
             }
         }
-        walk(root, prefix: [], depth: 3)
+        // Foundation can return ENOTDIR for a directory URL naming a symlink
+        // (e.g. ~/models -> an external volume). Child entries already resolve
+        // symlinks; the starting root must obey the same contract.
+        walk(root.resolvingSymlinksInPath(), prefix: [], depth: 3)
         return SourceScanReport(
             source: source,
             rootPath: root.path,

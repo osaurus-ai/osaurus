@@ -3,8 +3,8 @@ set -euo pipefail
 
 # Normal serial eval invocations, using the app's discovery/capability inventory.
 # No model download, name allowlist, sampler override, or RAM-safety bypass.
-if [[ $# -ne 2 ]]; then
-  echo "usage: $0 /path/to/osaurus-evals /path/to/new-output-directory" >&2
+if [[ $# -lt 2 || $# -gt 3 || ( $# -eq 3 && "$3" != "--representatives" ) ]]; then
+  echo "usage: $0 /path/to/osaurus-evals /path/to/new-output-directory [--representatives]" >&2
   exit 2
 fi
 eval_bin="$1"
@@ -16,6 +16,10 @@ if [[ -e "$proof_dir" ]]; then
 fi
 mkdir -p "$proof_dir"
 "$eval_bin" vision-inventory --out "$proof_dir/inventory.json" > "$proof_dir/inventory.log" 2>&1
+plan_args=()
+if [[ $# -eq 3 ]]; then plan_args+=(--representatives); fi
+python3 "$repo_root/scripts/evals/plan-installed-vision.py" "$proof_dir/inventory.json" \
+  --out "$proof_dir/coverage-plan.json" "${plan_args[@]}"
 python3 - "$proof_dir" <<'PY'
 import json, pathlib, sys
 root = pathlib.Path(sys.argv[1])
@@ -28,7 +32,6 @@ if not selected:
 for row in selected:
     if any(c in row['modelID'] for c in '\r\n\t'):
         raise SystemExit('Model identifier contains a control delimiter')
-(root / 'models.tsv').write_text(''.join(f"{i:03d}\t{row['modelID']}\n" for i, row in enumerate(selected)))
 PY
 result=0
 while IFS=$'\t' read -r row_id model_id; do
@@ -52,7 +55,20 @@ PY
   then
     result=1
   fi
-done < "$proof_dir/models.tsv"
+done < "$proof_dir/coverage-plan.tsv"
+python3 - "$proof_dir" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+plan = json.loads((root / 'coverage-plan.json').read_text())
+by_model = {row['modelID']: row for row in plan['bundles']}
+for line in (root / 'coverage-plan.tsv').read_text().splitlines():
+    ordinal, model = line.split('\t', 1)
+    path = root / f'{ordinal}.json'
+    cases = json.loads(path.read_text()).get('cases', []) if path.exists() else []
+    by_model[model]['runtime_status'] = cases[0].get('outcome', 'missing_report') if len(cases) == 1 else 'missing_report'
+    by_model[model]['runtime_report'] = str(path)
+(root / 'coverage-results.json').write_text(json.dumps(plan, indent=2) + '\n')
+PY
 python3 - "$proof_dir" <<'PY'
 import json, pathlib, sys
 root = pathlib.Path(sys.argv[1])

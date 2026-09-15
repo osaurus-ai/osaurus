@@ -15,6 +15,28 @@ import Testing
 
 struct ExternalModelLocatorTests {
 
+    @Test func symlinkedCustomModelRootDiscoversRenamedBundles() throws {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let actual = root.appendingPathComponent("mounted-models", isDirectory: true)
+        writeBundle(at: actual.appendingPathComponent("publisher/ordinary-renamed-bundle", isDirectory: true))
+        let link = root.appendingPathComponent("models", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: actual)
+        let report = ExternalModelLocator.scanCustomModelFolderReport(root: link)
+        #expect(report.discovered.map(\.id) == ["publisher/ordinary-renamed-bundle"])
+        #expect(report.skipped.isEmpty)
+        #expect(report.discovered.first?.bundlePath == actual.appendingPathComponent("publisher/ordinary-renamed-bundle").path)
+    }
+
+    @Test func failedRootEnumerationIsReportedInsteadOfAnEmptySuccessfulScan() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let missing = root.appendingPathComponent("not-mounted", isDirectory: true)
+        let report = ExternalModelLocator.scanCustomModelFolderReport(root: missing)
+        #expect(report.discovered.isEmpty)
+        #expect(report.skipped.contains { $0.reason == .unreadableRoot && $0.path == missing.path })
+    }
+
     // MARK: - Helpers
 
     private func makeTempDir() -> URL {
