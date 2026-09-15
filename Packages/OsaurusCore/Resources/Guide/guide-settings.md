@@ -45,6 +45,25 @@ Ask the assistant to change declarative settings in chat (`osaurus_config`); eac
 
 Unknown-Model Metadata Fallback on the same Cache panel does **not** constrain local models. Use Context Window Cap to lower the window.
 
+## Local model memory
+
+Server → Settings → Model Memory contains **Keep Model Loaded** (off by
+default) and **Unload After** (30 seconds by default). Models load when you
+send a request. With Keep Model Loaded off, idle weights unload after the
+timeout, or immediately when their last chat window closes. Active requests
+finish first; another open window or active background/API request is protected.
+Closing a chat does not shorten an unrelated API client's timeout.
+
+Enable Keep Model Loaded to retain weights across idle time and window close.
+Manual unload, model switching, changing settings that require a reload, and
+quitting can still unload them. Saving a residency change also updates models
+already idle in memory. This setting is UI-only, not declarative chat config.
+An older 15-minute default migrates once to 30 seconds; other saved durations
+and explicit Keep Model Loaded choices remain unchanged.
+
+macOS manages swap. Osaurus no longer shows swap warnings or requires a
+“Use Anyway” confirmation. Actual model-load failures still appear normally.
+
 ## Management sidebar
 
 General, Chat, Voice, Themes, Credits, Workspaces, Identity, Permissions, Privacy, Local Models, Cloud Models, Media, Orchestrator, Agents, Channels, Web Search, Knowledge, Memory, Tools, Skills, Commands, Schedules, Watchers, Computer Use, Browser Use, Server, Sandbox, Insights.

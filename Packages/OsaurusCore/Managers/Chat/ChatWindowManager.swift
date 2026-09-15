@@ -1202,10 +1202,8 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         // Once-per-user layout tour for users updating from the pre-tabs
         // layout; a no-op after it has run or been skipped.
         ChatLayoutTour.shared.autoStartIfEligible(windowId: id)
-        // Idle residency may have unloaded this window's selected model while
-        // the user was away. Re-arm the existing speculative warm-up when the
-        // user returns; its RAM and competing-residency gates still decide
-        // whether background loading is safe.
+        // Refresh the residency-backed dot. Focus never loads a model or
+        // cancels its idle deadline; the next Send loads on demand.
         windowStates[id]?.session.notifySessionBecameActive()
         // Distinguishes "user was in a chat window" from a management tab when
         // localizing a layout-engine app hang (no first-party frame in stack).
