@@ -16,10 +16,13 @@ if [[ -e "$proof_dir" ]]; then
 fi
 mkdir -p "$proof_dir"
 "$eval_bin" vision-inventory --out "$proof_dir/inventory.json" > "$proof_dir/inventory.log" 2>&1
-plan_args=()
-if [[ $# -eq 3 ]]; then plan_args+=(--representatives); fi
-python3 "$repo_root/scripts/evals/plan-installed-vision.py" "$proof_dir/inventory.json" \
-  --out "$proof_dir/coverage-plan.json" "${plan_args[@]}"
+if [[ $# -eq 3 ]]; then
+  python3 "$repo_root/scripts/evals/plan-installed-vision.py" "$proof_dir/inventory.json" \
+    --out "$proof_dir/coverage-plan.json" --representatives
+else
+  python3 "$repo_root/scripts/evals/plan-installed-vision.py" "$proof_dir/inventory.json" \
+    --out "$proof_dir/coverage-plan.json"
+fi
 python3 - "$proof_dir" <<'PY'
 import json, pathlib, sys
 root = pathlib.Path(sys.argv[1])
