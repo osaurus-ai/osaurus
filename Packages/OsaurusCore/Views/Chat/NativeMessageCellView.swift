@@ -1498,8 +1498,34 @@ final class NativeStatsView: NSView {
         tokenCount: Int?,
         unclosedReasoning: Bool = false,
         modelLoad: TimeInterval? = nil,
+        cachedInputTokens: Int? = nil,
         theme: any ThemeProtocol
     ) {
+        label.stringValue = Self.statsText(
+            ttft: ttft,
+            tokensPerSecond: tokensPerSecond,
+            tokenCount: tokenCount,
+            unclosedReasoning: unclosedReasoning,
+            modelLoad: modelLoad,
+            cachedInputTokens: cachedInputTokens
+        )
+        label.font = NSFont.monospacedDigitSystemFont(
+            ofSize: CGFloat(theme.captionSize) - 1,
+            weight: .regular
+        )
+        label.textColor = NSColor(theme.tertiaryText)
+    }
+
+    /// Pure footer text so the chip composition is unit-testable without a
+    /// view hierarchy.
+    static func statsText(
+        ttft: TimeInterval?,
+        tokensPerSecond: Double?,
+        tokenCount: Int?,
+        unclosedReasoning: Bool = false,
+        modelLoad: TimeInterval? = nil,
+        cachedInputTokens: Int? = nil
+    ) -> String {
         var parts: [String] = []
         if let ttft {
             if ttft < 0.01 {
@@ -1521,6 +1547,12 @@ final class NativeStatsView: NSView {
         if let count = tokenCount {
             parts.append(count == 1 ? L("1 token") : L("\(count) tokens"))
         }
+        // Prompt-cache hits: input the provider served from its cache (and,
+        // through Router or direct BYOK, billed at the discounted rate).
+        // Suppressed at zero so uncached turns look exactly as before.
+        if let cachedInputTokens, cachedInputTokens > 0 {
+            parts.append(String(format: L("%@ cached"), cachedInputTokens.formatted()))
+        }
         // Trailing diagnostic chip — vmlx tells us the model never emitted
         // `</think>` (or the family's close tag) before EOS / max_tokens.
         // Three observed scenarios all benefit from the same hint:
@@ -1538,12 +1570,7 @@ final class NativeStatsView: NSView {
         if unclosedReasoning {
             parts.append(L("⚠ thinking didn't close — answer may be in reasoning above"))
         }
-        label.stringValue = parts.joined(separator: " \u{2022} ")
-        label.font = NSFont.monospacedDigitSystemFont(
-            ofSize: CGFloat(theme.captionSize) - 1,
-            weight: .regular
-        )
-        label.textColor = NSColor(theme.tertiaryText)
+        return parts.joined(separator: " \u{2022} ")
     }
 
     /// Seconds below a minute, m/s above it. A cold 27 GB bundle can take
@@ -1897,13 +1924,14 @@ final class NativeMessageCellView: NSTableCellView {
         case let .fileDiff(diff):
             configureAsFileDiff(block: block, diff: diff, context: context, sameKind: sameKind)
 
-        case let .generationStats(ttft, tokensPerSecond, tokenCount, unclosedReasoning, modelLoad):
+        case let .generationStats(ttft, tokensPerSecond, tokenCount, unclosedReasoning, modelLoad, cachedInputTokens):
             configureAsStats(
                 ttft: ttft,
                 tokensPerSecond: tokensPerSecond,
                 tokenCount: tokenCount,
                 unclosedReasoning: unclosedReasoning,
                 modelLoad: modelLoad,
+                cachedInputTokens: cachedInputTokens,
                 context: context,
                 sameKind: sameKind
             )
@@ -2775,6 +2803,7 @@ final class NativeMessageCellView: NSTableCellView {
         tokenCount: Int?,
         unclosedReasoning: Bool,
         modelLoad: TimeInterval?,
+        cachedInputTokens: Int?,
         context: CellRenderingContext,
         sameKind: Bool
     ) {
@@ -2798,6 +2827,7 @@ final class NativeMessageCellView: NSTableCellView {
             tokenCount: tokenCount,
             unclosedReasoning: unclosedReasoning,
             modelLoad: modelLoad,
+            cachedInputTokens: cachedInputTokens,
             theme: context.theme
         )
     }

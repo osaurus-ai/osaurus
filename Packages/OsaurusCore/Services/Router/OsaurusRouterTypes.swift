@@ -110,6 +110,23 @@ enum OsaurusRouter {
         return "\(sign)\(body) \(unit)"
     }
 
+    /// "N cached" label for the router's prompt-cache split: how much of a
+    /// turn's (or session's) input was served from the upstream cache and so
+    /// billed at the discounted rate. `nil` when nothing was cached, so
+    /// callers can hide the label entirely instead of rendering "0 cached".
+    /// Pass `inputTokens` to append the hit ratio (`"3,200 cached · 80%"`);
+    /// the ratio is omitted when the total is unknown, zero, or the cached
+    /// count exceeds it (a defensive guard — the router already clamps).
+    static func formatCachedInputLabel(cachedTokens: Int, inputTokens: Int? = nil) -> String? {
+        guard cachedTokens > 0 else { return nil }
+        var label = "\(groupedThousands(Int64(cachedTokens))) cached"
+        if let inputTokens, inputTokens > 0, cachedTokens <= inputTokens {
+            let percent = Int((Double(cachedTokens) / Double(inputTokens) * 100).rounded())
+            label += " · \(percent)%"
+        }
+        return label
+    }
+
     /// Hero-figure variant of `formatMicroAsCredits`: the grouped whole-credit
     /// number without the unit, so large balances can render with "credits" as
     /// a small caption instead of inside the oversized monospaced string.
@@ -423,6 +440,13 @@ struct OsaurusRouterUsageItem: Decodable, Identifiable, Equatable, Sendable {
     let provider: String
     let inputTokens: Int
     let outputTokens: Int
+    /// Provider-reported prompt-cache split (router `0046_cache_pricing`).
+    /// Both are subsets of `inputTokens` (the TOTAL prompt size); cached
+    /// input billed at the discounted rate, writes at the premium rate.
+    /// `0` when the upstream reported no cache activity or the row predates
+    /// cache-aware billing (older routers omit the fields entirely).
+    let cachedInputTokens: Int
+    let cacheWriteTokens: Int
     let costMicro: String
     let status: String
     let tokenSource: String
@@ -439,6 +463,8 @@ struct OsaurusRouterUsageItem: Decodable, Identifiable, Equatable, Sendable {
         case requestId = "request_id"
         case inputTokens = "input_tokens"
         case outputTokens = "output_tokens"
+        case cachedInputTokens = "cached_input_tokens"
+        case cacheWriteTokens = "cache_write_tokens"
         case costMicro = "cost_micro"
         case tokenSource = "token_source"
         case createdAt = "created_at"
@@ -451,6 +477,8 @@ struct OsaurusRouterUsageItem: Decodable, Identifiable, Equatable, Sendable {
         provider: String,
         inputTokens: Int,
         outputTokens: Int,
+        cachedInputTokens: Int = 0,
+        cacheWriteTokens: Int = 0,
         costMicro: String,
         status: String,
         tokenSource: String,
@@ -464,12 +492,33 @@ struct OsaurusRouterUsageItem: Decodable, Identifiable, Equatable, Sendable {
         self.provider = provider
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
+        self.cachedInputTokens = cachedInputTokens
+        self.cacheWriteTokens = cacheWriteTokens
         self.costMicro = costMicro
         self.status = status
         self.tokenSource = tokenSource
         self.createdAt = createdAt
         self.actor = actor
         self.caller = caller
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        requestId = try c.decodeIfPresent(String.self, forKey: .requestId)
+        model = try c.decode(String.self, forKey: .model)
+        provider = try c.decode(String.self, forKey: .provider)
+        inputTokens = try c.decode(Int.self, forKey: .inputTokens)
+        outputTokens = try c.decode(Int.self, forKey: .outputTokens)
+        // Old-server compatibility: pre-cache routers omit the split.
+        cachedInputTokens = max(0, try c.decodeIfPresent(Int.self, forKey: .cachedInputTokens) ?? 0)
+        cacheWriteTokens = max(0, try c.decodeIfPresent(Int.self, forKey: .cacheWriteTokens) ?? 0)
+        costMicro = try c.decode(String.self, forKey: .costMicro)
+        status = try c.decode(String.self, forKey: .status)
+        tokenSource = try c.decode(String.self, forKey: .tokenSource)
+        createdAt = try c.decode(String.self, forKey: .createdAt)
+        actor = try c.decodeIfPresent(Actor.self, forKey: .actor)
+        caller = try c.decodeIfPresent(Actor.self, forKey: .caller)
     }
 }
 
@@ -519,6 +568,10 @@ struct OsaurusRouterSummaryEvent: Decodable, Equatable, Sendable {
         let tokenSource: String
         let inputTokens: Int
         let outputTokens: Int
+        /// Provider-reported prompt-cache split; subsets of `inputTokens`.
+        /// Absent on pre-cache routers → decoded as `0`.
+        let cachedInputTokens: Int
+        let cacheWriteTokens: Int
         /// `"workspace:<workspace_id>"` when the turn was charged to a
         /// workspace pool (request carried `workspace_context`); absent for
         /// personal spend. Pre-rename routers emitted `"team:<id>"`.
@@ -531,7 +584,44 @@ struct OsaurusRouterSummaryEvent: Decodable, Equatable, Sendable {
             case tokenSource = "token_source"
             case inputTokens = "input_tokens"
             case outputTokens = "output_tokens"
+            case cachedInputTokens = "cached_input_tokens"
+            case cacheWriteTokens = "cache_write_tokens"
             case billedTo = "billed_to"
+        }
+
+        init(
+            requestId: String?,
+            costMicro: String,
+            status: String,
+            tokenSource: String,
+            inputTokens: Int,
+            outputTokens: Int,
+            cachedInputTokens: Int = 0,
+            cacheWriteTokens: Int = 0,
+            billedTo: String?
+        ) {
+            self.requestId = requestId
+            self.costMicro = costMicro
+            self.status = status
+            self.tokenSource = tokenSource
+            self.inputTokens = inputTokens
+            self.outputTokens = outputTokens
+            self.cachedInputTokens = cachedInputTokens
+            self.cacheWriteTokens = cacheWriteTokens
+            self.billedTo = billedTo
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            requestId = try c.decodeIfPresent(String.self, forKey: .requestId)
+            costMicro = try c.decode(String.self, forKey: .costMicro)
+            status = try c.decode(String.self, forKey: .status)
+            tokenSource = try c.decode(String.self, forKey: .tokenSource)
+            inputTokens = try c.decode(Int.self, forKey: .inputTokens)
+            outputTokens = try c.decode(Int.self, forKey: .outputTokens)
+            cachedInputTokens = max(0, try c.decodeIfPresent(Int.self, forKey: .cachedInputTokens) ?? 0)
+            cacheWriteTokens = max(0, try c.decodeIfPresent(Int.self, forKey: .cacheWriteTokens) ?? 0)
+            billedTo = try c.decodeIfPresent(String.self, forKey: .billedTo)
         }
 
         /// The workspace id when this summary billed a workspace pool, nil otherwise.
@@ -561,6 +651,11 @@ public struct RouterBillingSummary: Codable, Equatable, Sendable {
     public var tokenSource: String
     public var inputTokens: Int
     public var outputTokens: Int
+    /// Prompt-cache split reported by the upstream provider and billed by the
+    /// router at cache rates. Both are subsets of `inputTokens`. `0` = no
+    /// cache activity (or a pre-cache router / ledger row).
+    public var cachedInputTokens: Int
+    public var cacheWriteTokens: Int
     /// `"workspace:<workspace_id>"` for pool spend; nil = personal. Optional so
     /// ledger entries persisted before Workspaces existed keep decoding.
     public var billedTo: String?
@@ -572,6 +667,8 @@ public struct RouterBillingSummary: Codable, Equatable, Sendable {
         tokenSource: String,
         inputTokens: Int,
         outputTokens: Int,
+        cachedInputTokens: Int = 0,
+        cacheWriteTokens: Int = 0,
         billedTo: String? = nil
     ) {
         self.requestId = requestId
@@ -580,6 +677,8 @@ public struct RouterBillingSummary: Codable, Equatable, Sendable {
         self.tokenSource = tokenSource
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
+        self.cachedInputTokens = cachedInputTokens
+        self.cacheWriteTokens = cacheWriteTokens
         self.billedTo = billedTo
     }
 
@@ -590,7 +689,29 @@ public struct RouterBillingSummary: Codable, Equatable, Sendable {
         self.tokenSource = summary.tokenSource
         self.inputTokens = summary.inputTokens
         self.outputTokens = summary.outputTokens
+        self.cachedInputTokens = summary.cachedInputTokens
+        self.cacheWriteTokens = summary.cacheWriteTokens
         self.billedTo = summary.billedTo
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case requestId, costMicro, status, tokenSource, inputTokens, outputTokens
+        case cachedInputTokens, cacheWriteTokens, billedTo
+    }
+
+    /// Tolerates hints/ledger payloads persisted before the cache split
+    /// existed (fields absent → 0).
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        requestId = try c.decodeIfPresent(String.self, forKey: .requestId)
+        costMicro = try c.decode(String.self, forKey: .costMicro)
+        status = try c.decode(String.self, forKey: .status)
+        tokenSource = try c.decode(String.self, forKey: .tokenSource)
+        inputTokens = try c.decode(Int.self, forKey: .inputTokens)
+        outputTokens = try c.decode(Int.self, forKey: .outputTokens)
+        cachedInputTokens = max(0, try c.decodeIfPresent(Int.self, forKey: .cachedInputTokens) ?? 0)
+        cacheWriteTokens = max(0, try c.decodeIfPresent(Int.self, forKey: .cacheWriteTokens) ?? 0)
+        billedTo = try c.decodeIfPresent(String.self, forKey: .billedTo)
     }
 }
 

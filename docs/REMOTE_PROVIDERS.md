@@ -222,6 +222,37 @@ wires and return a typed error instead of being dropped from the conversation.
 OpenAI-compatible routes forward multimodal content parts as-is and defer to
 the upstream's own validation.
 
+### Prompt Caching on Remote Routes
+
+Multi-turn chats and agent loops re-send the same system prompt, tool schemas,
+and history every turn. Osaurus keeps that prefix byte-stable (see
+[JSON Determinism](JSON_DETERMINISM.md)) and then enables each provider's own
+prompt cache so repeated input bills at the provider's cached rate:
+
+- **OpenAI (`api.openai.com`), Azure OpenAI Foundry, OpenRouter, Osaurus
+  Router**: a session-scoped `prompt_cache_key` (`osaurus-session-{id}`) is
+  sent on every turn so one conversation stays on one cache shard. OpenRouter
+  additionally receives `session_id` for sticky upstream routing. Other
+  OpenAI-compatible hosts (xAI, DeepSeek, Fireworks, Mistral, custom) get
+  neither field: strict schemas can reject unknown keys, and their caches are
+  automatic where they exist.
+- **Anthropic**: a top-level `cache_control` marker is always sent. The TTL is
+  `1h` when the last message is a user turn (a human gap is likely) and the
+  default 5 minutes when the last message is a tool result (tight agent loop),
+  balancing the 2x / 1.25x write premium against the 0.1x read rate.
+- **Gemini**: implicit context caching only; no request field is needed.
+- **Osaurus Router**: forwards the key and injects `cache_control` upstream,
+  then bills cached input at the discounted rate and echoes the split — see
+  [Osaurus Router → Prompt Cache Contract](OSAURUS_ROUTER.md#prompt-cache-contract).
+
+What the provider reports back is parsed into the turn's stats — OpenAI
+`prompt_tokens_details.cached_tokens` / `input_tokens_details.cached_tokens`,
+Anthropic `cache_read_input_tokens` (with `input_tokens` correctly summed
+across the uncached, cache-read and cache-write buckets), Gemini
+`usageMetadata.cachedContentTokenCount` — and shown as an "N cached" chip in
+the assistant footer when non-zero. No cached-token field means "unknown", not
+zero.
+
 ---
 
 ## Provider-Specific Notes

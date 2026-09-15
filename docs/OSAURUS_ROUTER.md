@@ -93,6 +93,15 @@ Router-specific fields and transforms:
   (subagent runner, plugin completions) get a synthesized per-request `auto-`
   key in `buildChatRequest` so connect-phase retries still dedupe.
 - `clamp_to_balance` is explicitly set to `false` for Router.
+- `prompt_cache_key` is sent as `osaurus-session-{sessionId}` whenever the
+  chat surface has a stable conversation id (every turn, including agent-loop
+  tool rounds). Router validates it (`[A-Za-z0-9._:-]{1,200}`) and forwards it
+  to upstreams with keyed prompt caches (OpenAI Responses, xAI); Anthropic
+  needs no key because Router injects `cache_control` server-side. The same
+  helper (`RemoteProviderService.supportsPromptCacheKey`) allowlists genuine
+  OpenAI hosts, Azure OpenAI Foundry, and OpenRouter for direct BYOK; every
+  other OpenAI-compatible gateway gets no key so strict schemas never 400.
+  See [Prompt Cache Contract](#prompt-cache-contract).
 - User multimodal content parts are preserved.
 - Assistant history is normalized to string `content` because several upstreams
   reject assistant content arrays or omitted assistant content on tool-call
@@ -135,6 +144,48 @@ If a stream ends with `finish_reason=length` and no visible text, reasoning, or
 tool call was emitted, the parser treats it as an error. That state usually
 means the provider spent output tokens without producing usable assistant
 content, so it must not silently look like a successful empty answer.
+
+## Prompt Cache Contract
+
+Router is the paid path, so upstream prompt-cache savings must reach the user.
+The contract is split between this app and the router:
+
+Client (this repo):
+
+- Sends `prompt_cache_key` (above) on every Router request that has a session.
+- Decodes the optional `cached_input_tokens` / `cache_write_tokens` fields from
+  the `osaurus` summary frame (`OsaurusRouterSummaryEvent`), from
+  `GET /credits/usage` rows (`OsaurusRouterUsageItem`), and persists them on
+  `RouterBillingSummary` (chat turn) and `RouterBillingEntry` (ledger schema
+  v3, additive `INTEGER NOT NULL DEFAULT 0` columns). Missing fields decode as
+  `0`, so a pre-cache router and pre-migration ledger rows keep working.
+- Shows the split as "N cached · P%": in the composer wallet panel
+  (session aggregate under "This session"), in Credits → Credits Activity
+  ("Cached input" total, shown only when non-zero), and on each activity row's
+  token line.
+
+Router (`osaurus-ai/osaurus-router`):
+
+- Forwards `prompt_cache_key` to OpenAI Responses and xAI (plus catalog-flagged
+  `prompt_cache_retention`), injects Anthropic `cache_control` with a 1h TTL
+  when the last message is a user turn and 5m when it is a tool result, parses
+  the provider's cache buckets, and bills `uncached × input + cached × cached
+  rate + write × write rate + output × output rate` with the margin applied
+  after. Holds are sized at the priciest input bucket so `hold >= settle`
+  always. Per-provider env kill switches (`CACHE_FORWARD_OPENAI`,
+  `CACHE_FORWARD_ANTHROPIC`, `CACHE_ANTHROPIC_1H_TTL`, `CACHE_FORWARD_XAI`)
+  disable forwarding without a deploy revert.
+
+Conservative defaults: a price row without cache rates bills at full price, a
+provider that reports no cache split bills at full price, and the tokenizer
+fallback never assumes a hit. Because the app sends no cache hints beyond the
+key, an older router that ignores `prompt_cache_key` behaves exactly as before.
+
+Unproven live (post-launch telemetry checks, not source guarantees): real
+upstream acceptance of `prompt_cache_key` on xAI, GPT-5.6 retention params,
+OpenRouter's use of `session_id` + `prompt_cache_key`, and observed Anthropic
+hit rates. Watch for `cached_input_tokens > 0` on production usage rows per
+provider; a provider that stays at zero has a forwarding or parsing gap.
 
 ## Billing Reliability
 
@@ -186,8 +237,9 @@ Ledger properties:
   metadata-only either way (no prompt/response/tool text).
 - Retention: newest 10,000 rows and at most 365 days
 - Export: metadata-only diagnostics from the Dashboard
-- Correlation: request id, session id, assistant turn id, model, token counts,
-  cost, status, app version, and rendered outcome
+- Correlation: request id, session id, assistant turn id, model, token counts
+  (including the router's cached-input / cache-write split), cost, status, app
+  version, and rendered outcome
 
 Outcomes are classified as `rendered`, `toolOnly`, `reasoningOnly`, `empty`,
 `error`, or `cancelled`. This mirrors what the user saw in chat and lets support
@@ -256,7 +308,11 @@ ledger explains what was charged and how the turn rendered.
 Keep tests close to the contract:
 
 - `RemoteChatRequestEncodingTests` covers Router-only request fields, message
-  normalization, idempotency keys, and implicit `max_tokens`.
+  normalization, idempotency keys, implicit `max_tokens`, and the
+  `prompt_cache_key` / OpenRouter `session_id` allowlist per provider and host.
+- `RouterCacheTelemetryDecodingTests` covers decoding the cache split on the
+  summary frame, usage rows, and persisted billing summaries with and without
+  the fields, the "N cached" label formatting, and the ledger v3 migration.
 - `OpenAICompatibleStreamParserTests` covers shared SSE framing, raw JSON
   fallback, split-data repair, streaming tool-call accumulation, and
   `finish_reason=length` handling.

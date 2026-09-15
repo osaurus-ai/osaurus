@@ -234,6 +234,15 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// the subset served from OpenAI's prompt cache when available.
     var inputTokenCount: Int? = nil
     var cachedInputTokenCount: Int? = nil
+    /// Prompt-cache read count for the footer chip. Prefers the provider's
+    /// own stats hint (direct BYOK: OpenAI / Anthropic / Gemini); falls back
+    /// to the Router billing split, which is the authoritative number on the
+    /// paid path. `nil` when neither source reported a positive count.
+    var effectiveCachedInputTokens: Int? {
+        if let cachedInputTokenCount, cachedInputTokenCount > 0 { return cachedInputTokenCount }
+        if let billed = routerBilling?.cachedInputTokens, billed > 0 { return billed }
+        return nil
+    }
     /// Keeps an abandoned protocol attempt visible in the transcript while
     /// preventing it from re-entering model history. This is set only when an
     /// agent/tool generation ends with incomplete reasoning and the loop

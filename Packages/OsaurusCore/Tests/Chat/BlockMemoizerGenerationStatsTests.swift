@@ -53,7 +53,7 @@ struct BlockMemoizerGenerationStatsTests {
         ttft: TimeInterval?, rate: Double?, count: Int?, unclosed: Bool, load: TimeInterval?
     ) {
         let stats = blocks.compactMap { block -> (TimeInterval?, Double?, Int?, Bool, TimeInterval?)? in
-            guard case let .generationStats(ttft, rate, count, unclosed, load) = block.kind else { return nil }
+            guard case let .generationStats(ttft, rate, count, unclosed, load, _) = block.kind else { return nil }
             return (ttft, rate, count, unclosed, load)
         }
         return try #require(stats.first)

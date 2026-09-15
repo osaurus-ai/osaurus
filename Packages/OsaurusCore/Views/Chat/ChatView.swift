@@ -1800,6 +1800,21 @@ final class ChatSession: ObservableObject {
         }
     }
 
+    /// Router prompt-cache telemetry for this session: total input tokens
+    /// billed and how many of them the upstream served from cache (billed at
+    /// the discounted rate). Summed from each turn's persisted `routerBilling`
+    /// alongside `sessionRouterSpendMicro`. Both are `0` for sessions billed
+    /// by a pre-cache router, which omits the split.
+    var sessionRouterCacheStats: (cachedInputTokens: Int, inputTokens: Int) {
+        turns.reduce((cachedInputTokens: 0, inputTokens: 0)) { acc, turn in
+            guard let billing = turn.routerBilling else { return acc }
+            return (
+                acc.cachedInputTokens + max(0, billing.cachedInputTokens),
+                acc.inputTokens + max(0, billing.inputTokens)
+            )
+        }
+    }
+
     /// True when the selected model is a local model — the kind that runs on
     /// the device's shared inference context. Covers both osaurus-downloaded
     /// models and externally-discovered ones (LM Studio, Hugging Face cache),
@@ -9652,6 +9667,13 @@ struct ChatView: View {
                                 appliesAgentReasoningDefault: observedSession.appliesAgentReasoningDefault,
                                 contextBreakdown: observedSession.estimatedContextBreakdown,
                                 sessionSpendMicro: observedSession.sessionRouterSpendMicro,
+                                sessionCachedInputLabel: {
+                                    let stats = observedSession.sessionRouterCacheStats
+                                    return OsaurusRouter.formatCachedInputLabel(
+                                        cachedTokens: stats.cachedInputTokens,
+                                        inputTokens: stats.inputTokens
+                                    )
+                                }(),
                                 isRouterBilledSession: observedSession.isOsaurusRouterSession,
                                 workspacePoolLabel: workspacePoolLabel,
                                 workspacePoolId: activeWorkspaceId,
