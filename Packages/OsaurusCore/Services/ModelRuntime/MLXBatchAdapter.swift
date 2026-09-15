@@ -40,7 +40,9 @@ struct MLXBatchAdapter {
     ) -> NativeMTPDepthPolicy {
         if settings.mode == .off
             || (settings.mode == .forceOn && settings.explicitDepth != nil)
-        { return .fixed }
+        {
+            return .fixed
+        }
         return .adaptive(maximumDepth: min(settings.draftTokenLimit ?? 5, 5))
     }
 
@@ -688,7 +690,9 @@ struct MLXBatchAdapter {
                     diskL2Misses += diskStats.misses
                     diskL2Stores += diskStats.stores
                     diskL2PayloadBytes = max(
-                        diskL2PayloadBytes, diskStats.currentPayloadBytes)
+                        diskL2PayloadBytes,
+                        diskStats.currentPayloadBytes
+                    )
                     diskL2MaxBytes = max(diskL2MaxBytes, diskStats.maxSizeBytes)
                     diskL2Evictions += diskStats.evictions
                 }
@@ -1119,7 +1123,10 @@ struct MLXBatchAdapter {
             switch DeclaredReasoningEffort.control(forModelId: modelName) {
             case .levels(let levels, let defaultLevel):
                 return DeclaredReasoningEffort.snapped(
-                    requested, ontoLevels: levels, defaultLevel: defaultLevel) ?? requested
+                    requested,
+                    ontoLevels: levels,
+                    defaultLevel: defaultLevel
+                ) ?? requested
             case .noEffortControl:
                 return nil
             case nil:
@@ -1136,6 +1143,12 @@ struct MLXBatchAdapter {
             DeclaredReasoningEffort.preserveThinking(forModelId: modelName) != nil
         {
             context["preserve_thinking"] = preserveThinking
+        }
+
+        // Omission means the bundle/template default, including on required
+        // tool turns. Do not close reasoning to compensate for a failed run.
+        guard normalizedReasoningEffort != nil || disableThinking != nil else {
+            return context
         }
 
         if DSV4ReasoningProfile.matches(modelId: modelName) {
@@ -1228,124 +1241,6 @@ struct MLXBatchAdapter {
             }
             return context
         }
-        if ModelFamilyNames.isQwenFamily(modelName) {
-            if directRailReasoningEffort {
-                context["enable_thinking"] = false
-                return context
-            }
-            if hasPositiveReasoningEffort {
-                context["enable_thinking"] = true
-                if let dispatchReasoningEffort {
-                    context["reasoning_effort"] = dispatchReasoningEffort
-                }
-            } else {
-                context["enable_thinking"] = false
-            }
-            return context
-        }
-        if ModelFamilyNames.isNemotronThinkingFamily(modelName) {
-            if directRailReasoningEffort {
-                context["enable_thinking"] = false
-                return context
-            }
-            if hasPositiveReasoningEffort {
-                context["enable_thinking"] = true
-                if let dispatchReasoningEffort {
-                    context["reasoning_effort"] = dispatchReasoningEffort
-                }
-            } else {
-                context["enable_thinking"] = false
-            }
-            return context
-        }
-        if ModelFamilyNames.isZayaFamily(modelName) {
-            if directRailReasoningEffort {
-                context["enable_thinking"] = false
-                return context
-            }
-            if hasPositiveReasoningEffort {
-                context["enable_thinking"] = true
-                if let dispatchReasoningEffort {
-                    context["reasoning_effort"] = dispatchReasoningEffort
-                }
-            } else {
-                context["enable_thinking"] = false
-            }
-            return context
-        }
-        if ModelFamilyNames.isMiniMaxFamily(modelName) {
-            if directRailReasoningEffort {
-                context["enable_thinking"] = false
-                return context
-            }
-            if hasPositiveReasoningEffort {
-                context["enable_thinking"] = true
-                if let dispatchReasoningEffort {
-                    context["reasoning_effort"] = dispatchReasoningEffort
-                }
-            } else {
-                context["enable_thinking"] = false
-            }
-            return context
-        }
-
-        if ModelFamilyNames.isLFM2Family(modelName) {
-            if toolChoiceRequiresLocalCall(toolChoice) {
-                context["enable_thinking"] = false
-            } else if let disableThinking {
-                context["enable_thinking"] = !disableThinking
-            } else if normalizedReasoningEffort != nil {
-                context["enable_thinking"] = hasPositiveReasoningEffort
-            }
-            return context
-        }
-        if ModelFamilyNames.isStepFamily(modelName) {
-            if toolChoiceRequiresLocalCall(toolChoice) {
-                context["enable_thinking"] = false
-            } else if let disableThinking {
-                context["enable_thinking"] = !disableThinking
-            } else if normalizedReasoningEffort != nil {
-                context["enable_thinking"] = hasPositiveReasoningEffort
-            }
-            return context
-        }
-        if ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelName) {
-            if toolChoiceRequiresLocalCall(toolChoice) {
-                context["enable_thinking"] = false
-                return context
-            }
-            if directRailReasoningEffort {
-                context["enable_thinking"] = false
-                return context
-            }
-            if let disableThinking {
-                context["enable_thinking"] = !disableThinking
-            } else if hasPositiveReasoningEffort {
-                context["enable_thinking"] = true
-                if let dispatchReasoningEffort {
-                    context["reasoning_effort"] = dispatchReasoningEffort
-                }
-            } else if normalizedReasoningEffort != nil {
-                context["enable_thinking"] = false
-            }
-            return context
-        }
-        if ModelFamilyNames.isGemmaFamily(modelName) {
-            if directRailReasoningEffort {
-                context["enable_thinking"] = false
-                return context
-            }
-            if hasPositiveReasoningEffort {
-                context["enable_thinking"] = true
-                if let dispatchReasoningEffort {
-                    context["reasoning_effort"] = dispatchReasoningEffort
-                }
-            } else {
-                context["enable_thinking"] = false
-            }
-            return context
-        }
-
         if hasPositiveReasoningEffort {
             if let dispatchReasoningEffort {
                 context["reasoning_effort"] = dispatchReasoningEffort
@@ -1613,6 +1508,16 @@ struct MLXBatchAdapter {
             cacheTopology: cacheTopology,
             stage: "submitted_to_batch_engine"
         )
+        do {
+            try AdmissionPositionLimit.validate(
+                promptTokens: prepared.promptTokens.count,
+                outputTokens: effective.maxTokens,
+                limit: generation.admissionPositionLimit
+            )
+        } catch {
+            if let soloLease { await soloLease.release() }
+            throw error
+        }
         if Self.shouldRecordAsLastEffectiveGeneration(generation) {
             await Registry.shared.recordEffectiveGenerationSettings(
                 modelName: modelName,
@@ -1792,7 +1697,8 @@ struct MLXBatchAdapter {
                         // (lease, allocator window, send gate) is untouched.
                         GenerationOutputRelay.shared.announce(
                             modelName: modelName,
-                            generationTokens: info.generationTokenCount)
+                            generationTokens: info.generationTokenCount
+                        )
                         terminalInfo = event
                         continue
                     }

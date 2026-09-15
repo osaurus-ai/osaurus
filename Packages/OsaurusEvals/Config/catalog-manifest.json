@@ -79,6 +79,9 @@
       "agent_loop.write-new-file",
       "agent_loop.write-then-verify-with-shell"
     ],
+    "AgentLoopBatchDisabled": [
+      "agent_loop.spawn-batch-disabled-two"
+    ],
     "AgentLoopBatchNative": [
       "agent_loop.spawn-batch-native-two"
     ],
@@ -128,7 +131,13 @@
     ],
     "AgentLoopRAMAdmission": [
       "agent_loop.ram-admission-sequential-children",
-      "agent_loop.ram-admission-single-child"
+      "agent_loop.ram-admission-single-child",
+      "agent_loop.ram-three-fresh-chats-then-sequential"
+    ],
+    "AgentLoopRAMControls": [
+      "agent_loop.ram-control-coexistence-on-same-model",
+      "agent_loop.ram-control-handoff-off-same-model",
+      "agent_loop.ram-control-ram-off"
     ],
     "AppleScript": [
       "apple_script.live-consequential-refusal",
@@ -437,6 +446,21 @@
       "prompt_surface.drop-code-style-saves",
       "prompt_surface.protected-section-refused",
       "prompt_surface.unknown-section-refused"
+    ],
+    "RAMAdmission": [
+      "ram_admission.batching-off-serializes",
+      "ram_admission.busy-engine-queues-one-without-erasing-capacity",
+      "ram_admission.busy-reclaim-stays-refused",
+      "ram_admission.engine-ceiling-serializes",
+      "ram_admission.explicit-budget-cannot-be-reclaimed",
+      "ram_admission.missing-fresh-sample-fails-closed",
+      "ram_admission.occupied-engine-keeps-total-capacity",
+      "ram_admission.one-byte-short-stays-refused",
+      "ram_admission.ram-off-does-not-reclaim",
+      "ram_admission.reclaim-restores-sequential-capacity",
+      "ram_admission.reporter-three-then-refusal",
+      "ram_admission.same-model-memory-serializes",
+      "ram_admission.same-model-two-slots"
     ],
     "ReasoningChannel": [
       "reasoning_channel.code-output-not-confused",

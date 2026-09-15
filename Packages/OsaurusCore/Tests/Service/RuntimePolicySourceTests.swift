@@ -808,7 +808,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "5b0c8e6b8b29a7ead21fe785688bc0621580cc62"
+        let expectedRuntimeHardenedRevision = "441d9a8e8df19f4c364b50903cbc62b4059639c9"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -2479,7 +2479,13 @@ struct RuntimePolicySourceTests {
         let runtime = try Self.source("Services/ModelRuntime.swift")
 
         #expect(runtime.contains("var loadConfiguration = mtpPlan.loadConfiguration"))
-        #expect(runtime.contains("loadConfiguration.alignmentRepairAuthorization = alignmentRepairActivity == nil"))
+        let normalizedRuntime = runtime.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        #expect(
+            normalizedRuntime.contains(
+                "loadConfiguration.alignmentRepairAuthorization = alignmentRepairActivity == nil ? .disabled : .directUserSend"
+            ),
+            "Alignment repair authorization must remain tied to a direct user send, independently of formatting."
+        )
         #expect(runtime.contains("loadConfiguration: loadConfiguration"))
         #expect(runtime.contains("resolvedLoadConfiguration("))
         #expect(runtime.contains("resolveMemorySafetyLoadPlan("))
@@ -3135,7 +3141,7 @@ struct RuntimePolicySourceTests {
             in: tasks
         )
         #expect(releaseBody.contains("state.source.inferenceSource"))
-        #expect(releaseBody.contains("taskSource != .chatUI"))
+        #expect(!releaseBody.contains("taskSource != .chatUI"))
         #expect(releaseBody.contains("accelerateIdleUnloadAfterBackgroundTaskCompleted"))
         #expect(releaseBody.contains("ChatWindowManager.shared.activeLocalModelNames()"))
         #expect(releaseBody.contains("rearmChatWarmupAfterBackgroundWork()"))
@@ -3148,7 +3154,7 @@ struct RuntimePolicySourceTests {
             "func accelerateIdleUnloadAfterBackgroundTaskCompleted(",
             in: runtime
         )
-        #expect(acceleratedReleaseBody.contains("guard taskSource != .chatUI else { return }"))
+        #expect(!acceleratedReleaseBody.contains("guard taskSource != .chatUI else { return }"))
         #expect(acceleratedReleaseBody.contains("guard case .afterSeconds = policy else { return }"))
         #expect(acceleratedReleaseBody.contains("guard !activeNames.contains(name) else { return }"))
         #expect(
@@ -3581,26 +3587,22 @@ struct RuntimePolicySourceTests {
             ),
             "Family-specific reasoning profiles must not force enable_thinking=false by writing a false boolean when no positive effort was requested."
         )
-        #expect(
-            adapter.contains("if ModelFamilyNames.isZayaFamily(modelName)")
-                && adapter.contains("context[\"enable_thinking\"] = false"),
-            "ZAYA text bundles are the explicit exception: their profile default is a closed/no-thinking prompt, so omitted reasoning controls must reach vmlx as enable_thinking=false."
+        let defaultGuard = try #require(
+            adapter.range(of: "guard normalizedReasoningEffort != nil || disableThinking != nil else {\n            return context\n        }")
         )
+        let firstFamilyOverride = try #require(adapter.range(of: "if DSV4ReasoningProfile.matches(modelId: modelName)"))
         #expect(
-            adapter.contains("if ModelFamilyNames.isQwenFamily(modelName)")
-                && adapter.contains("context[\"enable_thinking\"] = false"),
-            "Qwen local chat is an explicit exception: live tool-history rows must default to the closed/no-thinking rail instead of hidden reasoning-only length stops."
+            defaultGuard.lowerBound < firstFamilyOverride.lowerBound,
+            "Omitted reasoning controls must return the bundle default before any family-specific override, including required-tool turns. Executable MLXBatchAdapterTests cover the returned context."
         )
-        #expect(
-            adapter.contains("if ModelFamilyNames.isNemotronThinkingFamily(modelName)")
-                && adapter.contains("context[\"enable_thinking\"] = false"),
-            "Nemotron reasoning bundles are the explicit hybrid exception: live ordinary chat must default to the closed/no-thinking rail instead of hidden reasoning-only output."
-        )
-        #expect(
-            adapter.contains("if ModelFamilyNames.isGemmaFamily(modelName)")
-                && adapter.contains("context[\"enable_thinking\"] = false"),
-            "Gemma4 bundles must default to the closed/no-thinking rail for local API requests, matching their UI profile default without parser-side output repair."
-        )
+        let contextStart = try #require(adapter.range(of: "func additionalContext("))
+        let beforeDefaultGuard = adapter[contextStart.upperBound ..< defaultGuard.lowerBound]
+        for key in ["enable_thinking", "reasoning_effort"] {
+            #expect(
+                !beforeDefaultGuard.contains("context[\"\(key)\"]"),
+                "No family may inject reasoning controls before the omitted-options guard. Explicit overrides remain permitted after it."
+            )
+        }
         #expect(
             !adapter.contains("dsv4MaxReasoningRepetitionPenalty")
                 && !adapter.contains("repeated \"thinking\" token loop"),
@@ -3889,47 +3891,6 @@ struct RuntimePolicySourceTests {
         #expect(
             picker.contains("? [ModelOptionSegment(id: \"off\", label: L(\"Off\"))]"),
             "Blocked bundles must not advertise selectable Auto or explicit-depth chips."
-        )
-    }
-    @Test("Swap-pressure banner unloads through the guarded lifecycle and reports a refusal")
-    func swapBannerUnloadUsesGuardedLifecycle() throws {
-        let floatingInput = try Self.source("Views/Chat/FloatingInputCard.swift")
-        let bannerStart = try #require(floatingInput.range(of: "private func swapPressureBanner("))
-        let bannerEnd = try #require(
-            floatingInput.range(
-                of: "private func swapPrimaryButton(",
-                range: bannerStart.upperBound ..< floatingInput.endIndex
-            )
-        )
-        let banner = String(floatingInput[bannerStart.lowerBound ..< bannerEnd.lowerBound])
-
-        #expect(
-            banner.contains("await MLXService.shared.unloadRuntimeModel(named: target)"),
-            "The banner's Unload Model must take the same guarded path as the cache inspector: Stop-lifecycle preparation of every session on the model, then the timed runtime unload"
-        )
-        #expect(
-            !banner.contains("ModelRuntime.shared.unload(name:"),
-            "The banner must not call the runtime unload directly (that skipped session preparation and the lease-drain timeout, and dropped the result)"
-        )
-        #expect(
-            banner.contains("if !didUnload {") && banner.contains("swapUnloadFailure = String("),
-            "A refused unload (model still in use after the lease-drain timeout) must be reported in the banner instead of being discarded"
-        )
-        #expect(
-            banner.contains("guard let target, !swapUnloadInFlight else { return }")
-                && banner.contains(".disabled(swapUnloadInFlight)"),
-            "The Unload control must be single-flight while the runtime drains leases"
-        )
-        #expect(
-            banner.contains("let target = memoryWarningModel")
-                && banner.contains("?.name == target"),
-            "Unload and Cancel Loading must use the selected model's canonical runtime key, never a simulation label or another model's pressure episode"
-        )
-        let buttonsStart = bannerEnd.lowerBound
-        let buttons = String(floatingInput[buttonsStart...].prefix(2600))
-        #expect(
-            buttons.components(separatedBy: ".accessibilityLabel(Text(verbatim: title))").count >= 3,
-            "Both banner button helpers must expose their own title to accessibility; the banner container's label otherwise shadows Unload, Keep Running and Activity Monitor with the same sentence"
         )
     }
 }

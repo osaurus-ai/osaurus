@@ -301,20 +301,6 @@ public actor ModelRuntime {
         Array(loadingTasks.keys)
     }
 
-    /// Cache-only state for a canonical installed name resolved by the picker.
-    /// No directory scan, model load, warmup, or policy mutation.
-    func memoryWarningPhase(forCanonicalName name: String) -> MemoryWarningState.Phase {
-        if modelCache.keys.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
-            return .resident
-        }
-        if loadingTasks.keys.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame })
-            || inflightLoadWeights.keys.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame })
-        {
-            return .loading
-        }
-        return .unloaded
-    }
-
     /// By-weight MTP inspection for one model id. `nonisolated` + file-only I/O
     /// (config + safetensors headers, no weight load), so a caller can run it on
     /// a background task while a load holds the actor. Returns `nil` if the
@@ -332,7 +318,8 @@ public actor ModelRuntime {
             isBlocked: status.isExplicitlyBlocked
                 || status.nativeMTPTuning?.manualBlocked == true,
             measuredFamilyAutoDepth: status.measuredFamilyAutoDepth,
-            statusLine: status.statusLine)
+            statusLine: status.statusLine
+        )
     }
 
     /// Reads `config.json`'s `model_type` (top-level or nested `text_config`)
@@ -487,8 +474,7 @@ public actor ModelRuntime {
     /// Callers that arrive while the same exact teardown is already active
     /// join it. Returning immediately would let destructive consumers unlink
     /// weights while the first caller was still draining the resident model.
-    private var residencyUnloadWaiters:
-        [String: [CheckedContinuation<Void, Never>]] = [:]
+    private var residencyUnloadWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
 
     /// Canonical model deletion quarantine. Each lease is indexed by both the
     /// stable model id and picker/runtime name (plus their final path
@@ -522,14 +508,10 @@ public actor ModelRuntime {
         case resolved
     }
 
-    private var modelDeletionAccessWaiters:
-        [UUID: [ModelDeletionWaiter]] = [:]
-    private var modelDeletionLeaseWaiters:
-        [UUID: [ModelDeletionWaiter]] = [:]
-    private var modelDeletionDrainWaiters:
-        [UUID: [ModelDeletionWaiter]] = [:]
-    private var modelDeletionWaiterStates:
-        [UUID: ModelDeletionWaiterState] = [:]
+    private var modelDeletionAccessWaiters: [UUID: [ModelDeletionWaiter]] = [:]
+    private var modelDeletionLeaseWaiters: [UUID: [ModelDeletionWaiter]] = [:]
+    private var modelDeletionDrainWaiters: [UUID: [ModelDeletionWaiter]] = [:]
+    private var modelDeletionWaiterStates: [UUID: ModelDeletionWaiterState] = [:]
 
     /// On-disk weight bytes reserved by loads that are past the pre-load gate
     /// but not yet resident in `modelCache`, keyed by model name. The
@@ -566,9 +548,10 @@ public actor ModelRuntime {
 
     /// Runtime-owned idle-policy identities. `pending` means the residency
     /// manager may still fire; `inFlight` means the decision already won the
-    /// actor race and entered teardown. A focus activation invalidates the
-    /// former and captures the latter atomically.
+    /// actor race and entered teardown. A real request invalidates the former;
+    /// focus only observes residency and leaves its deadline intact.
     private var nextIdleResidencyDecisionID: UInt64 = 0
+    private var idleResidencyPolicyRevision: UInt64 = 0
     private var pendingIdleResidencyDecisions: [String: UInt64] = [:]
     private var inFlightIdleResidencyDecisions: [String: UInt64] = [:]
     /// Once an idle teardown passes its final pre-destructive decision check,
@@ -651,10 +634,8 @@ public actor ModelRuntime {
         currentResidencySnapshot()
     }
 
-    /// Atomically reconcile a visible-chat activation against an idle-policy
-    /// decision. A pending decision is invalidated before the actor yields;
-    /// an already-running decision is returned by identity for one-shot UI
-    /// recovery. Conditional manager cancellation cannot erase a newer timer.
+    /// Focus only refreshes the residency dot. It must not cancel an idle
+    /// deadline: focus has no matching lease release to re-arm that deadline.
     func chatActivationResidencySnapshot(
         selectedModel: String?
     ) async -> ModelRuntimeChatActivationResidencySnapshot {
@@ -666,18 +647,8 @@ public actor ModelRuntime {
         }
 
         let matchingName = matchingRuntimeModelName(selectedModel)
-        let cancelledDecision = matchingName.flatMap {
-            pendingIdleResidencyDecisions.removeValue(forKey: $0)
-        }
         let recoverableDecision = matchingName.flatMap {
             inFlightIdleResidencyDecisions[$0]
-        }
-
-        if let matchingName, let cancelledDecision {
-            await ModelResidencyManager.shared.cancel(
-                modelName: matchingName,
-                ownerDecisionID: cancelledDecision
-            )
         }
 
         return ModelRuntimeChatActivationResidencySnapshot(
@@ -1233,6 +1204,15 @@ public actor ModelRuntime {
         }
         let before = Memory.cacheMemory
         Stream.gpu.synchronize()
+        if waitForGenerationDrain {
+            // The exclusive gate has drained every producer. Optional RAM
+            // cache tiers can be rebuilt; model weights and persistent disk
+            // entries stay intact. Clearing only the allocator's freed pool
+            // cannot recover arrays still retained by paged/SSM caches.
+            for holder in modelCache.values {
+                holder.container.cacheCoordinator?.releaseVolatile()
+            }
+        }
         Memory.clearCache()
         Stream.gpu.synchronize()
         let after = Memory.cacheMemory
@@ -1339,8 +1319,8 @@ public actor ModelRuntime {
     ///   to permanent residency that a task completion must not override.
     /// - Only the resident this task's source class owns (`lastUseSource`).
     ///   A model that a chat window or another surface generated on since
-    ///   keeps its full residency — in particular, chat-owned release stays
-    ///   exclusively on the window-close path.
+    ///   keeps its full residency. A detached chat run can release once its
+    ///   window has closed and its work has finished.
     /// - `keeping` / `isModelStillWanted` protect models an open window or a
     ///   still-active registry task references, re-checked at fire time, and
     ///   the fire path re-checks the lease count — a follow-up turn or an API
@@ -1352,7 +1332,6 @@ public actor ModelRuntime {
         grace: TimeInterval = ModelRuntime.chatCloseUnloadGraceSeconds,
         isModelStillWanted: @Sendable @escaping (String) async -> Bool
     ) async {
-        guard taskSource != .chatUI else { return }
         let policy =
             await ServerConfigurationStore.load()?.modelIdleResidencyPolicy
             ?? ServerConfiguration.default.modelIdleResidencyPolicy
@@ -1395,9 +1374,11 @@ public actor ModelRuntime {
                 bytes: holder.weightsSizeBytes,
                 isCurrent: holder.name == currentModelName,
                 draftStrategyDescription: Self.describeDraftStrategy(
-                    Self.requestDraftStrategy(holder.draftStrategy)),
+                    Self.requestDraftStrategy(holder.draftStrategy)
+                ),
                 nativeMTPDepth: Self.nativeMTPDepth(
-                    Self.requestDraftStrategy(holder.draftStrategy)),
+                    Self.requestDraftStrategy(holder.draftStrategy)
+                ),
                 dflash2BlockSize: holder.dflash2BlockSize,
                 nativeMTPStatus: holder.nativeMTPStatus,
                 nativeMTPReason: holder.nativeMTPReason,
@@ -1428,62 +1409,66 @@ public actor ModelRuntime {
         let clearedModelCount: Int
         /// True when nothing was resident, so only the on-disk sweep ran.
         let clearedWithoutResidentModel: Bool
+        let error: String?
     }
 
     /// Purge the on-SSD prompt cache.
     ///
-    /// Routes through `CacheCoordinator.clear()` for every resident model,
-    /// which takes `MLXDiskCacheIOLock` before deleting — so a purge cannot
-    /// unlink a payload that an in-flight restore is mid-read. It also removes
-    /// every `.safetensors` in the cache directory, not just indexed rows,
-    /// which is the one path that reclaims orphans left by a crash between the
-    /// file write and the index insert.
-    ///
-    /// With no model resident there is no coordinator to route through, so the
-    /// directory sweep runs directly. That case is reported back to the caller
-    /// rather than silently doing less than the user asked for.
+    /// Serializes with runtime cache IO, deletes indexed payloads and linked
+    /// companions, and keeps weights and volatile caches resident. Unknown
+    /// files are preserved. Future requests can naturally repopulate the cache.
+    /// Live quotas may differ from saved settings until the next model load.
+    func diskCacheQuotaSnapshots() -> [DiskCacheQuotaSnapshot] {
+        modelCache.values.compactMap { holder in
+            guard let coordinator = holder.container.cacheCoordinator,
+                coordinator.config.enableDiskCache,
+                let stats = coordinator.snapshotStats().diskStats,
+                let directory = coordinator.config.diskCacheDir
+            else { return nil }
+            return DiskCacheQuotaSnapshot(
+                directory: directory,
+                usage: DiskCacheUsage(
+                    usedBytes: stats.currentPayloadBytes,
+                    maxBytes: stats.maxSizeBytes,
+                    evictions: stats.evictions
+                )
+            )
+        }
+    }
+
     @discardableResult
-    func clearDiskCaches() async -> DiskCacheClearResult {
-        var reclaimed = 0
-        var cleared = 0
-        for holder in modelCache.values {
-            guard let coordinator = holder.container.cacheCoordinator else { continue }
-            reclaimed = max(
-                reclaimed,
-                coordinator.snapshotStats().diskStats?.currentPayloadBytes ?? 0)
-            coordinator.clear()
-            cleared += 1
-        }
-        if cleared > 0 {
-            return DiskCacheClearResult(
-                reclaimedBytes: reclaimed,
-                clearedModelCount: cleared,
-                clearedWithoutResidentModel: false)
-        }
-        // No resident model: sweep the configured directory ourselves.
-        let dir =
+    func clearDiskCaches(directory: URL? = nil) async -> DiskCacheClearResult {
+        let configuredDirectory =
             ServerRuntimeSettingsStore.load()
             .flatMap { Self.cacheDiskDirectoryOverride(for: $0.cache) }
             ?? OsaurusPaths.diskKVCache()
-        var swept = 0
-        if
-            let items = try? FileManager.default.contentsOfDirectory(
-                at: dir, includingPropertiesForKeys: [.fileSizeKey])
-        {
-            for url in items where url.pathExtension == "safetensors" {
-                let size =
-                    (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-                if (try? FileManager.default.removeItem(at: url)) != nil { swept += size }
+        // A notice clears the root it measured. The Settings action clears
+        // both active roots and the saved root, including after a path change.
+        let directories =
+            directory.map { [$0] }
+            ?? (diskCacheQuotaSnapshots().map(\.directory) + [configuredDirectory])
+        let roots = Set(directories.map(\.standardizedFileURL))
+        let hadResidentModel = !modelCache.isEmpty
+        let result = await Task.detached(priority: .utility) {
+            MLXCacheIOLock.withSerializedMLXCacheIO {
+                var combined = SafeDiskCachePurge.Result()
+                var errors: [String] = []
+                for root in roots.sorted(by: { $0.path < $1.path }) {
+                    let result = SafeDiskCachePurge.clear(directory: root)
+                    combined.reclaimedBytes += result.reclaimedBytes
+                    combined.removedFiles += result.removedFiles
+                    if let error = result.error { errors.append(error) }
+                }
+                combined.error = errors.isEmpty ? nil : errors.joined(separator: "\n")
+                return combined
             }
-            // Drop the index rows too, otherwise the next quota pass accounts
-            // for files that are already gone.
-            let index = dir.appendingPathComponent("cache_index.db")
-            try? FileManager.default.removeItem(at: index)
-        }
+        }.value
         return DiskCacheClearResult(
-            reclaimedBytes: swept,
+            reclaimedBytes: result.reclaimedBytes,
             clearedModelCount: 0,
-            clearedWithoutResidentModel: true)
+            clearedWithoutResidentModel: !hadResidentModel,
+            error: result.error
+        )
     }
 
     /// Final monotonic cache counters for one resident holder. The caller
@@ -2464,6 +2449,17 @@ public actor ModelRuntime {
 
     // MARK: - Internals
 
+    /// Apply a saved setting to idle residents too, without requiring another
+    /// request. Never load a model here, and never release an active lease.
+    func refreshIdleResidencyPolicy() async {
+        idleResidencyPolicyRevision &+= 1
+        for name in Array(modelCache.keys) {
+            guard await ModelLease.shared.count(for: name) == 0 else { continue }
+            guard await markModelActiveForResidency(name) else { continue }
+            await scheduleIdleResidency(for: name)
+        }
+    }
+
     private func getConfig() async -> RuntimeConfig {
         if let cached = cachedConfig { return cached }
         let cfg = await RuntimeConfig.snapshot()
@@ -2472,10 +2468,30 @@ public actor ModelRuntime {
     }
 
     private func scheduleIdleResidency(for modelName: String) async {
-        guard !isClearingAllResidency else { return }
-        let policy =
+        let policyRevision = idleResidencyPolicyRevision
+        guard !isClearingAllResidency,
+            modelCache[modelName] != nil,
+            await ModelLease.shared.count(for: modelName) == 0
+        else { return }
+        var policy =
             await ServerConfigurationStore.load()?.modelIdleResidencyPolicy
             ?? ServerConfiguration.default.modelIdleResidencyPolicy
+        if case .afterSeconds = policy, lastUseSource[modelName] == .chatUI {
+            let stillReferenced = await MainActor.run {
+                ChatWindowManager.shared.activeLocalModelNames().contains(modelName)
+            }
+            // Cover close-during-load/generation too: the close callback may
+            // precede this final lease release, so no timer existed to shorten.
+            if !stillReferenced, lastUseSource[modelName] == .chatUI {
+                policy = .immediately
+            }
+        }
+        guard modelCache[modelName] != nil,
+            await ModelLease.shared.count(for: modelName) == 0
+        else { return }
+        // A setting may change while either the policy or window snapshot
+        // is awaited. Never replace its new timer with a stale policy.
+        guard policyRevision == idleResidencyPolicyRevision else { return }
         if case .never = policy {
             pendingIdleResidencyDecisions.removeValue(forKey: modelName)
             await ModelResidencyManager.shared.scheduleIdleUnload(
@@ -2738,10 +2754,9 @@ public actor ModelRuntime {
         public let gpuBudgetBytes: Int64
         public let timestamp: Date
 
-        /// The load doesn't fit the GPU working set, so macOS pages the
-        /// weights on every decode step. Distinct from ordinary RAM pressure:
-        /// the budget is a fixed fraction of installed memory, so closing
-        /// other apps cannot make room — only a smaller model can.
+        /// Whether the estimated load footprint exceeds the recommended GPU
+        /// working set. This diagnostic is not evidence of actual paging or
+        /// decode cost, and it does not drive a composer warning.
         ///
         /// Judged on the **weights**, not weights + KV headroom. The weights
         /// are what must stay resident for every decode step; the KV cache
@@ -2753,20 +2768,19 @@ public actor ModelRuntime {
             gpuBudgetBytes > 0 && incomingLoadFootprintBytes > gpuBudgetBytes
         }
 
-        /// UI severity for the chat input's tight-fit disclaimer.
+        /// Legacy diagnostic classification; no composer warning consumes it.
         public enum LoadPressureSeverity: String, Sendable, Equatable {
-            /// Comfortably within budget — no banner.
+            /// Estimate within the diagnostic thresholds.
             case none
-            /// Elevated load estimate: show an advisory acknowledgement.
+            /// Elevated estimate, not a user acknowledgement gate.
             case warn
-            /// High-risk estimate (legacy case name). The composer offers
-            /// Use Anyway; independent runtime admission still applies.
+            /// High-risk estimate (legacy case name). Independent runtime
+            /// admission still applies.
             case block
         }
 
-        /// Maps the assessment to advisory severity, not a runtime refusal.
-        /// The composer also surfaces the existing low-available tight verdict;
-        /// neither presentation changes the runtime's independent load policy.
+        /// Maps the assessment to diagnostic severity, not a runtime refusal
+        /// or UI confirmation. Runtime admission owns the actual load policy.
         public var loadPressureSeverity: LoadPressureSeverity {
             // Judge the hard ceiling on the resident working set (weights of
             // everything resident plus the incoming footprint), NOT on the
@@ -2823,7 +2837,8 @@ public actor ModelRuntime {
         forWeights weights: Int64,
         modelDirectory: URL? = nil,
         modelName: String? = nil,
-        kvRetentionCap: Int? = ServerRuntimeSettingsStore.resolvedKVRetentionCap()
+        kvRetentionCap: Int? = ServerRuntimeSettingsStore.resolvedKVRetentionCap(),
+        requestPositionLimit: Int? = nil
     ) -> Int64 {
         if let knownHeadroom = Self.knownMiMoOrN2JANGTQKVHeadroomBytes(modelName: modelName) {
             return knownHeadroom
@@ -2831,7 +2846,8 @@ public actor ModelRuntime {
         if let modelDirectory,
             let architectureHeadroom = estimatedArchitectureKVHeadroomBytes(
                 at: modelDirectory,
-                kvRetentionCap: kvRetentionCap
+                kvRetentionCap: kvRetentionCap,
+                requestPositionLimit: requestPositionLimit
             )
         {
             return architectureHeadroom
@@ -2867,7 +2883,8 @@ public actor ModelRuntime {
 
     private static func estimatedArchitectureKVHeadroomBytes(
         at directory: URL,
-        kvRetentionCap: Int?
+        kvRetentionCap: Int?,
+        requestPositionLimit: Int? = nil
     ) -> Int64? {
         let configURL = directory.appendingPathComponent("config.json")
         guard let data = try? Data(contentsOf: configURL),
@@ -2927,7 +2944,8 @@ public actor ModelRuntime {
         // the saved override was blank even though Safe Auto actually loaded
         // a 64K cap, materially under-reporting projected KV headroom.
         let maxPositions =
-            kvRetentionCap.map { min(declaredPositions, max($0, 4096)) }
+            requestPositionLimit
+            ?? kvRetentionCap.map { min(declaredPositions, max($0, 4096)) }
             ?? declaredPositions
         guard let kvHeads, let headDim, kvHeads > 0, headDim > 0, maxPositions > 0 else {
             return nil
@@ -2955,10 +2973,19 @@ public actor ModelRuntime {
         // the 8 full layers. Price each class at what it can actually retain.
         let slidingWindow = layerMix.slidingWindow ?? maxPositions
         let slidingPositions = min(maxPositions, max(1, slidingWindow))
+        // Gemma's global attention can use different heads/dimensions from
+        // sliding attention. Both K and V remain in the cache even when their
+        // projections share weights (attention_k_eq_v).
+        let fullAttentionDims: Int64
+        if let globalHeadDim = intValue(config["global_head_dim"]), globalHeadDim > 0 {
+            let globalHeads = intValue(config["num_global_key_value_heads"]) ?? kvHeads
+            fullAttentionDims = 2 * Int64(max(1, globalHeads)) * Int64(globalHeadDim)
+        } else {
+            fullAttentionDims = perTokenCacheDims
+        }
         let kvBytes =
-            (Int64(layerMix.fullAttention) * Int64(maxPositions)
-                + Int64(layerMix.slidingAttention) * Int64(slidingPositions))
-            * perTokenCacheDims
+            (Int64(layerMix.fullAttention) * Int64(maxPositions) * fullAttentionDims
+                + Int64(layerMix.slidingAttention) * Int64(slidingPositions) * perTokenCacheDims)
             * Int64(dtypeBytes)
 
         // SSM companion state is much smaller than full KV but still real.
@@ -2969,7 +2996,8 @@ public actor ModelRuntime {
         let ssmState = intValue(config["ssm_state_size"]) ?? intValue(config["mamba_d_state"]) ?? 0
         let convKernel = intValue(config["conv_kernel"]) ?? intValue(config["mamba_d_conv"]) ?? 0
         let mambaHeadDim = intValue(config["mamba_head_dim"]) ?? 0
-        let mambaStatePerLayer = Int64(max(0, mambaHeads))
+        let mambaStatePerLayer =
+            Int64(max(0, mambaHeads))
             * Int64(max(0, ssmState + convKernel * max(1, mambaHeadDim)))
         // GDN/GLA linear-attention layers (qwen3_5, Bailing KDA) keep a
         // per-head (keyDim x valueDim) matmul state instead of mamba-style
@@ -2977,7 +3005,8 @@ public actor ModelRuntime {
         let linearVHeads = intValue(config["linear_num_value_heads"]) ?? 0
         let linearKeyDim = intValue(config["linear_key_head_dim"]) ?? 0
         let linearValueDim = intValue(config["linear_value_head_dim"]) ?? 0
-        let linearStatePerLayer = Int64(max(0, linearVHeads))
+        let linearStatePerLayer =
+            Int64(max(0, linearVHeads))
             * Int64(max(0, linearKeyDim))
             * Int64(max(0, linearValueDim))
         let ssmBytes =
@@ -3026,7 +3055,13 @@ public actor ModelRuntime {
         if let types = config["layer_types"] as? [Any] {
             // Gemma4 / qwen3_5-style explicit per-layer topology.
             mix.declaredPerLayer = true
-            for raw in types {
+            // The shared suffix reads earlier layers' KV; Gemma creates no
+            // independent cache for those layers. Count only actual owners.
+            let shared = max(0, intValue(config["num_kv_shared_layers"]) ?? 0)
+            let owners =
+                shared > 0 && shared < types.count
+                ? Array(types.prefix(types.count - shared)) : types
+            for raw in owners {
                 switch stringValue(raw)?.lowercased() ?? "" {
                 case "full_attention", "attention", "attn":
                     mix.fullAttention += 1
@@ -3480,45 +3515,36 @@ public actor ModelRuntime {
         )
         let targetLoadFootprintBytes: Int64? =
             rawWeightsBytes > 0
-            ? (
-                preliminaryPlan.loadConfiguration.useMmapSafetensors
+            ? (preliminaryPlan.loadConfiguration.useMmapSafetensors
                 ? Self.effectiveLoadFootprintBytes(
                     rawWeightsBytes: rawWeightsBytes,
                     modelDirectory: localURL,
                     modelName: canonicalName
                 )
-                : rawWeightsBytes
-            )
+                : rawWeightsBytes)
             : nil
         let perActiveChildHeadroomBytes = targetLoadFootprintBytes.map {
             Self.estimatedKVHeadroomBytes(
                 forWeights: $0,
                 modelDirectory: localURL,
                 modelName: canonicalName,
-                kvRetentionCap: preliminaryPlan.cache.defaultMaxKVSize
+                kvRetentionCap: nil
             )
         }
-        // Request-bounded price: the SAME estimator, clamped to what this
-        // delegation can actually allocate. A bounded 2K-output child must
-        // not be charged the full retention-cap envelope — on a 16 GB Mac
-        // that difference alone drives ramSlots to 0 for an affordable
-        // same-resident-model spawn. Estimate stays conservative: seed
-        // chars/4 ×1.5, plus the child's max output, plus a 1024-token
-        // margin for the child system prompt and template overhead, never
-        // below 4096 and never above the policy cap (the planner's
-        // `effectiveChildHeadroomBytes` additionally clamps to the
-        // cap-priced value, so this can only shrink the charge).
+        // Price the exact ceiling forwarded to child execution. The runtime
+        // rejects tokenized prompts plus output allowance above that ceiling.
+        // defaultMaxKVSize is a conditional policy, not a guaranteed bound.
         let requestBoundedChildHeadroomBytes: Int64? = {
             guard let estimate = requestEstimate,
                 let footprint = targetLoadFootprintBytes,
-                let boundedPositions = estimate.boundedPositionBudget(
-                    policyCap: preliminaryPlan.cache.defaultMaxKVSize)
+                let boundedPositions = estimate.boundedPositionBudget()
             else { return nil }
             return Self.estimatedKVHeadroomBytes(
                 forWeights: footprint,
                 modelDirectory: localURL,
                 modelName: canonicalName,
-                kvRetentionCap: boundedPositions
+                kvRetentionCap: nil,
+                requestPositionLimit: boundedPositions
             )
         }()
         let estimatedWorkingSetBytes = targetLoadFootprintBytes.flatMap {
@@ -3584,26 +3610,15 @@ public actor ModelRuntime {
     ) async -> SubagentBatchMemoryFacts? {
         guard
             let profile = await subagentMemoryProfile(
-                for: modelName, requestEstimate: requestEstimate)
+                for: modelName,
+                requestEstimate: requestEstimate
+            )
         else {
             return nil
         }
-        let releasableParentBytes: Int64 =
-            residencyPlan.shouldUnload
-            ? profile.summaries.reduce(Int64(0)) { partial, summary in
-                let residentName =
-                    ModelManager.findInstalledModel(named: summary.name)?.name
-                    ?? summary.name
-                guard
-                    residentName.caseInsensitiveCompare(profile.canonicalName)
-                        != .orderedSame
-                else {
-                    return partial
-                }
-                let (sum, overflow) = partial.addingReportingOverflow(summary.bytes)
-                return overflow ? Int64.max : sum
-            }
-            : 0
+        // Handoff planning runs after the exact parent is released. Its freed
+        // bytes are already reflected in the host sample; disk sizes and
+        // unrelated residents must never become hypothetical credit.
 
         return SubagentBatchMemoryFacts(
             canonicalModelKey: profile.canonicalName,
@@ -3617,12 +3632,12 @@ public actor ModelRuntime {
             requestBoundedChildHeadroomBytes: profile.requestBoundedChildHeadroomBytes
                 .flatMap(Self.nonnegativeUInt64),
             // Normal loading and handoff use this same host estimator. After
-            // allocator recovery this is a fresh OS sample, not an arithmetic
-            // credit for buffers that might still be resident.
-            reclaimableBytes: Self.nonnegativeUInt64(
-                ChatResidencyHandoff.availableMemoryBytes()
-            ),
-            releasableParentBytes: Self.nonnegativeUInt64(releasableParentBytes) ?? 0,
+            // allocator recovery the planner waits out the kernel's cached
+            // statistics window before sampling again. Never credit freed
+            // buffers arithmetically: other work may have consumed the RAM.
+            reclaimableBytes: ChatResidencyHandoff.sampledAvailableMemoryBytes()
+                .flatMap(Self.nonnegativeUInt64),
+            releasableParentBytes: 0,
             resolvedLoadBudgetBytes: profile.resolvedLoadBudgetBytes,
             osHeadroomBytes: Self.nonnegativeUInt64(SubagentCoexistence.headroomBytes) ?? 0
         )
@@ -4362,7 +4377,10 @@ public actor ModelRuntime {
         let task = Task<SessionHolder, Error> {
             if let activity = alignmentRepairActivity {
                 await AlignmentPreparationState.shared.begin(
-                    id: activity, modelID: id, sessionID: alignmentRepairSession)
+                    id: activity,
+                    modelID: id,
+                    sessionID: alignmentRepairSession
+                )
             }
             defer {
                 if let activity = alignmentRepairActivity {
@@ -4395,7 +4413,8 @@ public actor ModelRuntime {
             let container: ModelContainer
             do {
                 var loadConfiguration = mtpPlan.loadConfiguration
-                loadConfiguration.alignmentRepairAuthorization = alignmentRepairActivity == nil
+                loadConfiguration.alignmentRepairAuthorization =
+                    alignmentRepairActivity == nil
                     ? .disabled : .directUserSend
                 let observer: @Sendable (AlignmentRepairProgress) -> Void = { progress in
                     guard let activity = alignmentRepairActivity else { return }
@@ -4407,13 +4426,13 @@ public actor ModelRuntime {
                 }
                 container = try await AlignmentRepairProgress.$observer.withValue(observer) {
                     try await loadModelContainer(
-                    from: localURL,
-                    using: tokenizerLoader,
-                    configuration: serverSettings.resolvedModelConfiguration(
-                        base: ModelConfiguration(directory: localURL)
-                    ),
-                    loadConfiguration: loadConfiguration
-                )
+                        from: localURL,
+                        using: tokenizerLoader,
+                        configuration: serverSettings.resolvedModelConfiguration(
+                            base: ModelConfiguration(directory: localURL)
+                        ),
+                        loadConfiguration: loadConfiguration
+                    )
                 }
             } catch {
                 // Drain the load's GPU tail before releasing the exclusive gate
@@ -4445,10 +4464,14 @@ public actor ModelRuntime {
             }
             if LocalVisionEvidence.inspect(localURL).hasVision && !constructedVision {
                 container.disableCaching()
-                throw NSError(domain: "OsaurusModelMedia", code: 1, userInfo: [
-                    NSLocalizedDescriptionKey:
-                        "The installed bundle has vision configuration and weights, but its loaded runtime has no vision tower. The model was not admitted as text-only. Check the bundle's processor configuration and model-load diagnostics."
-                ])
+                throw NSError(
+                    domain: "OsaurusModelMedia",
+                    code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "The installed bundle has vision configuration and weights, but its loaded runtime has no vision tower. The model was not admitted as text-only. Check the bundle's processor configuration and model-load diagnostics."
+                    ]
+                )
             }
             if Task.isCancelled {
                 container.disableCaching()
@@ -4534,7 +4557,9 @@ public actor ModelRuntime {
             // baseline behind (unless another model remains resident, whose
             // episode continues).
             SwapPressureMonitor.shared.endEpisodeOnLoadFailure(
-                model: name, residentCount: modelCache.count)
+                model: name,
+                residentCount: modelCache.count
+            )
             throw error
         }
     }
@@ -5095,7 +5120,8 @@ public actor ModelRuntime {
                 .attributesOfItem(atPath: url.path),
                 let owner = attributes[.ownerAccountName] as? String
             {
-                let permissions = (attributes[.posixPermissions] as? NSNumber)
+                let permissions =
+                    (attributes[.posixPermissions] as? NSNumber)
                     .map { String($0.intValue, radix: 8) } ?? "?"
                 detail += " (owner=\(owner) mode=\(permissions), current user=\(NSUserName()))"
             }
@@ -6198,7 +6224,7 @@ public actor ModelRuntime {
         // legacy Auto draft-token cap, regardless of the resident head's depth.
         // It sets the initial depth and the request's exploration ceiling.
         if mtp.mode == .forceOn, let manual = mtp.explicitDepth,
-            (1...3).contains(manual)
+            (1 ... 3).contains(manual)
         {
             return .nativeMTP(depth: manual, verifierMode: verifierMode)
         }

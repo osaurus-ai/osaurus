@@ -449,13 +449,22 @@ actor NativeImageJobCoordinator {
             )
             try await ChatResidencyHandoff.memoryPreflight(
                 requiredBytes: Int64(models.first { $0.id == model }?.totalBytes ?? 0),
-                enabled: config.ramSafetyPreflightEnabled
+                enabled: config.ramSafetyPreflightEnabled,
+                physicalCapacityOnly: true
             )
             chatLease = try await self.prepareChatResidencyIfNeeded(
                 config: config,
                 jobID: jobID,
                 record: record
             )
+            if config.ramSafetyPreflightEnabled {
+                _ = await ModelRuntime.shared.reclaimMemoryForSubagentAdmission()
+                try await Task.sleep(for: .milliseconds(1_100))
+                try await ChatResidencyHandoff.memoryPreflight(
+                    requiredBytes: Int64(models.first { $0.id == model }?.totalBytes ?? 0),
+                    enabled: true
+                )
+            }
             var produced: [GeneratedImage] = []
             let stream = await makeStream(model, jobID)
             for try await event in stream {

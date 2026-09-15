@@ -1138,6 +1138,7 @@ final class TextSubagentKind:
                 modelName: resolved.name,
                 seedMessages: seed,
                 maxTokens: budgets.maxDelegateTokens,
+                admissionPositionLimit: admissionRequestEstimate()?.boundedPositionBudget(),
                 maxIterations: maxTurns,
                 deadline: deadline,
                 sessionId: sessionId,

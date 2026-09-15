@@ -1,104 +1,170 @@
 {
   "sourceLanguage": "en",
   "strings": {
-    "Claim": {
+    "30 seconds": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Beanspruchen"
+            "value": "30 Sekunden"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "등록"
+            "value": "30초"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Занять"
+            "value": "30 секунд"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "认领"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "認領"
+            "value": "30 秒"
           }
         }
       }
     },
-    "Claim @%@?": {
+    "Unload After": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "@%@ beanspruchen?"
+            "value": "Entladen nach"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "@%@을(를) 등록할까요?"
+            "value": "언로드 대기 시간"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Занять @%@?"
+            "value": "Выгружать через"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "认领 @%@？"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "認領 @%@？"
+            "value": "卸载等待时间"
           }
         }
       }
     },
-    "Your Osaurus ID is permanent and public. It cannot be changed or released later, so make sure this is the handle you want.": {
+    "Unloads model memory when the last generation finishes.": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Deine Osaurus-ID ist dauerhaft und öffentlich. Sie kann später weder geändert noch freigegeben werden. Stelle also sicher, dass dies der gewünschte Handle ist."
+            "value": "Entlädt den Modellspeicher, sobald die letzte Generierung abgeschlossen ist."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Osaurus ID는 영구적이며 공개됩니다. 나중에 변경하거나 해제할 수 없으므로 원하는 핸들이 맞는지 확인하세요."
+            "value": "마지막 생성이 끝나면 모델 메모리를 해제합니다."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "Ваш Osaurus ID постоянный и публичный. Его нельзя будет изменить или освободить позже, поэтому убедитесь, что это именно тот хэндл, который вы хотите."
+            "value": "Освобождает память модели после завершения последней генерации."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "您的 Osaurus ID 是永久且公开的。之后无法更改或释放，请确认这就是您想要的用户名。"
+            "value": "最后一次生成结束后释放模型内存。"
           }
-        },
-        "zh-Hant": {
+        }
+      }
+    },
+    "Unloads after 30 seconds without a request, or when the last chat window using the model closes. Active requests finish first.": {
+      "localizations": {
+        "de": {
           "stringUnit": {
             "state": "needs_review",
-            "value": "您的 Osaurus ID 是永久且公開的。之後無法更改或釋放，請確認這就是您想要的使用者名稱。"
+            "value": "Entlädt nach 30 Sekunden ohne Anfrage oder wenn das letzte Chatfenster für dieses Modell geschlossen wird. Laufende Anfragen werden zuerst abgeschlossen."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "요청 없이 30초가 지나거나 이 모델을 사용하는 마지막 채팅 창을 닫으면 언로드합니다. 진행 중인 요청은 먼저 완료됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Выгружает модель через 30 секунд без запросов или при закрытии последнего окна чата, использующего модель. Активные запросы сначала завершаются."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "30 秒内没有请求，或关闭使用该模型的最后一个聊天窗口后卸载模型。正在处理的请求会先完成。"
+          }
+        }
+      }
+    },
+    "Unloads after %d minutes without a request, or when the last chat window using the model closes. Active requests finish first.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Entlädt nach %d Minuten ohne Anfrage oder wenn das letzte Chatfenster für dieses Modell geschlossen wird. Laufende Anfragen werden zuerst abgeschlossen."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "요청 없이 %d분이 지나거나 이 모델을 사용하는 마지막 채팅 창을 닫으면 언로드합니다. 진행 중인 요청은 먼저 완료됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Выгружает модель через %d мин. без запросов или при закрытии последнего окна чата, использующего модель. Активные запросы сначала завершаются."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%d 分钟内没有请求，或关闭使用该模型的最后一个聊天窗口后卸载模型。正在处理的请求会先完成。"
+          }
+        }
+      }
+    },
+    "Allows multiple resident models. The idle-unload setting still applies.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Mehrere Modelle können gleichzeitig geladen bleiben. Die Einstellung zum Entladen bei Inaktivität gilt weiterhin."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "여러 모델을 메모리에 유지할 수 있습니다. 유휴 상태 언로드 설정은 계속 적용됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Разрешает держать в памяти несколько моделей. Настройка выгрузки при бездействии по-прежнему применяется."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "允许多个模型同时驻留内存。空闲卸载设置仍然适用。"
           }
         }
       }
@@ -17226,142 +17292,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "1 個儲存轉換失敗。"
-          }
-        }
-      }
-    },
-    "%@ cached": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "%@ gecacht"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "%@ 캐시됨"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "%@ из кэша"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "%@ 已缓存"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "%@ 已快取"
-          }
-        }
-      }
-    },
-    "Cached input": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Gecachte Eingabe"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "캐시된 입력"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Кэшированный ввод"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "缓存输入"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "快取輸入"
-          }
-        }
-      }
-    },
-    "Prompt cache": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Prompt-Cache"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "프롬프트 캐시"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Кэш промпта"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "提示缓存"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "提示快取"
-          }
-        }
-      }
-    },
-    "Prompt cache: %@ input tokens served from cache": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Prompt-Cache: %@ Eingabe-Token aus dem Cache"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "프롬프트 캐시: 입력 토큰 %@개가 캐시에서 제공됨"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "Кэш промпта: %@ входных токенов из кэша"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "提示缓存：%@ 个输入 token 来自缓存"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "needs_review",
-            "value": "提示快取：%@ 個輸入 token 來自快取"
           }
         }
       }
@@ -268294,6 +268224,244 @@
         }
       }
     },
+    "Claim": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Beanspruchen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "등록"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Занять"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "认领"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "認領"
+          }
+        }
+      }
+    },
+    "Claim @%@?": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "@%@ beanspruchen?"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "@%@을(를) 등록할까요?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Занять @%@?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "认领 @%@？"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "認領 @%@？"
+          }
+        }
+      }
+    },
+    "Your Osaurus ID is permanent and public. It cannot be changed or released later, so make sure this is the handle you want.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Deine Osaurus-ID ist dauerhaft und öffentlich. Sie kann später weder geändert noch freigegeben werden. Stelle also sicher, dass dies der gewünschte Handle ist."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Osaurus ID는 영구적이며 공개됩니다. 나중에 변경하거나 해제할 수 없으므로 원하는 핸들이 맞는지 확인하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ваш Osaurus ID постоянный и публичный. Его нельзя будет изменить или освободить позже, поэтому убедитесь, что это именно тот хэндл, который вы хотите."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "您的 Osaurus ID 是永久且公开的。之后无法更改或释放，请确认这就是您想要的用户名。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "您的 Osaurus ID 是永久且公開的。之後無法更改或釋放，請確認這就是您想要的使用者名稱。"
+          }
+        }
+      }
+    },
+    "%@ cached": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ gecacht"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ 캐시됨"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ из кэша"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ 已缓存"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ 已快取"
+          }
+        }
+      }
+    },
+    "Cached input": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Gecachte Eingabe"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "캐시된 입력"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Кэшированный ввод"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "缓存输入"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "快取輸入"
+          }
+        }
+      }
+    },
+    "Prompt cache": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Prompt-Cache"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "프롬프트 캐시"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Кэш промпта"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "提示缓存"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "提示快取"
+          }
+        }
+      }
+    },
+    "Prompt cache: %@ input tokens served from cache": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Prompt-Cache: %@ Eingabe-Token aus dem Cache"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "프롬프트 캐시: 입력 토큰 %@개가 캐시에서 제공됨"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Кэш промпта: %@ входных токенов из кэша"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "提示缓存：%@ 个输入 token 来自缓存"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "提示快取：%@ 個輸入 token 來自快取"
+          }
+        }
+      }
+    },
     "1 event so far · last event id %@": {
       "localizations": {
         "de": {
@@ -270869,6 +271037,68 @@
           }
         }
       }
+    },
+    "Clears indexed conversation cache files. Chats and models are not deleted. Unrecognized files are left untouched; future replies may rebuild a cold cache.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Löscht indizierte Gesprächs-Cachedateien. Chats und Modelle werden nicht gelöscht. Unbekannte Dateien bleiben unverändert; spätere Antworten können den Cache neu aufbauen."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "색인에 등록된 대화 캐시 파일을 지웁니다. 채팅과 모델은 삭제되지 않습니다. 인식되지 않는 파일은 그대로 두며 이후 응답에서 캐시를 다시 만들 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удаляет индексированные файлы кэша диалогов. Чаты и модели не удаляются. Неизвестные файлы сохраняются; последующие ответы могут заново создать кэш."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清除已索引的对话缓存文件。不会删除聊天和模型。无法识别的文件保持不变；后续回复可能需要重建缓存。"
+          }
+        }
+      }
+    },
+    "SSD cache limit": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SSD-Cache-Limit"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SSD 캐시 한도"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Лимит кэша SSD"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SSD 缓存上限"
+          }
+        }
+      }
+    },
+    "SSD cache limit reached": {
+      "extractionState": "manual"
+    },
+    "The SSD cache reached its %@ limit. Removing older cached data to make room can make replies slower to start. Clearing frees cache space, but the next reply may need to rebuild it.": {
+      "extractionState": "manual"
     }
   },
   "version": "1.1"

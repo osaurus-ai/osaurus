@@ -133,7 +133,7 @@ struct SubagentSettingsSection: View {
                         SettingsToggle(
                             title: "Check memory before delegating",
                             description:
-                                "Before delegating image or text work, budget one model weight footprint plus architecture-aware KV, SSM, and activation headroom for every subagent that will run. Same-model groups are split into smaller waves when needed; if even one subagent cannot fit, refuse before unloading the chat model.",
+                                "Before delegating image or text work, budget one model weight footprint plus architecture-aware KV, SSM, and activation headroom for every subagent that will run. Same-model groups are split into smaller waves when needed. When swapping models, check feasibility first and measure available memory again after unloading; if the subagent still cannot fit, restore the chat model and refuse the delegation.",
                             isOn: $configuration.ramSafetyPreflightEnabled
                         )
 

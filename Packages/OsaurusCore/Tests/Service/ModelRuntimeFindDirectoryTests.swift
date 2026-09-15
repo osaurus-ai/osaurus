@@ -171,6 +171,34 @@ struct ModelRuntimeFindDirectoryTests {
         #expect(topology >= 512 * 1024 * 1024)
     }
 
+    @Test("Gemma E2B prices its fifteen KV owners and global head dimensions")
+    func gemmaE2BActualCacheOwners() throws {
+        let dir = try makeIsolatedDir()
+        let types = (0..<35).map { $0 % 5 == 4 ? "full_attention" : "sliding_attention" }
+        let config: [String: Any] = [
+            "model_type": "gemma4", "num_hidden_layers": 35,
+            "num_kv_shared_layers": 20, "num_attention_heads": 8,
+            "num_key_value_heads": 1, "head_dim": 256, "global_head_dim": 512,
+            "sliding_window": 512, "max_position_embeddings": 131_072,
+            "layer_types": types, "torch_dtype": "bfloat16"
+        ]
+        try JSONSerialization.data(withJSONObject: config).write(to: dir.appendingPathComponent("config.json"))
+        let mix = ModelRuntime.attentionLayerMix(in: config)
+        #expect(mix.fullAttention == 3)
+        #expect(mix.slidingAttention == 12)
+        let measured = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: 6 << 30, modelDirectory: dir, kvRetentionCap: nil,
+            requestPositionLimit: 131_072
+        )
+        let bytes: Int64 = (3 * 131_072 * 2 * 512 + 12 * 512 * 2 * 256) * 2
+        #expect(measured == bytes + bytes / 4)
+        let beyondDeclaredWindow = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: 6 << 30, modelDirectory: dir, kvRetentionCap: 8_192,
+            requestPositionLimit: 262_144
+        )
+        #expect(beyondDeclaredWindow > measured)
+    }
+
     @Test("Architecture KV RAM preflight uses the resolved retention policy")
     func architectureKVHeadroomUsesResolvedRetentionCap() throws {
         let dir = try makeIsolatedDir()

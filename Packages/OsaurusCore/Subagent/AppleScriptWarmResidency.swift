@@ -159,6 +159,7 @@ struct AppleScriptWarmResidencyHandoff: SubagentHandoff {
     let unload:
         @Sendable (_ maxElapsedSeconds: Int, _ onPhase: (String, String) -> Void) async throws ->
             ChatResidencyLease
+    var postUnloadPreflight: (@Sendable () async throws -> Void)? = nil
     /// Immediate restore for the failure path (injectable).
     let restoreNow: @Sendable (_ lease: ChatResidencyLease, _ onPhase: (String, String) -> Void) async -> Void
 
@@ -178,6 +179,7 @@ struct AppleScriptWarmResidencyHandoff: SubagentHandoff {
                 try await ChatResidencyHandoff.memoryPreflight(
                     requiredBytes: requiredBytes,
                     enabled: enabled,
+                    physicalCapacityOnly: plan.shouldUnload,
                     onPhase: onPhase
                 )
             },
@@ -185,6 +187,14 @@ struct AppleScriptWarmResidencyHandoff: SubagentHandoff {
                 try await ChatResidencyHandoff.unloadResidentChatModels(
                     maxElapsedSeconds: maxElapsedSeconds,
                     onPhase: onPhase
+                )
+            },
+            postUnloadPreflight: {
+                guard plan.ramSafetyEnabled else { return }
+                _ = await ModelRuntime.shared.reclaimMemoryForSubagentAdmission()
+                try await Task.sleep(for: .milliseconds(1_100))
+                try await ChatResidencyHandoff.memoryPreflight(
+                    requiredBytes: plan.requiredBytes, enabled: true
                 )
             },
             restoreNow: { lease, onPhase in
@@ -230,6 +240,7 @@ struct AppleScriptWarmResidencyHandoff: SubagentHandoff {
         }
         let lease = try await unload(plan.maxElapsedSeconds, emit)
         do {
+            try await postUnloadPreflight?()
             let result = try await body()
             // Keep the AppleScript model warm: defer the chat restore.
             await coordinator.endRun(lease: lease, model: model, keepWarmSeconds: keepWarmSeconds)

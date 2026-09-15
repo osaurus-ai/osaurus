@@ -1,7 +1,7 @@
 {
   "id": "agent_loop.spawn-batch-safe-serialized-two",
   "domain": "agent_loop",
-  "label": "agent loop • strict architecture-safe serialization",
+  "label": "agent loop \u2022 strict architecture-safe serialization",
   "query": "Fan out exactly two independent jobs in one spawn_batch call. Job id `math` must target allowed agent UUID `A11CE001-0000-4000-8000-000000000001` and return exactly BATCH_ALPHA_42. Job id `writing` must target allowed agent UUID `A11CE001-0000-4000-8000-000000000002` and return exactly BATCH_BETA_BLUE. Preserve order, then answer once with both tokens and stop.",
   "notes": "Strict architecture-capped contract. Both children must settle safely as [1,1]; requested width remains 2, the model ceiling and effective engine width are 1, and engineCapacity must be the limiting factor. This behavioral contract never waives RAM/performance gates.",
   "fixtures": {
@@ -25,22 +25,40 @@
     "runtimeConcurrency": {
       "continuousBatching": true,
       "maxConcurrentSequences": 2
+    },
+    "delegationSettings": {
+      "ramSafety": true,
+      "handoff": true,
+      "coexistence": false
     }
   },
   "expect": {
     "agentLoop": {
       "maxIterations": 6,
       "maxModelSteps": 4,
-      "mustCallTools": ["spawn_batch"],
-      "mustNotCallTools": ["spawn_agent", "spawn_model"],
+      "mustCallTools": [
+        "spawn_batch"
+      ],
+      "mustNotCallTools": [
+        "spawn_agent",
+        "spawn_model"
+      ],
       "maxToolCalls": 1,
       "noDuplicateExecutedCalls": true,
       "noToolErrors": true,
-      "allowedExits": ["finalResponse"],
-      "finalTextContains": ["BATCH_ALPHA_42", "BATCH_BETA_BLUE"],
+      "allowedExits": [
+        "finalResponse"
+      ],
+      "finalTextContains": [
+        "BATCH_ALPHA_42",
+        "BATCH_BETA_BLUE"
+      ],
       "spawnBatch": {
         "exactCallCount": 1,
-        "expectedJobIds": ["math", "writing"],
+        "expectedJobIds": [
+          "math",
+          "writing"
+        ],
         "expectedSucceeded": 2,
         "expectedFailed": 0,
         "expectedMaxParallel": 2,
@@ -56,12 +74,29 @@
             "engineArchitectureMaximum": 1,
             "engineEffectiveMaximum": 1,
             "effectiveLocalSlots": 1,
-            "localSubwaves": [1, 1],
-            "limitingFactors": ["engineCapacity"]
+            "localSubwaves": [
+              1,
+              1
+            ],
+            "limitingFactors": [
+              "engineCapacity"
+            ]
           }
         ],
         "requireEveryExecutionWaveWellFormed": true,
-        "expectedCacheAvailable": true
+        "expectedCacheAvailable": true,
+        "expectedRows": [
+          {
+            "id": "math",
+            "ok": true,
+            "summaryEquals": "BATCH_ALPHA_42"
+          },
+          {
+            "id": "writing",
+            "ok": true,
+            "summaryEquals": "BATCH_BETA_BLUE"
+          }
+        ]
       }
     }
   }

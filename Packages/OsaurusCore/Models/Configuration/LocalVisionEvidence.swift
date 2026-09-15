@@ -13,7 +13,7 @@ enum LocalVisionEvidence {
     }
 
     private static let lock = NSLock()
-    private nonisolated(unsafe) static var cache: [String: Result] = [:]
+    private nonisolated(unsafe) static var cache: [String: (processorVersion: UInt64, result: Result)] = [:]
     private nonisolated(unsafe) static var generation: UInt64 = 0
     private nonisolated(unsafe) static let observer: NSObjectProtocol = NotificationCenter.default.addObserver(
         forName: .localModelsChanged, object: nil, queue: nil
@@ -29,15 +29,19 @@ enum LocalVisionEvidence {
     static func inspect(_ directory: URL, refresh: Bool = false) -> Result {
         _ = observer
         let key = directory.standardizedFileURL.path
+        let processorVersion = VLMProcessorTypeRegistry.shared.registrationVersion
         lock.lock()
         let version = generation
         let cached = cache[key]
         lock.unlock()
-        if !refresh, let cached { return cached }
+        if !refresh, let cached, cached.processorVersion == processorVersion { return cached.result }
         let result = read(directory)
         lock.lock()
         // An invalidation while reading must not republish the old generation.
-        if version == generation { cache[key] = result }
+        if version == generation,
+            processorVersion == VLMProcessorTypeRegistry.shared.registrationVersion {
+            cache[key] = (processorVersion, result)
+        }
         lock.unlock()
         return result
     }
@@ -73,10 +77,10 @@ enum LocalVisionEvidence {
             return result(false, "The installed bundle has no readable processor configuration.")
         }
         let processorClass = processor["processor_class"] as? String ?? ""
-        let hasFactoryOverride = ["mistral3", "ministral3", "nemotron_h_omni",
-                                  "NemotronH_Nano_Omni_Reasoning_V3"].contains(modelType)
-        guard !processorClass.isEmpty || hasFactoryOverride else {
-            return result(false, "The selected processor configuration has no processor_class.")
+        let processorType = VLMProcessorTypeRegistry.processorType(
+            modelType: modelType, declaredProcessorType: processorClass)
+        guard VLMProcessorTypeRegistry.shared.containsProcessorType(processorType) else {
+            return result(false, "The selected processor configuration has no registered local processor.")
         }
         do {
             names = try tensorNames(directory)
@@ -206,8 +210,10 @@ enum LocalVisionEvidence {
             for (name, value) in header where name != "__metadata__" {
                 guard let tensor = value as? [String: Any],
                     let shape = tensor["shape"] as? [Int], shape.allSatisfy({ $0 > 0 }),
+                    let dtype = tensor["dtype"] as? String,
                     let offsets = tensor["data_offsets"] as? [UInt64], offsets.count == 2,
-                    offsets[0] < offsets[1], offsets[1] <= fileSize - 8 - length
+                    offsets[0] < offsets[1], offsets[1] <= fileSize - 8 - length,
+                    SafetensorsPayloadSize.matches(dtype: dtype, shape: shape, byteCount: offsets[1] - offsets[0])
                 else { throw InvalidWeights(detail: "invalid tensor metadata: \(name)") }
                 fileKeys.insert(name)
             }

@@ -591,7 +591,12 @@ public enum SubagentSession {
             // Process-wide admission: the TaskLocal guard above only covers one
             // task tree; parallel tool calls can reach here concurrently.
             if admissionClass == .localInPlace {
-                let capacity = await localInPlaceCapacityDecision(for: prepared).capacity
+                let initialDecision = OwnedSubagentOperation {
+                    await localInPlaceCapacityDecision(for: prepared)
+                }
+                let capacity = (try? await initialDecision.value(
+                    cancellationRequested: { interrupt.isInterrupted }
+                ))?.capacity ?? 0
                 let reservation = await admissionController.reserveLocalInPlace(
                     modelKey: admissionModelKey,
                     requestedSlots: 1,
@@ -930,23 +935,96 @@ public enum SubagentSession {
             }
 
             if refreshedClass == .localInPlace {
-                let refreshedCapacity: Int
-                var memoryDiagnostics: [String: Any] = [:]
-                if let postAdmissionLocalCapacityOverride {
-                    refreshedCapacity =
-                        await postAdmissionLocalCapacityOverride(
-                            prepared,
-                            currentPlan
+                let recoveryPlan = currentPlan
+                let recovery = OwnedSubagentOperation {
+                    if let postAdmissionLocalCapacityOverride {
+                        return LocalInPlaceCapacityDecision(
+                            capacity: await postAdmissionLocalCapacityOverride(prepared, recoveryPlan)
                         )
-                } else {
-                    let decision = await localInPlaceCapacityDecision(
+                    }
+                    return await localInPlaceCapacityDecision(
                         for: prepared,
-                        residencyPlan: currentPlan,
+                        residencyPlan: recoveryPlan,
                         rejectUnsafeSingleRun: true
                     )
-                    refreshedCapacity = decision.capacity
-                    memoryDiagnostics = decision.plan?.memoryDiagnostics ?? [:]
                 }
+                var decision = try? await recovery.value(
+                    cancellationRequested: { interrupt.isInterrupted }
+                )
+                // Host headroom is additional capacity; reservations include
+                // both materialized bytes and future growth. If siblings make
+                // that conservative aggregate comparison fail, drain them and
+                // resample under a writer lease instead of refunding guessed
+                // bytes or declaring a permanent refusal.
+                let occupied = await admissionController.snapshot().inPlace
+                if admissionHeldSlots > 0,
+                    occupied > admissionHeldSlots,
+                    (decision?.capacity ?? 0) <= occupied - admissionHeldSlots,
+                    !interrupt.isInterrupted, !Task.isCancelled
+                {
+                    await admissionController.releaseLocalInPlace(
+                        modelKey: admissionModelKey, slots: admissionHeldSlots
+                    )
+                    admissionHeld = false
+                    admissionHeldSlots = 0
+                    let drain = await admissionController.admit(
+                        .localExclusive, modelKey: admissionModelKey,
+                        onWait: { [feed] active in
+                            feed.emitPhase("waiting for local GPU", detail: active)
+                        },
+                        cancellationRequested: { interrupt.isInterrupted }
+                    )
+                    switch drain {
+                    case .admitted:
+                        admissionClass = .localExclusive
+                        admissionHeld = true
+                    case .cancelled, .timedOut:
+                        let cancelled = interrupt.isInterrupted || Task.isCancelled
+                        let message = cancelled
+                            ? "Run was cancelled while waiting for RAM-safety admission."
+                            : "Local work did not drain before the RAM-safety admission timeout."
+                        if presentation.finishFeed { feed.finish(success: false, summary: message) }
+                        return ToolEnvelope.failure(
+                            kind: cancelled ? .userDenied : .unavailable,
+                            message: message, tool: prepared.tool, retryable: !cancelled,
+                            metadata: ["admission": cancelled ? "cancelled" : "timeout"]
+                        )
+                    }
+                    let isolatedRecovery = OwnedSubagentOperation {
+                        try await prepared.kind.validateExecutionAuthority(
+                            prepared.scope, resolved: prepared.resolved
+                        )
+                        let plan = try await replanningKind.refreshedResidencyPlanAfterAdmission(
+                            for: prepared.resolved
+                        )
+                        if prepared.kind.admissionClass(prepared.resolved) != .localInPlace {
+                            return LocalInPlaceCapacityDecision(capacity: 1)
+                        }
+                        if let postAdmissionLocalCapacityOverride {
+                            return LocalInPlaceCapacityDecision(
+                                capacity: await postAdmissionLocalCapacityOverride(prepared, plan)
+                            )
+                        }
+                        return await localInPlaceCapacityDecision(
+                            for: prepared, residencyPlan: plan, rejectUnsafeSingleRun: true
+                        )
+                    }
+                    do {
+                        decision = try await isolatedRecovery.value(
+                            cancellationRequested: { interrupt.isInterrupted }
+                        )
+                    } catch {
+                        await admissionController.release(admissionClass, modelKey: admissionModelKey)
+                        admissionHeld = false
+                        let envelope = envelope(for: error, tool: prepared.tool)
+                        if presentation.finishFeed {
+                            feed.finish(success: false, summary: ToolEnvelope.failureMessage(envelope))
+                        }
+                        return envelope
+                    }
+                }
+                let refreshedCapacity = decision?.capacity ?? 0
+                let memoryDiagnostics = decision?.plan?.memoryDiagnostics ?? [:]
 
                 // Memory recovery may wait for the GPU gate. Stop during
                 // that wait must settle as cancellation before any child runs.
@@ -980,7 +1058,16 @@ public enum SubagentSession {
                         )
                     admissionHeld = admissionHeldSlots > 0
                 }
-                if refreshedCapacity == 0 || !admissionHeld {
+                if refreshedCapacity > 0, !admissionHeld {
+                    let message = "Local batching capacity changed while waiting for admission. Retry after the running child finishes."
+                    if presentation.finishFeed { feed.finish(success: false, summary: message) }
+                    return ToolEnvelope.failure(
+                        kind: .unavailable, message: message, tool: prepared.tool,
+                        retryable: true,
+                        metadata: ["admission": "capacity_changed", "refreshed_capacity": refreshedCapacity]
+                    )
+                }
+                if refreshedCapacity == 0 {
                     if admissionHeld {
                         await admissionController.release(
                             admissionClass,
@@ -1191,10 +1278,14 @@ public enum SubagentSession {
         rejectUnsafeSingleRun: Bool = false
     ) async -> LocalInPlaceCapacityDecision {
         let runtime = ServerRuntimeSettingsStore.snapshot()
-        let engineSlots = InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
+        let configuredEngineSlots = InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
             in: .standard,
             runtime: runtime
         )
+        let engineSnapshot = await ModelRuntime.shared.batchEngineCapacitySnapshot(
+            for: prepared.resolved.name, reconcilingTo: configuredEngineSlots
+        )
+        let engineSlots = min(configuredEngineSlots, engineSnapshot?.configuredMaximum ?? configuredEngineSlots)
         let maxParallel = await SpawnBatchTool.effectiveMaxParallel(
             scope: prepared.scope
         )
