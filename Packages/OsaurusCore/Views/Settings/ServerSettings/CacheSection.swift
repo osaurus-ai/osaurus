@@ -231,7 +231,8 @@ struct CacheSection: View {
     /// real. Nil when the volume cannot be measured — better to show nothing
     /// than a fabricated number.
     private var resolvedDiskCacheLabel: String? {
-        let dir = ModelRuntime.cacheDiskDirectoryOverride(for: draft.cache)
+        let dir =
+            ModelRuntime.cacheDiskDirectoryOverride(for: draft.cache)
             ?? OsaurusPaths.diskKVCache()
         guard let capacity = VMLXServerRuntimeSettings.cacheVolumeCapacityGB(for: dir) else {
             return nil
@@ -239,7 +240,8 @@ struct CacheSection: View {
         let resolved = VMLXServerRuntimeSettings.resolveDiskCacheMaxGB(
             percent: draft.cache.blockDisk.maxSizePercent,
             legacyGB: draft.cache.blockDisk.maxSizeGB,
-            directory: dir)
+            directory: dir
+        )
         // The share the resolver will ACTUALLY use. A stored value of 0 (or
         // negative) is not honoured — `resolveDiskCacheMaxGB` requires
         // `percent > 0` and falls back to the default share — so echoing the
@@ -262,7 +264,9 @@ struct CacheSection: View {
         let effective: Double
         if let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: dir.path), freeBytes > 0 {
             let decision = ModelRuntime.hostAwareDiskCacheDecision(
-                configuredCapGB: resolved, freeBytes: freeBytes)
+                configuredCapGB: resolved,
+                freeBytes: freeBytes
+            )
             effective = decision.enabled ? decision.capGB : 0
         } else {
             effective = resolved
@@ -276,13 +280,15 @@ struct CacheSection: View {
                 String(format: "%g", share),
                 DiskCacheUsage.format(bytes: Int(capacity * 1_073_741_824)),
                 DiskCacheUsage.format(bytes: Int(resolved * 1_073_741_824)),
-                DiskCacheUsage.format(bytes: Int(effective * 1_073_741_824)))
+                DiskCacheUsage.format(bytes: Int(effective * 1_073_741_824))
+            )
         }
         return String(
             format: L("%@%% of %@ ≈ %@"),
             String(format: "%g", share),
             DiskCacheUsage.format(bytes: Int(capacity * 1_073_741_824)),
-            DiskCacheUsage.format(bytes: Int(resolved * 1_073_741_824)))
+            DiskCacheUsage.format(bytes: Int(resolved * 1_073_741_824))
+        )
     }
 
     private var diskCacheControls: some View {
@@ -332,11 +338,13 @@ struct CacheSection: View {
                         isClearingDiskCache = true
                         let result = await ModelRuntime.shared.clearDiskCaches()
                         clearedCacheSummary =
-                            result.reclaimedBytes > 0
-                            ? String(
-                                format: L("Cleared %@"),
-                                DiskCacheUsage.format(bytes: result.reclaimedBytes))
-                            : L("Cache was already empty")
+                            result.error
+                            ?? (result.reclaimedBytes > 0
+                                ? String(
+                                    format: L("Cleared %@"),
+                                    DiskCacheUsage.format(bytes: result.reclaimedBytes)
+                                )
+                                : L("Cache was already empty"))
                         isClearingDiskCache = false
                     }
                 } label: {
@@ -354,7 +362,7 @@ struct CacheSection: View {
                 }
             }
             Text(
-                "Deletes all saved conversation data from disk, including leftover files from an interrupted write. Your chats are not affected — the next reply just takes a little longer to start.",
+                "Clears indexed conversation cache files. Chats and models are not deleted. Unrecognized files are left untouched; future replies may rebuild a cold cache.",
                 bundle: .module
             )
             .font(.caption)

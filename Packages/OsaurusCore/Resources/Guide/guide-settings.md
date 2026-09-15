@@ -71,3 +71,14 @@ General, Chat, Voice, Themes, Credits, Workspaces, Identity, Permissions, Privac
 ## Where settings are stored
 
 Config JSON lives under `~/.osaurus/config/` (`server.json`, `server-runtime.json`, `chat.json`, `default-agent.json`, `memory.json`, …). Secrets live in the macOS Keychain.
+
+### SSD cache limit notice
+
+The chat composer shows **SSD cache limit reached** when the active disk cache
+reaches its effective Disk Cache Size limit or removes older entries to make room.
+It uses the runtime quota, including the limit calculated from the configured SSD
+percentage. The notice appears once per cache directory and limit per app launch.
+**Clear SSD Cache** removes indexed conversation cache files and their linked
+companion data in one click; **Dismiss** closes the notice. Clearing can make the
+next reply slower while cached data rebuilds. The same clear action is available
+under Management → Server → Settings → Cache. Chats and model weights are preserved.
