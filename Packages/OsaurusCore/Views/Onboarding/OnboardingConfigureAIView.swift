@@ -305,19 +305,31 @@ final class ConfigureAIState: ObservableObject {
             ?? candidates.first
     }
 
+    /// Preferred first-run local model. Named explicitly because v0.5 parses
+    /// as 8B and would otherwise beat 0.6's 4B under the largest-parameter
+    /// rule, and Gemma E4B is also a 4B Top Pick that could steal 8 GB.
+    static let preferredOnboardingModelId = "OsaurusAI/Raptor-0.6-4B-JANG_6M"
+
+    /// Parameter-count floor that marks the large-RAM upgrade lane (Gemma 12B,
+    /// Ornith 35B). Comfortable models at or above this beat the preferred
+    /// Raptor 0.6 default. v0.5's 8B name sits below this on purpose.
+    static let largeRAMOnboardingParameterFloor = 12.0
+
     /// Pure, testable core of the onboarding default pick. Given the curated
     /// top-pick `candidates` and the machine RAM, returns the model onboarding
     /// should pre-select (or `nil` when there are no candidates).
     ///
-    /// Rule: auto-default to the curated Top Pick with the **largest base
-    /// parameter count** that **comfortably** fits (`.compatible`, so never
-    /// into the `.tight` band). For variants of the same base model, prefer
-    /// the larger resident footprint as the higher-quality precision.
-    /// Top Picks are the maintained onboarding recommendation set. Raptor v0.5
-    /// 8B-A1B is the mainstream-RAM text default; dense Bonsai 27B, LFM2.5 8B,
-    /// and dense Ornith 1.5 9B remain catalog choices rather than first-run
-    /// defaults. When nothing is comfortable (very low RAM), fall back to the
-    /// smallest candidate overall so onboarding never dead-ends.
+    /// Rule: auto-default to Raptor 0.6 when it **comfortably** fits
+    /// (`.compatible`, never the `.tight` band) and no larger-RAM Top Pick
+    /// (Gemma 12B / Ornith 35B) is also comfortable. Otherwise pick the
+    /// curated Top Pick with the **largest base parameter count** that
+    /// comfortably fits; equal-size variants prefer the larger resident
+    /// footprint. Top Picks are the maintained onboarding recommendation
+    /// set. Raptor v0.5 8B-A1B stays a Top Pick but is not the auto-default.
+    /// Dense Bonsai 27B, LFM2.5 8B, and dense Ornith 1.5 9B remain catalog
+    /// choices rather than first-run defaults. When nothing is comfortable
+    /// (very low RAM), fall back to the smallest candidate overall so
+    /// onboarding never dead-ends.
     ///
     /// This replaced the earlier Gemma-4-QAT auto-default spine: the Gemma 4
     /// `qat-MXFP4` builds are no longer curated Top Picks, so they are neither
@@ -346,6 +358,15 @@ final class ConfigureAIState: ObservableObject {
                 ($0.estimatedMemoryGB ?? .greatestFiniteMagnitude)
                     < ($1.estimatedMemoryGB ?? .greatestFiniteMagnitude)
             })
+        }
+
+        if let preferred = comfortable.first(where: { $0.id == preferredOnboardingModelId }) {
+            let hasLargerRAMTier = comfortable.contains {
+                ($0.parameterCountBillions ?? 0) >= largeRAMOnboardingParameterFloor
+            }
+            if !hasLargerRAMTier {
+                return preferred
+            }
         }
 
         return strongest(comfortable) ?? smallest(candidates)

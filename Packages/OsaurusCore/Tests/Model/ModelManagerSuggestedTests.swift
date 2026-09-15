@@ -121,12 +121,29 @@ struct ModelManagerSuggestedTests {
             let suggested = ModelManager().suggestedModels
             #expect(!suggested.contains { $0.id.lowercased().contains("ling-2.6") })
             // `suggestedModels` is RAM-tiered (the Top Pick can be filtered on a small
-            // runner); the unfiltered curated id list must still carry Raptor.
+            // runner); the unfiltered curated id list must still carry both Raptors.
+            #expect(ModelManager.curatedSuggestedIds.contains("osaurusai/raptor-0.6-4b-jang_6m"))
             #expect(ModelManager.curatedSuggestedIds.contains("osaurusai/raptor-v0.5-8b-a1b-jang_6m"))
         }
     }
 
-    @Test @MainActor func raptorEntry_isMainstreamTopPick() async {
+    @Test @MainActor func raptor06Entry_isOnboardingDefaultTopPick() async {
+        await withIsolatedModelSizeCache {
+            let suggested = ModelManager().suggestedModels
+            let raptor = suggested.first {
+                $0.id == "OsaurusAI/Raptor-0.6-4B-JANG_6M"
+            }
+
+            #expect(raptor != nil)
+            #expect(raptor?.modelType == "spark2_5")
+            #expect(raptor?.isTopSuggestion == true)
+            #expect(raptor?.useCase == .general)
+            #expect(raptor?.downloadSizeBytes == 3_677_829_017)
+            #expect(raptor?.releasedAt != nil)
+        }
+    }
+
+    @Test @MainActor func raptorV05Entry_remainsTopPick() async {
         await withIsolatedModelSizeCache {
             let suggested = ModelManager().suggestedModels
             let raptor = suggested.first {
@@ -140,6 +157,21 @@ struct ModelManagerSuggestedTests {
             #expect(raptor?.downloadSizeBytes == 6_783_354_784)
             #expect(raptor?.releasedAt != nil)
         }
+    }
+
+    @Test @MainActor func raptorEntries_doNotShareFamilyKey() async {
+        #expect(
+            ModelMetadataParser.familyKey(from: "OsaurusAI/Raptor-0.6-4B-JANG_6M")
+                == "osaurusai/raptor-0.6-4b"
+        )
+        #expect(
+            ModelMetadataParser.familyKey(from: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M")
+                == "osaurusai/raptor-v0.5-8b-a1b"
+        )
+        #expect(
+            ModelMetadataParser.familyKey(from: "OsaurusAI/Raptor-0.6-4B-JANG_6M")
+                != ModelMetadataParser.familyKey(from: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M")
+        )
     }
 
     @Test @MainActor func nanbeige42Entry_isJang6mTopPick() async {
@@ -273,13 +305,14 @@ struct ModelManagerSuggestedTests {
         await withIsolatedModelSizeCache {
             let suggested = ModelManager().suggestedModels
             let topIds = Set(suggested.filter(\.isTopSuggestion).map { $0.id })
-            // Recommendation spine: Raptor 8B-A1B hybrid MoE for mainstream
-            // RAM, Ornith 1.5 35B-A3B MXFP8 for the larger tiers, official
-            // OsaurusAI Gemma 4 for the smaller
-            // VL tiers, and Nanbeige 4.2 3B JANG_6M as the text-quality
+            // Recommendation spine: Raptor 0.6 4B for 8 GB through mainstream
+            // RAM (v0.5 stays a sibling Top Pick), Ornith 1.5 35B-A3B MXFP8
+            // for the larger tiers, official OsaurusAI Gemma 4 for the VL
+            // tiers, and Nanbeige 4.2 3B JANG_6M as the text-quality
             // exception (JANG_6M beats that family's MXFP8). These are the
             // ONLY Top Picks.
             let expectedTopPicks: Set<String> = [
+                "OsaurusAI/Raptor-0.6-4B-JANG_6M",
                 "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M",
                 "OsaurusAI/Ornith-1.5-35B-A3B-MXFP8",
                 "OsaurusAI/Nanbeige4.2-3B-JANG_6M",
@@ -289,7 +322,7 @@ struct ModelManagerSuggestedTests {
             ]
             #expect(
                 topIds == expectedTopPicks,
-                "Top Picks should be exactly Raptor + large Ornith 1.5 MXFP8 + Nanbeige JANG_6M + official Gemma; got \(topIds.sorted())"
+                "Top Picks should be exactly both Raptors + large Ornith 1.5 MXFP8 + Nanbeige JANG_6M + official Gemma; got \(topIds.sorted())"
             )
             // Gemma QAT/MXFP4, plus Qwen 3.6 / Nemotron-3 / Bonsai, are
             // catalog-only — installable and selectable, just not part of the
@@ -465,26 +498,43 @@ struct ModelManagerSuggestedTests {
                     "auto-default \(pick.id) at \(gb)GB must not be a Gemma QAT/MXFP4 build")
 
                 // The pick is the largest-base-parameter Top Pick that
-                // comfortably fits. Equal-size variants prefer the larger,
-                // higher-quality footprint. (When nothing is comfortable, the
-                // fallback smallest candidate is allowed.)
+                // comfortably fits, except Raptor 0.6 wins when it fits and
+                // no 12B+ upgrade (Gemma 12B / Ornith 35B) is comfortable.
+                // Equal-size variants prefer the larger, higher-quality
+                // footprint. (When nothing is comfortable, the fallback
+                // smallest candidate is allowed.)
                 let comfortable = candidates.filter {
                     $0.compatibility(totalMemoryGB: gb) == .compatible
                 }
                 if !comfortable.isEmpty {
-                    let maxParameters = comfortable.compactMap(\.parameterCountBillions).max() ?? 0
-                    #expect(
-                        (pick.parameterCountBillions ?? -1) == maxParameters,
-                        "auto-default at \(gb)GB should have the largest comfortable base model"
-                    )
-                    let strongestFamily = comfortable.filter {
-                        ($0.parameterCountBillions ?? 0) == maxParameters
+                    let preferred = comfortable.first {
+                        $0.id == ConfigureAIState.preferredOnboardingModelId
                     }
-                    let maxMem = strongestFamily.compactMap(\.estimatedMemoryGB).max() ?? 0
-                    #expect(
-                        (pick.estimatedMemoryGB ?? -1) == maxMem,
-                        "auto-default at \(gb)GB should prefer the highest-quality fitting variant"
-                    )
+                    let hasLargerRAMTier = comfortable.contains {
+                        ($0.parameterCountBillions ?? 0)
+                            >= ConfigureAIState.largeRAMOnboardingParameterFloor
+                    }
+                    if let preferred, !hasLargerRAMTier {
+                        #expect(
+                            pick.id == preferred.id,
+                            "auto-default at \(gb)GB should be preferred Raptor 0.6"
+                        )
+                    } else {
+                        let maxParameters =
+                            comfortable.compactMap(\.parameterCountBillions).max() ?? 0
+                        #expect(
+                            (pick.parameterCountBillions ?? -1) == maxParameters,
+                            "auto-default at \(gb)GB should have the largest comfortable base model"
+                        )
+                        let strongestFamily = comfortable.filter {
+                            ($0.parameterCountBillions ?? 0) == maxParameters
+                        }
+                        let maxMem = strongestFamily.compactMap(\.estimatedMemoryGB).max() ?? 0
+                        #expect(
+                            (pick.estimatedMemoryGB ?? -1) == maxMem,
+                            "auto-default at \(gb)GB should prefer the highest-quality fitting variant"
+                        )
+                    }
                 }
             }
         }
@@ -506,9 +556,13 @@ struct ModelManagerSuggestedTests {
         }
     }
 
-    @Test @MainActor func onboardingDefault_selectsRaptorThrough24GB() async {
+    @Test @MainActor func onboardingDefault_selectsRaptor06Through24GB() async {
         await withIsolatedModelSizeCache {
             let candidates = ModelManager().suggestedModels.filter(\.isTopSuggestion)
+            let eightGB = ConfigureAIState.recommendedLocalPick(
+                from: candidates,
+                totalMemoryGB: 8
+            )
             let sixteenGB = ConfigureAIState.recommendedLocalPick(
                 from: candidates,
                 totalMemoryGB: 16
@@ -522,20 +576,15 @@ struct ModelManagerSuggestedTests {
                 totalMemoryGB: 24
             )
 
-            let raptorId = "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M"
+            let raptorId = ConfigureAIState.preferredOnboardingModelId
+            #expect(eightGB?.id == raptorId)
             #expect(sixteenGB?.id == raptorId)
             #expect(eighteenGB?.id == raptorId)
             #expect(twentyFourGB?.id == raptorId)
 
-            // Nanbeige JANG_6M (~4.5 GB working set) is a Top Pick but must
-            // not steal the 8 GB multimodal floor (Gemma E2B). Raptor's
-            // measured bundle is intentionally not treated as comfortable on
-            // an 8 GB machine.
-            let eightGB = ConfigureAIState.recommendedLocalPick(
-                from: candidates,
-                totalMemoryGB: 8
-            )
-            #expect(eightGB?.id == "OsaurusAI/gemma-4-E2B-it-8bit")
+            // v0.5 remains a Top Pick and parses as 8B, but must not beat
+            // the 0.6 default on machines where 0.6 comfortably fits.
+            #expect(candidates.contains { $0.id == "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M" })
         }
     }
 }

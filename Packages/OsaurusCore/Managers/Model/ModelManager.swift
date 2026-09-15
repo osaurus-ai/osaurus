@@ -716,23 +716,26 @@ extension ModelManager {
     nonisolated fileprivate static let curatedSuggestedModels: [MLXModel] = [
         // MARK: Gemma 4 — multimodal
         //
-        // Onboarding recommendation spine (2026-08-31). Top Pick membership
+        // Onboarding recommendation spine (2026-09-15). Top Pick membership
         // controls the first-run shortlist; the memory-fit selector below still
         // refuses to auto-default into the `.tight` band:
-        //   • Mainstream RAM → Raptor v0.5 8B-A1B JANG_6M (~1B active) and
-        //                      Gemma 4 12B-it-MXFP8 as RAM allows. LFM2.5 8B
-        //                      and dense Ornith 1.5 9B remain in the catalog,
-        //                      but Raptor is the small-active-set first-run
-        //                      default once it comfortably fits.
-        //   • Larger RAM     → Ornith 1.5 35B-A3B MXFP8 (below).
-        //   • Smaller RAM → official OsaurusAI Gemma 4 at the highest non-QAT,
-        //                    non-MXFP4 precision that exists: `12B-it-MXFP8`
-        //                    (the only MXFP8 Gemma the org ships) and the
-        //                    `E4B/E2B-it-8bit` retention builds (no E-series
-        //                    MXFP8 exists on the HF org). Nanbeige 4.2 3B
-        //                    JANG_6M is the text-quality exception in this
-        //                    band (looped transformer; JANG_6M beats the
-        //                    family's MXFP8 on fidelity — see that entry).
+        //   • 8 GB through mainstream RAM → Raptor 0.6 4B JANG_6M (Spark-X2.5
+        //                      dense, ~3.41 GiB). v0.5 8B-A1B stays a Top Pick
+        //                      so existing installs can keep it, but it is not
+        //                      the auto-default. LFM2.5 8B and dense Ornith
+        //                      1.5 9B remain catalog-only.
+        //   • Larger RAM     → Ornith 1.5 35B-A3B MXFP8 (below), or Gemma 4
+        //                      12B-it-MXFP8 when that comfortably fits first.
+        //   • Smaller RAM fallback → official OsaurusAI Gemma 4 at the highest
+        //                    non-QAT, non-MXFP4 precision that exists:
+        //                    `12B-it-MXFP8` (the only MXFP8 Gemma the org
+        //                    ships) and the `E4B/E2B-it-8bit` retention
+        //                    builds (no E-series MXFP8 exists on the HF org).
+        //                    Nanbeige 4.2 3B JANG_6M is the text-quality
+        //                    exception in this band (looped transformer;
+        //                    JANG_6M beats the family's MXFP8 on fidelity —
+        //                    see that entry) but must not steal the 8 GB
+        //                    floor from Raptor 0.6.
         // A *recommended* Gemma build must never be `qat` or plain `MXFP4`, so
         // the 5 Gemma `qat-MXFP4` builds (E2B/E4B/12B/31B/26B-A4B) stay in the
         // catalog but are not Top Picks. Qwen 3.6 (incl. MXFP8-MTP), Nemotron-3
@@ -864,7 +867,20 @@ extension ModelManager {
             useCase: .vision
         ),
 
-        // MARK: Raptor v0.5 (Ling 3 / BailingMoeV3 — Top Pick)
+        // MARK: Raptor 0.6 (Spark-X2.5 — onboarding default)
+
+        curated(
+            id: "OsaurusAI/Raptor-0.6-4B-JANG_6M",
+            description:
+                "Raptor 0.6 4B text model on Spark-X2.5. JANG_6M — fast agentic tool use in a 3.41 GiB dense bundle. 1M context.",
+            isTopSuggestion: true,
+            bootstrapDownloadSizeBytes: 3_677_829_017,
+            modelType: "spark2_5",
+            releasedAt: date("2026-09-10"),
+            useCase: .general
+        ),
+
+        // MARK: Raptor v0.5 (Ling 3 / BailingMoeV3 — Top Pick, not the default)
 
         curated(
             id: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M",
@@ -1304,8 +1320,8 @@ extension ModelManager {
         //
         // Kept at the tail of the catalog so LFM rows always render at the
         // bottom of order-following lists (the onboarding chooser keeps
-        // catalog order). Raptor v0.5 now occupies the mainstream-RAM Top Pick
-        // slot; LFM2.5 remains available as an installable alternative.
+        // catalog order). Raptor 0.6 occupies the onboarding default slot;
+        // LFM2.5 remains available as an installable alternative.
 
         curated(
             id: "OsaurusAI/LFM2.5-8B-A1B-MXFP8",
