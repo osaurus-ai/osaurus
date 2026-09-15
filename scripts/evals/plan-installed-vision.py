@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Plan coverage from installed evidence and actual bundle metadata, never names.
 
-Selecting representatives qualifies coverage groups, not every member artifact.
+Representative runs exercise a group; unexecuted artifacts remain unqualified.
 All members, rejections and pending runtime rows remain in the output.
 """
 import argparse
+import collections
 import hashlib
 import json
 import pathlib
@@ -47,10 +48,19 @@ def metadata(row):
     quant = quantization_descriptors(config.get("quantization", {}))
     quant += quantization_descriptors(config.get("quantization_config", {}))
     jang = object_at(root / "jang_config.json")
-    quant += quantization_descriptors(jang)
+    quant += quantization_descriptors({
+        key: jang[key] for key in ("quantization", "format", "weight_format", "mxtq_bits") if key in jang
+    })
     index = object_at(root / "model.safetensors.index.json").get("weight_map", {})
-    files = sorted({root / name for name in index.values()}) if index else sorted(root.glob("*.safetensors"))
     dtypes, headers, failures = set(), [], []
+    if index and (not isinstance(index, dict) or any(
+        not isinstance(name, str) or pathlib.Path(name).name != name or not name.endswith(".safetensors")
+        for name in index.values()
+    )):
+        files = []
+        failures.append({"file": str(root / "model.safetensors.index.json"), "error": "invalid shard paths"})
+    else:
+        files = sorted({root / name for name in index.values()}) if index else sorted(root.glob("*.safetensors"))
     weight_bytes = 0
     for path in files:
         try:
@@ -69,8 +79,12 @@ def metadata(row):
             header = json.loads(data)
             if not isinstance(header, dict):
                 raise ValueError("header is not an object")
-            dtypes.update(tensor.get("dtype", "unknown") for key, tensor in header.items()
-                          if key != "__metadata__" and isinstance(tensor, dict))
+            for key, tensor in header.items():
+                if key == "__metadata__":
+                    continue
+                if not isinstance(tensor, dict) or not isinstance(tensor.get("dtype"), str):
+                    raise ValueError("invalid tensor dtype metadata")
+                dtypes.add(tensor["dtype"])
             headers.append({"file": path.name, "bytes": size,
                             "header_sha256": hashlib.sha256(data).hexdigest()})
         except (OSError, ValueError, TypeError) as error:
@@ -100,17 +114,16 @@ def main():
         row = dict(installed)
         row["runtime_status"] = "not_run"
         row["runtime_selected"] = False
-        if installed["declaresVision"] or installed["supportsImage"]:
-            row.update(metadata(installed))
-            key = hashlib.sha256(json.dumps(row["contract"], sort_keys=True).encode()).hexdigest()[:16]
-            row["coverage_group"] = key
-            if installed["supportsImage"] and not row["header_errors"]:
-                groups.setdefault(key, []).append(row)
-                row["selection_reason"] = "pending runtime qualification"
-            else:
-                row["selection_reason"] = "installed evidence rejected; " + installed["reason"]
+        # Audit every installed bundle, including architectures or config shapes
+        # the current capability detector rejects. Rejections must stay visible.
+        row.update(metadata(installed))
+        key = hashlib.sha256(json.dumps(row["contract"], sort_keys=True).encode()).hexdigest()[:16]
+        row["coverage_group"] = key
+        if installed["supportsImage"] and not row["header_errors"]:
+            groups.setdefault(key, []).append(row)
+            row["selection_reason"] = "pending runtime qualification"
         else:
-            row["selection_reason"] = "no installed vision declaration or admitted image route"
+            row["selection_reason"] = "installed evidence did not admit image input; " + installed["reason"]
         rows.append(row)
     for members in groups.values():
         ordered = sorted(members, key=lambda row: (row["weight_bytes"], row["directory"]))
@@ -126,8 +139,17 @@ def main():
               "selected_count": sum(row["runtime_selected"] for row in rows), "bundles": rows}
     args.out.write_text(json.dumps(output, indent=2) + "\n")
     print(f"{len(rows)} inventoried; {len(groups)} coverage groups; {output['selected_count']} runtime selections")
-    selected = sorted((row for row in rows if row["runtime_selected"]),
-                      key=lambda row: (row["contract"]["architecture"], row["weight_bytes"]))
+    # Cover architecture breadth first, then additional formats. Sorting only
+    # by model ID can spend the entire first run on one publisher/family.
+    by_architecture = collections.defaultdict(list)
+    for row in rows:
+        if row["runtime_selected"]:
+            by_architecture[row["contract"]["architecture"]].append(row)
+    queues = [collections.deque(sorted(members, key=lambda row: row["weight_bytes"]))
+              for _, members in sorted(by_architecture.items())]
+    selected = []
+    while any(queues):
+        selected.extend(queue.popleft() for queue in queues if queue)
     for row in selected:
         if any(character in row["modelID"] for character in "\r\n\t"):
             raise SystemExit("Model identifier contains a control delimiter")
