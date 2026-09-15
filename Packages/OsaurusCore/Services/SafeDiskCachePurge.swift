@@ -13,6 +13,7 @@ enum SafeDiskCachePurge {
     static func clear(directory: URL) -> Result {
         var result = Result()
         var db: OpaquePointer?
+        defer { if let db { sqlite3_close(db) } }
         let fm = FileManager.default
         do {
             let root = directory.standardizedFileURL
@@ -30,7 +31,6 @@ enum SafeDiskCachePurge {
             else { throw failure("Refusing a linked cache index.") }
             guard sqlite3_open_v2(index.path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK
             else { throw failure("Cannot open the cache index.") }
-            defer { sqlite3_close(db) }
             sqlite3_busy_timeout(db, 1000)
             guard sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK
             else { throw failure("Cache is busy. Try again after current work finishes.") }

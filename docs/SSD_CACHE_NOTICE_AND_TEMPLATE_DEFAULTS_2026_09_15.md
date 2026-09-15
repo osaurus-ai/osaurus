@@ -36,3 +36,13 @@ qwen38-92-clipboard-followup.png, combined-ui-run12-prompts. These are baseline
 receipts, not proof of this changed source. Exact Qwen3.6 35B6bit load exceeded the
 28GiB private footprint bound at34.29GiB and aborted before inference. No physical
 M4/16GB run has been performed on this M5 Max128GiB host.
+
+Focused source b966f372940a02ab8bc381eb5ae2b53e1ceef33e: 175/175 tests
+(161 Swift Testing across6suites,14 XCTest cache wiring). Command and output:
+SWIFTTEST_SSDDefaults0915__141006.log; xcresultssd-defaults-b966f3729-debug.xcresult.
+Supervisor exit0,peak10.70GiB,swapflat5.69GiB,cleanup0. CoreData XPC warnings were
+logged by the isolated test host; no test failures. The first attempt02ca failed
+compilation of mutating #expect receivers; corrected test evaluation, no policy
+change. Following review, the localization catalog retains the baseline key order
+without changing its JSON values, and SQLite handles now close even when open fails.
+Those last changes require the next current-source test/build receipts.
