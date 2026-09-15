@@ -26,9 +26,12 @@ struct ConfigPlanApprovalCard: View {
         ZStack {
             if let request = queue.pending.first {
                 // Modal scrim: dims the chat and swallows clicks while the
-                // plan review is pending. No tap-to-dismiss; a decision this
-                // consequential resolves only through the buttons.
-                Color.black.opacity(0.35)
+                // plan review is pending, matching ThemedAlertDialog's dim
+                // (theme-aware color and opacity). No tap-to-dismiss; a
+                // decision this consequential resolves only through the
+                // buttons.
+                (theme.isDark ? Color.black : Color(white: 0.1))
+                    .opacity(theme.isDark ? 0.5 : 0.35)
                     .ignoresSafeArea()
                     .contentShape(Rectangle())
                     .onTapGesture {}
@@ -249,6 +252,8 @@ struct ConfigPlanApprovalCard: View {
                 )
         }
         .buttonStyle(PlainButtonStyle())
+        // Themed-alert convention: Esc activates cancel.
+        .keyboardShortcut(.cancelAction)
     }
 
     private func primaryButton(_ title: String, action: @escaping () -> Void) -> some View {
@@ -261,5 +266,7 @@ struct ConfigPlanApprovalCard: View {
                 .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
         }
         .buttonStyle(PlainButtonStyle())
+        // Themed-alert convention: Return activates the primary action.
+        .keyboardShortcut(.defaultAction)
     }
 }
