@@ -410,3 +410,54 @@ admission failure. A concrete private-supervisor reclaimable-metric proposal
 and nine-fixture/live-Mach-probe receipt are prepared but not applied; the
 separate metric choice is awaiting user input. App admission and OS settings
 remain unchanged.
+
+
+## Additional current-runtime qualification and remaining image recall gap
+
+At unchanged app runtime d0d4b9aefa8d0ef85d6b7f9c832bc050ccdcb643,
+engine441d9a8e8df19f4c364b50903cbc62b4059639c9, the resumed bounded installed
+Vision matrix completed all26selected bundles:22passed,4failed. The failures
+remain Ornith9B2D, both ZAYA quantizations and CRACK Qwen3.8-27B2D. All seven
+requests completed for each scored row; seven previously oversized bundles
+were not rerun under this28GiB footprint guard. This is not universal model
+quality or low-RAM qualification. Raw reports: vision-d0d4-resumed-results.json,
+vision-d0d4-bounded/, vision-d0d4-remaining/. Resumed run peak15.01GiB,
+swap6.10->6.00GiB, no pressure or resource abort, cleanupzero. Private tests now
+use user-approved reclaimable RAM with the same24GiB minimum, normal pressure,
+1GiBswap growth,28GiB footprint,1800s and process-ownership limits.
+
+Native run11 completed both utilitiesON andOFF with GemmaE2B8bit parent and
+Qwen3-0.6B8bit Writer child. Actual child result CROSS_MODEL_OK and full
+swap_unload_reload phases were observed in both cases, child rates4.7/7.1tok/s.
+Both parent follow-ups returned CROSS_MODEL_OK. Writer's default was restored
+to Gemma, both utilitiesON, CoreUsechatmodel. Artifacts utility-d0d4-cross-model-*
+and combined-ui-run11-measurements.jsonl. Run peak3.24GiB, swap6.49->6.43GiB;
+this128GiB Mac is not the reporter's16GiB hardware.
+
+Reporter admission replay ran13canonical cases plus384steps across32cycles
+using one production reservation actor, preserving its real refresh delay.
+All expected decisions matched, all final reservations were zero. This includes
+expected refusals: reporter2442035200 bytes remain below3758096384 reserve plus
+incremental child requirement. No inference or physical16GiB emulation occurred.
+Artifacts reporter-stress-current-result.json and reporter-stress-fixture-receipt.json.
+
+Native clipboard proof with the reporter's128px blue/red PNG and LFM2.5VL3B4M
+returned blue on initial and follow-up requests (reported344.5/323.3tok/s,
+one token each). Preview copy and composer paste produced an actual attachment
+thumbnail. Artifacts lfm-d0d4-reporter-clipboard-{preview,result,followup}.*;
+input SHA256c42c77f9d49d5208c97f22651a0bece4344486d008778f720df06bb7d3987c93.
+A separate red-then-blue conversation correctly answered each new image but
+later answered Red when asked about the most recent image. prepareInput logged
+twoimages, so no image-drop or cache root cause is established from that alone.
+The new eighth Vision request covers this omitted later-recall case, retaining
+all actual prior answers. Its runtime qualification is pending; the seven-request
+22/26 score must not be reported as covering it.
+
+Published LM Studio Qwen3.8-27B6bit and Qwen3.6-35B-A3B6bit both contain333
+vision tensors in actual safetensors headers, plus processor/vision configuration.
+Pinned metadata receipts are in qwen-lmstudio-remote-metadata/. Tag0.25.0 already
+pins engine42269ff06a78854ccb14854846a514c55244e596, whose VLM registry includes
+qwen3_5 and qwen3_5_moe and their implementations. The report's asserted absence
+of encoders is contradicted by this source; its actual runtime failure remains
+unreproduced with the exact published6bit bundles. Download and qualification
+are in progress. Do not infer runtime support from registration alone.
