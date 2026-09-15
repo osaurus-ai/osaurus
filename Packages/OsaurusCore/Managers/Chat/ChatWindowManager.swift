@@ -351,6 +351,24 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         return true
     }
 
+    /// Start a new chat on `agentId` in the frontmost chat window, the same
+    /// way picking that agent in the sidebar does: the agent's existing tabs
+    /// are shown, a blank active tab is repurposed, otherwise a new tab
+    /// opens. Returns false when no chat window exists.
+    @discardableResult
+    public func startNewChatInLastFocusedWindow(agentId: UUID) -> Bool {
+        let targetId: UUID? =
+            if let lastId = lastFocusedWindowId, windowStates[lastId] != nil {
+                lastId
+            } else {
+                windowStates.keys.first
+            }
+        guard let targetId, let state = windowStates[targetId] else { return false }
+        showWindow(id: targetId)
+        state.startNewChat(with: agentId)
+        return true
+    }
+
     /// The chat window app-menu keyboard shortcuts act on: the key chat
     /// window when one is focused, otherwise the last-focused window as long
     /// as it is still visible. Hidden windows are excluded — unlike ⌘N these

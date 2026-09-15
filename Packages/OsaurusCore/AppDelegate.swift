@@ -2324,11 +2324,15 @@ extension AppDelegate {
         }
     }
 
-    /// Show a new chat window (creates new window via ChatWindowManager)
+    /// Start a new chat: opens a tab in the existing chat window when one
+    /// exists (menu bar "Ask AI", Dock "New Chat"), and only creates a new
+    /// window when there is none. Matches the sidebar New Chat button.
     @MainActor func showChatOverlay() {
         closePopoverAndPerform {
-            log.debug("Creating new chat window via ChatWindowManager")
-            ChatWindowManager.shared.createWindow()
+            if !ChatWindowManager.shared.startNewChatInLastFocusedWindow() {
+                log.debug("No chat window; creating one via ChatWindowManager")
+                ChatWindowManager.shared.createWindow()
+            }
 
             // start clipboard monitoring and do an immediate check
             ClipboardService.shared.startMonitoring()
@@ -2345,13 +2349,16 @@ extension AppDelegate {
         }
     }
 
-    /// Show a new chat window for a specific agent (used by VAD)
+    /// Start a new chat for a specific agent (used by VAD): a tab in the
+    /// existing chat window when one exists, otherwise a new window.
     @MainActor func showChatOverlay(forAgentId agentId: UUID) {
         closePopoverAndPerform {
-            log.debug(
-                "Creating new chat window for agent \(agentId, privacy: .public) via ChatWindowManager"
-            )
-            ChatWindowManager.shared.createWindow(agentId: agentId)
+            if !ChatWindowManager.shared.startNewChatInLastFocusedWindow(agentId: agentId) {
+                log.debug(
+                    "No chat window; creating one for agent \(agentId, privacy: .public) via ChatWindowManager"
+                )
+                ChatWindowManager.shared.createWindow(agentId: agentId)
+            }
 
             log.debug("Chat window shown for agent, count=\(ChatWindowManager.shared.windowCount)")
             NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
