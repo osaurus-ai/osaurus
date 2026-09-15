@@ -84,3 +84,57 @@ label because the native AX button was unnamed. These follow-up changes require
 fresh focused and native proof; the previous 175 tests and runtime results do
 not establish the follow-up source as verified. The isolated profile remains
 at 0.005% for the next reproduction and must be restored to 10% through Settings.
+
+## Native popup qualification on 425d42ec5
+
+The follow-up source `425d42ec5d040b366ba119321c4c0b1b18aa04b9` passed
+177/177 focused tests. App and Evals Release builds completed within the
+unchanged 1800-second supervisor: peak 22.50 GiB, swap 5.65 -> 5.64 GiB,
+exit 0 and zero remaining owned processes. App SHA256
+`bc56f54534d32eac76196fe1bd354ed1da769b667853584bd6f5f1f0fbf588bc`;
+Evals SHA256 `b6cf1dcc352f1ca6c63ae792bdc5e240b0de63a731fce9b2cfcf7833d7b42bd9`.
+Engine pin remains `441d9a8e8df19f4c364b50903cbc62b4059639c9`.
+
+Native run14 now showed the 191 MB quota notice after a real eviction in a
+fresh same-model chat. It hid during the next image turn and returned only
+when the turn settled. Popup Clear reported 164 MB; the live coordinator's
+indexed bytes fell from 172,455,808 to zero while the model remained loaded
+at 22:36:48 and 22:36:51 UTC. Idle unload followed at 22:36:54. Unknown
+sentinel data and the SQLite index remained; linked cache payloads were gone.
+Dismiss was exercised. A coherent follow-up refilled the cache, and another
+fresh chat evicted again without a duplicate notice.
+
+Run14 answers were Blue / Red / Blue / blue, with 50/261/59/74 generated
+tokens and 20.8/20.7/20.7/20.6 tok/s. These were real Preview-copy/native-paste
+requests and retained-image follow-ups, using the LM Studio Qwen3.8 27B 6-bit
+bundle and native thinking/sampling defaults. Reasoning closed, Stop cleared,
+and input unlocked. The history turn accepted a disk restore at boundary188,
+64 layers; topology is 16 KV + 48 Mamba, not TurboQuant. Separate SSM companion
+hit counters remain zero and are not claimed as a hit.
+
+Settings Clear also worked on this build (159 MB). The original 10% share was
+saved, the app relaunched (run15), and the real Settings field still showed
+10%. An actual post-relaunch image-history turn returned red (34 tokens,
+20.8 tok/s). The loaded engine enforced 187,078,148,096 bytes, matching the
+174.2 GiB host-limited readout rather than the unbounded 372.2 GiB share.
+Both runs exited 0 with owned cleanup zero. Peaks were 21.42 / 20.42 GiB;
+swap 5.64 -> 5.63 / 5.63 -> 5.63 GiB. This is not a physical16GiB qualification.
+
+Raw evidence in the same private root: `ssd-425-*.{ax.txt,png}`,
+`ssd-run14-{before-popup-clear-resident,after-popup-clear,resident-clear-timeline,
+fresh-chat-after-refill-cache}.json`, `ssd-run15-restored-active-cache.json`,
+`combined-ui-run14/15-{launch.json,measurements.jsonl,prompts/,timing/}`,
+`SWIFTTEST_SSDUI0915__153424.log`, `SWIFTTEST_SSDUI0915__154102.log`.
+The Settings Clear button's visible label and action were exercised; CUA still
+reported its AX button as unnamed, so no claim of a resolved AX-label issue.
+
+CI run35028563781 retained five issues in two RuntimePolicySourceTests cases:
+one expected a single-line alignment-authorization assignment that formatting
+split; four explicitly required the obsolete closed-thinking family defaults.
+The tests now normalize whitespace while checking the complete authorization
+ternary, and require the omitted-options guard before family overrides with
+no reasoning-context writes before it. Explicit reasoning overrides and all
+other policy assertions remain. This follow-up changes tests/documentation
+only; production source is identical to 425d42ec5. Its focused test rerun is
+pending. Current-build full vision and AgentLoop evaluations remain required;
+prior non-perfect scores and the oversized-model resource abort are retained.
