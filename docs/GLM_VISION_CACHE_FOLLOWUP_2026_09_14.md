@@ -84,3 +84,15 @@ transition and public-pin matrix remain pending.
 Engine CI has four successful Linux builds, advisory repository-wide style
 failure, and queued self-hosted Mac/CUDA jobs. The repository runner API
 reported zero registered runners. This is not a green CI claim.
+
+## September15 admission edge cases
+
+The next pin is `441d9a8e8df19f4c364b50903cbc62b4059639c9`, adding the shared
+processor-registration/override contract. Local vision evidence now rejects unknown
+processors and malformed tensor dtype/payload length with overflow-safe arithmetic.
+The three false positives were reproduced by the old executable: five of eight
+admission probe checks passed. New regressions and corrected-runtime proof are
+pending; the unchanged local build supervisor refused at7.48GiBswap>2GiB.
+See `VISION_IDLE_EDGE_CASE_AUDIT_2026_09_15.md` for exact sources, independent parser
+oracle, storage-dtype inventory, full prior scores and remaining UI/settings gates.
+The prior combined CI and model sweep do not verify these new changes.
