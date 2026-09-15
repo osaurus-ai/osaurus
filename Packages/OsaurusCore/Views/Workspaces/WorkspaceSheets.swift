@@ -240,7 +240,7 @@ struct CreateWorkspaceSheet: View {
             onConfirm: { submit() },
             secondaryTitle: checkoutOpened ? "Close" : "Cancel",
             confirmDismisses: checkoutOpened,
-            height: needsCheckout && !checkoutOpened ? 470 : 320
+            height: checkoutOpened ? 320 : (needsCheckout ? 540 : 420)
         ) {
             if checkoutOpened {
                 checkoutOpenedBody
