@@ -296,6 +296,12 @@ Validation at this step: `v == 1`; `agent_address` is `0x` + 40 hex;
 `device_id` is 1–64 chars of `[A-Za-z0-9._-]`; `device_name` ≤ 80 chars
 (optional). Anything else → `400`.
 
+The pending table is bounded: **one outstanding challenge per
+`(agent_address, device_id)`** — asking again replaces (invalidates) the
+earlier nonce for that pair — plus a hard cap on the whole table
+(`maxPendingChallenges`, oldest-expiring evicted first) and the 120 s TTL.
+Clients **MUST** use the most recent nonce they were issued.
+
 **Step 2 — prove the master, receive the key**
 
 ```
@@ -313,19 +319,26 @@ signature = EIP191_sign(master, message)        // 65 bytes r‖s‖v (v = 27/28
                   "encPub": "<base64url X25519 public key>"}}
 ```
 
+`encPub` is **required**: the base64url of a 32-byte raw X25519 public key
+generated fresh for this exchange. Every Osaurus client can mint one, and
+the relay terminates TLS and is untrusted by design, so a 90-day agent key
+is never returned in plaintext.
+
 Host checks, in order:
 
 | # | Check | Failure |
 |---|---|---|
+| 0 | `encPub` present and parses as a raw X25519 public key — checked **before** the nonce is consumed, so a malformed attempt does not burn it | `400 encPub is required: a base64url X25519 public key (32 bytes)` |
 | 1 | nonce known, unexpired (120 s), issued for this `agent_address` **and** `device_id`; consumed on use | `401 Unknown or expired challenge nonce` |
 | 2 | host can read its master non-interactively | `503 Host identity is unavailable right now` |
 | 3 | `ecrecover(message, wallet_signature) == host master address` | `401 Signature does not match this host's identity` |
 | 4 | an agent with that address is hosted here | `404 Agent address not found on this server` |
 | 5 | agent is not built-in | `403 Built-in agents are not reachable from other devices` |
 | 6 | mint `osk-v1` (label `Owner device – <device_name>`, 90-day expiry, `aud` = agent address) | `500 Failed to mint access key` |
-| 7 | if `encPub` present, HPKE-seal the key (§5.4); an unusable `encPub` deletes the minted key | `400 Invalid encryption key` |
+| 7 | HPKE-seal the key to `encPub` (§5.4); if sealing fails the minted key is deleted and nothing is returned | `500 Failed to mint access key` |
 
-→ `200 PairInviteResponse` (§5.4) with `"secureChannel": true`.
+→ `200 PairInviteResponse` (§5.4) with `"secureChannel": true` and the key
+only inside `sealedApiKey`; `apiKey` is always empty on this path.
 
 Semantics:
 
@@ -338,8 +351,9 @@ Semantics:
 - Signatures over the workspace wording (`osaurus-workspaces:redeem:…`) are
   **not** accepted here and vice versa — the domain string is part of the
   proof.
-- `encPub` is optional on the wire but **strongly recommended**: the relay
-  terminates TLS, so an unsealed key is visible to it.
+- There is no plaintext delivery. Unlike the invite and workspace flows,
+  where `encPub` is optional for older connectors, owner redeem has no
+  legacy clients to accommodate and refuses step two without a usable key.
 
 ### 5.2 Workspace redeem (teammate or same identity via a Workspace)
 

@@ -19,6 +19,7 @@
 //  limiter, redaction, and HPKE sealing contract.
 //
 
+import CryptoKit
 import Foundation
 import LocalAuthentication
 
@@ -70,9 +71,11 @@ struct OwnerPairRedeemEnvelope: Codable, Equatable, Sendable {
         /// Step two only: EIP-191 MASTER-key signature over
         /// `osaurus-owner:redeem:<agent_address_lowercase>:<nonce>`.
         let walletSignature: String?
-        /// Step two only: ephemeral X25519 public key (base64url) the host
-        /// HPKE-seals the minted key to. Strongly recommended — the relay
-        /// terminates TLS.
+        /// Step two: ephemeral X25519 public key (base64url, 32 raw bytes)
+        /// the host HPKE-seals the minted key to. REQUIRED — the relay
+        /// terminates TLS and is untrusted by design, so a 90-day agent key
+        /// never crosses it in plaintext. Step two without a valid key is
+        /// `400`, before the nonce is consumed.
         let encPub: String?
 
         enum CodingKeys: String, CodingKey {
@@ -157,9 +160,9 @@ actor OwnerDeviceAccessHost {
         let agentName: String
         let agentDescription: String?
         let agentModel: String?
-        /// Plaintext key, empty when sealed.
-        let apiKeyForWire: String
-        let sealedApiKey: PairingKeyEnvelope.Sealed?
+        /// The minted key, HPKE-sealed to the redeemer's `encPub`. Owner
+        /// redeem never returns a plaintext key.
+        let sealedApiKey: PairingKeyEnvelope.Sealed
     }
 
     enum Outcome: Sendable {
@@ -186,12 +189,24 @@ actor OwnerDeviceAccessHost {
         let expiresAt: Date
     }
 
+    /// Outstanding step-one nonces. Bounded two ways, because step one is
+    /// unauthenticated and deliberately does not reveal whether the agent
+    /// exists (so it cannot filter on the agent):
+    ///   1. one outstanding challenge per `(agent, device_id)` — a repeat
+    ///      request replaces (invalidates) the earlier nonce for that pair,
+    ///      so a single caller cannot grow the table by re-asking;
+    ///   2. a hard cap on the whole table, oldest-expiring evicted first.
+    /// Entries also expire after `challengeTTL`.
     private var pendingChallenges: [String: PendingChallenge] = [:]
     private var keyRecords: [String: OwnerDeviceKeyRecord] = [:]
     private var didLoadPersistedKeys = false
 
-    /// Upper bound on outstanding challenges; oldest evicted past the cap.
+    /// Hard upper bound on outstanding challenges (shared with workspace
+    /// redeem); the oldest-expiring entry is evicted past the cap.
     static let maxPendingChallenges = WorkspaceAgentAccessHost.maxPendingChallenges
+
+    /// Test seam: how many challenges are outstanding right now.
+    var pendingChallengeCount: Int { pendingChallenges.count }
 
     // MARK: Seams
 
@@ -239,9 +254,13 @@ actor OwnerDeviceAccessHost {
                 let address = agent.agentAddress
             else { return nil }
             return ResolvedAgent(
-                id: agent.id, keyPath: keyPath, address: address, name: agent.name,
+                id: agent.id,
+                keyPath: keyPath,
+                address: address,
+                name: agent.name,
                 description: agent.description,
-                model: AgentManager.shared.effectiveModel(for: agent.id), isBuiltIn: agent.isBuiltIn
+                model: AgentManager.shared.effectiveModel(for: agent.id),
+                isBuiltIn: agent.isBuiltIn
             )
         }
     }
@@ -284,7 +303,21 @@ actor OwnerDeviceAccessHost {
         guard let nonce = payload.nonce, let signature = payload.walletSignature else {
             return issueChallenge(agentAddress: payload.agentAddress, deviceId: deviceId)
         }
-        return await redeem(payload: payload, deviceId: deviceId, nonce: nonce, walletSignature: signature)
+        // Step two must name a usable recipient key BEFORE anything is
+        // consumed or minted: the nonce survives a malformed retry, and no
+        // key exists to leak or clean up.
+        guard let encPub = payload.encPub, Self.isValidEncPub(encPub) else {
+            return .rejected(
+                .malformedRequest("encPub is required: a base64url X25519 public key (32 bytes)")
+            )
+        }
+        return await redeem(
+            payload: payload,
+            deviceId: deviceId,
+            nonce: nonce,
+            walletSignature: signature,
+            encPub: encPub
+        )
     }
 
     static func isPlausibleAddress(_ address: String) -> Bool {
@@ -292,15 +325,32 @@ actor OwnerDeviceAccessHost {
         return address.dropFirst(2).allSatisfy(\.isHexDigit)
     }
 
+    /// Same parse `PairingKeyEnvelope.seal` performs, run up front.
+    static func isValidEncPub(_ encPub: String) -> Bool {
+        guard let raw = Data(base64urlEncoded: encPub), raw.count == 32 else { return false }
+        return (try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: raw)) != nil
+    }
+
     // MARK: Step one
 
     private func issueChallenge(agentAddress: String, deviceId: String) -> Outcome {
         prunePendingChallenges()
+        let addressLower = agentAddress.lowercased()
+
+        // One outstanding challenge per (agent, device): re-asking replaces
+        // the earlier nonce instead of adding a second entry.
+        for (existingNonce, pending) in pendingChallenges
+        where pending.agentAddressLower == addressLower && pending.deviceId == deviceId {
+            pendingChallenges.removeValue(forKey: existingNonce)
+        }
+
+        // Hard cap on the table regardless of how many distinct pairs ask.
         while pendingChallenges.count >= Self.maxPendingChallenges,
             let oldest = pendingChallenges.min(by: { $0.value.expiresAt < $1.value.expiresAt })
         {
             pendingChallenges.removeValue(forKey: oldest.key)
         }
+
         var nonceBytes = [UInt8](repeating: 0, count: 32)
         guard SecRandomCopyBytes(kSecRandomDefault, nonceBytes.count, &nonceBytes) == errSecSuccess
         else {
@@ -308,7 +358,7 @@ actor OwnerDeviceAccessHost {
         }
         let nonce = Data(nonceBytes).base64urlEncoded
         pendingChallenges[nonce] = PendingChallenge(
-            agentAddressLower: agentAddress.lowercased(),
+            agentAddressLower: addressLower,
             deviceId: deviceId,
             expiresAt: now().addingTimeInterval(OwnerDeviceAccess.challengeTTL)
         )
@@ -326,7 +376,8 @@ actor OwnerDeviceAccessHost {
         payload: OwnerPairRedeemEnvelope.Payload,
         deviceId: String,
         nonce: String,
-        walletSignature: String
+        walletSignature: String,
+        encPub: String
     ) async -> Outcome {
         // Single-use nonce, bound to the agent + device it was issued for.
         let addressLower = payload.agentAddress.lowercased()
@@ -396,25 +447,20 @@ actor OwnerDeviceAccessHost {
             issuedAt: now()
         )
 
-        // HPKE-seal when the device supplied an ephemeral key. Fail closed
-        // on an unusable encPub — never fall back to plaintext silently.
-        var sealed: PairingKeyEnvelope.Sealed?
-        var apiKeyForWire = fullKey
-        if let encPub = payload.encPub, !encPub.isEmpty {
-            guard
-                let sealedKey = try? PairingKeyEnvelope.seal(
-                    secret: fullKey,
-                    recipientPublicKeyBase64url: encPub,
-                    info: PairingKeyEnvelope.info(agentAddress: resolved.address, nonce: nonce)
-                )
-            else {
-                keyRecords.removeValue(forKey: keyInfo.nonce)
-                APIKeyManager.shared.delete(id: keyInfo.id)
-                persistKeys()
-                return .rejected(.malformedRequest("Invalid encryption key"))
-            }
-            sealed = sealedKey
-            apiKeyForWire = ""
+        // HPKE-seal to the (pre-validated) ephemeral key. There is no
+        // plaintext path: if sealing still fails, the minted key is deleted
+        // and nothing is returned.
+        guard
+            let sealed = try? PairingKeyEnvelope.seal(
+                secret: fullKey,
+                recipientPublicKeyBase64url: encPub,
+                info: PairingKeyEnvelope.info(agentAddress: resolved.address, nonce: nonce)
+            )
+        else {
+            keyRecords.removeValue(forKey: keyInfo.nonce)
+            APIKeyManager.shared.delete(id: keyInfo.id)
+            persistKeys()
+            return .rejected(.mintFailed)
         }
         persistKeys()
 
@@ -424,7 +470,6 @@ actor OwnerDeviceAccessHost {
                 agentName: resolved.name,
                 agentDescription: resolved.description.isEmpty ? nil : resolved.description,
                 agentModel: resolved.model,
-                apiKeyForWire: apiKeyForWire,
                 sealedApiKey: sealed
             )
         )
@@ -488,7 +533,8 @@ actor OwnerDeviceAccessHost {
         let url = keyRecordsFileURL()
         do {
             try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
             )
             if keyRecords.isEmpty {
                 if FileManager.default.fileExists(atPath: url.path) {

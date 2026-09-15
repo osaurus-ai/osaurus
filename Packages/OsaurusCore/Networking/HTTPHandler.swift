@@ -5211,7 +5211,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         agentName: grant.agentName,
                         agentDescription: grant.agentDescription,
                         agentModel: grant.agentModel,
-                        apiKeyForWire: grant.apiKeyForWire,
+                        apiKeyForWire: "",
                         sealedApiKey: grant.sealedApiKey
                     )
                 }

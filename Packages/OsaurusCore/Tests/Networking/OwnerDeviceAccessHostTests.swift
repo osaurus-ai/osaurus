@@ -89,6 +89,8 @@ struct OwnerRedeemWireShapeTests {
 struct OwnerDeviceAccessHostTests {
     private let hostedAddress = "0x00000000000000000000000000000000a11ce0a1"
     private let deviceId = "c3d4e5f6"
+    /// A well-formed ephemeral recipient key: step two is refused without one.
+    private let encPub = PairingKeyEnvelope.generateRecipientKey().publicKeyBase64url
 
     private func makeHost(wallet: String? = TestKeys.aliceAddress) async -> OwnerDeviceAccessHost {
         let host = OwnerDeviceAccessHost()
@@ -102,12 +104,19 @@ struct OwnerDeviceAccessHostTests {
     }
 
     private func stepOne(
-        _ host: OwnerDeviceAccessHost, address: String? = nil, device: String? = nil
+        _ host: OwnerDeviceAccessHost,
+        address: String? = nil,
+        device: String? = nil
     ) async throws -> String {
         let outcome = await host.handle(
             .init(
-                v: 1, agentAddress: address ?? hostedAddress, deviceId: device ?? deviceId,
-                deviceName: "iPhone", nonce: nil, walletSignature: nil, encPub: nil
+                v: 1,
+                agentAddress: address ?? hostedAddress,
+                deviceId: device ?? deviceId,
+                deviceName: "iPhone",
+                nonce: nil,
+                walletSignature: nil,
+                encPub: nil
             )
         )
         guard case .challenge(let nonce, let expiresIn) = outcome else {
@@ -120,7 +129,8 @@ struct OwnerDeviceAccessHostTests {
     private func sign(_ address: String, nonce: String, with key: Data) throws -> String {
         "0x"
             + (try signEIP191Message(
-                OwnerDeviceAccess.redeemMessage(agentAddress: address, nonce: nonce), privateKey: key
+                OwnerDeviceAccess.redeemMessage(agentAddress: address, nonce: nonce),
+                privateKey: key
             )).hexEncodedString
     }
 
@@ -155,8 +165,13 @@ struct OwnerDeviceAccessHostTests {
         let host = await makeHost()
         let badVersion = await host.handle(
             .init(
-                v: 2, agentAddress: hostedAddress, deviceId: deviceId, deviceName: nil,
-                nonce: nil, walletSignature: nil, encPub: nil
+                v: 2,
+                agentAddress: hostedAddress,
+                deviceId: deviceId,
+                deviceName: nil,
+                nonce: nil,
+                walletSignature: nil,
+                encPub: nil
             )
         )
         guard case .rejected(.malformedRequest) = badVersion else {
@@ -164,8 +179,13 @@ struct OwnerDeviceAccessHostTests {
         }
         let badAddress = await host.handle(
             .init(
-                v: 1, agentAddress: "not-an-address", deviceId: deviceId, deviceName: nil,
-                nonce: nil, walletSignature: nil, encPub: nil
+                v: 1,
+                agentAddress: "not-an-address",
+                deviceId: deviceId,
+                deviceName: nil,
+                nonce: nil,
+                walletSignature: nil,
+                encPub: nil
             )
         )
         guard case .rejected(.malformedRequest) = badAddress else {
@@ -173,8 +193,13 @@ struct OwnerDeviceAccessHostTests {
         }
         let badDevice = await host.handle(
             .init(
-                v: 1, agentAddress: hostedAddress, deviceId: "has spaces/and/slashes", deviceName: nil,
-                nonce: nil, walletSignature: nil, encPub: nil
+                v: 1,
+                agentAddress: hostedAddress,
+                deviceId: "has spaces/and/slashes",
+                deviceName: nil,
+                nonce: nil,
+                walletSignature: nil,
+                encPub: nil
             )
         )
         guard case .rejected(.malformedRequest) = badDevice else {
@@ -182,9 +207,13 @@ struct OwnerDeviceAccessHostTests {
         }
         let longName = await host.handle(
             .init(
-                v: 1, agentAddress: hostedAddress, deviceId: deviceId,
+                v: 1,
+                agentAddress: hostedAddress,
+                deviceId: deviceId,
                 deviceName: String(repeating: "x", count: 81),
-                nonce: nil, walletSignature: nil, encPub: nil
+                nonce: nil,
+                walletSignature: nil,
+                encPub: nil
             )
         )
         guard case .rejected(.malformedRequest) = longName else {
@@ -192,14 +221,157 @@ struct OwnerDeviceAccessHostTests {
         }
     }
 
+    // MARK: challenge table bounds
+
+    @Test func stepOne_repeatForSamePair_replacesEarlierNonce() async throws {
+        let host = await makeHost()
+        let first = try await stepOne(host)
+        let second = try await stepOne(host)
+        #expect(first != second)
+        // Re-asking never grows the table for the same (agent, device).
+        #expect(await host.pendingChallengeCount == 1)
+
+        // The earlier nonce is gone even with a correct owner signature.
+        let staleSignature = try sign(hostedAddress, nonce: first, with: TestKeys.alicePrivateKey)
+        let stale = await host.handle(
+            .init(
+                v: 1,
+                agentAddress: hostedAddress,
+                deviceId: deviceId,
+                deviceName: nil,
+                nonce: first,
+                walletSignature: staleSignature,
+                encPub: encPub
+            )
+        )
+        guard case .rejected(.unknownChallenge) = stale else {
+            Issue.record("expected the replaced nonce to be unknown, got \(stale)"); return
+        }
+        // The current one is still live (consumed here; stops at agentNotFound).
+        let liveSignature = try sign(hostedAddress, nonce: second, with: TestKeys.alicePrivateKey)
+        let live = await host.handle(
+            .init(
+                v: 1,
+                agentAddress: hostedAddress,
+                deviceId: deviceId,
+                deviceName: nil,
+                nonce: second,
+                walletSignature: liveSignature,
+                encPub: encPub
+            )
+        )
+        guard case .rejected(.agentNotFound) = live else {
+            Issue.record("expected the current nonce to pass the challenge gate, got \(live)"); return
+        }
+        #expect(await host.pendingChallengeCount == 0)
+    }
+
+    @Test func stepOne_distinctPairs_eachKeepOneChallenge() async throws {
+        let host = await makeHost()
+        _ = try await stepOne(host, device: "phone")
+        _ = try await stepOne(host, device: "studio")
+        _ = try await stepOne(host, address: "0x00000000000000000000000000000000deadbeef", device: "phone")
+        _ = try await stepOne(host, device: "phone")  // replaces the first
+        #expect(await host.pendingChallengeCount == 3)
+    }
+
+    @Test func stepOne_tableIsHardCapped_evictingOldest() async throws {
+        let host = await makeHost()
+        let cap = OwnerDeviceAccessHost.maxPendingChallenges
+        let firstNonce = try await stepOne(host, device: "flood-0")
+        for i in 1 ..< (cap + 8) {
+            _ = try await stepOne(host, device: "flood-\(i)")
+        }
+        // A flood of distinct device ids from an unauthenticated caller
+        // cannot grow the table past the cap …
+        #expect(await host.pendingChallengeCount == cap)
+        // … and the oldest entry is the one that went.
+        let signature = try sign(hostedAddress, nonce: firstNonce, with: TestKeys.alicePrivateKey)
+        let evicted = await host.handle(
+            .init(
+                v: 1,
+                agentAddress: hostedAddress,
+                deviceId: "flood-0",
+                deviceName: nil,
+                nonce: firstNonce,
+                walletSignature: signature,
+                encPub: encPub
+            )
+        )
+        guard case .rejected(.unknownChallenge) = evicted else {
+            Issue.record("expected the evicted nonce to be unknown, got \(evicted)"); return
+        }
+    }
+
     // MARK: step two gates
+
+    @Test func encPubValidation_acceptsOnlyRawX25519Keys() {
+        #expect(OwnerDeviceAccessHost.isValidEncPub(encPub))
+        #expect(!OwnerDeviceAccessHost.isValidEncPub(""))
+        #expect(!OwnerDeviceAccessHost.isValidEncPub("not base64url!"))
+        // Valid base64url, wrong length.
+        #expect(!OwnerDeviceAccessHost.isValidEncPub(Data(repeating: 1, count: 31).base64urlEncoded))
+        #expect(!OwnerDeviceAccessHost.isValidEncPub(Data(repeating: 1, count: 33).base64urlEncoded))
+    }
+
+    /// The relay terminates TLS and is untrusted by design: a step two that
+    /// names no recipient key is refused with 400 before the nonce is
+    /// consumed, before the signature is checked, and before anything is
+    /// minted — there is no plaintext path.
+    @Test func stepTwo_withoutEncPub_is400_beforeNonceIsConsumed() async throws {
+        let host = await makeHost()
+        let nonce = try await stepOne(host)
+        let signature = try sign(hostedAddress, nonce: nonce, with: TestKeys.alicePrivateKey)
+
+        for missing in [nil, "", "not-a-key"] {
+            let outcome = await host.handle(
+                .init(
+                    v: 1,
+                    agentAddress: hostedAddress,
+                    deviceId: deviceId,
+                    deviceName: nil,
+                    nonce: nonce,
+                    walletSignature: signature,
+                    encPub: missing
+                )
+            )
+            guard case .rejected(.malformedRequest(let detail)) = outcome else {
+                Issue.record("expected malformedRequest for encPub \(String(describing: missing)), got \(outcome)")
+                return
+            }
+            #expect(detail.contains("encPub"))
+            #expect(OwnerRedeemRejection.malformedRequest(detail).httpStatus == 400)
+        }
+        // Nothing was consumed: the same nonce still clears the challenge gate.
+        #expect(await host.pendingChallengeCount == 1)
+        let retry = await host.handle(
+            .init(
+                v: 1,
+                agentAddress: hostedAddress,
+                deviceId: deviceId,
+                deviceName: nil,
+                nonce: nonce,
+                walletSignature: signature,
+                encPub: encPub
+            )
+        )
+        guard case .rejected(.agentNotFound) = retry else {
+            Issue.record("expected the nonce to survive a malformed attempt, got \(retry)"); return
+        }
+        #expect(await host.keyRecordsSnapshot().isEmpty)
+    }
 
     @Test func stepTwo_unknownNonce_isRejected() async {
         let host = await makeHost()
         let outcome = await host.handle(
             .init(
-                v: 1, agentAddress: hostedAddress, deviceId: deviceId, deviceName: nil,
-                nonce: "never-issued", walletSignature: "0x" + String(repeating: "1", count: 130), encPub: nil
+                v: 1,
+                agentAddress: hostedAddress,
+                deviceId: deviceId,
+                deviceName: nil,
+                nonce: "never-issued",
+                walletSignature: "0x" + String(repeating: "1", count: 130),
+                encPub: encPub
             )
         )
         guard case .rejected(.unknownChallenge) = outcome else {
@@ -214,8 +386,13 @@ struct OwnerDeviceAccessHostTests {
         // Same nonce, different device → not the challenge that was issued.
         let wrongDevice = await host.handle(
             .init(
-                v: 1, agentAddress: hostedAddress, deviceId: "other-device", deviceName: nil,
-                nonce: nonce, walletSignature: signature, encPub: nil
+                v: 1,
+                agentAddress: hostedAddress,
+                deviceId: "other-device",
+                deviceName: nil,
+                nonce: nonce,
+                walletSignature: signature,
+                encPub: encPub
             )
         )
         guard case .rejected(.unknownChallenge) = wrongDevice else {
@@ -229,8 +406,13 @@ struct OwnerDeviceAccessHostTests {
         let bobSignature = try sign(hostedAddress, nonce: nonce, with: TestKeys.bobPrivateKey)
         let outcome = await host.handle(
             .init(
-                v: 1, agentAddress: hostedAddress, deviceId: deviceId, deviceName: nil,
-                nonce: nonce, walletSignature: bobSignature, encPub: nil
+                v: 1,
+                agentAddress: hostedAddress,
+                deviceId: deviceId,
+                deviceName: nil,
+                nonce: nonce,
+                walletSignature: bobSignature,
+                encPub: encPub
             )
         )
         guard case .rejected(.notOwner) = outcome else {
@@ -252,8 +434,13 @@ struct OwnerDeviceAccessHostTests {
             )).hexEncodedString
         let outcome = await host.handle(
             .init(
-                v: 1, agentAddress: hostedAddress, deviceId: deviceId, deviceName: nil,
-                nonce: nonce, walletSignature: crossed, encPub: nil
+                v: 1,
+                agentAddress: hostedAddress,
+                deviceId: deviceId,
+                deviceName: nil,
+                nonce: nonce,
+                walletSignature: crossed,
+                encPub: encPub
             )
         )
         guard case .rejected(.notOwner) = outcome else {
@@ -267,8 +454,13 @@ struct OwnerDeviceAccessHostTests {
         let signature = try sign(hostedAddress, nonce: nonce, with: TestKeys.alicePrivateKey)
         let outcome = await host.handle(
             .init(
-                v: 1, agentAddress: hostedAddress, deviceId: deviceId, deviceName: nil,
-                nonce: nonce, walletSignature: signature, encPub: nil
+                v: 1,
+                agentAddress: hostedAddress,
+                deviceId: deviceId,
+                deviceName: nil,
+                nonce: nonce,
+                walletSignature: signature,
+                encPub: encPub
             )
         )
         guard case .rejected(.noIdentity) = outcome else {
@@ -284,8 +476,13 @@ struct OwnerDeviceAccessHostTests {
         func redeem() async -> OwnerDeviceAccessHost.Outcome {
             await host.handle(
                 .init(
-                    v: 1, agentAddress: hostedAddress, deviceId: deviceId, deviceName: nil,
-                    nonce: nonce, walletSignature: signature, encPub: nil
+                    v: 1,
+                    agentAddress: hostedAddress,
+                    deviceId: deviceId,
+                    deviceName: nil,
+                    nonce: nonce,
+                    walletSignature: signature,
+                    encPub: encPub
                 )
             )
         }
@@ -303,8 +500,13 @@ struct OwnerDeviceAccessHostTests {
         let signature = try sign(unknown, nonce: nonce, with: TestKeys.alicePrivateKey)
         let outcome = await host.handle(
             .init(
-                v: 1, agentAddress: unknown, deviceId: deviceId, deviceName: nil,
-                nonce: nonce, walletSignature: signature, encPub: nil
+                v: 1,
+                agentAddress: unknown,
+                deviceId: deviceId,
+                deviceName: nil,
+                nonce: nonce,
+                walletSignature: signature,
+                encPub: encPub
             )
         )
         guard case .rejected(.agentNotFound) = outcome else {
@@ -322,16 +524,26 @@ struct OwnerDeviceAccessHostTests {
         await host.setSeams(resolveAgent: { lower in
             guard lower == address.lowercased() else { return nil }
             return .init(
-                id: Agent.defaultId, keyPath: .legacy(index: 0), address: address, name: "Default",
-                description: "", model: nil, isBuiltIn: true
+                id: Agent.defaultId,
+                keyPath: .legacy(index: 0),
+                address: address,
+                name: "Default",
+                description: "",
+                model: nil,
+                isBuiltIn: true
             )
         })
         let nonce = try await stepOne(host, address: address)
         let signature = try sign(address, nonce: nonce, with: TestKeys.alicePrivateKey)
         let outcome = await host.handle(
             .init(
-                v: 1, agentAddress: address, deviceId: deviceId, deviceName: nil,
-                nonce: nonce, walletSignature: signature, encPub: nil
+                v: 1,
+                agentAddress: address,
+                deviceId: deviceId,
+                deviceName: nil,
+                nonce: nonce,
+                walletSignature: signature,
+                encPub: encPub
             )
         )
         guard case .rejected(.builtInAgent) = outcome else {
@@ -354,19 +566,22 @@ struct OwnerDeviceAccessHostTests {
             let recipient = PairingKeyEnvelope.generateRecipientKey()
             let outcome = await host.handle(
                 .init(
-                    v: 1, agentAddress: hostedAddress, deviceId: deviceId, deviceName: "iPhone",
-                    nonce: nonce, walletSignature: signature, encPub: recipient.publicKeyBase64url
+                    v: 1,
+                    agentAddress: hostedAddress,
+                    deviceId: deviceId,
+                    deviceName: "iPhone",
+                    nonce: nonce,
+                    walletSignature: signature,
+                    encPub: recipient.publicKeyBase64url
                 )
             )
             switch outcome {
             case .granted(let grant):
                 #expect(grant.agentAddress.lowercased() == hostedAddress.lowercased())
                 #expect(grant.agentName == agent.name)
-                // encPub supplied → sealed, never plaintext.
-                #expect(grant.apiKeyForWire.isEmpty)
-                let sealed = try #require(grant.sealedApiKey)
+                // The grant carries only the sealed envelope.
                 let opened = try PairingKeyEnvelope.open(
-                    sealed,
+                    grant.sealedApiKey,
                     privateKey: recipient.privateKey,
                     info: PairingKeyEnvelope.info(agentAddress: hostedAddress, nonce: nonce)
                 )
@@ -387,27 +602,30 @@ struct OwnerDeviceAccessHostTests {
         }
     }
 
+    /// With a hosted agent and a real owner proof, an unusable encPub still
+    /// never reaches the mint: it is a 400 before the nonce is consumed.
     @MainActor
-    @Test func stepTwo_invalidEncPub_failsClosed() async throws {
+    @Test func stepTwo_invalidEncPub_isRefusedBeforeMint() async throws {
         try await withHostedAgent { _ in
             let host = await makeHost()
             let nonce = try await stepOne(host)
             let signature = try sign(hostedAddress, nonce: nonce, with: TestKeys.alicePrivateKey)
             let outcome = await host.handle(
                 .init(
-                    v: 1, agentAddress: hostedAddress, deviceId: deviceId, deviceName: nil,
-                    nonce: nonce, walletSignature: signature, encPub: "not-a-key"
+                    v: 1,
+                    agentAddress: hostedAddress,
+                    deviceId: deviceId,
+                    deviceName: nil,
+                    nonce: nonce,
+                    walletSignature: signature,
+                    encPub: "not-a-key"
                 )
             )
-            switch outcome {
-            case .rejected(.malformedRequest):
-                // Real keychain: minted, then refused to send plaintext.
-                #expect(await host.keyRecordsSnapshot().isEmpty)
-            case .rejected(.mintFailed):
-                break  // disabled keychain: never reached the seal
-            default:
-                Issue.record("expected malformedRequest or mintFailed, got \(outcome)")
+            guard case .rejected(.malformedRequest) = outcome else {
+                Issue.record("expected malformedRequest, got \(outcome)"); return
             }
+            #expect(await host.keyRecordsSnapshot().isEmpty)
+            #expect(await host.pendingChallengeCount == 1)
         }
     }
 
@@ -422,12 +640,18 @@ struct OwnerDeviceAccessHostTests {
         // Seed a records file the way the host writes it.
         let records: [String: OwnerDeviceAccessHost.OwnerDeviceKeyRecord] = [
             "nonce-1": .init(
-                keyId: UUID(), deviceId: "phone", deviceName: "iPhone",
-                agentAddressLower: hostedAddress.lowercased(), issuedAt: Date()
+                keyId: UUID(),
+                deviceId: "phone",
+                deviceName: "iPhone",
+                agentAddressLower: hostedAddress.lowercased(),
+                issuedAt: Date()
             ),
             "nonce-2": .init(
-                keyId: UUID(), deviceId: "studio", deviceName: "Studio",
-                agentAddressLower: hostedAddress.lowercased(), issuedAt: Date()
+                keyId: UUID(),
+                deviceId: "studio",
+                deviceName: "Studio",
+                agentAddressLower: hostedAddress.lowercased(),
+                issuedAt: Date()
             ),
         ]
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
