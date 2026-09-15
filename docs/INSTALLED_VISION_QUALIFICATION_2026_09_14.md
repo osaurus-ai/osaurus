@@ -256,7 +256,7 @@ attempt excluded from proof. All accepted UI actions used the observed
 isolated agent/root.
 
 The complete updated inventory again found 79 bundles, with 33 image-admitted
-bundles across 11 architectures. All 33 were executed: **26 passed, 7 failed**
+bundles across 10 architectures. All 33 were executed: **26 passed, 7 failed**
 (`full-matrix-prepared-summary.json`, `full-runtime-matrix-prepared`). Three
 failures were resource admission (both GLM variants and Qwen4Exp 6S); four were
 answer contracts (Ornith 9B 2D, both ZAYA variants, and CRACK Qwen 27B 2D).
