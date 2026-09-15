@@ -10,26 +10,15 @@ import SwiftUI
 
 struct ThemedBackgroundLayer: View {
     let cachedBackgroundImage: NSImage?
-    let showSidebar: Bool
-    /// Square corners in native full screen, where the window has no
-    /// rounded corners and rounding would expose the backing behind.
-    var isFullScreen: Bool = false
 
     @Environment(\.theme) private var theme
 
+    /// Fills edge to edge. The opaque chat panel is masked by AppKit at the
+    /// system window radius, so this layer must not clip itself to a guessed
+    /// radius: macOS 26 and 27 use different corners, and a hardcoded 24pt
+    /// left the content clipped tighter than the frame on 27.
     var body: some View {
         backgroundLayer
-            .clipShape(backgroundShape)
-    }
-
-    private var backgroundShape: UnevenRoundedRectangle {
-        UnevenRoundedRectangle(
-            topLeadingRadius: (showSidebar || isFullScreen) ? 0 : 24,
-            bottomLeadingRadius: (showSidebar || isFullScreen) ? 0 : 24,
-            bottomTrailingRadius: isFullScreen ? 0 : 24,
-            topTrailingRadius: isFullScreen ? 0 : 24,
-            style: .continuous
-        )
     }
 
     @ViewBuilder

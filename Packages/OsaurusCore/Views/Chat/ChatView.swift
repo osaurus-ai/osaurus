@@ -9824,14 +9824,11 @@ struct ChatView: View {
             idealHeight: WindowConfiguration.chat.defaultSize.height,
             maxHeight: .infinity
         )
-        // Matches the window's rounded corners; in full screen the window is
-        // square, so rounding would cut visible notches into the content.
-        .clipShape(
-            RoundedRectangle(
-                cornerRadius: windowState.isFullScreen ? 0 : 24,
-                style: .continuous
-            )
-        )
+        // No corner clipping here: the panel is opaque and AppKit masks the
+        // window frame at the system radius, which differs between macOS
+        // releases (26 and 27 disagree). A hardcoded radius left the
+        // content clipped tighter than the frame on 27, exposing the panel
+        // background in the corners.
         .ignoresSafeArea()
         .onReceive(NotificationCenter.default.publisher(for: .chatToolbarBackToProject)) { notification in
             guard let targetWindowId = notification.userInfo?["windowId"] as? UUID,
@@ -10438,17 +10435,13 @@ struct ChatView: View {
     private var chatBackground: some View {
         ZStack {
             ThemedBackgroundLayer(
-                cachedBackgroundImage: windowState.cachedBackgroundImage,
-                showSidebar: windowState.showSidebar,
-                isFullScreen: windowState.isFullScreen
+                cachedBackgroundImage: windowState.cachedBackgroundImage
             )
 
             if theme.glassEnabled {
-                ThemedGlassSurface(
-                    cornerRadius: windowState.isFullScreen ? 0 : 24,
-                    topLeadingRadius: windowState.showSidebar ? 0 : nil,
-                    bottomLeadingRadius: windowState.showSidebar ? 0 : nil
-                )
+                // Square: the window frame supplies the corners (see the root
+                // view's comment on corner clipping).
+                ThemedGlassSurface(cornerRadius: 0)
                 .allowsHitTesting(false)
 
                 let baseBacking = theme.windowBackingOpacity
@@ -10461,15 +10454,6 @@ struct ChatView: View {
                     ],
                     startPoint: .top,
                     endPoint: .bottom
-                )
-                .clipShape(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: (windowState.showSidebar || windowState.isFullScreen) ? 0 : 24,
-                        bottomLeadingRadius: (windowState.showSidebar || windowState.isFullScreen) ? 0 : 24,
-                        bottomTrailingRadius: windowState.isFullScreen ? 0 : 24,
-                        topTrailingRadius: windowState.isFullScreen ? 0 : 24,
-                        style: .continuous
-                    )
                 )
                 .allowsHitTesting(false)
             }
