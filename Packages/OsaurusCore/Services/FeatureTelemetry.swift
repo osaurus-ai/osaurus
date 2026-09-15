@@ -86,6 +86,32 @@ struct MessageTelemetryInfo: Sendable {
 
 @MainActor
 enum FeatureTelemetry {
+    private static var modelMemoryLimiter = ModelMemoryTelemetryLimiter()
+
+    static func observeModelMemory(_ state: SwapPressureMonitor.State) {
+        guard modelMemoryLimiter.shouldRecord(state) else { return }
+        modelMemorySample(state)
+    }
+
+    /// Silent, coarse system observations. Host swap is not model attribution.
+    /// The same consent gate as other feature events applies; no model/path,
+    /// episode UUID, prompt, output or token counts leave the process.
+    static func modelMemorySample(_ state: SwapPressureMonitor.State, service: TelemetryService = .shared) {
+        guard !state.emulated, state.episodeID != nil, state.phase != .idle else { return }
+        service.track(
+            "model_memory_sample",
+            [
+                "phase": state.phase.rawValue,
+                "severity": state.severity.rawValue,
+                "host_swap_gib": ModelMemoryTelemetryBuckets.bytes(state.swapUsedBytes),
+                "peak_swap_growth_gib": ModelMemoryTelemetryBuckets.bytes(UInt64(max(0, state.peakGrowthBytes))),
+                "process_footprint_gib": ModelMemoryTelemetryBuckets.bytes(state.processFootprintBytes),
+                "host_swapins_pages_s": ModelMemoryTelemetryBuckets.rate(state.swapinsPerSecond),
+                "host_decompressions_pages_s": ModelMemoryTelemetryBuckets.rate(state.decompressionsPerSecond),
+            ]
+        )
+    }
+
     // The `service` parameter defaults to the shared instance for app use;
     // tests inject a recording service to assert the exact event name and
     // properties each KPI moment produces.

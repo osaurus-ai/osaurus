@@ -3135,7 +3135,7 @@ struct RuntimePolicySourceTests {
             in: tasks
         )
         #expect(releaseBody.contains("state.source.inferenceSource"))
-        #expect(releaseBody.contains("taskSource != .chatUI"))
+        #expect(!releaseBody.contains("taskSource != .chatUI"))
         #expect(releaseBody.contains("accelerateIdleUnloadAfterBackgroundTaskCompleted"))
         #expect(releaseBody.contains("ChatWindowManager.shared.activeLocalModelNames()"))
         #expect(releaseBody.contains("rearmChatWarmupAfterBackgroundWork()"))
@@ -3148,7 +3148,7 @@ struct RuntimePolicySourceTests {
             "func accelerateIdleUnloadAfterBackgroundTaskCompleted(",
             in: runtime
         )
-        #expect(acceleratedReleaseBody.contains("guard taskSource != .chatUI else { return }"))
+        #expect(!acceleratedReleaseBody.contains("guard taskSource != .chatUI else { return }"))
         #expect(acceleratedReleaseBody.contains("guard case .afterSeconds = policy else { return }"))
         #expect(acceleratedReleaseBody.contains("guard !activeNames.contains(name) else { return }"))
         #expect(

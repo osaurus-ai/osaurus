@@ -301,20 +301,6 @@ public actor ModelRuntime {
         Array(loadingTasks.keys)
     }
 
-    /// Cache-only state for a canonical installed name resolved by the picker.
-    /// No directory scan, model load, warmup, or policy mutation.
-    func memoryWarningPhase(forCanonicalName name: String) -> MemoryWarningState.Phase {
-        if modelCache.keys.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
-            return .resident
-        }
-        if loadingTasks.keys.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame })
-            || inflightLoadWeights.keys.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame })
-        {
-            return .loading
-        }
-        return .unloaded
-    }
-
     /// By-weight MTP inspection for one model id. `nonisolated` + file-only I/O
     /// (config + safetensors headers, no weight load), so a caller can run it on
     /// a background task while a load holds the actor. Returns `nil` if the
@@ -566,9 +552,10 @@ public actor ModelRuntime {
 
     /// Runtime-owned idle-policy identities. `pending` means the residency
     /// manager may still fire; `inFlight` means the decision already won the
-    /// actor race and entered teardown. A focus activation invalidates the
-    /// former and captures the latter atomically.
+    /// actor race and entered teardown. A real request invalidates the former;
+    /// focus only observes residency and leaves its deadline intact.
     private var nextIdleResidencyDecisionID: UInt64 = 0
+    private var idleResidencyPolicyRevision: UInt64 = 0
     private var pendingIdleResidencyDecisions: [String: UInt64] = [:]
     private var inFlightIdleResidencyDecisions: [String: UInt64] = [:]
     /// Once an idle teardown passes its final pre-destructive decision check,
@@ -651,10 +638,8 @@ public actor ModelRuntime {
         currentResidencySnapshot()
     }
 
-    /// Atomically reconcile a visible-chat activation against an idle-policy
-    /// decision. A pending decision is invalidated before the actor yields;
-    /// an already-running decision is returned by identity for one-shot UI
-    /// recovery. Conditional manager cancellation cannot erase a newer timer.
+    /// Focus only refreshes the residency dot. It must not cancel an idle
+    /// deadline: focus has no matching lease release to re-arm that deadline.
     func chatActivationResidencySnapshot(
         selectedModel: String?
     ) async -> ModelRuntimeChatActivationResidencySnapshot {
@@ -666,18 +651,8 @@ public actor ModelRuntime {
         }
 
         let matchingName = matchingRuntimeModelName(selectedModel)
-        let cancelledDecision = matchingName.flatMap {
-            pendingIdleResidencyDecisions.removeValue(forKey: $0)
-        }
         let recoverableDecision = matchingName.flatMap {
             inFlightIdleResidencyDecisions[$0]
-        }
-
-        if let matchingName, let cancelledDecision {
-            await ModelResidencyManager.shared.cancel(
-                modelName: matchingName,
-                ownerDecisionID: cancelledDecision
-            )
         }
 
         return ModelRuntimeChatActivationResidencySnapshot(
@@ -1339,8 +1314,8 @@ public actor ModelRuntime {
     ///   to permanent residency that a task completion must not override.
     /// - Only the resident this task's source class owns (`lastUseSource`).
     ///   A model that a chat window or another surface generated on since
-    ///   keeps its full residency — in particular, chat-owned release stays
-    ///   exclusively on the window-close path.
+    ///   keeps its full residency. A detached chat run can release once its
+    ///   window has closed and its work has finished.
     /// - `keeping` / `isModelStillWanted` protect models an open window or a
     ///   still-active registry task references, re-checked at fire time, and
     ///   the fire path re-checks the lease count — a follow-up turn or an API
@@ -1352,7 +1327,6 @@ public actor ModelRuntime {
         grace: TimeInterval = ModelRuntime.chatCloseUnloadGraceSeconds,
         isModelStillWanted: @Sendable @escaping (String) async -> Bool
     ) async {
-        guard taskSource != .chatUI else { return }
         let policy =
             await ServerConfigurationStore.load()?.modelIdleResidencyPolicy
             ?? ServerConfiguration.default.modelIdleResidencyPolicy
@@ -2464,6 +2438,17 @@ public actor ModelRuntime {
 
     // MARK: - Internals
 
+    /// Apply a saved setting to idle residents too, without requiring another
+    /// request. Never load a model here, and never release an active lease.
+    func refreshIdleResidencyPolicy() async {
+        idleResidencyPolicyRevision &+= 1
+        for name in Array(modelCache.keys) {
+            guard await ModelLease.shared.count(for: name) == 0 else { continue }
+            guard await markModelActiveForResidency(name) else { continue }
+            await scheduleIdleResidency(for: name)
+        }
+    }
+
     private func getConfig() async -> RuntimeConfig {
         if let cached = cachedConfig { return cached }
         let cfg = await RuntimeConfig.snapshot()
@@ -2472,10 +2457,30 @@ public actor ModelRuntime {
     }
 
     private func scheduleIdleResidency(for modelName: String) async {
-        guard !isClearingAllResidency else { return }
-        let policy =
+        let policyRevision = idleResidencyPolicyRevision
+        guard !isClearingAllResidency,
+            modelCache[modelName] != nil,
+            await ModelLease.shared.count(for: modelName) == 0
+        else { return }
+        var policy =
             await ServerConfigurationStore.load()?.modelIdleResidencyPolicy
             ?? ServerConfiguration.default.modelIdleResidencyPolicy
+        if case .afterSeconds = policy, lastUseSource[modelName] == .chatUI {
+            let stillReferenced = await MainActor.run {
+                ChatWindowManager.shared.activeLocalModelNames().contains(modelName)
+            }
+            // Cover close-during-load/generation too: the close callback may
+            // precede this final lease release, so no timer existed to shorten.
+            if !stillReferenced, lastUseSource[modelName] == .chatUI {
+                policy = .immediately
+            }
+        }
+        guard modelCache[modelName] != nil,
+            await ModelLease.shared.count(for: modelName) == 0
+        else { return }
+        // A setting may change while either the policy or window snapshot
+        // is awaited. Never replace its new timer with a stale policy.
+        guard policyRevision == idleResidencyPolicyRevision else { return }
         if case .never = policy {
             pendingIdleResidencyDecisions.removeValue(forKey: modelName)
             await ModelResidencyManager.shared.scheduleIdleUnload(

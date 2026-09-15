@@ -3,10 +3,9 @@
 //  OsaurusCore
 //
 //  Watches macOS swap usage across a local-model residency episode and
-//  classifies whether that episode COINCIDED with enough system swap growth
-//  to slow decode. Attribution is deliberately cautious: swap is a host-wide
-//  resource, so the banner reports coincidence ("loading X coincided with
-//  N GB of swap growth"), never blame. Severity keys on the episode's
+//  classifies observed system swap growth during load. Swap is host-wide:
+//  these are silent observations, not a causal diagnosis or a reason to
+//  interrupt a request. Severity keys on the episode's
 //  MONOTONIC PEAK growth over its baseline — a Mac already deep in swap
 //  before the episode contributes nothing to the reading. Advisory only:
 //  never changes model, sampler, or cache behavior.
@@ -16,7 +15,7 @@
 //  touch the episode. markLoadCompleted / noteFirstOutput / failure hooks
 //  match records BY MODEL, so concurrent loads cannot corrupt each other,
 //  and a load's attribution window closes at its first output (issue #2501)
-//  — the frozen window keeps the warning honest without attributing the
+//  — the frozen window bounds the observation without attributing the
 //  machine's later behavior to the model indefinitely. The episode ends when
 //  nothing is resident and no load is in flight.
 //
@@ -74,24 +73,32 @@ public final class SwapPressureMonitor: @unchecked Sendable {
         /// This process's physical footprint at sample time.
         public let processFootprintBytes: UInt64
         /// Host swap-in rate (pages/s) over the last sample interval —
-        /// nonzero sustained swap-ins while generating is the actual
-        /// slowdown mechanism.
+        /// not a measurement of this model's I/O or proof of a slowdown.
         public let swapinsPerSecond: Double
         /// Host compressor decompression rate (pages/s) over the last
         /// sample interval.
         public let decompressionsPerSecond: Double
         /// True when the state came from the team/designer emulation
-        /// override rather than a real sample — the banner must say so.
+        /// override rather than a real sample — excluded from telemetry.
         public let emulated: Bool
+        /// Ephemeral deduplication key, never transmitted in telemetry.
+        var episodeID: UUID? = nil
 
         public static let quiet = State(
-            severity: .none, phase: .idle, modelName: nil,
+            severity: .none,
+            phase: .idle,
+            modelName: nil,
             baselineUsedBytes: 0,
-            swapUsedBytes: 0, swapTotalBytes: 0,
-            growthSinceBaselineBytes: 0, peakGrowthBytes: 0,
-            episodeElapsedSeconds: 0, processFootprintBytes: 0,
-            swapinsPerSecond: 0, decompressionsPerSecond: 0,
-            emulated: false)
+            swapUsedBytes: 0,
+            swapTotalBytes: 0,
+            growthSinceBaselineBytes: 0,
+            peakGrowthBytes: 0,
+            episodeElapsedSeconds: 0,
+            processFootprintBytes: 0,
+            swapinsPerSecond: 0,
+            decompressionsPerSecond: 0,
+            emulated: false
+        )
     }
 
     // MARK: - Thresholds (enter fast, exit slow)
@@ -99,7 +106,7 @@ public final class SwapPressureMonitor: @unchecked Sendable {
     /// Peak growth over baseline that flags "this episode coincided with
     /// swapping".
     static let elevatedEnterGrowthBytes: Int64 = 3 << 29  // 1.5 GiB
-    /// Peak growth that flags "decode slowdown expected".
+    /// Higher growth bucket; not a causal diagnosis of decode slowdown.
     static let criticalEnterGrowthBytes: Int64 = 4 << 30  // 4 GiB
     /// Near swap exhaustion counts as critical once the episode coincided
     /// with at least this much growth.
@@ -134,6 +141,7 @@ public final class SwapPressureMonitor: @unchecked Sendable {
     }
 
     private struct Episode {
+        let id = UUID()
         var loads: [LoadRecord]
         var peakGrowthBytes: Int64 = 0
         var lastSeverity: Severity = .none
@@ -239,13 +247,13 @@ public final class SwapPressureMonitor: @unchecked Sendable {
     // MARK: - Sampling
 
     /// Current classified state. Cheap (two sysctls + one mach call);
-    /// callers ride an existing periodic tick — the chat card's 2 s memory
-    /// tick is the intended one.
+    /// sampled by the off-main system resource tick, independently of chat UI.
     public func currentState(dataRoot: URL? = nil) -> State {
         if let override = Self.emulationOverride(dataRoot: dataRoot) {
             let growth: Int64 = override == .critical ? (5 << 30) : (2 << 30)
             return State(
-                severity: override, phase: .resident,
+                severity: override,
+                phase: .resident,
                 modelName: "Simulated Model",
                 baselineUsedBytes: 1 << 30,
                 swapUsedBytes: UInt64(growth) + (1 << 30),
@@ -325,7 +333,9 @@ public final class SwapPressureMonitor: @unchecked Sendable {
             processFootprintBytes: footprint,
             swapinsPerSecond: rates.swapins,
             decompressionsPerSecond: rates.decompressions,
-            emulated: false)
+            emulated: false,
+            episodeID: current.id
+        )
     }
 
     // MARK: - Pure classifier (unit-tested)
@@ -412,13 +422,20 @@ public final class SwapPressureMonitor: @unchecked Sendable {
     private func sampleVMRates() -> (swapins: Double, decompressions: Double) {
         var stats = vm_statistics64()
         var count = mach_msg_type_number_t(
-            MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size)
+            MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size
+        )
+        let host = mach_host_self()
+        defer { mach_port_deallocate(mach_task_self_, host) }
         let result = withUnsafeMutablePointer(to: &stats) { pointer in
             pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+                host_statistics64(host, HOST_VM_INFO64, $0, &count)
             }
         }
-        guard result == KERN_SUCCESS else { return lastRates }
+        guard result == KERN_SUCCESS else {
+            lock.lock()
+            defer { lock.unlock() }
+            return lastRates
+        }
         let now = Date()
         let swapins = stats.swapins
         let decompressions = stats.decompressions

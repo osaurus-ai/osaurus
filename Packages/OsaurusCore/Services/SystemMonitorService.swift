@@ -66,9 +66,11 @@ class SystemMonitorService: ObservableObject {
             let sampler = self.sampler
             Task.detached(priority: .utility) {
                 let snapshot = sampler.sample()
+                let memoryObservation = SwapPressureMonitor.shared.currentState()
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     self.publish(snapshot)
+                    FeatureTelemetry.observeModelMemory(memoryObservation)
                     self.isSampling = false
                 }
             }

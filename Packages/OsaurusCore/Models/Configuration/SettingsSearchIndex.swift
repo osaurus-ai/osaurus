@@ -598,7 +598,7 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Model Memory",
             title: "Model Residency",
-            keywords: ["eviction", "idle", "keep model loaded", "unload"],
+            keywords: ["eviction policy", "idle", "keep model loaded", "unload after", "30 seconds", "close window"],
             subTab: "modelMemory"
         ),
         .init(
