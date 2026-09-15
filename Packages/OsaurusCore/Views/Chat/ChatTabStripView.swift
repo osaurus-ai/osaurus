@@ -183,13 +183,32 @@ struct ChatTabStripView: View {
                 .frame(width: 0)
             }
             .animation(windowState.theme.animationQuick(), value: windowState.showSidebar)
+            // Leaving the strip ends a close streak: widths relax to fit.
+            .onHover { inside in
+                guard !inside, frozenTabWidth != nil else { return }
+                withAnimation(windowState.theme.animationQuick()) { frozenTabWidth = nil }
+            }
             .environment(\.theme, windowState.theme)
         }
     }
 
+    /// Tab width pinned by a × close (Chrome): closing a tab would otherwise
+    /// widen the survivors and slide the next × out from under the cursor.
+    /// Held until the pointer leaves the strip, at which point the tabs
+    /// relax to `fittedTabWidth` in one animated pass.
+    @State private var frozenTabWidth: CGFloat?
+
+    /// The width every tab renders at: the pinned width while a close
+    /// streak is in progress (never wider than what still fits, so a
+    /// shrinking window or a new tab cannot overflow the strip), else the
+    /// fitted width.
+    private var maxTabWidth: CGFloat {
+        min(frozenTabWidth ?? .infinity, fittedTabWidth)
+    }
+
     /// Per-tab width cap, shrunk as tabs multiply so the whole row (tabs +
     /// separators + "+" button) always fits inside `stripWidth`.
-    private var maxTabWidth: CGFloat {
+    private var fittedTabWidth: CGFloat {
         guard let stripWidth else { return Self.maxTabWidthCap }
         let count = CGFloat(max(visibleTabs.count, 1))
         let available = stripWidth - Self.plusButtonReserve - (count - 1)
@@ -268,7 +287,12 @@ struct ChatTabStripView: View {
                     isDragging: draggingTabId == tab.id,
                     dragOffset: draggingTabId == tab.id ? dragOffset : 0,
                     onSelect: { windowState.selectTab(id: tab.id) },
-                    onClose: { windowState.closeTab(id: tab.id) },
+                    onClose: {
+                        // Pin the current width for the rest of this close
+                        // streak so the next tab's × lands under the cursor.
+                        if frozenTabWidth == nil { frozenTabWidth = maxTabWidth }
+                        windowState.closeTab(id: tab.id)
+                    },
                     onOpenProject: {
                         windowState.selectTab(id: tab.id)
                         NotificationCenter.default.post(
