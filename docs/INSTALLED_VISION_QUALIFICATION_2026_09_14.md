@@ -1,6 +1,6 @@
 # Installed vision qualification
 
-Status: **PARTIAL**, draft PR #2772. This extends the regression harness and
+Model qualification: **PARTIAL**, PR #2772. This extends the regression harness and
 repairs discovery/agent transport defects; it does not promise
 support for every architecture or qualify the separate 16 GB RAM issue.
 
@@ -213,8 +213,8 @@ so zero SSM-sidecar hits alone is not a failed native restoration. Effective
 cache topology and measured rates stay in each report. No low-RAM claim follows
 from an image-case pass, especially on the large Qwen4Exp rows.
 
-Keep this PR draft until the remaining failures and exact-head CI are reviewed.
-Do not advertise universal vision correctness from these partial results.
+Review the remaining failures and exact-head CI before merging the shared
+fixes. Do not advertise universal vision correctness from these partial results.
 
 
 ## Post-preprocessing image contract
@@ -287,6 +287,40 @@ make the overall command fail if other rows passed. The driver now writes
 failed before this correction; all five driver tests pass afterward
 (`header-audit-driver-before.log`, `header-audit-driver-after.log`). This changes
 coverage accounting only; the production app and engine remain unchanged.
+
+### Final all-bundle driver run
+
+The complete rerun with harness source `2bbb71417423e29857590b34a62b44b235ac9666`
+and the unchanged `03cd12278` production binary attempted all 33 admitted
+bundles across 10 architectures: **25 passed, 7 failed, 1 crashed**. The inventory
+still contains 79 bundles, five rejected vision declarations, and zero admitted
+header-audit exclusions. The driver exits 1 and retains the crash as a missing
+runtime report, with its raw process log. See `full-runtime-matrix-final`,
+`full-matrix-final-summary.json`, and `final-matrix-receipt.json` for commands,
+binary/source identities, responses, token/s and available resource telemetry.
+
+Six failures are answer contracts: Ornith 9B 2D's verbose agent answer,
+CRACK Qwen 27B 2D's visible reasoning/prose, wrong colors from both ZAYA
+variants, a wrong first-image color from Qwen 27B 6D, and an old-image color
+from Bonsai on the changed-image history turn. Both the preceding passing
+rows and these failures remain recorded. Default sampling was unchanged;
+the differing outcomes do not establish a cause or qualify those artifacts.
+
+Available memory let the two formerly RAM-refused GLM bundles reach execution.
+The non-MTP bundle logged a token-shape error followed by a fatal Metal command
+buffer timeout (`003.log`). Its process crashed without a result JSON; it is
+an unqualified runtime failure, not an omitted case. The MTP bundle answered
+earlier image requests but did not demonstrate a replay cache hit, then returned
+HTTP 500 explicitly reporting that only one image per request is wired when
+the two-image history arrived (`012.json`). No RAM gate was bypassed. The
+Qwen4Exp 6S row passed in this run, but the earlier resource refusal remains
+part of the evidence. These rows establish neither a 16 GB RAM fix nor
+low-footprint operation on this 128 GiB host.
+
+The earlier 26/33 result above describes its own run; it must not be presented
+as this final run's score or as a guarantee against regressions. Additional
+bounded parent comparisons and Release error-path receipts remain in the
+same private evidence directory and the PR validation notes.
 
 ## Attention diagnostic retained outside this PR
 
