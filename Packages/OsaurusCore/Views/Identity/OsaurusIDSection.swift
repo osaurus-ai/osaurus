@@ -25,6 +25,9 @@ struct OsaurusIDSection: View {
     @State private var availability: OsaurusIDAvailabilityStatus?
     @State private var isCheckingAvailability = false
     @State private var claimError: String?
+    /// The handle awaiting the "are you sure" step. A claim is permanent,
+    /// so neither the Claim button nor Enter sends it straight away.
+    @State private var pendingClaimHandle: String?
 
     @State private var isEditing = false
     @State private var draftDisplayName = ""
@@ -78,6 +81,26 @@ struct OsaurusIDSection: View {
             guard !Task.isCancelled else { return }
             availability = status
         }
+        // A handle can never be changed once claimed, and the field's fine
+        // print is easy to miss on the way to Enter. Ask once, plainly.
+        .themedAlert(
+            pendingClaimHandle.map { String(format: L("Claim @%@?"), $0) } ?? "",
+            isPresented: Binding(
+                get: { pendingClaimHandle != nil },
+                set: { if !$0 { pendingClaimHandle = nil } }
+            ),
+            message: L(
+                "Your Osaurus ID is permanent and public. It cannot be changed or released later, so make sure this is the handle you want."
+            ),
+            // The handle is captured when the alert is built rather than read
+            // back on confirm, so the claim does not depend on whether the
+            // dialog clears `pendingClaimHandle` before or after its action.
+            primaryButton: .primary(L("Claim")) { [handle = pendingClaimHandle] in
+                pendingClaimHandle = nil
+                if let handle { claim(handle) }
+            },
+            secondaryButton: .cancel(L("Cancel"))
+        )
     }
 
     // MARK: - State routing
@@ -185,7 +208,7 @@ struct OsaurusIDSection: View {
 
             HStack(spacing: 8) {
                 handleField
-                Button(action: claim) {
+                Button(action: requestClaim) {
                     Text("Claim", bundle: .module)
                 }
                 .buttonStyle(PrimaryButtonStyle(isLoading: service.isClaiming, size: .compact))
@@ -226,7 +249,7 @@ struct OsaurusIDSection: View {
             .font(.system(size: 13, weight: .medium, design: .monospaced))
             .foregroundColor(theme.primaryText)
             .focused($handleFocused)
-            .onSubmit { if canClaim { claim() } }
+            .onSubmit { if canClaim { requestClaim() } }
             .accessibilityIdentifier("identity.osaurusId.handle")
         }
         .padding(.horizontal, 10)
@@ -303,9 +326,15 @@ struct OsaurusIDSection: View {
         .frame(height: 14, alignment: .leading)
     }
 
-    private func claim() {
+    /// Opens the confirmation for the current handle; the claim itself only
+    /// goes out from the dialog's confirm button.
+    private func requestClaim() {
         guard canClaim else { return }
-        let handle = trimmedHandle
+        claimError = nil
+        pendingClaimHandle = trimmedHandle
+    }
+
+    private func claim(_ handle: String) {
         claimError = nil
         Task {
             switch await service.claim(handle: handle) {

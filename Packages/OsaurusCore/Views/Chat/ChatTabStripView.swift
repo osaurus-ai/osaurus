@@ -183,13 +183,32 @@ struct ChatTabStripView: View {
                 .frame(width: 0)
             }
             .animation(windowState.theme.animationQuick(), value: windowState.showSidebar)
+            // Leaving the strip ends a close streak: widths relax to fit.
+            .onHover { inside in
+                guard !inside, frozenTabWidth != nil else { return }
+                withAnimation(windowState.theme.animationQuick()) { frozenTabWidth = nil }
+            }
             .environment(\.theme, windowState.theme)
         }
     }
 
+    /// Tab width pinned by a × close (Chrome): closing a tab would otherwise
+    /// widen the survivors and slide the next × out from under the cursor.
+    /// Held until the pointer leaves the strip, at which point the tabs
+    /// relax to `fittedTabWidth` in one animated pass.
+    @State private var frozenTabWidth: CGFloat?
+
+    /// The width every tab renders at: the pinned width while a close
+    /// streak is in progress (never wider than what still fits, so a
+    /// shrinking window or a new tab cannot overflow the strip), else the
+    /// fitted width.
+    private var maxTabWidth: CGFloat {
+        min(frozenTabWidth ?? .infinity, fittedTabWidth)
+    }
+
     /// Per-tab width cap, shrunk as tabs multiply so the whole row (tabs +
     /// separators + "+" button) always fits inside `stripWidth`.
-    private var maxTabWidth: CGFloat {
+    private var fittedTabWidth: CGFloat {
         guard let stripWidth else { return Self.maxTabWidthCap }
         let count = CGFloat(max(visibleTabs.count, 1))
         let available = stripWidth - Self.plusButtonReserve - (count - 1)
@@ -268,7 +287,12 @@ struct ChatTabStripView: View {
                     isDragging: draggingTabId == tab.id,
                     dragOffset: draggingTabId == tab.id ? dragOffset : 0,
                     onSelect: { windowState.selectTab(id: tab.id) },
-                    onClose: { windowState.closeTab(id: tab.id) },
+                    onClose: {
+                        // Pin the current width for the rest of this close
+                        // streak so the next tab's × lands under the cursor.
+                        if frozenTabWidth == nil { frozenTabWidth = maxTabWidth }
+                        windowState.closeTab(id: tab.id)
+                    },
                     onOpenProject: {
                         windowState.selectTab(id: tab.id)
                         NotificationCenter.default.post(
@@ -639,6 +663,11 @@ private struct ChatTabItemView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            } else if !isCompact {
+                // No title, but the × keeps its trailing inset: without the
+                // spacer the avatar and × pack left and the slack piles up
+                // on the right.
+                Spacer(minLength: 0)
             }
 
             if canClose, !isCompact {
@@ -647,7 +676,9 @@ private struct ChatTabItemView: View {
         }
         .frame(maxWidth: .infinity, alignment: isCompact ? .center : .leading)
         .padding(.leading, isCompact ? 0 : Self.footRadius + 14 - (TabActivityRing.diameter - Self.avatarDiameter) / 2)
-        .padding(.trailing, isCompact ? 0 : Self.footRadius + (isActive ? 14 : 10))
+        // Same inset for every tab: the × must not shift when a tab gains
+        // or loses selection (closing tabs one by one made that jump felt).
+        .padding(.trailing, isCompact ? 0 : Self.footRadius + 2)
     }
 
     private var closeButton: some View {
@@ -754,11 +785,15 @@ private struct ChatTabItemView: View {
 
 /// Right-click menu for a tab chip: the sidebar / History row actions
 /// (Stop, Open in New Window, Rename, Pin, Move to Project, Export,
-/// Archive, Delete) applied to the tab's session, plus Close Tab. Items
-/// that need a persisted conversation (open elsewhere, export) are hidden
-/// for a blank tab that has never been saved. Mutations go through
-/// `ChatSessionsManager` and are mirrored onto the live `ChatSession` so
-/// its next auto-save does not clobber them, exactly like the sidebar.
+/// Archive, Delete) applied to the tab's session, plus Close Tab. A blank
+/// tab that has never been saved still gets a menu: Rename, Pin and Move
+/// to Project act on the live `ChatSession` alone and ride along on its
+/// first save (a user title also stops auto-titling), and Open in New
+/// Window opens a blank window for the same agent. Export, Archive and
+/// Delete need a stored row and are hidden until there is one. For a saved
+/// chat, mutations go through `ChatSessionsManager` and are mirrored onto
+/// the live `ChatSession` so its next auto-save does not clobber them,
+/// exactly like the sidebar.
 ///
 /// Built as an `NSMenu`, not a SwiftUI `.contextMenu`: the strip lives in
 /// an `NSToolbarItem`, and the toolbar's own right-click handler (Icon and
@@ -787,18 +822,29 @@ private struct ChatTabContextMenu {
             add(to: menu, L("Stop"), icon: "stop.circle") { session.stop() }
             menu.addItem(.separator())
         }
+        // A blank tab is not saved, so there is nothing to open elsewhere;
+        // a blank window for the same agent is the closest equivalent.
+        let isBlank = session.turns.isEmpty && !session.isStreaming
         if let persisted {
             add(to: menu, L("Open in New Window"), icon: "macwindow.badge.plus") {
                 ChatWindowManager.shared.createWindow(
                     agentId: persisted.agentId, sessionData: persisted)
             }
             menu.addItem(.separator())
+        } else if isBlank {
+            add(to: menu, L("Open in New Window"), icon: "macwindow.badge.plus") {
+                _ = ChatWindowManager.shared.createWindow(agentId: session.agentId)
+            }
+            menu.addItem(.separator())
         }
-        if let id = session.sessionId {
+        let id = session.sessionId
+        // Rename / Pin / Move to Project work for a never-saved tab too: the
+        // live session carries the values into its first save.
+        if id != nil || isBlank {
             add(to: menu, L("Rename")) { requestRename() }
             add(to: menu, session.pinned ? L("Unpin") : L("Pin")) {
                 let pinned = !session.pinned
-                ChatSessionsManager.shared.setPinned(id: id, pinned: pinned)
+                if let id { ChatSessionsManager.shared.setPinned(id: id, pinned: pinned) }
                 session.pinned = pinned
                 windowState.refreshSessions()
             }
@@ -807,10 +853,12 @@ private struct ChatTabContextMenu {
                 let item = NSMenuItem(
                     title: session.projectId == nil ? L("Move to Project") : L("Change Project"),
                     action: nil, keyEquivalent: "")
-                item.submenu = makeProjectSubmenu(id: id, projects: projects)
+                item.submenu = makeProjectSubmenu(projects: projects)
                 menu.addItem(item)
             }
             menu.addItem(.separator())
+        }
+        if let id {
             if persisted != nil {
                 add(to: menu, L("Export…")) { requestExport() }
                 menu.addItem(.separator())
@@ -827,22 +875,21 @@ private struct ChatTabContextMenu {
         if canClose {
             add(to: menu, L("Close Tab"), handler: onClose)
         }
-        // A never-saved blank tab that cannot close has nothing to offer.
         if menu.items.last?.isSeparatorItem == true { menu.removeItem(at: menu.items.count - 1) }
         return menu
     }
 
     /// One row per project (checkmark on the current one) plus "Remove from
     /// Project" while the chat is in one. Mirrors the sidebar row's submenu.
-    private func makeProjectSubmenu(id: UUID, projects: [Project]) -> NSMenu {
+    private func makeProjectSubmenu(projects: [Project]) -> NSMenu {
         let submenu = NSMenu()
         for project in projects {
-            let item = add(to: submenu, project.name) { setProject(id: id, project.id) }
+            let item = add(to: submenu, project.name) { setProject(project.id) }
             item.state = project.id == session.projectId ? .on : .off
         }
         if session.projectId != nil {
             submenu.addItem(.separator())
-            add(to: submenu, L("Remove from Project")) { setProject(id: id, nil) }
+            add(to: submenu, L("Remove from Project")) { setProject(nil) }
         }
         return submenu
     }
@@ -860,9 +907,18 @@ private struct ChatTabContextMenu {
         return item
     }
 
-    private func setProject(id: UUID, _ projectId: UUID?) {
-        ChatSessionsManager.shared.setProject(id: id, projectId: projectId)
+    private func setProject(_ projectId: UUID?) {
+        if let id = session.sessionId {
+            ChatSessionsManager.shared.setProject(id: id, projectId: projectId)
+        }
         session.projectId = projectId
+        // A blank active tab moved into a project also takes the project's
+        // folder, the way a New Chat started from that project does.
+        if session.sessionId == nil, session === windowState.session,
+            let project = ProjectManager.shared.project(for: projectId)
+        {
+            windowState.adoptProjectFolder(project)
+        }
         windowState.refreshSessions()
     }
 
@@ -872,7 +928,7 @@ private struct ChatTabContextMenu {
     /// field, so the strip asks in the same single-field prompt the sidebar
     /// uses for project names.
     private func requestRename() {
-        guard let id = session.sessionId else { return }
+        let id = session.sessionId
         let requestId = UUID()
         let scope = alertScope
         let windowState = self.windowState
@@ -883,7 +939,7 @@ private struct ChatTabContextMenu {
             placeholder: "Chat Title"
         ) { title in
             ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
-            ChatSessionsManager.shared.rename(id: id, title: title)
+            if let id { ChatSessionsManager.shared.rename(id: id, title: title) }
             session.title = title
             windowState.refreshSessions()
         }

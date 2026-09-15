@@ -22,6 +22,46 @@ enum AgentChannelN8nRemoteTransportPolicy: String, Codable, CaseIterable, Sendab
     case plaintextAllowed = "plaintext_allowed"
 }
 
+/// Where the operator's n8n instance runs relative to this Mac. Chosen in the
+/// setup sheet's "Where is your n8n?" step and persisted so a reopened
+/// channel regenerates a pairing code with exactly the URLs that can reach
+/// this Mac from there: loopback, the Docker Desktop host alias, the LAN
+/// address, or the public relay URL.
+enum AgentChannelN8nCallerLocation: String, Codable, CaseIterable, Equatable, Hashable, Sendable {
+    case thisMac = "this_mac"
+    case dockerDesktop = "docker_desktop"
+    case lan = "lan"
+    case remote = "remote"
+
+    var title: String {
+        switch self {
+        case .thisMac: return L("This Mac")
+        case .dockerDesktop: return L("Docker Desktop on this Mac")
+        case .lan: return L("Another machine on my network")
+        case .remote: return L("Remote (hosted or another network)")
+        }
+    }
+
+    /// One-line consequence shown under the picker.
+    var summary: String {
+        switch self {
+        case .thisMac:
+            return L("n8n calls 127.0.0.1. Nothing leaves this Mac.")
+        case .dockerDesktop:
+            return L("n8n calls host.docker.internal; Docker Desktop delivers it as a same-Mac request.")
+        case .lan:
+            return L("n8n calls this Mac's LAN address. The server must be exposed to the network.")
+        case .remote:
+            return L("n8n reaches this Mac through the Osaurus relay, end-to-end encrypted. No ports to open.")
+        }
+    }
+
+    /// Best guess for connections saved before the location was stored.
+    static func inferred(plaintextAllowed: Bool) -> AgentChannelN8nCallerLocation {
+        plaintextAllowed ? .lan : .thisMac
+    }
+}
+
 /// How inbound requests prove they came from the paired n8n workflow.
 struct AgentChannelN8nInboundVerification: Codable, Equatable, Sendable {
     static let defaultSharedSecretHeader = "X-Osaurus-Channel-Secret"
@@ -118,13 +158,16 @@ struct AgentChannelN8nConfiguration: Codable, Equatable, Sendable {
     var inboundDispatch: AgentChannelInboundDispatchConfiguration
     var remoteTransportPolicy: AgentChannelN8nRemoteTransportPolicy
     var outbound: AgentChannelN8nOutboundConfiguration
+    /// Where n8n runs; nil on rows saved before the setup step existed.
+    var callerLocation: AgentChannelN8nCallerLocation?
 
     init(
         inboundVerification: AgentChannelN8nInboundVerification = AgentChannelN8nInboundVerification(),
         secretName: String = AgentChannelN8nConfiguration.defaultSecretName,
         inboundDispatch: AgentChannelInboundDispatchConfiguration = AgentChannelInboundDispatchConfiguration(),
         remoteTransportPolicy: AgentChannelN8nRemoteTransportPolicy = .secureChannelRequired,
-        outbound: AgentChannelN8nOutboundConfiguration = AgentChannelN8nOutboundConfiguration()
+        outbound: AgentChannelN8nOutboundConfiguration = AgentChannelN8nOutboundConfiguration(),
+        callerLocation: AgentChannelN8nCallerLocation? = nil
     ) {
         self.inboundVerification = inboundVerification
         let trimmedName = secretName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -136,6 +179,12 @@ struct AgentChannelN8nConfiguration: Codable, Equatable, Sendable {
         self.inboundDispatch = dispatch
         self.remoteTransportPolicy = remoteTransportPolicy
         self.outbound = outbound
+        self.callerLocation = callerLocation
+    }
+
+    /// Stored location, or the inference for legacy rows.
+    var effectiveCallerLocation: AgentChannelN8nCallerLocation {
+        callerLocation ?? .inferred(plaintextAllowed: remoteTransportPolicy == .plaintextAllowed)
     }
 
     init(from decoder: Decoder) throws {
@@ -158,7 +207,11 @@ struct AgentChannelN8nConfiguration: Codable, Equatable, Sendable {
             outbound: try container.decodeIfPresent(
                 AgentChannelN8nOutboundConfiguration.self,
                 forKey: .outbound
-            ) ?? AgentChannelN8nOutboundConfiguration()
+            ) ?? AgentChannelN8nOutboundConfiguration(),
+            callerLocation: try container.decodeIfPresent(
+                AgentChannelN8nCallerLocation.self,
+                forKey: .callerLocation
+            )
         )
     }
 
@@ -168,7 +221,8 @@ struct AgentChannelN8nConfiguration: Codable, Equatable, Sendable {
             secretName: secretName,
             inboundDispatch: inboundDispatch,
             remoteTransportPolicy: remoteTransportPolicy,
-            outbound: outbound
+            outbound: outbound,
+            callerLocation: callerLocation
         )
     }
 }

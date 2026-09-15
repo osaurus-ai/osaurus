@@ -316,7 +316,7 @@ let package = Package(
             url: "https://github.com/rryam/VecturaKit",
             revision: "3bc52538f16a95d956c575abbc7e0423737dfd64"
         ),
-        .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1", exact: "0.21.1"),
+        .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1", exact: "0.23.2"),
         .package(path: "../OsaurusNetworking"),
         .package(path: "../OsaurusRepository"),
         .package(url: "https://github.com/mgriebling/SwiftMath", from: "1.7.3"),
@@ -462,6 +462,7 @@ let package = Package(
                 .product(name: "OsaurusNetworking", package: "OsaurusNetworking"),
                 .product(name: "OsaurusRepository", package: "OsaurusRepository"),
                 .product(name: "P256K", package: "swift-secp256k1"),
+                .product(name: "libsecp256k1", package: "swift-secp256k1"),
                 .product(name: "SwiftMath", package: "SwiftMath"),
                 .product(name: "Containerization", package: "containerization"),
                 .product(name: "ContainerizationExtras", package: "containerization"),

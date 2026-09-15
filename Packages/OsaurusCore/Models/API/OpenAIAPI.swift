@@ -1013,17 +1013,42 @@ struct Usage: Codable, Sendable {
     let completion_tokens: Int
     let total_tokens: Int
     let tokens_per_second: Double?
+    /// OpenAI Chat Completions prompt-cache split (`cached_tokens` is the
+    /// subset of `prompt_tokens` served from the prompt cache at the
+    /// discounted rate). Also emitted by Azure, OpenRouter, xAI, DeepSeek
+    /// (`prompt_cache_hit_tokens` is NOT mapped here). Optional and omitted
+    /// when nil so the server-side writers keep their exact wire bytes.
+    var prompt_tokens_details: PromptTokensDetails? = nil
+
+    struct PromptTokensDetails: Codable, Sendable, Equatable {
+        var cached_tokens: Int? = nil
+        var audio_tokens: Int? = nil
+
+        init(cached_tokens: Int? = nil, audio_tokens: Int? = nil) {
+            self.cached_tokens = cached_tokens
+            self.audio_tokens = audio_tokens
+        }
+    }
 
     init(
         prompt_tokens: Int,
         completion_tokens: Int,
         total_tokens: Int,
-        tokens_per_second: Double? = nil
+        tokens_per_second: Double? = nil,
+        prompt_tokens_details: PromptTokensDetails? = nil
     ) {
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
         self.total_tokens = total_tokens
         self.tokens_per_second = tokens_per_second
+        self.prompt_tokens_details = prompt_tokens_details
+    }
+
+    /// Provider-reported prompt-cache hits, clamped to `[0, prompt_tokens]`.
+    /// `nil` when the provider sent no `prompt_tokens_details.cached_tokens`.
+    var cachedPromptTokens: Int? {
+        guard let cached = prompt_tokens_details?.cached_tokens else { return nil }
+        return min(max(0, cached), max(0, prompt_tokens))
     }
 }
 

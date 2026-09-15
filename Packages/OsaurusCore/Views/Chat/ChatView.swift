@@ -1800,6 +1800,21 @@ final class ChatSession: ObservableObject {
         }
     }
 
+    /// Router prompt-cache telemetry for this session: total input tokens
+    /// billed and how many of them the upstream served from cache (billed at
+    /// the discounted rate). Summed from each turn's persisted `routerBilling`
+    /// alongside `sessionRouterSpendMicro`. Both are `0` for sessions billed
+    /// by a pre-cache router, which omits the split.
+    var sessionRouterCacheStats: (cachedInputTokens: Int, inputTokens: Int) {
+        turns.reduce((cachedInputTokens: 0, inputTokens: 0)) { acc, turn in
+            guard let billing = turn.routerBilling else { return acc }
+            return (
+                acc.cachedInputTokens + max(0, billing.cachedInputTokens),
+                acc.inputTokens + max(0, billing.inputTokens)
+            )
+        }
+    }
+
     /// True when the selected model is a local model — the kind that runs on
     /// the device's shared inference context. Covers both osaurus-downloaded
     /// models and externally-discovered ones (LM Studio, Hugging Face cache),
@@ -6232,30 +6247,13 @@ final class ChatSession: ObservableObject {
             // mode). Interactive chats never set this.
             let folderIsDispatchTarget =
                 self.folderContextFromDispatchBookmark && turnFolderRoot != nil
-            await ChatExecutionContext.$currentFolderRoot.withValue(turnFolderRoot) { [self] in
-            await ChatExecutionContext.$hostFolderIsDispatchTarget.withValue(folderIsDispatchTarget) { [self] in
-            // Typed run provenance for the whole turn. The session's own
-            // persisted `source` is authoritative here (a dispatched
-            // schedule/watcher/self-schedule run re-binds the same value the
-            // dispatcher already bound; a UI chat turn binds `.chat`).
-            // Source-scoped capabilities (proactive channel publishing) read
-            // this instead of inferring provenance from surface flags.
-            await ChatExecutionContext.$currentSessionSource.withValue(source) { [self] in
-            // Weak handle to THIS session for the whole turn, so a
-            // `background: true` spawn dispatch can deliver its report-back
-            // digest to the exact launching conversation later.
-            await ChatExecutionContext.$currentChatSessionBox.withValue(WeakChatSessionBox(self)) { [self] in
-            await ChatExecutionContext.$currentAgentId.withValue(turnAgentId) { [self] in
-            await ChatExecutionContext.$currentProjectId.withValue(self.projectId) { [self] in
-            await ChatExecutionContext.$currentUserRequest.withValue(
-                trimmed.isEmpty ? nil : trimmed
-            ) { [self] in
-            await ChatExecutionContext.$currentModelName.withValue(
-                turnModelId
-            ) { [self] in
-            await ChatExecutionContext.$currentEnableThinking.withValue(
-                turnGenerationControls.enableThinking
-            ) { [self] in
+            // The turn body is a local function rather than the innermost
+            // closure literal: the eight nested `withValue` calls form ONE
+            // expression, and Swift 6.3 folds every closure body into that
+            // expression's constraint system, which blows the type-checker
+            // budget ("unable to type-check this expression in reasonable
+            // time"). A declaration is checked on its own.
+            @MainActor func runTurn() async {
                 debugLog("send: task started runId=\(runId) model=\(turnModelId ?? "nil")")
                 // A Stop can land between beginRun (synchronous in send) and
                 // this task's first line: stop() has then already finalized
@@ -7517,33 +7515,30 @@ final class ChatSession: ObservableObject {
                             // Context), so subtract it from the Conversation
                             // total; PAST turns' frozen prefixes are genuine
                             // history bytes and stay counted here.
-                            let currentInjectedTokens =
-                                self.turns.last(where: { $0.role == .user })?
-                                .injectedContextPrefix
-                                .map { ContextBudgetManager.estimateTokens(for: $0) } ?? 0
+                            let latestUserTurn = self.turns.last(where: { $0.role == .user })
+                            let currentInjectedPrefix: String? = latestUserTurn?.injectedContextPrefix
+                            let currentInjectedTokens: Int = currentInjectedPrefix.map {
+                                ContextBudgetManager.estimateTokens(for: $0)
+                            } ?? 0
                             // The dedicated AppleScript app-name hint is part of
                             // the conversation, not the opt-in Screen Context
                             // budget row. Add its tokens back after excluding
                             // the memory/screen prefix from Conversation.
-                            let automationContextTokens =
-                                appleScriptWorkingContext.map {
-                                    ContextBudgetManager.estimateTokens(for: $0)
-                                } ?? 0
+                            let automationContextTokens: Int = appleScriptWorkingContext.map {
+                                ContextBudgetManager.estimateTokens(for: $0)
+                            } ?? 0
                             // The LLM compaction summary message rides inside
                             // `msgs` but has its own budget row (set above), so
                             // exclude it from the Conversation total.
-                            let summaryMessageTokens =
-                                self.conversationSummary.map {
-                                    ContextBudgetManager.estimateTokens(for: $0.contextMessageText)
-                                } ?? 0
-                            let convTokens =
-                                msgs
-                                .filter { $0.role != "system" }
-                                                    .reduce(0) {
-                                                        $0 + ContextBudgetManager.estimateTokens(for: $1.content)
-                                                    }
-                                - max(0, currentInjectedTokens - automationContextTokens)
-                                - summaryMessageTokens
+                            let summaryMessageTokens: Int = self.conversationSummary.map {
+                                ContextBudgetManager.estimateTokens(for: $0.contextMessageText)
+                            } ?? 0
+                            var rawConvTokens: Int = 0
+                            for message in msgs where message.role != "system" {
+                                rawConvTokens += ContextBudgetManager.estimateTokens(for: message.content)
+                            }
+                            let excludedInjected: Int = max(0, currentInjectedTokens - automationContextTokens)
+                            let convTokens: Int = rawConvTokens - excludedInjected - summaryMessageTokens
                             self.budgetTracker.updateConversation(
                                 tokens: max(0, convTokens),
                                 finishedOutputTurn: assistantTurn
@@ -8336,9 +8331,10 @@ final class ChatSession: ObservableObject {
                     // the assistant bubble surfaces the localized
                     // explanation (e.g. "Open Settings → Privacy to re-
                     // download…") instead of a generic "Error:" prefix.
-                    debugLog("send: privacy filter blocked send — \(pfError.localizedDescription)")
-                    assistantTurn.content = pfError.localizedDescription
-                    lastStreamError = pfError.localizedDescription
+                    let privacyFilterMessage: String = pfError.localizedDescription
+                    debugLog("send: privacy filter blocked send — " + privacyFilterMessage)
+                    assistantTurn.content = privacyFilterMessage
+                    lastStreamError = privacyFilterMessage
                 } catch {
                     let errorMessage = ChatErrorMessages.assistantMessage(for: error)
                     // Preserve any text the model already streamed before the
@@ -8353,11 +8349,38 @@ final class ChatSession: ObservableObject {
                     if streamedSoFar.isEmpty {
                         assistantTurn.content = errorMessage
                     } else {
-                        assistantTurn.content += "\n\n\(errorMessage)"
+                        assistantTurn.content += "\n\n" + errorMessage
                     }
                     lastStreamError = error.localizedDescription
                     noteInsufficientFundsIfNeeded(error: error, blockedTurn: assistantTurn)
                 }
+            }
+
+            await ChatExecutionContext.$currentFolderRoot.withValue(turnFolderRoot) { [self] () async -> Void in
+            await ChatExecutionContext.$hostFolderIsDispatchTarget.withValue(folderIsDispatchTarget) { [self] () async -> Void in
+            // Typed run provenance for the whole turn. The session's own
+            // persisted `source` is authoritative here (a dispatched
+            // schedule/watcher/self-schedule run re-binds the same value the
+            // dispatcher already bound; a UI chat turn binds `.chat`).
+            // Source-scoped capabilities (proactive channel publishing) read
+            // this instead of inferring provenance from surface flags.
+            await ChatExecutionContext.$currentSessionSource.withValue(source) { [self] () async -> Void in
+            // Weak handle to THIS session for the whole turn, so a
+            // `background: true` spawn dispatch can deliver its report-back
+            // digest to the exact launching conversation later.
+            await ChatExecutionContext.$currentChatSessionBox.withValue(WeakChatSessionBox(self)) { [self] () async -> Void in
+            await ChatExecutionContext.$currentAgentId.withValue(turnAgentId) { [self] () async -> Void in
+            await ChatExecutionContext.$currentProjectId.withValue(self.projectId) { [self] () async -> Void in
+            await ChatExecutionContext.$currentUserRequest.withValue(
+                trimmed.isEmpty ? nil : trimmed
+            ) { [self] () async -> Void in
+            await ChatExecutionContext.$currentModelName.withValue(
+                turnModelId
+            ) { [self] () async -> Void in
+            await ChatExecutionContext.$currentEnableThinking.withValue(
+                turnGenerationControls.enableThinking
+            ) { [self] () async -> Void in
+                await runTurn()
             }  // ChatExecutionContext.$currentEnableThinking.withValue
             }  // ChatExecutionContext.$currentModelName.withValue
             }  // ChatExecutionContext.$currentUserRequest.withValue
@@ -9654,6 +9677,13 @@ struct ChatView: View {
                                 appliesAgentReasoningDefault: observedSession.appliesAgentReasoningDefault,
                                 contextBreakdown: observedSession.estimatedContextBreakdown,
                                 sessionSpendMicro: observedSession.sessionRouterSpendMicro,
+                                sessionCachedInputLabel: {
+                                    let stats = observedSession.sessionRouterCacheStats
+                                    return OsaurusRouter.formatCachedInputLabel(
+                                        cachedTokens: stats.cachedInputTokens,
+                                        inputTokens: stats.inputTokens
+                                    )
+                                }(),
                                 isRouterBilledSession: observedSession.isOsaurusRouterSession,
                                 workspacePoolLabel: workspacePoolLabel,
                                 workspacePoolId: activeWorkspaceId,
@@ -9826,14 +9856,11 @@ struct ChatView: View {
             idealHeight: WindowConfiguration.chat.defaultSize.height,
             maxHeight: .infinity
         )
-        // Matches the window's rounded corners; in full screen the window is
-        // square, so rounding would cut visible notches into the content.
-        .clipShape(
-            RoundedRectangle(
-                cornerRadius: windowState.isFullScreen ? 0 : 24,
-                style: .continuous
-            )
-        )
+        // No corner clipping here: the panel is opaque and AppKit masks the
+        // window frame at the system radius, which differs between macOS
+        // releases (26 and 27 disagree). A hardcoded radius left the
+        // content clipped tighter than the frame on 27, exposing the panel
+        // background in the corners.
         .ignoresSafeArea()
         .onReceive(NotificationCenter.default.publisher(for: .chatToolbarBackToProject)) { notification in
             guard let targetWindowId = notification.userInfo?["windowId"] as? UUID,
@@ -10440,17 +10467,13 @@ struct ChatView: View {
     private var chatBackground: some View {
         ZStack {
             ThemedBackgroundLayer(
-                cachedBackgroundImage: windowState.cachedBackgroundImage,
-                showSidebar: windowState.showSidebar,
-                isFullScreen: windowState.isFullScreen
+                cachedBackgroundImage: windowState.cachedBackgroundImage
             )
 
             if theme.glassEnabled {
-                ThemedGlassSurface(
-                    cornerRadius: windowState.isFullScreen ? 0 : 24,
-                    topLeadingRadius: windowState.showSidebar ? 0 : nil,
-                    bottomLeadingRadius: windowState.showSidebar ? 0 : nil
-                )
+                // Square: the window frame supplies the corners (see the root
+                // view's comment on corner clipping).
+                ThemedGlassSurface(cornerRadius: 0)
                 .allowsHitTesting(false)
 
                 let baseBacking = theme.windowBackingOpacity
@@ -10463,15 +10486,6 @@ struct ChatView: View {
                     ],
                     startPoint: .top,
                     endPoint: .bottom
-                )
-                .clipShape(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: (windowState.showSidebar || windowState.isFullScreen) ? 0 : 24,
-                        bottomLeadingRadius: (windowState.showSidebar || windowState.isFullScreen) ? 0 : 24,
-                        bottomTrailingRadius: windowState.isFullScreen ? 0 : 24,
-                        topTrailingRadius: windowState.isFullScreen ? 0 : 24,
-                        style: .continuous
-                    )
                 )
                 .allowsHitTesting(false)
             }

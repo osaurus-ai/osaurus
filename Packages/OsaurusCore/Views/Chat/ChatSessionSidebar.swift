@@ -2130,14 +2130,6 @@ private struct AgentSidebarRow: View {
         Button(action: openAgentSettings) {
             Label(L("Open Settings"), systemImage: "gearshape")
         }
-        if let address = agent.agentAddress, !address.isEmpty {
-            Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(address, forType: .string)
-            } label: {
-                Label(L("Copy Address"), systemImage: "doc.on.doc")
-            }
-        }
         if !shareableWorkspaces.isEmpty, let onShareToWorkspace {
             Menu {
                 ForEach(shareableWorkspaces) { workspace in

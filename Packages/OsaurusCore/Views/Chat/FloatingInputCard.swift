@@ -44,6 +44,9 @@ struct FloatingInputCard: View {
     var contextBreakdown: ContextBreakdown = .zero
     /// Total micro-USD spent on the Osaurus Router this session.
     var sessionSpendMicro: Int = 0
+    /// "N cached · P%" label for this session's router prompt-cache hits
+    /// (see `OsaurusRouter.formatCachedInputLabel`); nil hides the line.
+    var sessionCachedInputLabel: String? = nil
     /// True when this session's spend is billed via the Osaurus Router (the
     /// managed cloud provider is the selected model). Drives the credits chip's
     /// low/empty escalation and the wallet panel's session-spend row; the chip
@@ -189,6 +192,7 @@ struct FloatingInputCard: View {
         appliesAgentReasoningDefault: Bool = false,
         contextBreakdown: ContextBreakdown = .zero,
         sessionSpendMicro: Int = 0,
+        sessionCachedInputLabel: String? = nil,
         isRouterBilledSession: Bool = false,
         workspacePoolLabel: String? = nil,
         workspacePoolId: String? = nil,
@@ -242,6 +246,7 @@ struct FloatingInputCard: View {
         self.appliesAgentReasoningDefault = appliesAgentReasoningDefault
         self.contextBreakdown = contextBreakdown
         self.sessionSpendMicro = sessionSpendMicro
+        self.sessionCachedInputLabel = sessionCachedInputLabel
         self.isRouterBilledSession = isRouterBilledSession
         self.workspacePoolLabel = workspacePoolLabel
         self.workspacePoolId = workspacePoolId
@@ -2898,6 +2903,7 @@ extension FloatingInputCard {
             FloatingCreditsChip(
                 isRouterBilledSession: isRouterBilledSession,
                 sessionSpendMicro: sessionSpendMicro,
+                sessionCachedInputLabel: sessionCachedInputLabel,
                 metaCompact: metaCompact,
                 metaUltraCompact: metaUltraCompact,
                 onAddCredits: onAddCredits
@@ -7266,6 +7272,9 @@ private struct ContextBreakdownPopover: View {
 private struct WalletPopover: View {
     /// This session's router spend; nil outside router-billed sessions.
     let sessionSpend: String?
+    /// "N cached · P%" for the session's router prompt-cache hits. Shown under
+    /// the spend row so users can see the discount they got; nil hides it.
+    let sessionCachedInputLabel: String?
     /// True when a low/empty balance should tint amber (router-billed sessions
     /// only — a $0 wallet doesn't block a local-model chat).
     let isAttention: Bool
@@ -7296,7 +7305,7 @@ private struct WalletPopover: View {
             header
             if let sessionSpend {
                 divider
-                sessionSpendRow(sessionSpend)
+                sessionSpendRow(sessionSpend, cachedLabel: sessionCachedInputLabel)
             }
             if let searchGrant = accountService.webSettings?.grants?.search,
                 searchGrant.includedTotal > 0
@@ -7400,18 +7409,37 @@ private struct WalletPopover: View {
         )
     }
 
-    private func sessionSpendRow(_ spend: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "chart.bar.fill")
-                .font(.system(size: 8))
-                .foregroundColor(theme.tertiaryText)
-            Text("This session", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
-            Spacer()
-            Text(verbatim: spend)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundColor(theme.primaryText)
+    private func sessionSpendRow(_ spend: String, cachedLabel: String?) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: "chart.bar.fill")
+                    .font(.system(size: 8))
+                    .foregroundColor(theme.tertiaryText)
+                Text("This session", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                Spacer()
+                Text(verbatim: spend)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundColor(theme.primaryText)
+            }
+            // Prompt-cache hits: input the router billed at the cached rate.
+            // Only rendered when the router echoed a non-zero split.
+            if let cachedLabel {
+                HStack(spacing: 6) {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 8))
+                        .foregroundColor(theme.tertiaryText)
+                    Text("Prompt cache", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                    Spacer()
+                    Text(verbatim: cachedLabel)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.secondaryText)
+                }
+                .accessibilityLabel(Text("Prompt cache: \(cachedLabel) input tokens served from cache", bundle: .module))
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -8500,6 +8528,8 @@ private struct FloatingCreditsChip: View {
     let isRouterBilledSession: Bool
     /// Total micro-USD spent on the Osaurus Router this session (popover row).
     let sessionSpendMicro: Int
+    /// Session prompt-cache hit label for the popover's spend row; nil hides it.
+    let sessionCachedInputLabel: String?
     let metaCompact: Bool
     let metaUltraCompact: Bool
     let onAddCredits: (() -> Void)?
@@ -8696,6 +8726,7 @@ private struct FloatingCreditsChip: View {
         .popover(isPresented: $showWalletPanel, arrowEdge: .top) {
             WalletPopover(
                 sessionSpend: isRouterBilledSession ? sessionSpendDisplay : nil,
+                sessionCachedInputLabel: isRouterBilledSession ? sessionCachedInputLabel : nil,
                 isAttention: isRouterBilledSession && balanceLevel != .healthy,
                 onAddCredits: {
                     closeWalletPanel()

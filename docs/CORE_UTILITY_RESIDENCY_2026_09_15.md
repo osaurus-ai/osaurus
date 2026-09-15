@@ -461,3 +461,20 @@ qwen3_5 and qwen3_5_moe and their implementations. The report's asserted absence
 of encoders is contradicted by this source; its actual runtime failure remains
 unreproduced with the exact published6bit bundles. Download and qualification
 are in progress. Do not infer runtime support from registration alone.
+
+
+The eight-request matrix on63b869984 completed21passed/5failed/26selected,
+including the new latest-image recall check. Failures: Ornith9B2D, both ZAYA
+variants, CRACKQwen3.8-27B2D and NemotronOmni30B6M. The last had passed the
+previous seven-request run and now answered Red for changed-imageB; retain
+both outcomes rather than classify this as a caused regression. LFM4M and
+Qwen3.8-27B4D passed latest recall in the API harness; the earlier native LFM
+failure remains separately unresolved. Peak16.01GiB, swap5.99GiB unchanged,
+no resource abort, cleanupzero. Rawvision-latest-eight-results.json and reports.
+
+Current integration brings mainabfef96fa and its newer tab/window and crypto
+changes into this branch. The localization conflict was resolved by semantic
+three-way JSON merge, preserving both independent additions and deletions.
+Core's tracked secp256k1 lock now matches main's manifest and workspace0.23.2.
+Fresh integrated runtime/eval/UI proof is pending. Prior branch proof must not
+be presented as exact-source proof for this integration.

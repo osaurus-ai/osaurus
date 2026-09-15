@@ -65,12 +65,17 @@ enum ContentBlockKind: Equatable {
     /// `modelLoad` is non-nil only when a cold container load happened inside
     /// this turn's TTFT window; it is shown beside the TTFT chip so a long wait
     /// is attributed to loading weights rather than read as a slow engine.
+    /// `cachedInputTokens` is the provider-reported prompt-cache read count
+    /// (OpenAI `cached_tokens`, Anthropic `cache_read_input_tokens`, Gemini
+    /// `cachedContentTokenCount`, Router `cached_input_tokens`); shown as an
+    /// "N cached" chip only when > 0 so uncached turns look exactly as before.
     case generationStats(
         ttft: TimeInterval?,
         tokensPerSecond: Double?,
         tokenCount: Int?,
         unclosedReasoning: Bool,
-        modelLoad: TimeInterval?
+        modelLoad: TimeInterval?,
+        cachedInputTokens: Int?
     )
     case typingIndicator
     case groupSpacer
@@ -144,14 +149,14 @@ enum ContentBlockKind: Equatable {
             return lName == rName && lSize == rSize
 
         case let (
-            .generationStats(lTtft, lTps, lCount, lUnclosed, lLoad),
-            .generationStats(rTtft, rTps, rCount, rUnclosed, rLoad)
+            .generationStats(lTtft, lTps, lCount, lUnclosed, lLoad, lCached),
+            .generationStats(rTtft, rTps, rCount, rUnclosed, rLoad, rCached)
         ):
-            // `modelLoad` participates: this equality decides whether the cell
-            // re-renders, so omitting it would leave a stale (or missing)
-            // load chip on screen when only that value changed.
+            // `modelLoad` / `cachedInputTokens` participate: this equality
+            // decides whether the cell re-renders, so omitting them would leave
+            // a stale (or missing) chip on screen when only that value changed.
             return lTtft == rTtft && lTps == rTps && lCount == rCount
-                && lUnclosed == rUnclosed && lLoad == rLoad
+                && lUnclosed == rUnclosed && lLoad == rLoad && lCached == rCached
 
         case (.typingIndicator, .typingIndicator):
             return true
@@ -415,6 +420,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         tokenCount: Int?,
         unclosedReasoning: Bool = false,
         modelLoad: TimeInterval? = nil,
+        cachedInputTokens: Int? = nil,
         position: BlockPosition
     ) -> ContentBlock {
         ContentBlock(
@@ -425,7 +431,8 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
                 tokensPerSecond: tokensPerSecond,
                 tokenCount: tokenCount,
                 unclosedReasoning: unclosedReasoning,
-                modelLoad: modelLoad
+                modelLoad: modelLoad,
+                cachedInputTokens: cachedInputTokens
             ),
             position: position
         )
@@ -914,6 +921,7 @@ extension ContentBlock {
                         tokenCount: turn.generationTokenCount,
                         unclosedReasoning: turn.unclosedReasoning,
                         modelLoad: turn.modelLoadSeconds,
+                        cachedInputTokens: turn.effectiveCachedInputTokens,
                         position: .middle
                     )
                 )

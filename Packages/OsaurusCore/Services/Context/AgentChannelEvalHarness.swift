@@ -1191,11 +1191,13 @@ public enum AgentChannelEvalHarness {
         try? store.openInMemory()
         defer { store.close() }
         let activity = AgentChannelInboundActivityCenter()
+        let pendingContacts = AgentChannelN8nPendingContactCenter(notify: {})
         let relay = RelayRecorder()
         let ingress = AgentChannelWebhookIngress(
             secretResolver: FixedSecretResolver(secret: secret),
             messageStore: store,
             activityCenter: activity,
+            pendingContacts: pendingContacts,
             transportHealth: AgentChannelTransportHealthCenter(),
             connectionLookup: { id in id == connectionId ? connectionBox.connection : nil },
             relaySubmit: { request in
@@ -1301,24 +1303,51 @@ public enum AgentChannelEvalHarness {
         expect(relay.requests.count == 1, "no second dispatch for a duplicate (\(relay.requests.count))")
 
         // 4. Fail-closed authorization: unknown sender and unknown conversation.
+        //    A verified event from an unapproved identity is still rejected
+        //    and never dispatched, but it is surfaced as `pending_approval`
+        //    (approve-on-first-contact) and recorded for the operator.
         let badSender = await ingress.handleInbound(request(body: envelope(eventId: "evt-2", sender: deniedSenderId)))
         expect(badSender.status == 202, "non-allowlisted sender -> 202 rejected (got \(badSender.status))")
         expect(json(badSender)["status"] as? String == "rejected", "non-allowlisted sender status is rejected")
         expect(
-            json(badSender)["reason"] as? String == "sender_not_allowlisted",
-            "reason is sender_not_allowlisted (got \(json(badSender)["reason"] ?? "nil"))"
+            json(badSender)["reason"] as? String == "pending_approval",
+            "first contact from an unknown sender is pending_approval (got \(json(badSender)["reason"] ?? "nil"))"
         )
         let badRoom = await ingress.handleInbound(
             request(body: envelope(eventId: "evt-3", conversation: deniedRoomId))
         )
         expect(json(badRoom)["status"] as? String == "rejected", "non-allowlisted conversation is rejected")
         expect(
-            json(badRoom)["reason"] as? String == "room_not_allowlisted",
-            "reason is room_not_allowlisted (got \(json(badRoom)["reason"] ?? "nil"))"
+            json(badRoom)["reason"] as? String == "pending_approval",
+            "first contact from an unknown conversation is pending_approval (got \(json(badRoom)["reason"] ?? "nil"))"
         )
         expect(relay.requests.count == 1, "rejected events never dispatch (\(relay.requests.count))")
         let rejectedRows = (try? store.messageCount(connectionId: connectionId, roomId: deniedRoomId)) ?? -1
         expect(rejectedRows == 0, "no message rows for the denied conversation (found \(rejectedRows))")
+        let pendingRows = await pendingContacts.pending(connectionId: connectionId)
+        expect(pendingRows.count == 2, "both unapproved identities are pending (found \(pendingRows.count))")
+        expect(
+            pendingRows.contains { $0.senderId == deniedSenderId && $0.conversationId == conversationId },
+            "pending row carries the unknown sender's real ids"
+        )
+        // The audit row keeps the exact policy verdict for the workbench.
+        let auditReasons = ((try? store.recentAuditEvents(connectionId: connectionId, limit: 10)) ?? []).map(\.reason)
+        expect(
+            auditReasons.contains("sender_not_allowlisted") && auditReasons.contains("room_not_allowlisted"),
+            "audit rows keep sender_not_allowlisted / room_not_allowlisted (got \(auditReasons))"
+        )
+        // Once denied, the identity is not re-prompted: the bare policy reason returns.
+        if let senderRow = pendingRows.first(where: { $0.senderId == deniedSenderId }) {
+            await pendingContacts.deny(senderRow)
+        }
+        let deniedAgain = await ingress.handleInbound(
+            request(body: envelope(eventId: "evt-2b", sender: deniedSenderId))
+        )
+        expect(
+            json(deniedAgain)["reason"] as? String == "sender_not_allowlisted",
+            "a denied identity gets sender_not_allowlisted, not a new prompt (got \(json(deniedAgain)["reason"] ?? "nil"))"
+        )
+        expect(relay.requests.count == 1, "denied re-run still never dispatches (\(relay.requests.count))")
 
         // 5. Envelope contract is enforced only after verification.
         let wrongVersion = await ingress.handleInbound(request(body: envelope(eventId: "evt-4", version: 2)))

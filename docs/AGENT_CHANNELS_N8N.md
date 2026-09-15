@@ -26,8 +26,12 @@ Everything channel-specific lives in:
 - `Services/AgentChannel/AgentChannelN8nPreset.swift` — projects the optional
   outbound webhook onto ordinary custom HTTP actions.
 - `Models/AgentChannel/N8nPairingCode.swift` — the one-string pairing code
-  the `n8n-nodes-osaurus` credential consumes.
-- `Views/Settings/N8nSettingsView.swift` — the Connection Center setup sheet.
+  the `@osaurus/n8n-nodes-osaurus` credential consumes, scoped by caller
+  location and gated by `readiness`.
+- `Services/AgentChannel/AgentChannelN8nPendingContactCenter.swift` —
+  session-scoped approve-on-first-contact requests.
+- `Views/Settings/N8nSettingsView.swift` — the Connection Center setup sheet
+  (*Name it → Where is your n8n? → Who answers? → Pair → Prove it*).
 - `Networking/HTTPHandler.swift` — the `/channels/` shim (bearer-exempt).
 
 ## Authentication Model
@@ -75,6 +79,7 @@ Insights request log; the HTTP shim only logs a redacted header twin.
     "inboundVerification": { "method": "hmac_sha256" },
     "secretName": "webhook",
     "remoteTransportPolicy": "plaintext_allowed",
+    "callerLocation": "lan",
     "inboundDispatch": {
       "enabled": true,
       "target": { "kind": "local", "id": "<agent-uuid>" },
@@ -91,10 +96,19 @@ Notes:
   path adds it automatically.
 - `inboundAuthorization.senderAllowlist` and `roomAllowlist` are **fail-closed**:
   both must be non-empty and match `sender.id` / `conversation_id` or the
-  event is recorded as `rejected` and never dispatched.
+  event is recorded as `rejected` and never dispatched. The sheet fills them
+  by **approve-on-first-contact** (see *Inbound Response Shapes*,
+  `pending_approval`); they can still be edited by hand under *Prove it →
+  Advanced*.
 - `requireMention` is forced `false`; n8n has no mention concept.
 - `remoteTransportPolicy` defaults to `secure_channel_required`. Loopback
   callers and Secure Channel (`/secure/call`) callers are always accepted.
+  The sheet only offers `plaintext_allowed` when `callerLocation` is `lan`.
+- `callerLocation` (`this_mac` | `docker_desktop` | `lan` | `remote`) records
+  the answer to *Where is your n8n?*. It scopes the pairing code's `urls` and
+  decides whether Relay is required. Rows saved before the field existed
+  decode as `nil` and are inferred: `plaintext_allowed` → `lan`, else
+  `this_mac` (`AgentChannelN8nConfiguration.effectiveCallerLocation`).
 - Save-time validation (`AgentChannelConnectionManager`) requires the `n8n`
   block, a non-empty verification header name, and — when `outbound.webhookURL`
   is set — a URL that passes the custom runner's blocked-host policy.
@@ -134,7 +148,8 @@ Rules (`AgentChannelN8nEnvelope.parse`):
 | --- | --- | --- |
 | `202` | `{"status":"accepted","event_id","dispatch":"dispatched","task_id","session_id","poll_url"}` | Stored and dispatched. `task_id == session_id` (deterministic from the session partition). |
 | `202` | `{"status":"accepted","dispatch":"suppressed:<reason>", ...}` | Stored but not dispatched (inbound dispatch disabled, no target, etc.). Polling returns `404` until a dispatch exists. |
-| `202` | `{"status":"rejected","event_id","reason":"sender_not_allowlisted"}` | Authorization denied; audit row written, no dispatch. Also `room_not_allowlisted`, `space_not_allowlisted`, `bot_message_denied`. |
+| `202` | `{"status":"rejected","event_id","reason":"pending_approval"}` | Secret verified and envelope parsed, but `conversation_id` / `sender.id` are not allowlisted yet. The identity is recorded in `AgentChannelN8nPendingContactCenter` (session-scoped, max 20 per connection) and shown under *Prove it → Who may speak* as **Allow / Deny**. Allow appends both ids to the allowlists via `approveN8nContact`; the workflow is then re-run. Nothing dispatches before approval. An identity denied this session falls back to the bare reason below. |
+| `202` | `{"status":"rejected","event_id","reason":"sender_not_allowlisted"}` | Authorization denied; audit row written, no dispatch. Also `room_not_allowlisted` (both only after a session-scoped Deny), `space_not_allowlisted`, `bot_message_denied`. |
 | `200` | `{"status":"duplicate","event_id","task_id","session_id","poll_url"}` | Replayed `event_id`; no new task or store row. |
 | `400` | `unsupported_envelope_version` / `invalid_payload` / `unsupported_kind` / `invalid_task_id` | Contract errors. |
 | `401` | `unauthorized` | Secret/signature did not verify. Penalizes the source for rate limiting. |
@@ -202,11 +217,12 @@ inbound and poll.
 
 ## Pairing Code
 
-The setup sheet's **Pair with n8n** card (step *Connect n8n*, the fourth of
-*Name this channel → Who may speak → How Osaurus replies → Connect n8n → Live
-check*, so the id and the bound agent are known before the code is issued)
-emits one copyable string that the `n8n-nodes-osaurus` **Osaurus Channel**
-credential decodes:
+n8n calls Osaurus, never the reverse; the pairing code is the entire hand-off.
+The setup sheet's **Pair with n8n** card (step *Pair*, the fourth of *Name it
+→ Where is your n8n? → Who answers? → Pair → Prove it*, so the id, the caller
+location, the bound agent and its Relay state are all known before the code
+is issued) emits one copyable string that the `@osaurus/n8n-nodes-osaurus`
+**Osaurus Channel** credential decodes:
 
 ```
 osrs-n8n-1.<base64url(compact JSON, sorted keys)>
@@ -215,8 +231,7 @@ osrs-n8n-1.<base64url(compact JSON, sorted keys)>
 ```json
 {
   "v": 1,
-  "urls": ["http://127.0.0.1:1337", "http://host.docker.internal:1337",
-           "http://192.168.1.20:1337", "https://0x….agent.osaurus.ai"],
+  "urls": ["https://0x….agent.osaurus.ai"],
   "cid": "n8n-local",
   "secret": "<channel secret>",
   "vfy": "hmac_sha256" | "shared_secret_header",
@@ -226,19 +241,31 @@ osrs-n8n-1.<base64url(compact JSON, sorted keys)>
 }
 ```
 
-- `urls` are ordered candidates: loopback, the Docker Desktop host alias, the
-  LAN address (only when the server is exposed to the network), and the public
-  relay URL (only when the bound agent's relay reports the route live). The
-  node pings them in order and keeps the first that answers.
-- `addr` is the address of the local agent chosen in *How Osaurus replies*.
-  When present the node speaks **Secure Channel** to every candidate: it pins
+- `urls` are **scoped to `callerLocation`** (`N8nPairingCode.urlCandidates`):
+  `this_mac` → `http://127.0.0.1:<port>`; `docker_desktop` →
+  `http://host.docker.internal:<port>`; `lan` → `http://<lan-ip>:<port>`
+  (only when the server is exposed to the network); `remote` → the public
+  relay URL (only when the bound agent's relay reports connected). The list
+  stays an ordered array for wire compatibility; the node pings in order and
+  keeps the first that answers.
+- **No unusable code is ever issued.** `N8nPairingCode.readiness` returns a
+  typed blocker instead — `needsBoundAgent` / `needsRelay` (remote),
+  `needsExposeToNetwork` / `needsPlaintextOrAgent` (LAN) — and the Pair card
+  shows the blocker with a jump to the step that clears it. `make` returns
+  `nil` when there is no URL for the location.
+- `addr` is the address of the local agent chosen in *Who answers?*. When
+  present the node speaks **Secure Channel** to every candidate: it pins
   `addr` in the `/secure/session` handshake and wraps ping, inbound and poll
   in `/secure/call`. That satisfies `secure_channel_required` from anywhere —
   including through the relay, which then carries only ciphertext — without
-  the *Remote callers* plaintext toggle. When `addr` is absent the node sends
-  plaintext HTTP and remote callers need `plaintext_allowed`.
+  the LAN plaintext toggle. `remote` requires `addr`. When `addr` is absent the
+  node sends plaintext HTTP and LAN callers need `plaintext_allowed`.
+- Relay for the bound agent is enabled from *Who answers?* itself
+  (`RelayTunnelManager.setTunnelEnabled`), with live connecting/connected
+  state; the Remote code appears once the relay is connected.
 - The code contains the channel secret. Treat it as the secret; rotating the
-  secret invalidates every previously issued code.
+  secret (*Pair → Advanced*) invalidates every previously issued code. Moving
+  n8n means changing *Where is your n8n?* and copying the code again.
 - `N8nPairingCode` (Swift) and `src/pairing.ts` (node) are the two decoders.
 
 ## Session Continuity
@@ -252,12 +279,12 @@ session.
 
 ## Topology Matrix
 
-| Caller location | Loopback? | Default policy result | Recommended setting |
-| --- | --- | --- | --- |
-| n8n on the same Mac (native process) | yes | accepted | `secure_channel_required` (loopback bypasses it) |
-| n8n in Docker Desktop on the same Mac (`host.docker.internal`) | **yes** on macOS — Docker Desktop's host forwarder delivers the connection from `127.0.0.1` | accepted | `secure_channel_required`; the secret still authenticates every request |
-| n8n on the LAN (or any request that reaches Osaurus on its LAN IP) | no | `426` | Pairing code with a bound agent (the node uses Secure Channel), or `plaintext_allowed` behind a trusted network |
-| n8n anywhere via Osaurus relay + Secure Channel (`/secure/call`) | n/a | accepted | default; the pairing code carries the relay URL and pinned agent address, no `osk-v1` key is involved — the inner request is still bearer-exempt and secret-verified |
+| *Where is your n8n?* (`callerLocation`) | Pairing code URL | Loopback? | Default policy result | Sheet consequences |
+| --- | --- | --- | --- | --- |
+| This Mac (`this_mac`) | `http://127.0.0.1:<port>` | yes | accepted | No toggles. Encryption optional (bound local agent adds it). |
+| Docker Desktop on this Mac (`docker_desktop`, `host.docker.internal`) | `http://host.docker.internal:<port>` | **yes** on macOS — Docker Desktop's host forwarder delivers the connection from `127.0.0.1` | accepted | Same as This Mac; the secret still authenticates every request. |
+| Another machine on my network (`lan`) | `http://<lan-ip>:<port>`; withheld until *Expose to Network* is on | no | `426` | The only location that shows **Allow plaintext HTTP from other machines**. With a bound local agent the node uses Secure Channel and the toggle stays off. Relay is optional here. |
+| Remote (`remote`) — hosted n8n or another network, via Osaurus relay + Secure Channel (`/secure/call`) | relay URL only; withheld until the bound agent's Relay is connected | n/a | accepted | Requires a local agent in *Who answers?*; Relay is enabled from that step. `plaintext_allowed` is forced off. No `osk-v1` key is involved — the inner request is still bearer-exempt and secret-verified. |
 
 Two facts about "loopback" matter here:
 
@@ -271,9 +298,9 @@ Two facts about "loopback" matter here:
   `host.docker.internal` through its host forwarder, so Osaurus sees the
   connection from `127.0.0.1` whether it binds `127.0.0.1` or `0.0.0.0`; the
   container therefore never triggers the `426`. Docker on Linux (bridge
-  network, no forwarder) is a genuine non-loopback caller and needs
-  `plaintext_allowed` or Secure Channel. The setup sheet surfaces the Docker
-  URL and the toggle either way.
+  network, no forwarder) is a genuine non-loopback caller: pick *Another
+  machine on my network* for it and either bind a local agent (Secure
+  Channel) or allow plaintext.
 
 ## Outbound Push (optional)
 

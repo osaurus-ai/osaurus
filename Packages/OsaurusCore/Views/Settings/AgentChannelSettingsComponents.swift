@@ -95,6 +95,13 @@ struct AgentChannelStatusBadge: View {
 
 // MARK: - Channel Card
 
+/// On/off accessory for `AgentChannelCard`.
+struct AgentChannelCardEnabledToggle {
+    var isOn: Bool
+    var anchorId: String? = nil
+    var onChange: (Bool) -> Void
+}
+
 /// Full-width card for one channel (native integration or custom connection).
 /// The whole card is a button that opens the channel's configuration sheet,
 /// mirroring `ProviderRowCard`.
@@ -110,6 +117,10 @@ struct AgentChannelCard: View {
     /// Optional third line, e.g. which agent(s) answer this channel.
     var detail: String?
     var anchorId: String?
+    /// Optional on/off switch rendered before the chevron. Used by stored
+    /// connections (n8n) so enabling and disabling never requires opening
+    /// the sheet.
+    var enabledToggle: AgentChannelCardEnabledToggle?
     let action: () -> Void
 
     @State private var isHovered = false
@@ -168,6 +179,24 @@ struct AgentChannelCard: View {
                 }
 
                 Spacer(minLength: 8)
+
+                if let enabledToggle {
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { enabledToggle.isOn },
+                            set: { enabledToggle.onChange($0) }
+                        )
+                    )
+                    .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                    .labelsHidden()
+                    .help(
+                        enabledToggle.isOn
+                            ? L("Channel enabled — turn off to refuse every request with 403")
+                            : L("Channel disabled — turn on to accept requests again")
+                    )
+                    .settingsLandingAnchor(enabledToggle.anchorId)
+                }
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .semibold))

@@ -88,10 +88,14 @@ struct AgentChannelSetupFlowTests {
 
     @Test func n8nSetupSectionsAreFiveWorkflowSteps() {
         let ids = N8nSetupSection.sections.map(\.id)
-        #expect(ids == ["basics", "who", "reply", "connect", "live"])
-        #expect(N8nSetupSection.requiredSectionIds == ["basics", "connect", "who"])
+        // Name it → Where is your n8n? → Who answers? → Pair → Prove it.
+        #expect(ids == ["basics", "location", "reply", "connect", "live"])
+        #expect(N8nSetupSection.requiredSectionIds == ["basics", "location", "reply", "connect"])
         #expect(N8nSetupSection.fallbackSectionId == "live")
-        #expect(N8nSetupSection.basics.caption == L("Identity"))
+        #expect(N8nSetupSection.basics.caption == L("Display name and id"))
+        #expect(N8nSetupSection.sections.map(\.title) == [
+            L("Name it"), L("Where is your n8n?"), L("Who answers?"), L("Pair"), L("Prove it"),
+        ])
     }
 
     @Test func addCatalogListsGuidedProvidersFirstAndCustomLastAsAdvanced() {

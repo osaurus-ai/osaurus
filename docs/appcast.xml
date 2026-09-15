@@ -3,6 +3,41 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.4</title>
+            <pubDate>Tue, 15 Sep 2026 19:18:52 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.4</sparkle:version>
+            <sparkle:shortVersionString>0.25.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.4/Osaurus-0.25.4.dmg" length="77371239" type="application/octet-stream" sparkle:edSignature="0mykRH61UYxeHxKettbi6e2s1TJdn3MssxAGD58pEDacIlvGChx2TJ47JJW85XnBbYWPpn2yN/rCJ8IXT5dlBQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Remote prompt-cache efficiency: session cache keys, cache-aware Router telemetry, BYOK cache parsing (#2779) by @tpae
+- Guide n8n setup so pairing codes only issue when they can work (#2775) by @tpae
+- QoL improvements (#2776) by @RaajeevChandran
+- Audit installed vision bundles and repair discovery and admission parity (#2772) by @jjang-ai
+- Multi-device identity: unique agent addresses, owner redeem, and iOS Keychain group (#2769) by @tpae
+
+## 🚀 Features
+
+- add recent folders to the + menu and agent working folder setting (#2765) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- open a new tab instead of spawning a new window when ask ai button is tapped in menu bar (#2781) by @RaajeevChandran
+- Allow the release archive to trust SwiftPM build plugins (#2780) by @tpae
+- fixed xcode 27 build errors (#2778) by @RaajeevChandran
+- present the orchestrator config approval popup as a centered themed modal (#2773) by @RaajeevChandran
+- Fix daily schedule double-fire and launch replay (#2770) by @tpae
+- Reject unsupported embedding model requests instead of substituting Potion (#2768) by @jjang-ai
+- Update MLX 0.32.2 pin and default only Flash Next MTP Off (#2745) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.3...0.25.4
+]]></description>
+        </item>
+        <item>
             <title>0.25.3</title>
             <pubDate>Mon, 14 Sep 2026 15:25:07 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

@@ -128,6 +128,10 @@ actor AgentChannelWebhookIngress {
     static let transportId = "webhook_ingress"
     /// Hard cap on inbound bodies; the envelope content cap is far smaller.
     static let maxBodyBytes = 256 * 1024
+    /// Allowlist misses that become a pending approval request instead of a
+    /// bare rejection. Only reachable after the secret verified.
+    static let pendingApprovalReasons: Set<String> = ["room_not_allowlisted", "sender_not_allowlisted"]
+    static let pendingApprovalReason = "pending_approval"
     /// Redaction for request logs: verification headers never reach Insights.
     static let sensitiveHeaderNames: Set<String> = [
         "authorization",
@@ -147,6 +151,7 @@ actor AgentChannelWebhookIngress {
     private let authorizationService: AgentChannelConnectionService
     private let messageStore: AgentChannelMessageStore
     private let activityCenter: AgentChannelInboundActivityCenter
+    private let pendingContacts: AgentChannelN8nPendingContactCenter
     private let transportHealth: AgentChannelTransportHealthCenter
     private let connectionLookup: ConnectionLookup
     private let relaySubmit: RelaySubmit
@@ -165,6 +170,7 @@ actor AgentChannelWebhookIngress {
         authorizationService: AgentChannelConnectionService = .shared,
         messageStore: AgentChannelMessageStore = .shared,
         activityCenter: AgentChannelInboundActivityCenter = .shared,
+        pendingContacts: AgentChannelN8nPendingContactCenter = .shared,
         transportHealth: AgentChannelTransportHealthCenter = .shared,
         connectionLookup: ConnectionLookup? = nil,
         relaySubmit: RelaySubmit? = nil,
@@ -177,6 +183,7 @@ actor AgentChannelWebhookIngress {
         self.authorizationService = authorizationService
         self.messageStore = messageStore
         self.activityCenter = activityCenter
+        self.pendingContacts = pendingContacts
         self.transportHealth = transportHealth
         self.connectionLookup =
             connectionLookup ?? { id in
@@ -333,15 +340,31 @@ actor AgentChannelWebhookIngress {
                 ]
             )
         case .denied:
+            // Approve-on-first-contact: the secret verified and the envelope
+            // parsed, so this is the paired workflow speaking with an identity
+            // the operator has not approved yet. Surface it as a pending
+            // request instead of a bare allowlist miss. Still no dispatch.
+            var reason = receive.authorizationReason ?? "denied"
+            if Self.pendingApprovalReasons.contains(reason) {
+                let recorded = await pendingContacts.record(
+                    connectionId: connection.id,
+                    conversationId: envelope.conversationId,
+                    senderId: envelope.sender.id,
+                    senderDisplay: envelope.sender.display,
+                    eventId: envelope.eventId,
+                    at: request.receivedAt
+                )
+                if recorded { reason = Self.pendingApprovalReason }
+            }
             bump(connectionId) {
                 $0.inboundRejected += 1
-                $0.lastFailureReason = receive.authorizationReason
+                $0.lastFailureReason = reason
             }
             await activityCenter.record(
                 connectionId: connection.id,
                 providerEventId: envelope.eventId,
                 stage: .rejected,
-                reason: receive.authorizationReason
+                reason: reason
             )
             await publishHealth(connection: connection, failure: nil)
             return .json(
@@ -349,7 +372,7 @@ actor AgentChannelWebhookIngress {
                 [
                     "status": "rejected",
                     "event_id": envelope.eventId,
-                    "reason": receive.authorizationReason ?? "denied",
+                    "reason": reason,
                 ]
             )
         case .accepted:

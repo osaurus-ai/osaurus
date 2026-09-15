@@ -2700,7 +2700,7 @@ struct RemoteChatRequestEncodingTests {
 
     // MARK: - prompt_cache_key (session-scoped OpenAI prompt-cache routing)
 
-    @Test func supportsPromptCacheKey_onlyForGenuineOpenAIHosts() throws {
+    @Test func supportsPromptCacheKey_allowlistsKeyedCacheTargets() throws {
         #expect(
             RemoteProviderService.supportsPromptCacheKey(
                 providerType: .openaiLegacy,
@@ -2713,26 +2713,90 @@ struct RemoteChatRequestEncodingTests {
                 host: "eu.api.openai.com"
             )
         )
-        // Third-party OpenAI-compat schemas can be strict about unknown
-        // fields — same rationale as router-only `idempotency_key`.
         #expect(
-            !RemoteProviderService.supportsPromptCacheKey(
-                providerType: .openaiLegacy,
-                host: "api.x.ai"
+            RemoteProviderService.supportsPromptCacheKey(
+                providerType: .openResponses,
+                host: "api.openai.com"
             )
         )
+        // Osaurus Router validates and forwards the key upstream (OpenAI,
+        // xAI) so cached turns bill at the discounted rate — any host.
         #expect(
-            !RemoteProviderService.supportsPromptCacheKey(
+            RemoteProviderService.supportsPromptCacheKey(
                 providerType: .osaurusRouter,
                 host: "router.osaurus.ai"
             )
         )
+        #expect(
+            RemoteProviderService.supportsPromptCacheKey(
+                providerType: .osaurusRouter,
+                host: "staging-router.example.com"
+            )
+        )
+        // Azure OpenAI Foundry shares OpenAI's request schema.
+        #expect(
+            RemoteProviderService.supportsPromptCacheKey(
+                providerType: .azureOpenAI,
+                host: "my-resource.openai.azure.com"
+            )
+        )
+        // OpenRouter forwards the key to OpenAI-backed models.
+        #expect(
+            RemoteProviderService.supportsPromptCacheKey(
+                providerType: .openaiLegacy,
+                host: "openrouter.ai"
+            )
+        )
+        #expect(
+            RemoteProviderService.supportsPromptCacheKey(
+                providerType: .openaiLegacy,
+                host: "OpenRouter.ai"
+            )
+        )
+        // Third-party OpenAI-compat schemas can be strict about unknown
+        // fields — same rationale as router-only `idempotency_key`.
+        for host in ["api.x.ai", "api.deepseek.com", "api.fireworks.ai", "api.venice.ai", "notopenrouter.ai"] {
+            #expect(
+                !RemoteProviderService.supportsPromptCacheKey(
+                    providerType: .openaiLegacy,
+                    host: host
+                ),
+                "\(host)"
+            )
+        }
         #expect(
             !RemoteProviderService.supportsPromptCacheKey(
                 providerType: .anthropic,
                 host: "api.anthropic.com"
             )
         )
+        #expect(
+            !RemoteProviderService.supportsPromptCacheKey(
+                providerType: .gemini,
+                host: "generativelanguage.googleapis.com"
+            )
+        )
+        #expect(
+            !RemoteProviderService.supportsPromptCacheKey(
+                providerType: .osaurus,
+                host: "127.0.0.1"
+            )
+        )
+        #expect(
+            !RemoteProviderService.supportsPromptCacheKey(
+                providerType: .openAICodex,
+                host: "chatgpt.com"
+            )
+        )
+    }
+
+    @Test func promptCacheKey_isSessionScopedAndRouterSafe() throws {
+        let key = RemoteProviderService.promptCacheKey(forSession: "6F9619FF-8B86-D011-B42D-00C04FC964FF")
+        #expect(key == "osaurus-session-6F9619FF-8B86-D011-B42D-00C04FC964FF")
+        // Router accepts `[A-Za-z0-9._:-]{1,200}`; UUID session ids fit.
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:-")
+        #expect(key.unicodeScalars.allSatisfy { allowed.contains($0) })
+        #expect(key.count <= 200)
     }
 
     @Test func wireBody_carriesPromptCacheKeyOnlyWhenSet() throws {
@@ -2747,7 +2811,7 @@ struct RemoteChatRequestEncodingTests {
         #expect(payload["prompt_cache_key"] as? String == "osaurus-session-ABC")
     }
 
-    @Test func buildChatRequest_setsSessionScopedPromptCacheKeyForOpenAIOnly() async throws {
+    @Test func buildChatRequest_setsSessionScopedPromptCacheKeyPerTarget() async throws {
         func service(host: String, providerType: RemoteProviderType) -> RemoteProviderService {
             RemoteProviderService(
                 provider: RemoteProvider(
@@ -2790,6 +2854,7 @@ struct RemoteChatRequestEncodingTests {
                 toolChoice: nil
             )
         #expect(compatReq.promptCacheKey == nil)
+        #expect(compatReq.openRouterSessionId == nil)
 
         // No session id → no key, even on the genuine OpenAI host.
         let noSessionReq = await service(host: "api.openai.com", providerType: .openaiLegacy)
@@ -2802,6 +2867,113 @@ struct RemoteChatRequestEncodingTests {
                 toolChoice: nil
             )
         #expect(noSessionReq.promptCacheKey == nil)
+
+        // Router: key travels with every session turn, including agent-loop
+        // tool rounds (same session id, tool-result tail), next to the
+        // router-only idempotency fields.
+        let routerReq = await service(host: "router.osaurus.ai", providerType: .osaurusRouter)
+            .buildChatRequest(
+                messages: [
+                    ChatMessage(role: "user", content: "hi"),
+                    ChatMessage(
+                        role: "assistant",
+                        content: "",
+                        tool_calls: [
+                            ToolCall(
+                                id: "call_1",
+                                type: "function",
+                                function: ToolCallFunction(name: "f", arguments: "{}")
+                            )
+                        ],
+                        tool_call_id: nil
+                    ),
+                    ChatMessage(role: "tool", content: "ok", tool_calls: nil, tool_call_id: "call_1"),
+                ],
+                parameters: params,
+                model: "gpt-5.2",
+                stream: true,
+                tools: nil,
+                toolChoice: nil
+            )
+        #expect(routerReq.promptCacheKey == "osaurus-session-SESSION-1")
+        #expect(routerReq.openRouterSessionId == nil)
+        let routerPayload = try Self.decodeAsDictionary(
+            try JSONEncoder.osaurusCanonical().encode(routerReq)
+        )
+        #expect(routerPayload["prompt_cache_key"] as? String == "osaurus-session-SESSION-1")
+        #expect(routerPayload["session_id"] == nil)
+
+        // Azure: key only (no session_id).
+        let azureReq = await service(host: "my-resource.openai.azure.com", providerType: .azureOpenAI)
+            .buildChatRequest(
+                messages: [ChatMessage(role: "user", content: "hi")],
+                parameters: params,
+                model: "gpt-5.2",
+                stream: true,
+                tools: nil,
+                toolChoice: nil
+            )
+        #expect(azureReq.promptCacheKey == "osaurus-session-SESSION-1")
+        #expect(azureReq.openRouterSessionId == nil)
+        let azurePayload = try Self.decodeAsDictionary(
+            try JSONEncoder.osaurusCanonical().encode(azureReq)
+        )
+        #expect(azurePayload["prompt_cache_key"] as? String == "osaurus-session-SESSION-1")
+        #expect(azurePayload["session_id"] == nil)
+
+        // OpenRouter: key + sticky-routing session_id, model still on the wire.
+        let openRouterReq = await service(host: "openrouter.ai", providerType: .openaiLegacy)
+            .buildChatRequest(
+                messages: [ChatMessage(role: "user", content: "hi")],
+                parameters: params,
+                model: "openai/gpt-5.2",
+                stream: true,
+                tools: nil,
+                toolChoice: nil
+            )
+        #expect(openRouterReq.promptCacheKey == "osaurus-session-SESSION-1")
+        #expect(openRouterReq.openRouterSessionId == "SESSION-1")
+        #expect(openRouterReq.remoteAgentSessionId == nil)
+        let openRouterPayload = try Self.decodeAsDictionary(
+            try JSONEncoder.osaurusCanonical().encode(openRouterReq)
+        )
+        #expect(openRouterPayload["prompt_cache_key"] as? String == "osaurus-session-SESSION-1")
+        #expect(openRouterPayload["session_id"] as? String == "SESSION-1")
+        #expect(openRouterPayload["model"] as? String == "openai/gpt-5.2")
+        #expect(openRouterPayload["idempotency_key"] == nil)
+
+        // OpenRouter without a session id: neither field.
+        let openRouterNoSession = await service(host: "openrouter.ai", providerType: .openaiLegacy)
+            .buildChatRequest(
+                messages: [ChatMessage(role: "user", content: "hi")],
+                parameters: GenerationParameters(temperature: 0.7, maxTokens: 256),
+                model: "openai/gpt-5.2",
+                stream: true,
+                tools: nil,
+                toolChoice: nil
+            )
+        #expect(openRouterNoSession.promptCacheKey == nil)
+        #expect(openRouterNoSession.openRouterSessionId == nil)
+        let bare = try JSONEncoder.osaurusCanonical().encode(openRouterNoSession)
+        #expect(!String(decoding: bare, as: UTF8.self).contains("session_id"))
+
+        // Other compat hosts: neither, even with a session.
+        for host in ["api.deepseek.com", "api.fireworks.ai"] {
+            let req = await service(host: host, providerType: .openaiLegacy)
+                .buildChatRequest(
+                    messages: [ChatMessage(role: "user", content: "hi")],
+                    parameters: params,
+                    model: "m",
+                    stream: true,
+                    tools: nil,
+                    toolChoice: nil
+                )
+            #expect(req.promptCacheKey == nil, Comment(rawValue: host))
+            #expect(req.openRouterSessionId == nil, Comment(rawValue: host))
+            let payload = try Self.decodeAsDictionary(try JSONEncoder.osaurusCanonical().encode(req))
+            #expect(payload["prompt_cache_key"] == nil, Comment(rawValue: host))
+            #expect(payload["session_id"] == nil, Comment(rawValue: host))
+        }
     }
 
     /// Surfaces that don't derive a key (subagent runner, plugin
