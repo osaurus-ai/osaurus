@@ -7517,33 +7517,30 @@ final class ChatSession: ObservableObject {
                             // Context), so subtract it from the Conversation
                             // total; PAST turns' frozen prefixes are genuine
                             // history bytes and stay counted here.
-                            let currentInjectedTokens =
-                                self.turns.last(where: { $0.role == .user })?
-                                .injectedContextPrefix
-                                .map { ContextBudgetManager.estimateTokens(for: $0) } ?? 0
+                            let latestUserTurn = self.turns.last(where: { $0.role == .user })
+                            let currentInjectedPrefix: String? = latestUserTurn?.injectedContextPrefix
+                            let currentInjectedTokens: Int = currentInjectedPrefix.map {
+                                ContextBudgetManager.estimateTokens(for: $0)
+                            } ?? 0
                             // The dedicated AppleScript app-name hint is part of
                             // the conversation, not the opt-in Screen Context
                             // budget row. Add its tokens back after excluding
                             // the memory/screen prefix from Conversation.
-                            let automationContextTokens =
-                                appleScriptWorkingContext.map {
-                                    ContextBudgetManager.estimateTokens(for: $0)
-                                } ?? 0
+                            let automationContextTokens: Int = appleScriptWorkingContext.map {
+                                ContextBudgetManager.estimateTokens(for: $0)
+                            } ?? 0
                             // The LLM compaction summary message rides inside
                             // `msgs` but has its own budget row (set above), so
                             // exclude it from the Conversation total.
-                            let summaryMessageTokens =
-                                self.conversationSummary.map {
-                                    ContextBudgetManager.estimateTokens(for: $0.contextMessageText)
-                                } ?? 0
-                            let convTokens =
-                                msgs
-                                .filter { $0.role != "system" }
-                                                    .reduce(0) {
-                                                        $0 + ContextBudgetManager.estimateTokens(for: $1.content)
-                                                    }
-                                - max(0, currentInjectedTokens - automationContextTokens)
-                                - summaryMessageTokens
+                            let summaryMessageTokens: Int = self.conversationSummary.map {
+                                ContextBudgetManager.estimateTokens(for: $0.contextMessageText)
+                            } ?? 0
+                            var rawConvTokens: Int = 0
+                            for message in msgs where message.role != "system" {
+                                rawConvTokens += ContextBudgetManager.estimateTokens(for: message.content)
+                            }
+                            let excludedInjected: Int = max(0, currentInjectedTokens - automationContextTokens)
+                            let convTokens: Int = rawConvTokens - excludedInjected - summaryMessageTokens
                             self.budgetTracker.updateConversation(
                                 tokens: max(0, convTokens),
                                 finishedOutputTurn: assistantTurn
