@@ -2190,6 +2190,24 @@ struct MLXBatchAdapter {
         return Array(with.dropFirst(without.count))
     }
 
+    /// A successfully rendered template is not evidence that attached images
+    /// survived preprocessing. Some processors return text-only input when a
+    /// template omits its image placeholders. Refuse that result before cache
+    /// lookup or generation, independently of the model's name or architecture.
+    static func validatePreparedImages(requestedImageCount: Int, input: LMInput) throws {
+        guard requestedImageCount > 0 else { return }
+        guard let image = input.image, image.pixels.size > 0 else {
+            throw NSError(
+                domain: "MLXBatchAdapter",
+                code: 6,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Image preprocessing produced no image pixels for \(requestedImageCount) attached image(s). Check the installed model's processor and chat template."
+                ]
+            )
+        }
+    }
+
     private static func prepareInput(
         modelName: String,
         container: ModelContainer,
@@ -2308,6 +2326,7 @@ struct MLXBatchAdapter {
                         lmInput = probeTruncated
                     } else {
                         let prepared = try await context.processor.prepare(input: userInput)
+                        try Self.validatePreparedImages(requestedImageCount: box.imageCount, input: prepared)
                         lmInput = prepared.withToolSchemas(toolsSpec)
                         if generation.warmupPrefill {
                             lmInput = Self.truncatingToCanonicalCacheBoundary(

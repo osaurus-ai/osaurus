@@ -183,7 +183,7 @@ Both new symlink/enumeration tests failed before the root fix. An earlier
 manually bounded campaign was 5/6; it is retained as `matrix-attempt-3`, not used
 as the broad denominator.
 
-Current-source isolated Release build succeeded (`release-format-build.log`).
+The `c99b2f78b` isolated Release build succeeded (`release-format-build.log`).
 `release-format-receipt.json` records bundle
 `com.dinoki.osaurus.installedvision20260914`, binary SHA256
 `3199836f120607a0c9efe0a5f4cb63843a97b39ba6f9b97625dcfcc06a675a95`.
@@ -215,3 +215,76 @@ from an image-case pass, especially on the large Qwen4Exp rows.
 
 Keep this PR draft until the remaining failures and exact-head CI are reviewed.
 Do not advertise universal vision correctness from these partial results.
+
+
+## Post-preprocessing image contract
+
+The shared `MLXBatchAdapter.prepareInput` path now checks the processor result,
+not only installed capability metadata: an attached image must produce a
+nonempty `LMInput.image.pixels` payload before cache lookup or generation.
+The guard does not impose a tensor layout, one tensor per image, model name,
+architecture list, sampler, or template. Text-only requests pass through.
+`PreparedImageContractTests` cover dropped pixels, empty pixels, packed images,
+and text-only input. The focused adapter/discovery run passed 128 tests in
+four suites (`prepared-image-tests.log`).
+
+The private `missing-pixels-fixture` deliberately omits image markers from a
+fixture-only text template. Original bundle files were not edited. Osaurus's
+ZAYA template fallback recovered the first three fixture attempts; those
+attempts do not prove dropped-media refusal. With the existing fallback-disable
+diagnostic flag applied identically before and after, the old harness generated
+HTTP 200 answers with `media=nil` (including white and black). The new harness
+returned HTTP 500 with the explicit missing-image-pixels error on its first
+image request, before image-request generation. This is an internal processor
+contract failure, not an unsupported-model admission verdict. The normal LFM2-VL
+bundle then passed all seven HTTP image/history/cache checks without disabling
+fallbacks (`prepared-positive-lfm.json`). `prepared-image-receipt.json` records
+the binary, adapter hash, and unchanged engine pin. The explicit negative
+`typed_error` eval also passed (`missing-pixels-fixture/typed-error.json`).
+
+The refreshed Release build (`release-prepared-image-build.log`, identity in
+`release-prepared-image-receipt.json`) completed a native file-picker sequence:
+Red → Red → Blue, with visible one-token rates of 269.5, 276.9 and 329.9 token/s.
+The first turn reused a persisted image cache; the follow-up reused the same
+media prefix; the changed-image turn had a different processed-media hash and
+missed. `native-prepared-cache.json` records two disk hits, three stores,
+8 KV + 22 Mamba layers, disk-backed restore, paged off and zero TurboQuant KV
+layers. The collector observed a 2750 MiB peak physical footprint in this
+bounded sequence. These are not low-RAM or speed certifications.
+`native-prepared-ui-summary.json` records the CUA observations and launcher
+attempt excluded from proof. All accepted UI actions used the observed
+isolated agent/root.
+
+The complete updated inventory again found 79 bundles, with 33 image-admitted
+bundles across 11 architectures. All 33 were executed: **26 passed, 7 failed**
+(`full-matrix-prepared-summary.json`, `full-runtime-matrix-prepared`). Three
+failures were resource admission (both GLM variants and Qwen4Exp 6S); four were
+answer contracts (Ornith 9B 2D, both ZAYA variants, and CRACK Qwen 27B 2D).
+No previously passing bundle failed this rerun, and no valid installed bundle
+hit the new missing-pixels guard (`prepared-matrix-comparison.json`). This
+bounded comparison is not a guarantee against all regressions. A previously
+RAM-refused Qwen4Exp 4M row now passed as available memory changed; this guard
+contains no RAM-admission change. The previous Qwen 27B 6D color failure did
+not recur; the original failed row remains recorded. Declared-but-rejected
+bundles remain visible in `unqualified-declarations.json`, and the overall
+matrix correctly exits nonzero while failures or unqualified declarations
+remain.
+
+## Attention diagnostic retained outside this PR
+
+Ten fresh-process repetitions of the five answer-failing bundles produced
+three passing and seven failing rows (`answer-failure-rechecks-c99/results.json`).
+Original failures are retained. ZAYA wrong-color responses also occurred with
+cache reuse disabled; this is not explained by cache-hit counters alone.
+
+The recommended flash-attention path in Zyphra's reference commit
+`5d10c38a767f43c6e99e712bc006af4e12fd2625` uses a bidirectional image prefix,
+while the current Swift path is causal. An isolated mask prototype reproduced
+the numerical discrepancy (maximum errors 2.0 and 1.0 for two fixtures) and
+passed three Metal numerical tests after changing the mask. However, all four
+real Osaurus image/history rows failed with that prototype; visible empty
+answers and worse instruction adherence appeared. Numerical agreement with
+that backend did not establish compatibility with the installed bundles and
+Osaurus template path. The prototype is rejected for integration, remains in a
+separate local diagnostic worktree, and is not in this PR or its engine pin.
+See `zaya-mask-numerical-receipt.json` and `zaya-prefix-prototype/summary.json`.
