@@ -2,15 +2,16 @@
 
 The broad installed-model inventory in #2772 exposed GLM prefill rank errors,
 second-image rejection and incomplete hybrid cache restoration. This change
-pins vmlx-swift#475 at `ffee904d4f4f0680aa6a2c39c3dedff9cedae010`.
+pins vmlx-swift#475 at `6244dfe2c8715ae0ff68c43afb596b987573ade6`.
 It does not introduce a model-name allowlist or change sampling settings.
 
 The engine processor preserves ordered media patches and placeholder IDs,
 normalizes the generic generation token rank, and handles decoded video
 frames without opening a fake asset. A versioned `DiskCacheStateProviding`
 contract persists model-owned tensors and metadata. All six production disk
-restore callers validate a positive, complete boundary before mutating live
-state; an incomplete recurrent snapshot is a miss, not a partial restore.
+restore callers stage payload validation and reject zero restoration before
+applying arrays in place. The generation coordinator subsequently validates
+all layer offsets against the prompt boundary and resets on mismatch.
 
 ## Source and observed evidence
 
@@ -59,15 +60,26 @@ local self-judge. No manual score promotions.
 
 ## Pending and limits
 
-A complete all-installed rerun and build against the public dependency pin
-are pending. The 11-case follow-up does not replace that full matrix. No
+The public-pin build at engine `ffee904d` completed the 33-case installed
+sweep: 28 passed, four failed, and one GLM MTP case was interrupted. The
+four failing bundles were Ornith 9B 2D, both ZAYA quantizations, and CRACK
+Qwen3.8 27B 2D; all had failed earlier. Five declared-vision bundles were
+rejected by inventory evidence, with zero header exclusions. Receipt:
+`glm-public-full-matrix-receipt.json`. The new process-policy candidate
+requires another full matrix and Release UI model-switch run. No
 blanket family, low-RAM, video-understanding or regression-free claim is made.
 Video has numerical decoded-frame input coverage only.
 
-The UI cache-stats receipt reports an unlimited last-load plan but a current
-Safe Auto plan with a 0.70 memory fraction. The cause and relation to the UI
-throughput difference are not established; neither a setting override nor a
-performance fix is included here.
+The UI model switch exposed an unlimited load plan retaining the preceding
+model's 70% process limit. The engine now applies the existing shared
+`requiresUncappedResidentPools` policy instead of a separate DSV4-only
+check. The new test reproduces six failed GLM assertions before the change.
+Afterward, all 42 load-configuration tests, 65 cache/input tests and nine
+wired-memory/safety tests passed (`glm-resident-policy-green-2.log`,
+`glm-policy-regressions.json`). The native ceiling formula and wired reserve
+are unchanged. Both compared CLI builds already had the native 95% ceiling,
+so this mismatch does not explain their full speed variance. The final UI
+transition and public-pin matrix remain pending.
 
 Engine CI has four successful Linux builds, advisory repository-wide style
 failure, and queued self-hosted Mac/CUDA jobs. The repository runner API

@@ -302,7 +302,7 @@ let package = Package(
         // and validates complete model-owned disk state before live restore.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "ffee904d4f4f0680aa6a2c39c3dedff9cedae010"
+            revision: "6244dfe2c8715ae0ff68c43afb596b987573ade6"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
