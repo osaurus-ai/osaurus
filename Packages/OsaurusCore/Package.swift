@@ -314,7 +314,7 @@ let package = Package(
             url: "https://github.com/rryam/VecturaKit",
             revision: "3bc52538f16a95d956c575abbc7e0423737dfd64"
         ),
-        .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1", exact: "0.21.1"),
+        .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1", exact: "0.23.2"),
         .package(path: "../OsaurusNetworking"),
         .package(path: "../OsaurusRepository"),
         .package(url: "https://github.com/mgriebling/SwiftMath", from: "1.7.3"),
