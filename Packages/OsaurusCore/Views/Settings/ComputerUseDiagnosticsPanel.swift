@@ -175,7 +175,11 @@ struct ComputerUseDiagnosticsPanel: View {
             }
             HStack(alignment: .top, spacing: 10) {
                 labeledTextField(L("Typed text"), text: $previewText, placeholder: L("For type/set"))
-                labeledTextField(L("Key"), text: $previewKey, placeholder: L("For press_key"))
+                labeledTextField(
+                    L("computer.use.diagnostics.key.label"),
+                    text: $previewKey,
+                    placeholder: L("For press_key")
+                )
             }
             HStack(alignment: .top, spacing: 10) {
                 labeledTextField(
@@ -510,7 +514,7 @@ struct ComputerUseDiagnosticsPanel: View {
         case .doubleClick: return L("Double-click")
         case .rightClick: return L("Right-click")
         case .drag: return L("Drag")
-        case .type: return L("Type")
+        case .type: return L("computer.use.diagnostics.verb.type")
         case .setValue: return L("Set value")
         case .clear: return L("Clear")
         case .pressKey: return L("Press key")
