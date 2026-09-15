@@ -673,7 +673,7 @@ private struct ChatTabItemView: View {
         .padding(.leading, isCompact ? 0 : Self.footRadius + 14 - (TabActivityRing.diameter - Self.avatarDiameter) / 2)
         // Same inset for every tab: the × must not shift when a tab gains
         // or loses selection (closing tabs one by one made that jump felt).
-        .padding(.trailing, isCompact ? 0 : Self.footRadius + 14)
+        .padding(.trailing, isCompact ? 0 : Self.footRadius + 8)
     }
 
     private var closeButton: some View {
