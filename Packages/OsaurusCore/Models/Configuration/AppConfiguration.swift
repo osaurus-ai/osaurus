@@ -62,6 +62,25 @@ public final class AppConfiguration: ObservableObject {
         static let name = "coreModelName"
     }
 
+    /// An explicit chat-model fallback must survive the legacy migration.
+    /// Delegate all fields to the normal encoder, adding only the otherwise
+    /// omitted nil choice so it differs from an old, never-configured file.
+    private struct PersistedChatConfiguration: Encodable {
+        let config: ChatConfiguration
+
+        private enum CodingKeys: String, CodingKey {
+            case coreModelName
+        }
+
+        func encode(to encoder: Encoder) throws {
+            try config.encode(to: encoder)
+            if config.coreModelName == nil {
+                var values = encoder.container(keyedBy: CodingKeys.self)
+                try values.encodeNil(forKey: .coreModelName)
+            }
+        }
+    }
+
     // MARK: - Load / save
 
     private static func loadFromDisk() -> ChatConfiguration {
@@ -179,6 +198,9 @@ public final class AppConfiguration: ObservableObject {
     /// (2026-04 user report → `migrateCoreModelFromMemoryConfig`).
     private static func chatJsonNeedsLegacyMigration(_ data: Data) -> Bool {
         guard let json = loadJSONObject(from: data) else { return false }
+        // A saved null means the user chose "Use chat model". Missing keys
+        // still allow migration from the older memory.json configuration.
+        if json[LegacyKey.name] is NSNull { return false }
         return (json[LegacyKey.name] as? String)?.isEmpty != false
     }
 
@@ -191,7 +213,7 @@ public final class AppConfiguration: ObservableObject {
             }
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(config)
+            let data = try encoder.encode(PersistedChatConfiguration(config: config))
             // Persist off the main thread; the `@Published chatConfig` cache is
             // already updated, so in-process reads see the new value at once.
             // Tests run against an override root and write synchronously.
