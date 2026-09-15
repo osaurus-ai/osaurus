@@ -257,3 +257,156 @@ policy regression and a fresh Release replay of the failed native prompt.
 That replay and final-source qualification remain pending. Actual M4/16GiB
 confirmation, retained earlier semantic/media-history failures and the wider
 combined model matrix remain PARTIAL; no blanket regression-free claim is made.
+
+## Current combined Release: d0d4, both utility configurations
+
+SOURCE EVIDENCE: app d0d4b9aefa8d0ef85d6b7f9c832bc050ccdcb643,
+engine 441d9a8e8df19f4c364b50903cbc62b4059639c9. The native Release SHA-256
+is c8d334602e9f80ec04d6a6f0533f235a3d05c385fa22fbe80df3eedb2814da9c.
+The exact callable-identifier boundary, utility ownership and explicit fallback
+persistence changes were exercised together with RAM8229 and vision/idle changes.
+
+LIVE EVIDENCE: tool-name-boundary-d0d4-release-receipt.json,
+utility-d0d4-delegation-matrix.json, utility-d0d4-eight-parent-transcripts.json,
+combined-ui-run8.oslog, combined-ui-run8-measurements.jsonl and the native
+utility-d0d4-*.png/AX captures in the private evidence directory.
+
+Both enabled and disabled configurations completed three fresh single-child
+chats followed by a fresh sequential SysAdmin/Writer chat: ten actual children,
+all exact expected digests in order. No restart or manual cache clear occurred;
+the normal 30-second idle policy remained active. Core Model was Use chat model,
+RAM safety/handoff on, coexistence off, batch/same-model ceiling one. The enabled
+configuration and Core fallback survived a real restart. Child envelope rates
+were 27.8–33.4 tok/s; these include child-run overhead and are not decode-only
+benchmark rates. The host was M5 Max128GiB, not the reporter's M4/16GiB.
+
+The previous literal complete(...) native failure was replayed with its saved
+history and dedicated Qwen Core Model. It returned RAM_FIRST_OK at84.0tok/s;
+the rendered prompt no longer forced a function call on the word “completed.”
+Cancellation stopped a live turn (648 delivered tokens, task_cancelled), and its
+follow-up returned CANCEL-RECOVERED at88.0tok/s with input unlocked.
+
+With actual titles and suggestions generated, Close All at14:33:00.246Z
+unloaded by14:33:01.171908Z, before the14:33:12Z idle deadline. A genuine API
+request returned API-OWNER-OK at94.7657tok/s; closing chat retained that resident
+until its original14:34:07Z deadline. This distinguishes utility preservation
+from real API ownership. Disk-backed restoration accepted4691 tokens after
+restart; the effective Gemma topology was3 KV plus12 rotating layers, paged off,
+TurboQuant KV layers0. Run8 peak tracked footprint was3.09GiB; swap6.86GiB stayed
+unchanged and supervisor cleanup found zero owned processes.
+
+### Failed answer rows remain failures
+
+The enabled pair's parent returned abbreviated result objects, then repeated
+those objects on a strict codes-only follow-up (85.2tok/s). Both complete tool
+results were in the rendered history. Retrieved Memory facts also contained
+prior result objects. Disabling Memory and regenerating returned exact codes,
+but the subsequent re-enabled regeneration had no Memory block, so it was not a
+matched memory-content control. An explicit later recall request did retrieve
+Memory and returned a literal osaurus_inspect expression without executing it.
+Those failures do not establish an admission or cache-ownership mechanism.
+
+The earlier wrong “200” answer reproduced with identical status-code history
+under utilities ON, OFF after idle, and OFF while resident (94.8–95.3tok/s).
+All three rendered235-token prompts contained the correct preceding answer.
+Utilities are therefore not necessary for this failure. A direct first-answer
+recall returned the original code; it does not replace the failed rows.
+See utility-d0d4-matched-history-prompts.json and memory comparison receipts.
+
+### Fresh harness and CI
+
+The Xcode Release Evals binary SHA-256 is
+ de02c4881a26e3d38bf303b97e5c8272594b60d435d497576a5d06b2241ca48a.
+Receipt evals-d0d4-release-receipt.json names source, engine and MLX metallib.
+The first launch failed before main because the Xcode CLI lacked Sparkle's
+runtime search path; the isolated launch now points DYLD_FRAMEWORK_PATH to the
+actual current build products. No app source or binary was changed to repair
+the harness packaging environment; the failed launch log is retained.
+
+RAMAdmission13/13, AgentLoopRAMAdmission3/3 (four single and four sequential
+trials plus the three-fresh-chats sequence), RAMControls3/3 and both batching
+suites1/1 each passed:21/21 cases. Actual child digests and zero post-chat
+reservations were asserted. evals-d0d4-targeted-receipt.json and raw reports
+retain every trial, throughput/cache telemetry, and unavailable early tool-step
+throughput markers. The self-judge warning remains; deterministic RAM assertions
+do not rely on an LLM judge. Peak sampled supervisor footprint1.75GiB,
+swap6.83→6.81GiB, exit0 and zero owned processes. Per-case telemetry may observe
+higher peaks between supervisor samples and is retained independently.
+
+App CI34978506104 at exact d0d4 completed all seven jobs successfully.
+Evals harness tests358/358; deterministic floor run131 passed/15 skipped/146
+including RAM13/13. Skipped ComputerUseLoop cases are not passes.
+The full live AgentLoop/Frontier and current vision matrix are tracked separately;
+this checkpoint does not claim M4 acceptance, universal coherence or merge readiness.
+
+
+### Full live scores and remaining coverage
+
+The same d0d4 Release Evals binary completed AgentLoop with36 passed,7 failed,
+4 skipped out of47, and AgentLoopFrontier with22 passed,17 failed out of39.
+Combined:58 passed,24 failed,4 skipped out of86. The process exited1; this is
+not a green full-matrix result. See evals-d0d4-agent-full-receipt.json,
+evals-d0d4-agentloop-failures.json and evals-d0d4-frontier-failures.json.
+The strict two-different-model batch failed because the generated job placed
+`target_type` inside its payload; no child executed. Other failures include
+file-edit formatting, task completion, clarification/tool selection, and
+constraint retention. No matched baseline exists for every failed row, so
+these are not all classified as pre-existing or unrelated to this PR.
+The rejection-stops-run fixture still expects an immediate stop for not_found;
+the inherited production path permits one typed path correction. Its original
+failed result is retained without changing the assertion or score.
+
+Canonical engine ProcessorTypeRegistryEvidenceTests from a393 were compiled
+unchanged against current441 Release production objects. Both source revisions
+have identical Libraries tree9ddbcd63b6dc6f54fb02b0f572fc5cb2a72b65a3.
+Two test functions completed successfully: six parameterized selection rows and
+one registration/construction row. See registry-current-tests/source-receipt.json
+and SWIFTTEST_RegistryCurrent0915__080708.log. This is a local registry test,
+not a substitute for engine CI or actual media generation.
+
+The current installed-bundle inventory contains79 bundles,33 admitting images
+from config, processor and tensor evidence. A resource-bounded matrix selected26;
+seven larger bundles remained blocked by previously measured footprint.
+Of eight completed seven-request image rows, six passed and two failed:
+Ornith1.5-9B-JANG_2D gave the correct red background but violated the agent route's
+one-word contract; ZAYA1-VL-8B-JANGTQ_K answered "one" on the agent route.
+NemotronOmni4M, GemmaE2B8bit, Gemma12BQAT4M, LFM2.5VL3B4M,
+MuseGlimmer30B4M and Ornith1.5-35BA3B4M passed their recorded cases.
+The next NemotronOmni6M row was interrupted and17 later selected rows did not run.
+See vision-d0d4-bounded/progress.json and individual numbered reports; there is
+no final all-model report. Seven-request coverage includes changed image after
+history but does not include a further recall turn after that changed image;
+the earlier native latest-image failure therefore remains open.
+
+The private supervisor stopped this matrix when kernel-free RAM fell below24GiB
+(23.6GiB), with normal pressure and unchanged6.71GiB swap. It subsequently stopped
+a native different-model handoff attempt at23.0GiB before a child result was
+observed. The correct Qwen0.6B Writer selection was visually captured in
+utility-d0d4-cross-model-writer.png/AX, but selection is not execution proof.
+Both owned process trees were cleaned. Logs: SWIFTTEST_VisionBounded0915__081512.log
+and SWIFTTEST_ToolNameBoundaryUI__081923.log. The isolated Writer remains Qwen0.6B
+pending completion and restoration of this test; production agent settings
+were not edited.
+
+Separate direct-residency diagnostics are not qualified substitutes: their
+EvalScope does not bind currentModelName/currentSessionSource, so exact-parent
+reclaim correctly refuses the different-model case. Their still-resident
+assertion also conflicts with the chatUI idle policy when no actual chat window
+owns the model. See evals-d0d4-direct-residency-local.json and the corresponding
+080807/081048 supervisor logs. Ownership guards were not bypassed to make these
+old harness expectations pass.
+
+Actual M4/16GiB acceptance, completed different-model native handoff, remaining
+vision cases and unresolved semantic failures remain PARTIAL. No merge or
+regression-free claim follows from these results.
+
+A second native attempt, run10, used the unchanged kernel-free guard and the
+already selected different-model Writer. It again stopped during parent load,
+at23.8GiB kernel-free (08:32:37 local), before any child result. Peak tracked
+footprint1.57GiB, swap6.71GiB unchanged; cleanup found zero owned processes.
+See SWIFTTEST_ToolNameBoundaryUI__083217.log and combined-ui-run10 artifacts.
+This third resource-guard abort, including the vision attempt, is not an app
+admission failure. A concrete private-supervisor reclaimable-metric proposal
+and nine-fixture/live-Mach-probe receipt are prepared but not applied; the
+separate metric choice is awaiting user input. App admission and OS settings
+remain unchanged.
