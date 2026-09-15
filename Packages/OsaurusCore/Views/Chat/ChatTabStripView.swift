@@ -663,6 +663,11 @@ private struct ChatTabItemView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            } else if !isCompact {
+                // No title, but the × keeps its trailing inset: without the
+                // spacer the avatar and × pack left and the slack piles up
+                // on the right.
+                Spacer(minLength: 0)
             }
 
             if canClose, !isCompact {
