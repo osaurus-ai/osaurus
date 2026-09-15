@@ -1,5 +1,13 @@
 import Foundation
 
+/// A polling task must never keep the previous chat's identity or an old
+/// streaming/alert gate after SwiftUI updates the input card.
+struct SSDQuotaNoticePollContext: Equatable {
+    let model: String?
+    let session: UUID?
+    let eligible: Bool
+}
+
 /// A resident coordinator's real directory and enforced quota, including linked
 /// recurrent payloads. Never substitute a saved setting for an active quota.
 struct DiskCacheQuotaSnapshot: Sendable {

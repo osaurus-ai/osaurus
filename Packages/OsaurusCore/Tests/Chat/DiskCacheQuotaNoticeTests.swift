@@ -3,6 +3,15 @@ import Testing
 @testable import OsaurusCore
 
 @Suite struct DiskCacheQuotaNoticeTests {
+    @Test func pollingRestartsForFreshSameModelChatsAndPresentationGates() {
+        let session = UUID()
+        let idle = SSDQuotaNoticePollContext(model: "shared-model", session: session, eligible: true)
+        #expect(idle != SSDQuotaNoticePollContext(model: "shared-model", session: UUID(), eligible: true))
+        #expect(idle != SSDQuotaNoticePollContext(model: "shared-model", session: session, eligible: false))
+        #expect(idle != SSDQuotaNoticePollContext(model: "different-model", session: session, eligible: true))
+        #expect(idle == SSDQuotaNoticePollContext(model: "shared-model", session: session, eligible: true))
+    }
+
     private func snapshot(
         used: Int,
         limit: Int = 100,

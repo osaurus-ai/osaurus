@@ -955,7 +955,7 @@ struct FloatingInputCard: View {
             .overlay(alignment: .top) {
                 configContextErrorOverlay
             }
-            .task(id: selectedModel) {
+            .task(id: ssdQuotaNoticePollContext) {
                 while !Task.isCancelled {
                     if canPresentSSDQuotaNotice, ssdWarningSnapshot == nil {
                         let snapshots = await ModelRuntime.shared.diskCacheQuotaSnapshots()
@@ -4463,6 +4463,16 @@ extension FloatingInputCard {
         }
     }
 
+    /// SwiftUI tasks retain the view values from their launch. Restart when a
+    /// same-model chat or presentation gate changes, not just the model name.
+    private var ssdQuotaNoticePollContext: SSDQuotaNoticePollContext {
+        SSDQuotaNoticePollContext(
+            model: selectedModel,
+            session: inputHistoryKey,
+            eligible: canPresentSSDQuotaNotice
+        )
+    }
+
     private var canPresentSSDQuotaNotice: Bool {
         guard isSelectedModelLocal, !isRemoteAgentRun, !isStreaming,
             !configContextTooSmall, modelSwitchContinuityWarning == nil,
@@ -4478,10 +4488,7 @@ extension FloatingInputCard {
 
     @ViewBuilder
     private var ssdQuotaWarningRow: some View {
-        if isSelectedModelLocal, !isRemoteAgentRun, !configContextTooSmall,
-            modelSwitchContinuityWarning == nil, mtpLayoutAdvisory == nil,
-            let snapshot = ssdWarningSnapshot
-        {
+        if canPresentSSDQuotaNotice, let snapshot = ssdWarningSnapshot {
             VStack(alignment: .leading, spacing: 10) {
                 Text("SSD cache limit reached", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))

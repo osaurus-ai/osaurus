@@ -355,6 +355,7 @@ struct CacheSection: View {
                     }
                 }
                 .disabled(isClearingDiskCache)
+                .accessibilityLabel(Text("Clear SSD Cache", bundle: .module))
                 if let clearedCacheSummary {
                     Text(verbatim: clearedCacheSummary)
                         .font(.caption)

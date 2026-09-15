@@ -20,6 +20,13 @@
 import XCTest
 
 final class CacheSectionWiringTests: XCTestCase {
+    func testQuotaPollingAndVisibleNoticeFollowCurrentChatEligibility() throws {
+        let src = try source("Views/Chat/FloatingInputCard.swift")
+        XCTAssertTrue(src.contains(".task(id: ssdQuotaNoticePollContext)"))
+        XCTAssertTrue(src.contains("session: inputHistoryKey,\n            eligible: canPresentSSDQuotaNotice"))
+        XCTAssertTrue(src.contains("if canPresentSSDQuotaNotice, let snapshot = ssdWarningSnapshot"))
+    }
+
     func testMTPBannerPreservesIndividualButtonAccessibility() throws {
         let src = try source("Views/Chat/FloatingInputCard.swift")
         XCTAssertTrue(src.contains(".accessibilityElement(children: .contain)"))
