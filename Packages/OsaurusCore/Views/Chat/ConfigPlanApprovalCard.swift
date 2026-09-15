@@ -3,7 +3,7 @@
 //  OsaurusCore
 //
 //  The dedicated in-chat approval card for `osaurus_config` applies.
-//  Bottom-pinned like `ComputerUseConfirmOverlay`, driven by
+//  Centered on the chat area, driven by
 //  `ConfigApprovalQueue`: it renders the structured plan (grouped by
 //  section, with per-field change lines, risk callouts, and a prune
 //  warning) and resolves the tool's awaiting continuation on Apply /
@@ -15,7 +15,7 @@
 import Combine
 import SwiftUI
 
-/// Bottom-pinned plan-review card driven by `ConfigApprovalQueue`.
+/// Screen-centered plan-review card driven by `ConfigApprovalQueue`.
 struct ConfigPlanApprovalCard: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var queue = ConfigApprovalQueue.shared
@@ -25,13 +25,9 @@ struct ConfigPlanApprovalCard: View {
     var body: some View {
         ZStack {
             if let request = queue.pending.first {
-                VStack {
-                    Spacer()
-                    card(for: request)
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 16)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
+                card(for: request)
+                    .padding(16)
+                    .transition(.scale(scale: 0.96).combined(with: .opacity))
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: queue.pending.first?.id)
