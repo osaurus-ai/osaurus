@@ -32,10 +32,14 @@ struct ModelMemoryTelemetryTests {
     @Test func repeatedTicksAreDeduplicatedAndEpisodeEventsAreBounded() {
         var limiter = ModelMemoryTelemetryLimiter()
         let id = UUID()
-        #expect(limiter.shouldRecord(sample(id: id, phase: .loading)))
-        #expect(!limiter.shouldRecord(sample(id: id, phase: .loading)))
-        #expect(limiter.shouldRecord(sample(id: id)))
-        #expect(!limiter.shouldRecord(sample(id: id)))
+        let firstLoad = limiter.shouldRecord(sample(id: id, phase: .loading))
+        let repeatedLoad = limiter.shouldRecord(sample(id: id, phase: .loading))
+        let firstResident = limiter.shouldRecord(sample(id: id))
+        let repeatedResident = limiter.shouldRecord(sample(id: id))
+        #expect(firstLoad)
+        #expect(!repeatedLoad)
+        #expect(firstResident)
+        #expect(!repeatedResident)
         var count = 2
         for i in 0 ..< 100 {
             if limiter.shouldRecord(sample(id: id, severity: i.isMultiple(of: 2) ? .critical : .none)) {
@@ -43,9 +47,12 @@ struct ModelMemoryTelemetryTests {
             }
         }
         #expect(count == ModelMemoryTelemetryLimiter.maximumEventsPerEpisode)
-        #expect(limiter.shouldRecord(sample()))
-        #expect(!limiter.shouldRecord(.quiet))
-        #expect(!limiter.shouldRecord(sample(emulated: true)))
+        let nextEpisode = limiter.shouldRecord(sample())
+        let quiet = limiter.shouldRecord(.quiet)
+        let emulated = limiter.shouldRecord(sample(emulated: true))
+        #expect(nextEpisode)
+        #expect(!quiet)
+        #expect(!emulated)
     }
 
     @Test func samplesStayConsentGatedAndContainOnlyDocumentedBuckets() {

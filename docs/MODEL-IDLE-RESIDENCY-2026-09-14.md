@@ -1,6 +1,7 @@
 # Model idle residency and swap-warning removal
 
-Status: implementation in progress; live proof pending.
+Status: PARTIAL. Implementation and proof harness prepared; current CI and all
+source-bound live UI rows remain required. PR stays draft and unmerged.
 
 NOW: Remove the swap/predicted-RAM confirmation UI and make idle residency bounded.
 DO NOT: Tune macOS swap, change runtime admission/samplers, release active leases,
@@ -62,3 +63,47 @@ diff review and PR.
 - Local live profile: `post-1653-qwen38-audit/mtp-default-off-live.VJzhhW/mlx0322/model-idle-residency-0914.Rf3bEw`.
   Only symlinks to existing LFM2.5-2.6B-JANG_6M and SmolLM2-135M-Instruct-8bit
   bundles; no weight or generation-config edits. Live proof is still pending.
+- Draft PR: https://github.com/osaurus-ai/osaurus/pull/2771 . Runtime/UI source
+  at `f3e89c8766503aaf33089fbebc3f0b2ceaab2e18`; six engine pins unchanged at
+  `5b0c8e6b8b29a7ead21fe785688bc0621580cc62`.
+- CI run `34914207229` on that head: CLI 32/32, SwiftLint, shellcheck and small
+  package jobs completed successfully. Core tests did not execute: Swift Testing
+  macro expansion rejected the new limiter's mutating calls inside `#expect`
+  (`cannot use mutating member on immutable value: '$0' is immutable`).
+  Materialize each observation before asserting it; rerun CI on the correction.
+- Both local dev builds were resource-aborted, not compiler failures. First
+  `SWIFTTEST_ModelIdleDevApp0914__174012.log`: available memory 29.4 GiB crossed
+  a 32 GiB reserve, tracked peak 15.84 GiB. Retry
+  `SWIFTTEST_ModelIdleDevAppRetry0914__175138.log`: available memory 22.2 GiB
+  crossed a 24 GiB reserve. Host pressure remained normal and swap stayed
+  0.49 GiB. Other local work was active; do not terminate its processes. Logs
+  and `.mem`/`.procs` receipts are under `mtp-swift-2026-09-04/logs`.
+- No source-bound new app was launched, and no critical-swap UI/model/delegation
+  row has run. Do not reuse the old dev binary as proof. Resume with a clear
+  local build window, then follow every required live row above. No release.
+
+## Resume handles
+
+- App worktree: `/Users/eric/osaurus-mtp-calibration-app`, branch
+  `fix/model-idle-unload-no-swap-warning`. Preserve untracked
+  `build-mtp-calibration/`; no changes to `/Users/eric/vmlx-swift` are in scope.
+- Evidence root: `/Users/eric/vmlx-private-evidence/post-1653-qwen38-audit`.
+  `build-mlx0322-development-app-0914.sh` requires the retained bounded
+  supervisor and exact app/engine/core/C ABI commits. Core is
+  `c0a51a085b9252dc6469afe1aed772b1f538c9b0`; C ABI is
+  `2d783ac38713458eae2067ffff9ef8ebbff2ec70`. Only local development build;
+  no archive/export/install/release. Confirm no competing heavy process first.
+- `launch-model-idle-app-0914.py`: supervisor-owned launch on port 1338,
+  isolated profile above, exact new binary/metallib hashes and `--emulate-swap`.
+  Actual proof requires the runtime log
+  `swap-pressure emulation sampled severity=critical`, not merely the flag.
+- `capture-model-idle-turn-0914.py`: PID-bound AX submission, complete parent
+  history, screenshots, cache snapshots, exact iterator timings and observed
+  UI-rate labels. Pass the actual selected model button label, profile root,
+  and new binary SHA. Fast answers may finish between polls; the artifact
+  explicitly records whether Stop was observed.
+- `observe-model-residency-0914.py`: bounded `/health` lease/deadline/load
+  transitions plus physical-footprint samples. Compare the unload timestamp
+  with the actual final-lease deadline, not with observer start time.
+- All three Python proof helpers passed syntax compilation only. No model,
+  UI, delegation, telemetry-delivery, or performance result is implied.
