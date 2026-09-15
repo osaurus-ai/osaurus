@@ -1,14 +1,17 @@
 # Model idle residency and swap-warning removal
 
-Status: PARTIAL. Implementation and proof harness prepared; current CI and all
-source-bound live UI rows remain required. PR stays draft and unmerged.
+Status: PARTIAL. CI's unchanged-source repeat completed successfully, but the
+new local dev app has not linked and all source-bound live UI rows remain
+required. PR stays draft and unmerged. Preserve the first CI failure below;
+a successful repeat is not a causal diagnosis or live model/UI proof.
 
 NOW: Remove the swap/predicted-RAM confirmation UI and make idle residency bounded.
 DO NOT: Tune macOS swap, change runtime admission/samplers, release active leases,
 or publish a release. Engine pin remains unchanged.
 BATCH OWNER: App-only lifecycle checkpoint.
-NEXT: Focused tests, isolated local development build, actual settings/chat proof,
-diff review and PR.
+NEXT: Complete the isolated local development build when the shared machine
+meets the existing resource gates, then actual settings/chat/delegation proof,
+final diff review and PR promotion.
 
 ## Source-bound plan
 
@@ -82,6 +85,50 @@ diff review and PR.
   row has run. Do not reuse the old dev binary as proof. Resume with a clear
   local build window, then follow every required live row above. No release.
 
+## Current CI and build receipts
+
+- App implementation/test head: `51aceb98a760f3edb1a9d5137b03aa7f7c4b82b0`.
+  CI [run 34915676900, attempt 2](https://github.com/osaurus-ai/osaurus/actions/runs/34915676900/attempts/2)
+  completed successfully. CI actually checked out merge commit
+  `b5c96ea4c39c5c3d022c23829c344a3ce1639001`, combining that head with
+  base `7666cc6ba0cf8c1b24b93c220b8c0331c392cab5`; do not conflate the run's
+  reported head with its checkout. The local build remains branch-head-bound.
+- Attempt 1 failed `LocalModelDetectionTests.swift:146`,
+  `isStreamingLocalModel_composesStreamingStateWithLocality`, expecting true
+  but observing false. No assertion, fixture, source or timeout changed before
+  rerunning failed jobs. Attempt 2 observed the same test completing in 0.054 s.
+  Its precise failure mechanism is not established by this repeat.
+- Retained core log `model-idle-ci-core-51aceb9-attempt2.log` under
+  `post-1653-qwen38-audit`: checkout lines 101-114; XCTest reports 399 tests,
+  eight skipped, zero failures at 16362/16364; locality test 21510; telemetry
+  tests 22461-22465; residency manager 22576-22595; configuration tests
+  25739-25756; `Test Succeeded` at 28048. Attempt 1's raw assertion is retained
+  in `model-idle-core-raw-51aceb9.zip`, member `test-core.log`, line 21021.
+- Evals are scripted-only: 133 cases, 118 successful and 15 skipped
+  model-driven cases. Unscored judge rubrics and skipped real-model cases are
+  not app/delegation evidence. Log: `model-idle-ci-evals-51aceb9-attempt2.log`.
+- Local build receipt `SWIFTTEST_ModelIdleDevSingleResume0914__191246`
+  reached its 1800-second deadline. Subsequent same-source one-file builds
+  retained object outputs, but progress entries alone do not prove actual
+  recompilation or completion. A later one-file attempt was deliberately
+  stopped through its owned supervisor after its rate was too slow for the
+  bounded build window; cleanup confirmed zero owned processes.
+- `smallbatch` is now available in the retained build helper: one Xcode task,
+  at most eight primary files per frontend, `-O`, runtime assertions and
+  testability unchanged. Live samples observed two and five primary files.
+  This is a local dev-UI qualification strategy, not interchangeable WMO
+  performance proof. No tracked runtime/build-project setting was changed.
+- `SWIFTTEST_ModelIdleDevSmallBatch0914__201740` stopped at 20:24:28 PDT
+  when kernel-free memory crossed the unchanged 24 GiB floor. Owned footprint
+  peaked at 1.08 GiB; cleanup confirmed zero owned processes at 20:24:33.
+  Read-only inventory then identified another task's GLM vision evaluation;
+  host swap subsequently exceeded this task's 2 GiB admission limit. No
+  unrelated process was signaled, and no resource gate was bypassed.
+- Full source/command/resource history is in
+  `post-1653-qwen38-audit/model-idle-core-ci-investigation-0914.md`.
+  `model-idle-runtime-receipts-0914.md` tracks the still-unrun acceptance rows.
+  All live app rows remain pending; do not mark this PR ready or merge it yet.
+
 ## Resume handles
 
 - App worktree: `/Users/eric/osaurus-mtp-calibration-app`, branch
@@ -93,6 +140,9 @@ diff review and PR.
   `c0a51a085b9252dc6469afe1aed772b1f538c9b0`; C ABI is
   `2d783ac38713458eae2067ffff9ef8ebbff2ec70`. Only local development build;
   no archive/export/install/release. Confirm no competing heavy process first.
+  Include `osaurus-evals` model jobs in that read-only preflight, not only
+  xcodebuild, swift-frontend and GUI model processes. Preserve the existing
+  memory, swap, pressure, time and ownership guards.
 - `launch-model-idle-app-0914.py`: supervisor-owned launch on port 1338,
   isolated profile above, exact new binary/metallib hashes and `--emulate-swap`.
   Actual proof requires the runtime log
@@ -107,3 +157,7 @@ diff review and PR.
   with the actual final-lease deadline, not with observer start time.
 - All three Python proof helpers passed syntax compilation only. No model,
   UI, delegation, telemetry-delivery, or performance result is implied.
+- `snapshot-model-idle-ui-0914.py` captures the actual AX tree, screenshot,
+  saved server policy, health/cache snapshots and footprint after UI actions.
+  It is identity-bound and returns no pass verdict; syntax compilation only
+  until the new app can be launched.
