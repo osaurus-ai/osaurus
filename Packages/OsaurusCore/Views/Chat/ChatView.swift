@@ -8331,9 +8331,10 @@ final class ChatSession: ObservableObject {
                     // the assistant bubble surfaces the localized
                     // explanation (e.g. "Open Settings → Privacy to re-
                     // download…") instead of a generic "Error:" prefix.
-                    debugLog("send: privacy filter blocked send — \(pfError.localizedDescription)")
-                    assistantTurn.content = pfError.localizedDescription
-                    lastStreamError = pfError.localizedDescription
+                    let privacyFilterMessage: String = pfError.localizedDescription
+                    debugLog("send: privacy filter blocked send — " + privacyFilterMessage)
+                    assistantTurn.content = privacyFilterMessage
+                    lastStreamError = privacyFilterMessage
                 } catch {
                     let errorMessage = ChatErrorMessages.assistantMessage(for: error)
                     // Preserve any text the model already streamed before the
@@ -8348,7 +8349,7 @@ final class ChatSession: ObservableObject {
                     if streamedSoFar.isEmpty {
                         assistantTurn.content = errorMessage
                     } else {
-                        assistantTurn.content += "\n\n\(errorMessage)"
+                        assistantTurn.content += "\n\n" + errorMessage
                     }
                     lastStreamError = error.localizedDescription
                     noteInsufficientFundsIfNeeded(error: error, blockedTurn: assistantTurn)
