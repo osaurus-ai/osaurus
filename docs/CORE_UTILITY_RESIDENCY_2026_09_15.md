@@ -131,3 +131,34 @@ Neither a755's ownership results nor #2752's earlier standalone results replace
 tests/evals/native delegation on that combined source. The reporter's measured
 2,442,035,200bytes remain below the documented reserve-plus-child cutoff;
 preserving source ownership alone does not change that arithmetic.
+
+## Core Model restart regression found during combined proof
+
+Combined source019294bfab48a74e1b885af7f20297aaa522c34c built as Release
+(binary61fbd9ac5b3b05205a45b8405fbf15e668f3e2f181eda40b5ef26294d3eca866).
+The actual General control was cleared to Use chat model, revisited, and then
+Osaurus was quit and relaunched. It reverted to foundation (unavailable).
+`core-fallback-explicit-before-restart.png` and
+`core-fallback-after-restart-failure.png` capture the native failure. Saved JSON
+omitted coreModelName, making the explicit choice indistinguishable from a
+legacy file that still needed migration. Both utility toggles remained on.
+
+The correction persists an explicit null for the chat-model fallback; missing
+legacy keys still migrate. Other fields use the existing ChatConfiguration
+encoder. The regression exercises actual save/reload twice for fallback,
+local and remote Core Model choices, with conflicting legacy memory.json.
+
+SOURCE EVIDENCE: AppConfiguration.PersistedChatConfiguration and
+chatJsonNeedsLegacyMigration; AppConfigurationMigrationTests.savedCoreModelChoiceSurvivesReload.
+LIVE EVIDENCE: SWIFTTEST_CoreFallback0915__055416.log and
+core-fallback-green-debug.xcresult: 42/42 tests in AppConfigurationMigrationTests,
+CoreModelServiceFallbackTests and ResidencyIntentTests; exit0,12.77GiB peak,
+swap6.94 to6.93GiB and zero owned processes after cleanup. The tested patch is
+core-fallback-green.patch, based on019294. CoreData XPC warnings were emitted;
+the assertions executed and all three suites completed.
+
+Status remains PARTIAL: the persistence correction still requires a fresh
+Release build and the same native clear/relaunch test. The reporter's utility
+configuration is unknown; continue both off and on. Repeated and sequential
+native delegation on the final combined source is still required. No M4/16GB
+acceptance or blanket regression-free claim is made.
