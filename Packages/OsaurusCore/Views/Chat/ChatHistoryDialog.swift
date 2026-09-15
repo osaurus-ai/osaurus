@@ -93,12 +93,11 @@ private struct ChatHistoryDialogContent: View {
     @State private var showArchived = false
     @State private var isArchivedChipHovered = false
 
-    /// The Default agent has always listed every conversation here
-    /// (`sessions(for:)` returns all of them for Default), so it opens on
-    /// "All Chats"; any other agent opens on its own chats.
+    /// Opens on the window's agent, the Default (orchestrator) agent
+    /// included: the sidebar scopes that agent's row to its own chats, and
+    /// the dialog should match it. "All Chats" stays one pick away.
     private var activeFilter: ChatHistoryAgentFilter {
-        if let agentFilter { return agentFilter }
-        return windowState.agentId == Agent.defaultId ? .all : .agent(windowState.agentId)
+        agentFilter ?? .agent(windowState.agentId)
     }
 
     private var visibleSessions: [ChatSessionData] {
