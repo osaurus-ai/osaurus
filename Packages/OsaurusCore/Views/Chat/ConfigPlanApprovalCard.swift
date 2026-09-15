@@ -2,64 +2,114 @@
 //  ConfigPlanApprovalCard.swift
 //  OsaurusCore
 //
-//  The dedicated in-chat approval card for `osaurus_config` applies.
-//  Centered on the chat area, driven by
-//  `ConfigApprovalQueue`: it renders the structured plan (grouped by
-//  section, with per-field change lines, risk callouts, and a prune
-//  warning) and resolves the tool's awaiting continuation on Apply /
-//  Cancel. Mounted by the main chat; mounting also
-//  registers the surface so `ConfigApprovalService` knows a card can be
-//  shown instead of falling back to the modal panel.
+//  The dedicated in-chat approval dialog for `osaurus_config` applies.
+//  Presented through the ThemedAlert system (per-window `ThemedAlertHost`)
+//  so it gets the standard modal treatment — theme-aware dim, glass card,
+//  Esc / Return handling — instead of hand-rolling its own. Driven by
+//  `ConfigApprovalQueue`: the custom content renders the structured plan
+//  (grouped by section, with per-field change lines, risk callouts, and a
+//  prune warning) and resolves the tool's awaiting continuation on Apply /
+//  Cancel. Mounted by the main chat; mounting also registers the surface
+//  so `ConfigApprovalService` knows a dialog can be shown instead of
+//  falling back to the modal panel.
 //
 
 import Combine
 import SwiftUI
 
-/// Screen-centered plan-review card driven by `ConfigApprovalQueue`.
+/// Plan-review presenter driven by `ConfigApprovalQueue`. Draws nothing
+/// itself: it routes the pending request into `ThemedAlertCenter` as a
+/// `customContent` alert, so the per-window `ThemedAlertHost` renders it
+/// exactly like every other modal.
 struct ConfigPlanApprovalCard: View {
+    /// The window's alert scope, passed explicitly by the mounting chat
+    /// view. The scope environment doesn't reach this overlay level (see
+    /// the note in `ThemedAlertHost`), so it can't be read from there.
+    let scope: ThemedAlertScope
+
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var queue = ConfigApprovalQueue.shared
+
+    /// Queue request currently presented as a themed alert; the alert
+    /// reuses the request's id.
+    @State private var presentedId: UUID?
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        ZStack {
-            if let request = queue.pending.first {
-                // Modal scrim: dims the chat and swallows clicks while the
-                // plan review is pending, matching ThemedAlertDialog's dim
-                // (theme-aware color and opacity). No tap-to-dismiss; a
-                // decision this consequential resolves only through the
-                // buttons.
-                (theme.isDark ? Color.black : Color(white: 0.1))
-                    .opacity(theme.isDark ? 0.5 : 0.35)
-                    .ignoresSafeArea()
-                    .contentShape(Rectangle())
-                    .onTapGesture {}
-                    .transition(.opacity)
-                card(for: request)
-                    .padding(16)
-                    .transition(.scale(scale: 0.96).combined(with: .opacity))
+        Color.clear
+            .allowsHitTesting(false)
+            .onAppear {
+                queue.surfaceDidMount()
+                syncPresentation()
             }
-        }
-        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: queue.pending.first?.id)
-        .onAppear { queue.surfaceDidMount() }
-        .onDisappear { queue.surfaceDidUnmount() }
+            .onDisappear {
+                queue.surfaceDidUnmount()
+                if let id = presentedId {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: id)
+                    presentedId = nil
+                }
+            }
+            .onChange(of: queue.pending.first?.id) { _, _ in
+                syncPresentation()
+            }
     }
 
-    // MARK: - Card
+    /// Keep the themed alert in step with the head of the queue: dismiss a
+    /// stale presentation (the request resolved elsewhere — Apply/Cancel in
+    /// another window, timeout, turn cancellation) and present the next.
+    private func syncPresentation() {
+        let request = queue.pending.first
+        guard request?.id != presentedId else { return }
+        if let stale = presentedId {
+            ThemedAlertCenter.shared.dismiss(scope: scope, id: stale)
+            presentedId = nil
+        }
+        guard let request else { return }
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: request.id,
+                title: L("Review configuration changes"),
+                message: nil,
+                // The plan list under a "?" badge reads as noise; the
+                // content dialog convention is title-only.
+                showsHeaderIcon: false,
+                // The visible buttons live in `customContent` (which
+                // replaces the standard row); this cancel entry backs the
+                // Esc path — ChatView's window-level Esc monitor resolves
+                // it through `cancelActive`.
+                buttons: [
+                    .cancel(L("Cancel")) {
+                        queue.resolve(id: request.id, outcome: .denied)
+                    }
+                ],
+                customContent: AnyView(planContent(for: request)),
+                width: 460,
+                // Let an unrelated alert landing mid-review stack above the
+                // dialog instead of clobbering it — clobbering runs
+                // onDismiss, which would silently deny the pending apply.
+                hostsNestedAlerts: true,
+                onDismiss: {
+                    // Every dismissal path that isn't Apply denies the
+                    // pending apply. `resolve` is idempotent, so the
+                    // buttons resolving first is fine.
+                    queue.resolve(id: request.id, outcome: .denied)
+                }
+            ),
+            scope: scope
+        )
+        presentedId = request.id
+    }
 
-    private func card(for request: ConfigApprovalRequest) -> some View {
+    // MARK: - Dialog content
+
+    private func planContent(for request: ConfigApprovalRequest) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "gearshape.2.fill")
-                    .font(.system(size: 15))
-                    .foregroundColor(theme.accentColor)
-                Text("Review configuration changes", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-                if request.plan.hasHighRiskChanges {
+            if request.plan.hasHighRiskChanges {
+                HStack {
+                    Spacer(minLength: 0)
                     badge(L("HIGH RISK"), color: theme.warningColor)
+                    Spacer(minLength: 0)
                 }
             }
 
@@ -82,6 +132,8 @@ struct ConfigPlanApprovalCard: View {
 
             HStack(spacing: 10) {
                 Spacer()
+                // Resolving pops the request off the queue, which drives
+                // `syncPresentation` to dismiss the alert.
                 secondaryButton(L("Cancel")) {
                     queue.resolve(id: request.id, outcome: .denied)
                 }
@@ -90,16 +142,6 @@ struct ConfigPlanApprovalCard: View {
                 }
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14).stroke(theme.cardBorder, lineWidth: 1)
-                )
-                .shadow(color: Color.black.opacity(0.2), radius: 16, y: 6)
-        )
-        .frame(maxWidth: 460)
     }
 
     private var pruneBanner: some View {

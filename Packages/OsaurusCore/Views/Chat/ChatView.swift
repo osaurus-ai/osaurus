@@ -9223,10 +9223,13 @@ struct ChatView: View {
             // request the user resolves; rendered above the input bar like the
             // other prompt cards.
             .overlay { ComputerUseConfirmOverlay() }
-            // osaurus_config plan-review approvals: the dedicated diff card
-            // every apply awaits. Same process-wide queue pattern as the
-            // Computer Use card.
-            .overlay { ConfigPlanApprovalCard() }
+            // osaurus_config plan-review approvals: the dedicated diff
+            // dialog every apply awaits (same process-wide queue pattern as
+            // the Computer Use card). A presenter, not a surface — it routes
+            // the request into this window's ThemedAlertHost, and takes the
+            // scope explicitly because the environment doesn't reach
+            // overlay level.
+            .overlay { ConfigPlanApprovalCard(scope: .chat(windowState.windowId)) }
             .sheet(isPresented: $showTopUpSheet) {
                 CreditsTopUpSheet()
                     .environment(\.theme, theme)
