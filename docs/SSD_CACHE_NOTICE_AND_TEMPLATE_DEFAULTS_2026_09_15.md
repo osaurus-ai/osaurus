@@ -1,8 +1,10 @@
 # SSD quota notice and template defaults
 
-Status: PARTIAL — implementation prepared; current-source build, focused suites,
-Release UI quota/clear/refill, Qwen default-thinking image turns, and affected full
-evals remain required before promotion.
+Status: PARTIAL overall. The Release SSD quota/clear/refill UI scenarios and
+Qwen native-default image turns have current evidence below. Focused tests and
+RAM evals passed; the 26-bundle vision sweep has four retained failures. Full
+AgentLoop/Frontier qualification is in progress. This is not all-model or
+physical M4/16 GiB proof.
 
 This integrates PR #2698 (7ec9004063ecfed9d0e4d1d0cdb2312c05825889) on the combined
 RAM/residency/vision source 92d81b1070c6add69acb7fad72c4d9bf50eb9ec0. The original
@@ -138,3 +140,69 @@ other policy assertions remain. This follow-up changes tests/documentation
 only; production source is identical to 425d42ec5. Its focused test rerun is
 pending. Current-build full vision and AgentLoop evaluations remain required;
 prior non-perfect scores and the oversized-model resource abort are retained.
+
+## Current tests and full bounded vision sweep
+
+SOURCE EVIDENCE: review source `552c4a4335508a4d2e902be15930e4072c7f56ab`
+differs from the built `425d42ec5d040b366ba119321c4c0b1b18aa04b9` only in
+`RuntimePolicySourceTests.swift` and this document. Production sources, eval
+suites and dependency pins are byte-identical. The built app/Evals hashes and
+engine pin remain those recorded above; the binaries are not relabelled as
+builds of the later test/documentation commit.
+
+LIVE EVIDENCE: focused source552 tests passed 287/287 (272 Swift Testing and
+15 XCTest, zero failures), including RuntimePolicySourceTests. Log
+`SWIFTTEST_SSDDefaults0915__154742.log`, receipt
+`ssd-defaults-552c4a433-focused-receipt.json`, xcresult
+`ssd-defaults-552c4a433-debug.xcresult`. Peak owned footprint 9.41 GiB,
+swap 5.63 GiB unchanged, exit0 and owned cleanup0. All seven app CI jobs
+passed on552 in run35032615838; Release Drafter also passed separately.
+
+The current Release Evals passed 21/21 across RAMAdmission,
+AgentLoopRAMAdmission, AgentLoopRAMControls, AgentLoopBatchNative and
+AgentLoopBatchDisabled. This includes three fresh chats followed by sequential
+children, RAM/handoff/coexistence controls, and same-model batching on/off.
+The 13 deterministic memory cases include expected refusals; they do not
+emulate physical M4 memory pressure. Log
+`SWIFTTEST_SSDTargeted0915__155259.log`, receipt
+`ssd-425-targeted-ram-receipt.json`. Exit0, peak1.47 GiB, swap5.63 GiB unchanged,
+owned cleanup0. Iterator timing artifacts are retained alongside the reports.
+
+Matching LM Studio `Qwen3.8-27B-MLX-6bit` completed all eight Vision requests
+with native thinking and bundle T1/top-k20/top-p0.95. Image replay, streaming,
+custom-agent routing, changed-image history and latest-image recall passed.
+Request decode rates were20.4–21.2tok/s; no request ended at its token limit.
+Receipt `lmstudio-defaults-425d42ec5-Qwen3.8-27B-MLX-6bit-receipt.json` records
+the publisher revision, shard hashes, report hash and iterator timings
+(including the separate warmup). Supervisor log
+`SWIFTTEST_LMStudioDefaults0915__155501.log`: peak20.29 GiB, swap5.63 GiB flat,
+exit0/cleanup0. This does not identify the reporter's unknown exact files.
+
+The complete current 26-bundle/eight-request Vision sweep scored **22 passed,
+4 failed**, exit1. All selected bundles ran; none crashed or hit the supervisor
+limit. Peak owned footprint16.01 GiB, swap5.63 GiB unchanged, owned cleanup0.
+Log `SWIFTTEST_SSDImage0915__155553.log`; raw reports in
+`vision-ssd-defaults-eight/`; combined receipt
+`ssd-425-vision-matrix-receipt.json` records every score, failure, report hash,
+cache telemetry and throughput. Seven earlier oversized bundles remain unrun
+under the unchanged28 GiB cap.
+
+| Failed bundle | Observed failure |
+| --- | --- |
+| Ornith1.5-9B-JANG_2D | Agent route returned the correct red color with repeated prose, violating the exact answer contract. Raw deltas contain the repetition and one normal stop; the report did not duplicate a final whole-message event. |
+| ZAYA1-VL-8B-JANGTQ_K | First image and agent route answered blue instead of red. |
+| Nemotron-3-Nano-Omni-30B-A3B-JANG_6M | Changed image after history answered red instead of blue. |
+| ZAYA1-VL-8B-JANGTQ4 | Changed-image and later-recall colors were wrong; the agent route answered white instead of red. |
+
+These four also failed the prior sweep. CRACK Qwen27B2D passed this run after
+failing the prior run; both outcomes remain recorded. No newly failing bundle
+appeared in this single comparison, which is not a regression-free claim.
+The prior native LFM later-recall failure remains separate from its passing
+API row. Source/default changes are never compensated by hidden sampling,
+thinking suppression or answer filters.
+
+Full AgentLoop/Frontier started serially after the vision process exited and
+cleanup was verified, using the same exact Release Evals binary. Results are
+pending in `evals-425d42ec5-agent-full/` and
+`SWIFTTEST_SSDAgent0915__164030.log`; earlier58pass/24fail/4skip remains the
+baseline, not the current score.
