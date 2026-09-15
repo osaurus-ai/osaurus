@@ -38,6 +38,20 @@ while IFS=$'\t' read -r row_id model_id; do
     --out "$proof_dir/$row_id.json" > "$proof_dir/$row_id.log" 2>&1; then
     result=1
   fi
+  # A CLI exit alone cannot certify a case: an output-write failure or empty
+  # suite must not turn this matrix into a false pass.
+  if ! python3 - "$proof_dir/$row_id.json" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+if not path.exists():
+    raise SystemExit('Missing runtime report: ' + str(path))
+cases = json.loads(path.read_text()).get('cases', [])
+if len(cases) != 1 or cases[0].get('id') != 'vision.image-runtime-history' or cases[0].get('outcome') != 'passed':
+    raise SystemExit('Runtime image qualification did not pass: ' + str(path))
+PY
+  then
+    result=1
+  fi
 done < "$proof_dir/models.tsv"
 python3 - "$proof_dir" <<'PY'
 import json, pathlib, sys

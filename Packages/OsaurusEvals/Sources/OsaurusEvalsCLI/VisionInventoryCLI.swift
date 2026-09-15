@@ -15,7 +15,10 @@ extension OsaurusEvalsCLI {
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-            try encoder.encode(bundles).write(to: URL(fileURLWithPath: args[1]), options: .atomic)
+            let output = URL(fileURLWithPath: args[1])
+            try encoder.encode(bundles).write(to: output, options: .atomic)
+            try encoder.encode(InstalledVisionEvaluation.discoverySources()).write(
+                to: output.deletingPathExtension().appendingPathExtension("discovery.json"), options: .atomic)
             print("Inventoried \(bundles.count) installed bundles; \(bundles.filter(\.supportsImage).count) advertise image input. No models loaded.")
             return 0
         } catch {

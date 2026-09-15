@@ -6436,6 +6436,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // race-free — same capture pattern as `responseContent` above.
             var loggedResponseText = ""
             var loggedToolCalls: [ToolCallLog] = []
+            var runUsage = AgentRunUsage()
 
             // Set when a successful `complete`/`clarify` intercept ends the
             // run — the post-loop tail streams this text (the parsed summary
@@ -6547,6 +6548,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         + AgentToolLoop.stepIdempotencyFingerprint(messages: msgs)
 
                     responseContent = ""
+                    var stepCompletionTokens: Int?
+                    var stepPromptTokens: Int?
+                    var stepTokensPerSecond: Double?
+                    defer {
+                        runUsage.append(
+                            promptTokens: stepPromptTokens ?? Self.estimatePromptTokens(msgs),
+                            completionTokens: stepCompletionTokens ?? TokenEstimator.estimate(responseContent),
+                            tokensPerSecond: stepTokensPerSecond
+                        )
+                    }
                     var contentCoalescer = Self.StreamDeltaCoalescer(
                         interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
                     )
@@ -6609,7 +6620,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 }
                                 continue
                             }
-                            if StreamingStatsHint.decode(delta) != nil { continue }
+                            if let stats = StreamingStatsHint.decode(delta) {
+                                // Keep the final cumulative stats for this step;
+                                // intermediate updates must not be counted twice.
+                                stepCompletionTokens = stats.tokenCount
+                                stepPromptTokens = stats.inputTokenCount
+                                stepTokensPerSecond = stats.tokensPerSecond
+                                continue
+                            }
                             if StreamingToolHint.isSentinel(delta) { continue }
                             responseContent += delta
                             loggedResponseText += delta
@@ -7088,8 +7106,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
                 loggedResponseText += text
             }
+            let finalUsage = runUsage
+            let includeUsage = req.stream_options?.include_usage == true
             hop {
                 writerBound.value.writeFinish(model, responseId: responseId, created: created, context: ctx.value)
+                if includeUsage {
+                    writerBound.value.writeUsageChunk(
+                        promptTokens: finalUsage.promptTokens,
+                        completionTokens: finalUsage.completionTokens,
+                        tokensPerSecond: finalUsage.tokensPerSecond,
+                        model: model, responseId: responseId, created: created, context: ctx.value
+                    )
+                }
                 writerBound.value.writeEnd(ctx.value)
             }
             logSelf.logRequest(
