@@ -530,7 +530,7 @@ public enum MicroPerfEvaluator {
         var contentChars = 0
         let stream = try await engine.streamChat(request: request)
         for try await delta in stream {
-            if ttftMs == nil {
+            if ttftMs == nil, AgentLoopStepProgressTracker.isGeneratedOutput(delta) {
                 ttftMs = Date().timeIntervalSince(started) * 1000
             }
             if StreamingReasoningHint.decode(delta) != nil { continue }
