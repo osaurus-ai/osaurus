@@ -921,6 +921,25 @@ private struct AgentCard: View {
                 }
 
                 Spacer(minLength: 0)
+                // Provenance sits on its own line above the stats: that band
+                // is the same width on every card, so a long template name
+                // can neither crowd the agent name nor squeeze the stat chips.
+                if let source = agent.sourceTemplateName, !source.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.on.square.dashed")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(L("From the \(source) template"))
+                            .font(.system(size: 10, weight: .medium))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .foregroundColor(theme.infoColor)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(theme.infoColor.opacity(0.12)))
+                    .help(L("Created from the \(source) template"))
+                    .padding(.bottom, 6)
+                }
                 compactStats
             }
             .frame(maxWidth: .infinity, minHeight: 140, alignment: .top)
@@ -1042,12 +1061,6 @@ private struct AgentCard: View {
         // Model: always shown, "Default" when the agent inherits the global one.
         let modelText = agent.defaultModel.map(formatModelName) ?? L("Default")
         chips.append(.init(icon: "cube", text: modelText))
-
-        // Provenance: the template this agent was created from. Lives in the
-        // stats row so a long template name can never crowd the agent name.
-        if let source = agent.sourceTemplateName, !source.isEmpty {
-            chips.append(.init(icon: "square.on.square.dashed", text: source))
-        }
 
         // Capabilities: hide when 0 in `.auto` mode (means "all available"
         // until the user explicitly picks a subset). The "· Auto" / "· Custom"
