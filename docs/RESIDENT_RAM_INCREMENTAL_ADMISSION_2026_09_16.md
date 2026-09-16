@@ -104,3 +104,41 @@ allowance found during review. It is not a build/test failure or runtime proof.
 Final focused rerun after shared allocator pricing: `SWIFTTEST_ResidentRAMTests0916__231402.log`,
 40 tests / five suites / zero failures, including all 18 committed fixtures.
 `tests-20260915-231403/source-receipt.json` records exact inputs and argv.
+
+## Native replay found a second causal path
+
+The unchanged baseline app (09cee61, binary d4b1b6f) reproduces the exact
+2,442,035,200-byte resident refusal in native Chat with RAM Safety On. Turning
+that control Off admits the identical SysAdmin request and returns RAM_FIRST_OK;
+a follow-up repeats the actual tool result. Source, image and process receipts
+are under ram-causal-audit/baseline-ui-run1-* and baseline-on-decision.*.
+
+Candidate 57be5d9 (binary 39aaa9e6) admits the first child with RAM Safety On,
+normal pressure and the full 1,474,808,049-byte allocator allowance. Its second
+fresh chat refuses because the model has become nonresident. Half-second live
+samples show unloading immediately after each generation, despite an open
+chat and the saved 30-second idle policy. This is a retained failed row,
+not proof of repeated-run success (resident-ui-run1-*, candidate-off-single2-*).
+
+The cache-only name resolver versions its memo by registry identity, but the
+nonblocking external catalog initially returns an empty/stale snapshot and
+later publishes the completed catalog without changing that registry version.
+A cached miss therefore survives publication. The model remains loadable via
+the blocking runtime resolver while the open-chat reference set omits it;
+scheduleIdleResidency treats that omission as a closed window and unloads at
+the parent/child boundary. The same miss also labels the picker as generic
+"Model ready" instead of a local loaded/cold state.
+
+The correction versions the name memo by both registry and materialized
+catalog generation. ExternalCatalogResidencyTests holds catalog construction
+after registration, caches the provisional miss, completes construction
+without a registry change, and checks both local identity recovery and later
+removal. Native repeated-run proof must be repeated on this combined source.
+
+The private host-statistics interposer only lowers reported available bytes
+for two named test profiles. It preserves real pressure and physical RAM;
+the independent supervisor observes the actual host. emulator-receipt.json
+records uncapped, capped and wrong-profile controls plus source/dylib hashes.
+The initial interposer helper crashed from recursive dlsym resolution; that
+failed probe is retained and the corrected direct call-through probe passed.
+This tests admission/lifecycle wiring, not physical M4 paging performance.
