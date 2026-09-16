@@ -10,7 +10,8 @@
     "AgentChannels": 1.0,
     "ComputerUse": 1.0,
     "ComputerUseLoop": 1.0,
-    "ScreenContext": 1.0
+    "ScreenContext": 1.0,
+    "RAMAdmission": 1.0
   },
   "caseFloors": {
     "capability_search": {

@@ -262,6 +262,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             suppressProgressUI: request.suppressProgressUI,
             warmupPrefill: request.warmupPrefill,
             cacheStableSystemPrefix: request.cacheStableSystemPrefix,
+            admissionPositionLimit: request.admissionPositionLimit,
             requestSource: inferenceSource,
             loadIntent: request.backgroundModelLoad ? .background : .interactive,
             alignmentRepairModel: inferenceSource == .chatUI && !request.backgroundModelLoad

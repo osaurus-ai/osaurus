@@ -17,6 +17,7 @@
 //
 
 import Foundation
+import OsaurusCore
 
 struct EvalTrialIdentity: Sendable, Equatable {
     let ordinal: Int
@@ -41,19 +42,25 @@ public struct EvalCaseTranscript: Codable, Sendable {
         public let resultPreview: String?
         public let wasDeduped: Bool?
         public let wasError: Bool?
+        public let spawnSummary: String?
+        public let spawnBatch: AgentLoopTranscript.SpawnBatchObservation?
 
         public init(
             name: String,
             arguments: String,
             resultPreview: String? = nil,
             wasDeduped: Bool? = nil,
-            wasError: Bool? = nil
+            wasError: Bool? = nil,
+            spawnSummary: String? = nil,
+            spawnBatch: AgentLoopTranscript.SpawnBatchObservation? = nil
         ) {
             self.name = name
             self.arguments = arguments
             self.resultPreview = resultPreview
             self.wasDeduped = wasDeduped
             self.wasError = wasError
+            self.spawnSummary = spawnSummary
+            self.spawnBatch = spawnBatch
         }
     }
 
@@ -261,17 +268,19 @@ public enum EvalTranscriptStore {
         writtenCount = 0
     }
 
-    /// Persist `transcript` iff the store is enabled and the case did not
-    /// pass/skip. Failures are swallowed into stderr — transcript loss
+    /// Persist failures when enabled; explicit RAM/batch proof callers may
+    /// also retain successful runs. Failures are swallowed into stderr — transcript loss
     /// must never fail a run that already produced its report.
-    public static func persistIfEnabled(_ transcript: EvalCaseTranscript) {
+    public static func persistIfEnabled(_ transcript: EvalCaseTranscript, includeSuccessful: Bool = false) {
         guard let directory else { return }
         // `outcome` is the persisted rawValue of `EvalCaseOutcome`; keep it
         // tied to the enum rather than bare string literals.
         let persisted: Set<String> = [
             EvalCaseOutcome.failed.rawValue, EvalCaseOutcome.errored.rawValue,
         ]
-        guard persisted.contains(transcript.outcome) else { return }
+        guard persisted.contains(transcript.outcome)
+            || (includeSuccessful && transcript.outcome == EvalCaseOutcome.passed.rawValue)
+        else { return }
         do {
             try FileManager.default.createDirectory(
                 at: directory,

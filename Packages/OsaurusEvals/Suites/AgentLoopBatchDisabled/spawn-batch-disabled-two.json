@@ -1,0 +1,104 @@
+{
+  "id": "agent_loop.spawn-batch-disabled-two",
+  "domain": "agent_loop",
+  "label": "agent loop \u2022 Continuous Batching off serializes two same-model children",
+  "query": "Fan out exactly two independent jobs in one spawn_batch call. Job id `math` must target allowed agent UUID `A11CE001-0000-4000-8000-000000000001` and return exactly BATCH_ALPHA_42. Job id `writing` must target allowed agent UUID `A11CE001-0000-4000-8000-000000000002` and return exactly BATCH_BETA_BLUE. Preserve order, then answer once with both tokens and stop.",
+  "notes": "Settings control for a batch-capable model: Concurrent Sessions remains 2, Continuous Batching is off, and two same-model children must finish in [1,1] subwaves. The engine request is clamped to 1 by the shared runtime policy; no architecture cap is expected. Exact child outputs are required separately from admission.",
+  "fixtures": {
+    "agentCapabilities": {
+      "spawnAgents": [
+        {
+          "id": "A11CE001-0000-4000-8000-000000000001",
+          "name": "Osaurus Eval Batch Math",
+          "description": "Returns the requested validation token.",
+          "systemPrompt": "Return only the exact token requested."
+        },
+        {
+          "id": "A11CE001-0000-4000-8000-000000000002",
+          "name": "Osaurus Eval Batch Writing",
+          "description": "Returns the requested validation token.",
+          "systemPrompt": "Return only the exact token requested."
+        }
+      ],
+      "maxParallelSpawns": 2
+    },
+    "runtimeConcurrency": {
+      "continuousBatching": false,
+      "maxConcurrentSequences": 2
+    },
+    "delegationSettings": {
+      "ramSafety": true,
+      "handoff": true,
+      "coexistence": false
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "maxModelSteps": 4,
+      "mustCallTools": [
+        "spawn_batch"
+      ],
+      "mustNotCallTools": [
+        "spawn_agent",
+        "spawn_model"
+      ],
+      "maxToolCalls": 1,
+      "noDuplicateExecutedCalls": true,
+      "noToolErrors": true,
+      "allowedExits": [
+        "finalResponse"
+      ],
+      "finalTextContains": [
+        "BATCH_ALPHA_42",
+        "BATCH_BETA_BLUE"
+      ],
+      "spawnBatch": {
+        "exactCallCount": 1,
+        "expectedJobIds": [
+          "math",
+          "writing"
+        ],
+        "expectedSucceeded": 2,
+        "expectedFailed": 0,
+        "expectedMaxParallel": 2,
+        "requireEveryRowSettled": true,
+        "requireReportedCountsMatchRows": true,
+        "expectedAggregateStatus": "succeeded",
+        "expectedExecutionWaves": [
+          {
+            "wave": 1,
+            "remoteJobs": 0,
+            "localJobs": 2,
+            "engineRequestedMaximum": 1,
+            "requireUncappedArchitecture": true,
+            "engineEffectiveMaximum": 1,
+            "effectiveLocalSlots": 1,
+            "localSubwaves": [
+              1,
+              1
+            ],
+            "limitingFactors": [
+              "continuousBatchingDisabled",
+              "engineCapacity"
+            ]
+          }
+        ],
+        "requireEveryExecutionWaveWellFormed": true,
+        "expectedCacheAvailable": true,
+        "expectedRows": [
+          {
+            "id": "math",
+            "ok": true,
+            "summaryEquals": "BATCH_ALPHA_42"
+          },
+          {
+            "id": "writing",
+            "ok": true,
+            "summaryEquals": "BATCH_BETA_BLUE"
+          }
+        ]
+      }
+    }
+  }
+}

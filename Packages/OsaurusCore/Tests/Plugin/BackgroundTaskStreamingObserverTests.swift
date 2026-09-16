@@ -47,6 +47,27 @@ struct BackgroundTaskStreamingObserverTests {
 
     // MARK: - Tests
 
+    @Test
+    func cancelTask_resumesPendingDelegateAsCancelledNotCompleted() async throws {
+        let (state, mgr) = makeObservedState()
+        defer { mgr.finalizeTask(state.id) }
+        state.chatSession?.isStreaming = true
+        let waiter = Task { @MainActor in
+            await mgr.awaitCompletion(state.id, timeoutSeconds: 5)
+        }
+        // Let awaitCompletion register its continuation before the synchronous
+        // streaming-end publication from stop(). Checking only final status
+        // misses the old race: cancelTask overwrote it after resuming success.
+        await Task.yield()
+        mgr.cancelTask(state.id)
+        let result = await waiter.value
+        guard case .cancelled = result else {
+            Issue.record("A stopped child resumed its waiter as \(result)")
+            return
+        }
+        #expect(state.status == .cancelled)
+    }
+
     /// Subscribing must NOT synchronously fire `markCompleted`, even though
     /// CombineLatest delivers `(isStreaming: false, lastStreamError: nil)`
     /// the instant the sink attaches.

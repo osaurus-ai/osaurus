@@ -74,6 +74,36 @@ private func feed() -> SubagentFeed { SubagentFeed(toolCallId: "t", kindId: "k",
 @Suite("Residency handoff middleware")
 struct ResidencyHandoffTests {
 
+    @Test("actual post-release memory refusal restores the exact parent without starting the child")
+    func postReleaseMemoryRefusalRestoresParent() async {
+        let log = OpLog()
+        let handoff = ResidencyHandoff(
+            plan: { _ in ResidencyPlan(shouldUnload: true, ramSafetyEnabled: true) },
+            preflight: { _, _, _ in log.add("physical-bound") },
+            unload: { parent, _, _ in
+                #expect(parent == "exact-parent")
+                log.add("unload")
+                return ChatResidencyLease(unloadedModelNames: ["exact-parent"])
+            },
+            restore: { lease, _ in
+                #expect(lease.unloadedModelNames == ["exact-parent"])
+                log.add("restore")
+                return lease.unloadedModelNames
+            },
+            postUnloadPreflight: { _, _, _ in
+                log.add("actual-memory")
+                throw PreflightRefused()
+            }
+        )
+        await #expect(throws: PreflightRefused.self) {
+            _ = try await handoff.around(scope: scope, resolved: resolved, feed: feed()) {
+                log.add("child")
+                return SubagentResult(payload: [:])
+            }
+        }
+        #expect(log.value == ["physical-bound", "unload", "actual-memory", "restore"])
+    }
+
     @Test("unload path: preflight → unload → body → restore, in order")
     func unloadPathOrder() async throws {
         let log = OpLog()

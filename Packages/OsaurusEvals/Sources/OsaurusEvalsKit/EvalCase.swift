@@ -142,6 +142,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// spawn admission and BatchEngine slots, without inheriting whichever
         /// settings happen to be saved on the contributor's machine.
         public let runtimeConcurrency: RuntimeConcurrencyFixture?
+        public let delegationSettings: SubagentJobEvaluator.DelegationSettings?
         /// Live-sandbox fixture for `agent_loop` cases. PRESENCE of this
         /// block switches the case into sandbox execution mode: the
         /// runner installs a temporary eval agent with `autonomousExec`
@@ -237,6 +238,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             useHostFolder: Bool? = nil,
             agentCapabilities: AgentCapabilitiesFixture? = nil,
             runtimeConcurrency: RuntimeConcurrencyFixture? = nil,
+            delegationSettings: SubagentJobEvaluator.DelegationSettings? = nil,
             sandbox: SandboxFixture? = nil,
             seedAgents: [SeedAgent]? = nil,
             seedProviders: [SeedProvider]? = nil,
@@ -253,6 +255,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.useHostFolder = useHostFolder
             self.agentCapabilities = agentCapabilities
             self.runtimeConcurrency = runtimeConcurrency
+            self.delegationSettings = delegationSettings
             self.sandbox = sandbox
             self.seedAgents = seedAgents
             self.seedProviders = seedProviders
@@ -427,6 +430,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let spawnAgents: [SpawnAgentFixture]?
         /// Per-call/concurrency ceiling applied to the temporary orchestrator.
         public let maxParallelSpawns: Int?
+        public let childBudgets: SubagentBudgets?
 
         public init(
             dbEnabled: Bool? = nil,
@@ -436,7 +440,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             searchMemoryEnabled: Bool? = nil,
             appleScriptEnabled: Bool? = nil,
             spawnAgents: [SpawnAgentFixture]? = nil,
-            maxParallelSpawns: Int? = nil
+            maxParallelSpawns: Int? = nil,
+            childBudgets: SubagentBudgets? = nil
         ) {
             self.dbEnabled = dbEnabled
             self.selfSchedulingEnabled = selfSchedulingEnabled
@@ -446,6 +451,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.appleScriptEnabled = appleScriptEnabled
             self.spawnAgents = spawnAgents
             self.maxParallelSpawns = maxParallelSpawns
+            self.childBudgets = childBudgets
         }
 
         /// True when any flag is explicitly enabled — the runner only
@@ -1764,6 +1770,20 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// complete parsed result rather than the bounded transcript preview.
         public let spawnBatch: SpawnBatchAssertion?
 
+        /// Exact digests from executed single-child calls, in order. Parent
+        /// prose, deduped calls and previews cannot satisfy this assertion.
+        public let spawnSummaries: [String]?
+        public let spawnAgentIDs: [UUID]?
+        /// Fresh parent conversations in the same process before the scored
+        /// main query. Workers/model/cache/admission are deliberately retained.
+        public let freshChatWarmups: [FreshChatWarmup]?
+
+        public struct FreshChatWarmup: Sendable, Codable {
+            public let query: String
+            public let spawnSummaries: [String]
+            public let spawnAgentIDs: [UUID]?
+        }
+
         public init(
             maxIterations: Int? = nil,
             maxTokens: Int? = nil,
@@ -1797,7 +1817,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             scoredMaxPromptTokens: Int? = nil,
             scoredMaxTotalTokens: Int? = nil,
             cancelAfterToolCalls: Int? = nil,
-            spawnBatch: SpawnBatchAssertion? = nil
+            spawnBatch: SpawnBatchAssertion? = nil,
+            spawnSummaries: [String]? = nil,
+            spawnAgentIDs: [UUID]? = nil,
+            freshChatWarmups: [FreshChatWarmup]? = nil
         ) {
             self.maxIterations = maxIterations
             self.maxTokens = maxTokens
@@ -1832,6 +1855,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.scoredMaxTotalTokens = scoredMaxTotalTokens
             self.cancelAfterToolCalls = cancelAfterToolCalls
             self.spawnBatch = spawnBatch
+            self.spawnSummaries = spawnSummaries
+            self.spawnAgentIDs = spawnAgentIDs
+            self.freshChatWarmups = freshChatWarmups
         }
 
         /// Aggregate and per-child result contract for one or more
@@ -1889,6 +1915,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 public let ok: Bool?
                 public let model: String?
                 public let summaryContains: [String]?
+                public let summaryEquals: String?
 
                 public init(
                     id: String,
@@ -1896,7 +1923,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                     target: String? = nil,
                     ok: Bool? = nil,
                     model: String? = nil,
-                    summaryContains: [String]? = nil
+                    summaryContains: [String]? = nil,
+                    summaryEquals: String? = nil
                 ) {
                     self.id = id
                     self.targetType = targetType
@@ -1904,6 +1932,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                     self.ok = ok
                     self.model = model
                     self.summaryContains = summaryContains
+                    self.summaryEquals = summaryEquals
                 }
             }
 
@@ -2891,6 +2920,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     }
 
     public struct SubagentExpectations: Sendable, Codable {
+        public struct RAMAdmission: Sendable, Codable {
+            public let scenario: SubagentAdmissionEvaluator.Scenario
+            public let expected: [SubagentAdmissionEvaluator.Observation]
+        }
+        public let ramAdmission: RAMAdmission?
+
         /// One child in a heterogeneous model-free scripted batch. Each child
         /// still runs through the real `SubagentSession` host and admission
         /// gate; this shape only supplies deterministic eval inputs.
@@ -3171,6 +3206,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
 
         public init(
             lane: String,
+            ramAdmission: RAMAdmission? = nil,
             needsHandoff: Bool? = nil,
             decision: String? = nil,
             resolveFailure: String? = nil,
@@ -3237,6 +3273,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             expectPostRunCache: Bool? = nil
         ) {
             self.lane = lane
+            self.ramAdmission = ramAdmission
             self.needsHandoff = needsHandoff
             self.decision = decision
             self.resolveFailure = resolveFailure

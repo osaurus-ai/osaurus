@@ -810,6 +810,8 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// already been rendered; it is not decoded from OpenAI JSON and is not
     /// forwarded to remote providers.
     var cacheStableSystemPrefix: String? = nil
+    /// Local admission contract, checked against exact prepared tokens before prefill.
+    var admissionPositionLimit: Int? = nil
     /// Local-only: when true, this request's model load must not disturb a model
     /// that is already resident or already loading — the runtime refuses the load
     /// instead of evicting. Set by housekeeping that nobody is waiting on
