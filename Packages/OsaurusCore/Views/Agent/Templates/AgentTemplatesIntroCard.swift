@@ -71,10 +71,12 @@ struct AgentTemplatesIntroCard: View {
     @State private var stage: AgentTemplatesIntroStage = .agent
 
     /// The diagram is drawn in fixed coordinates at this size and scaled as
-    /// a whole to the space beside the copy, so a narrow window never
-    /// reflows it.
+    /// a whole to fill the space beside the copy, up or down, so it stays
+    /// legible on a wide window and never reflows on a narrow one.
     static let canvasDesignSize = CGSize(width: 420, height: 160)
-    private static let copyWidth: CGFloat = 250
+    /// Largest enlargement before the pills start to look oversized.
+    static let maxCanvasScale: CGFloat = 1.7
+    private static let copyWidth: CGFloat = 230
 
     var body: some View {
         HStack(alignment: .top, spacing: 24) {
@@ -197,7 +199,7 @@ struct AgentTemplatesIntroCard: View {
 
     private var diagram: some View {
         GeometryReader { proxy in
-            let scale = min(1, proxy.size.width / Self.canvasDesignSize.width)
+            let scale = min(Self.maxCanvasScale, proxy.size.width / Self.canvasDesignSize.width)
             AgentTemplatesIntroCanvas(stage: stage, reduceMotion: reduceMotion)
                 .scaleEffect(scale, anchor: .topLeading)
                 .frame(
