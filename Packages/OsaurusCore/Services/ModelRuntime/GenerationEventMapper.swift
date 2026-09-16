@@ -40,6 +40,7 @@ enum GenerationEventMapper {
     static func map(
         events: AsyncStream<Generation>,
         modelName: String = "",
+        promptTokenCount: Int? = nil,
         trace: TTFTTrace? = nil,
         suppressProgressUI: Bool = false,
         /// Whether this generation's completion-time MTP stats should become
@@ -61,6 +62,9 @@ enum GenerationEventMapper {
     ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
         let task = Task {
+            if let promptTokenCount, promptTokenCount >= 0 {
+                continuation.yield(.inputTokenCount(promptTokenCount))
+            }
             let interval = mapperSignposter.beginInterval(
                 "generation",
                 id: mapperSignposter.makeSignpostID()
@@ -113,6 +117,9 @@ enum GenerationEventMapper {
                     finalTokenCount = info.generationTokenCount
                     logCompletionInfo(info)
                     let mtp = Self.mtpSummary(from: info)
+                    if info.promptTokenCount >= 0, info.promptTokenCount != promptTokenCount {
+                        continuation.yield(.inputTokenCount(info.promptTokenCount))
+                    }
                     // Park the ADAPTIVE result where a Settings poll can read it.
                     // Completion-time, so it shows what the controller settled on
                     // (e.g. asked depth 3, ran depth 1 on low acceptance) rather

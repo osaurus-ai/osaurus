@@ -98,6 +98,7 @@ struct HTTPHandlerChatStreamingTests {
         }
         let usages = frames.compactMap { $0["usage"] as? [String: Any] }
         #expect(usages.count == 1)
+        #expect(usages.first?["prompt_tokens"] as? Int == 257)
         #expect(usages.first?["completion_tokens"] as? Int == 59)
         #expect(usages.first?["tokens_per_second"] as? Double == 17.5)
         let choices = frames.flatMap { $0["choices"] as? [[String: Any]] ?? [] }

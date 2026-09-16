@@ -620,12 +620,14 @@ struct CompletionRequest: Decodable, Sendable {
     let topK: Int?
     let stop: [String]
     let stream: Bool?
+    let streamOptions: StreamOptions?
 
     private enum CodingKeys: String, CodingKey {
         case model, prompt, prefix, suffix, middle, temperature, stop, stream
         case maxTokens = "max_tokens"
         case topP = "top_p"
         case topK = "top_k"
+        case streamOptions = "stream_options"
     }
 
     init(from decoder: Decoder) throws {
@@ -653,6 +655,7 @@ struct CompletionRequest: Decodable, Sendable {
             stop = []
         }
         stream = try? c.decodeIfPresent(Bool.self, forKey: .stream)
+        streamOptions = try c.decodeIfPresent(StreamOptions.self, forKey: .streamOptions)
     }
 
     private static func decodeStringOrFirstArray(

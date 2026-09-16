@@ -619,6 +619,22 @@ enum StreamingStatsHint: Sendable {
     }
 }
 
+/// Prepared input accounting is independent of terminal completion stats.
+/// In particular, receiving this hint must not disarm stream cancellation or
+/// invent an output-token count for a tool call dispatched before EOS.
+enum StreamingInputTokenHint: Sendable {
+    private static let prefix = "\u{FFFE}input_tokens:"
+
+    static func encode(_ count: Int) -> String { prefix + String(count) }
+
+    static func decode(_ delta: String) -> Int? {
+        guard delta.hasPrefix(prefix), let count = Int(delta.dropFirst(prefix.count)), count >= 0 else {
+            return nil
+        }
+        return count
+    }
+}
+
 /// In-band signaling for an Osaurus Router billing event (cost, token counts,
 /// status). Shares the `\u{FFFE}` sentinel so the generic filters in HTTP
 /// handlers and `ChatEngine` drop it from visible output and skip it for token

@@ -5537,6 +5537,7 @@ public actor ModelRuntime {
         return GenerationEventMapper.map(
             events: prepared.stream,
             modelName: modelName,
+            promptTokenCount: prepared.promptTokens.count,
             trace: trace,
             suppressProgressUI: parameters.suppressProgressUI,
             // Background housekeeping (follow-up suggestions, titles) must not
@@ -5628,6 +5629,8 @@ public actor ModelRuntime {
         // call, so iterating to natural EOS captures all of them).
         for try await ev in events {
             switch ev {
+            case .inputTokenCount:
+                break
             case .tokens(let s):
                 accumulated += s
             case .reasoning:
@@ -5657,7 +5660,8 @@ public actor ModelRuntime {
     /// Stream a completion from a raw, pre-formatted prompt — no chat template,
     /// no tools, no reasoning channel. Backs the OpenAI-legacy
     /// `/v1/completions` endpoint (FIM autocomplete), where the prompt must
-    /// reach the model verbatim. Yields plain text deltas only.
+    /// reach the model verbatim. Yields text and in-band usage hints; callers
+    /// must consume accounting before forwarding visible completion text.
     func streamRawText(
         prompt: String,
         parameters: GenerationParameters,
@@ -5683,11 +5687,18 @@ public actor ModelRuntime {
                         continuation.finish()
                         return
                     }
-                    // Raw completions only surface generated text. Reasoning,
-                    // tool calls, and stats events are irrelevant to the
-                    // legacy completions wire format and are dropped.
-                    if case .tokens(let s) = ev, !s.isEmpty {
-                        continuation.yield(s)
+                    switch ev {
+                    case .inputTokenCount(let count):
+                        continuation.yield(StreamingInputTokenHint.encode(count))
+                    case .completionInfo(let count, let rate, let unclosed, let stop, let prefill, let mtp):
+                        continuation.yield(StreamingStatsHint.encode(
+                            tokenCount: count, tokensPerSecond: rate, unclosedReasoning: unclosed,
+                            stopReason: stop, prefillTokensPerSecond: prefill, mtp: mtp
+                        ))
+                    case .tokens(let text) where !text.isEmpty:
+                        continuation.yield(text)
+                    default:
+                        break
                     }
                 }
                 continuation.finish()
@@ -5796,6 +5807,8 @@ public actor ModelRuntime {
                         return
                     }
                     switch ev {
+                    case .inputTokenCount(let count):
+                        continuation.yield(StreamingInputTokenHint.encode(count))
                     case .tokens(let s):
                         if !s.isEmpty { continuation.yield(s) }
                     case .reasoning(let s):

@@ -12,6 +12,57 @@ import Testing
 @testable import OsaurusCore
 
 struct HTTPStreamingWriterTests {
+    @Test(arguments: [true, false])
+    func anthropicDeferredStartPrecedesFirstContent(withPreparedCount: Bool) throws {
+        let channel = EmbeddedChannel()
+        let context = try channel.embeddedContext()
+        let writer = AnthropicSSEResponseWriter()
+        writer.writeMessageStart(messageId: "msg_test", model: "test", inputTokens: 7,
+                                 context: context, deferUntilInput: true)
+        #expect(try channel.readOutbound(as: HTTPServerResponsePart.self) == nil)
+        if withPreparedCount { writer.setInputTokens(257, context: context) }
+        writer.writeTextDelta("answer", context: context)
+        writer.setOutputTokens(59)
+        writer.writeFinish(stopReason: "end_turn", context: context)
+        var body = ""
+        while let part = try channel.readOutbound(as: HTTPServerResponsePart.self) {
+            if case .body(.byteBuffer(var buffer)) = part {
+                body += buffer.readString(length: buffer.readableBytes) ?? ""
+            }
+        }
+        let frames = body.components(separatedBy: .newlines).filter { $0.hasPrefix("data: ") }.compactMap {
+            (try? JSONSerialization.jsonObject(with: Data($0.dropFirst(6).utf8))) as? [String: Any]
+        }
+        #expect(frames.first?["type"] as? String == "message_start")
+        #expect(frames.filter { $0["type"] as? String == "message_start" }.count == 1)
+        let message = frames.first?["message"] as? [String: Any]
+        let initialUsage = message?["usage"] as? [String: Any]
+        #expect(initialUsage?["input_tokens"] as? Int == (withPreparedCount ? 257 : 7))
+        let finalUsage = frames.compactMap { $0["usage"] as? [String: Any] }.last
+        #expect(finalUsage?["input_tokens"] as? Int == (withPreparedCount ? 257 : 7))
+        #expect(finalUsage?["output_tokens"] as? Int == 59)
+        _ = try channel.finish()
+    }
+
+    @Test func anthropicErrorBeforePreparationDoesNotInventAStartOrUsage() throws {
+        let channel = EmbeddedChannel()
+        let context = try channel.embeddedContext()
+        let writer = AnthropicSSEResponseWriter()
+        writer.writeMessageStart(messageId: "msg_test", model: "test", inputTokens: 7,
+                                 context: context, deferUntilInput: true)
+        writer.writeErrorFromThrown(NativeMTPAdmission.Refusal(reason: "Missing tuning"), context: context)
+        var body = ""
+        while let part = try channel.readOutbound(as: HTTPServerResponsePart.self) {
+            if case .body(.byteBuffer(var buffer)) = part {
+                body += buffer.readString(length: buffer.readableBytes) ?? ""
+            }
+        }
+        #expect(body.contains("invalid_request_error"))
+        #expect(!body.contains("message_start"))
+        #expect(!body.contains("usage"))
+        _ = try channel.finish()
+    }
+
     @Test func nativeMTPRefusalKeepsItsTypeInEveryStreamingEnvelope() throws {
         let error = NativeMTPAdmission.Refusal(reason: "Missing verified tuning")
         let writers: [(ChannelHandlerContext) -> Void] = [

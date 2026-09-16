@@ -542,6 +542,12 @@ final class SSEResponseWriter: ResponseWriter {
 }
 
 final class NDJSONResponseWriter: ResponseWriter {
+    private var inputTokens: Int?
+    private var outputTokens: Int?
+
+    func setInputTokens(_ count: Int) { inputTokens = max(0, count) }
+    func setOutputTokens(_ count: Int) { outputTokens = max(0, count) }
+
     func writeHeaders(_ context: ChannelHandlerContext, extraHeaders: [(String, String)]? = nil) {
         var head = HTTPResponseHead(version: .http1_1, status: .ok)
         var headers = HTTPHeaders()
@@ -648,6 +654,11 @@ final class NDJSONResponseWriter: ResponseWriter {
     }
 
     private func writeJSONObject(_ response: [String: Any], context: ChannelHandlerContext) {
+        var response = response
+        if response["done"] as? Bool == true, response["error"] == nil {
+            if let inputTokens { response["prompt_eval_count"] = inputTokens }
+            if let outputTokens { response["eval_count"] = outputTokens }
+        }
         if let jsonData = try? JSONSerialization.data(withJSONObject: response, options: .osaurusCanonical) {
             var buffer = context.channel.allocator.buffer(capacity: 256)
             buffer.writeBytes(jsonData)
@@ -684,6 +695,12 @@ final class NDJSONResponseWriter: ResponseWriter {
 }
 
 final class OllamaGenerateNDJSONResponseWriter {
+    private var inputTokens: Int?
+    private var outputTokens: Int?
+
+    func setInputTokens(_ count: Int) { inputTokens = max(0, count) }
+    func setOutputTokens(_ count: Int) { outputTokens = max(0, count) }
+
     func writeHeaders(_ context: ChannelHandlerContext, extraHeaders: [(String, String)]? = nil) {
         var head = HTTPResponseHead(version: .http1_1, status: .ok)
         var headers = HTTPHeaders()
@@ -781,6 +798,11 @@ final class OllamaGenerateNDJSONResponseWriter {
     }
 
     private func writeJSONObject(_ response: [String: Any], context: ChannelHandlerContext) {
+        var response = response
+        if response["done"] as? Bool == true, response["error"] == nil {
+            if let inputTokens { response["prompt_eval_count"] = inputTokens }
+            if let outputTokens { response["eval_count"] = outputTokens }
+        }
         if let jsonData = try? JSONSerialization.data(withJSONObject: response, options: .osaurusCanonical) {
             var buffer = context.channel.allocator.buffer(capacity: 256)
             buffer.writeBytes(jsonData)
@@ -799,6 +821,8 @@ final class AnthropicSSEResponseWriter {
     private var messageId: String = ""
     private var model: String = ""
     private var inputTokens: Int = 0
+    private var messageStartConfigured = false
+    private var hasStartedMessage = false
     private var outputTokens: Int = 0
     private var currentBlockIndex: Int = 0
     private var hasStartedTextBlock: Bool = false
@@ -825,7 +849,8 @@ final class AnthropicSSEResponseWriter {
         messageId: String,
         model: String,
         inputTokens: Int,
-        context: ChannelHandlerContext
+        context: ChannelHandlerContext,
+        deferUntilInput: Bool = false
     ) {
         self.messageId = messageId
         self.model = model
@@ -835,6 +860,19 @@ final class AnthropicSSEResponseWriter {
         self.hasStartedTextBlock = false
         self.hasStartedThinkingBlock = false
 
+        messageStartConfigured = true
+        hasStartedMessage = false
+        if !deferUntilInput { ensureMessageStart(context: context) }
+    }
+
+    func setInputTokens(_ count: Int, context: ChannelHandlerContext) {
+        inputTokens = max(0, count)
+        ensureMessageStart(context: context)
+    }
+
+    private func ensureMessageStart(context: ChannelHandlerContext) {
+        guard messageStartConfigured, !hasStartedMessage else { return }
+        hasStartedMessage = true
         let event = MessageStartEvent(id: messageId, model: model, inputTokens: inputTokens)
         writeSSEEvent("message_start", payload: event, context: context)
     }
@@ -943,7 +981,7 @@ final class AnthropicSSEResponseWriter {
 
     /// Write message_delta with stop_reason
     func writeMessageDelta(stopReason: String, context: ChannelHandlerContext) {
-        let event = MessageDeltaEvent(stopReason: stopReason, outputTokens: outputTokens)
+        let event = MessageDeltaEvent(stopReason: stopReason, outputTokens: outputTokens, inputTokens: inputTokens)
         writeSSEEvent("message_delta", payload: event, context: context)
     }
 
@@ -1032,6 +1070,7 @@ final class AnthropicSSEResponseWriter {
 
     @inline(__always)
     private func writeSSEEvent<T: Encodable>(_ eventType: String, payload: T, context: ChannelHandlerContext) {
+        if eventType != "message_start", eventType != "error" { ensureMessageStart(context: context) }
         let encoder = IkigaJSONEncoder()
         var buffer = context.channel.allocator.buffer(capacity: 256)
         buffer.writeString("event: ")
@@ -1271,6 +1310,8 @@ final class OpenResponsesSSEWriter {
         )
         writeSSEEvent("response.output_text.delta", payload: event, context: context)
     }
+
+    func setInputTokens(_ count: Int) { inputTokens = max(0, count) }
 
     func setOutputTokens(_ tokenCount: Int) {
         outputTokens = max(0, tokenCount)
