@@ -119,11 +119,32 @@ struct ModelPickerOptionsControl {
     }
 }
 
+/// An action offered under the model list, for callers that need to give the
+/// user a way to get a model that is not there yet (add a provider, download
+/// a bundle). Only callers that pass these show a footer; everywhere else the
+/// picker is unchanged.
+struct ModelPickerFooterAction: Identifiable {
+    let id: String
+    let title: String
+    let icon: String
+    let action: () -> Void
+
+    init(id: String, title: String, icon: String, action: @escaping () -> Void) {
+        self.id = id
+        self.title = title
+        self.icon = icon
+        self.action = action
+    }
+}
+
 struct ModelPickerView: View {
     let options: [ModelPickerItem]
     @Binding var selectedModel: String?
     let agentId: UUID?
     var optionsControl: ModelPickerOptionsControl? = nil
+    /// Escape hatches shown under the list. Empty for every caller that only
+    /// selects among models the user already has.
+    var footerActions: [ModelPickerFooterAction] = []
     let onDismiss: () -> Void
 
     @State private var searchText = ""
@@ -463,12 +484,17 @@ struct ModelPickerView: View {
                 Divider().background(theme.primaryBorder.opacity(0.3))
                 optionsSection(optionsControl)
             }
+
+            if !footerActions.isEmpty {
+                Divider().background(theme.primaryBorder.opacity(0.3))
+                footerSection
+            }
         }
         .frame(
             width: 380,
             height: min(
-                CGFloat(visibleOptions.count * 48 + 160) + optionsSectionHeight,
-                optionsSectionHeight > 0 ? 480 + min(optionsSectionHeight, 200) : 480
+                CGFloat(visibleOptions.count * 48 + 160) + optionsSectionHeight + footerSectionHeight,
+                (optionsSectionHeight > 0 ? 480 + min(optionsSectionHeight, 200) : 480) + footerSectionHeight
             )
         )
         .background(popoverBackground)
@@ -1290,16 +1316,62 @@ struct ModelPickerView: View {
         .help(help ?? label)
     }
 
+    // MARK: - Footer
+
+    private static let footerRowHeight: CGFloat = 36
+
+    private var footerSectionHeight: CGFloat {
+        footerActions.isEmpty ? 0 : CGFloat(footerActions.count) * Self.footerRowHeight + 8
+    }
+
+    private var footerSection: some View {
+        VStack(spacing: 0) {
+            ForEach(footerActions) { item in
+                Button {
+                    // The caller presents its own UI, so the popover has to
+                    // get out of the way first.
+                    onDismiss()
+                    item.action()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: item.icon)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.accentColor)
+                            .frame(width: 16)
+                        Text(item.title)
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundColor(theme.accentColor)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 14)
+                    .frame(height: Self.footerRowHeight)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
     // MARK: - Empty State
 
+    /// With a footer present the rows below say what to do next, so the
+    /// empty state only has to explain why the list is bare.
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
+            Image(systemName: footerActions.isEmpty ? "magnifyingglass" : "cube")
                 .font(.system(size: 24))
                 .foregroundColor(theme.tertiaryText)
-            Text("No models found", bundle: .module)
-                .font(.system(size: 13))
-                .foregroundColor(theme.secondaryText)
+            Group {
+                if isSearching || footerActions.isEmpty {
+                    Text("No models found", bundle: .module)
+                } else {
+                    Text("No models are set up yet", bundle: .module)
+                }
+            }
+            .font(.system(size: 13))
+            .foregroundColor(theme.secondaryText)
+            .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
