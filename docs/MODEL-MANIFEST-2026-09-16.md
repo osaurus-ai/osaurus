@@ -10,8 +10,10 @@ Baseline artifacts: `/Users/eric/vmlx-private-evidence/model-manifest-2026-09-16
 `ModelManifest` is the shared decoder for local admission, remote update checks and
 pinned download preflight. Missing sidecars preserve legacy/offline operation.
 Present unreadable/malformed sidecars fail explicitly. Unknown keys are tolerated;
-optional `required_osaurus_version` is SemVer, `model_version` is a non-negative
-JSON string decimal counter. Revision comparison never uses lexicographic ordering
+both version fields are required when the file is present. `required_osaurus_version`
+is SemVer and `model_version` is a non-negative
+JSON string decimal counter. This matches the publisher contract in
+`/Users/eric/jang/docs/runtime/OSAURUS-JSON-CONTRACT.md`. Revision comparison never uses lexicographic ordering
 or machine-integer conversion. App build metadata is ignored for precedence;
 prereleases precede final releases. Short Apple host versions have zero-filled
 missing components. An unknown host version cannot bypass a declared minimum.
@@ -25,7 +27,7 @@ and distinguish absent sidecars from transport/authentication/parse failures.
 The existing model detail and catalog show available publisher revisions. Update
 Model uses the tracked Repair downloader, exclusive model lease, hash checking,
 progress, pause/resume/cancel and atomic file replacement. The publisher sidecar
-commits last. A persistent incomplete-update marker prevents loading mixed files
+commits last. Pause/resume keeps the same immutable HF revision. A persistent incomplete-update marker prevents loading mixed files
 after interruption and clears only after successful completion. External bundles
 remain managed by their original application. This does not implement automatic
 updates or rollbacks; a cancelled update needs Resume or Repair.

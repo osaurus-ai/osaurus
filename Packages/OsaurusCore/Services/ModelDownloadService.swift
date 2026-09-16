@@ -222,6 +222,7 @@ final class ModelDownloadService: ObservableObject {
     /// outlive the process. Coarse per-file resume (skip files whose on-disk
     /// size matches the expected size) covers the cross-launch case.
     private var pausedDownloads: [String: PausedSnapshot] = [:]
+    private var downloadRevisions: [String: String] = [:]
     private var hasRunTopUp = false
 
     /// Snapshot captured at the moment the user paused, used by `resume(_:)`
@@ -230,6 +231,7 @@ final class ModelDownloadService: ObservableObject {
     /// from the same byte offset.
     private struct PausedSnapshot {
         let resumeDataByFile: [String: Data]
+        let revision: String?
     }
 
     /// Result of one file's transfer inside the download task group.
@@ -279,6 +281,7 @@ final class ModelDownloadService: ObservableObject {
             repair(model)
             return
         }
+        downloadRevisions[model.id] = nil
         repairingModels.remove(model.id)
         repairMessages[model.id] = nil
         downloadRoutes[model.id] = route
@@ -293,6 +296,7 @@ final class ModelDownloadService: ObservableObject {
             repairMessages[model.id] = L("External models are managed by their original application.")
             return
         }
+        downloadRevisions[model.id] = nil
         repairingModels.insert(model.id)
         repairMessages[model.id] = L("Checking model files…")
         downloadRoutes[model.id] = .direct
@@ -305,6 +309,11 @@ final class ModelDownloadService: ObservableObject {
     /// otherwise.
     func resume(_ model: MLXModel) {
         let snapshot = pausedDownloads.removeValue(forKey: model.id)
+        if FileManager.default.fileExists(
+            atPath: model.localDirectory.appendingPathComponent(ModelManifest.pendingUpdateFilename).path
+        ) {
+            repairingModels.insert(model.id)
+        }
         startOrchestration(model: model, resuming: snapshot)
     }
 
@@ -422,8 +431,10 @@ final class ModelDownloadService: ObservableObject {
             let files = try await HuggingFaceService.shared.fetchDownloadFiles(
                 repoId: model.id,
                 patterns: Self.downloadFilePatterns,
-                excludedFiles: Self.downloadExcludedFiles
+                excludedFiles: Self.downloadExcludedFiles,
+                revision: resuming?.revision
             )
+            downloadRevisions[model.id] = files.first?.revision
 
             // Inspect the same immutable revision as the weights, before transfer.
             if let manifestFile = files.first(where: { $0.path == ModelManifest.filename }) {
@@ -1000,7 +1011,10 @@ final class ModelDownloadService: ObservableObject {
         fileTransferBase[modelId] = nil
         fileTransferTotal[modelId] = nil
         pauseRequestedModels.remove(modelId)
-        pausedDownloads[modelId] = PausedSnapshot(resumeDataByFile: resumeDataByFile)
+        pausedDownloads[modelId] = PausedSnapshot(
+            resumeDataByFile: resumeDataByFile,
+            revision: downloadRevisions[modelId]
+        )
         invalidateDownloaders(for: modelId)
         activeDownloadTasks[modelId] = nil
     }
@@ -1045,11 +1059,12 @@ final class ModelDownloadService: ObservableObject {
                 etaSeconds: nil
             )
         }
-        pausedDownloads[modelId] = PausedSnapshot(resumeDataByFile: [:])
+        pausedDownloads[modelId] = PausedSnapshot(resumeDataByFile: [:], revision: downloadRevisions[modelId])
         downloadStates[modelId] = .paused(progress: progress)
     }
 
     func cancel(_ modelId: String) {
+        downloadRevisions[modelId] = nil
         releaseOrchestrationResources(for: modelId)
         pausedDownloads[modelId] = nil
         clearDownloadTracking(for: modelId)

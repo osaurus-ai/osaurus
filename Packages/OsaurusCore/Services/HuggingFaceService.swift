@@ -130,9 +130,16 @@ actor HuggingFaceService {
     func fetchDownloadFiles(
         repoId: String,
         patterns: [String],
-        excludedFiles: Set<String> = []
+        excludedFiles: Set<String> = [],
+        revision requestedRevision: String? = nil
     ) async throws -> [MatchedFile] {
-        let revision = try await resolveRevision(repoId: repoId)
+        let revision: String
+        if let requestedRevision {
+            revision = requestedRevision
+        } else {
+            revision = try await resolveRevision(repoId: repoId)
+        }
+        guard revision.count == 40, revision.allSatisfy(\.isHexDigit) else { throw URLError(.badURL) }
         var components = URLComponents()
         components.scheme = "https"
         components.host = "huggingface.co"

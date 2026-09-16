@@ -1124,7 +1124,6 @@ public actor ModelRuntime {
             modelName: trimmed
         )
         defer { finishModelDeletionProtectedAccess(deletionAccess) }
-        if modelCache[trimmed] != nil { return }
         guard let found = ModelManager.findInstalledModel(named: trimmed) else {
             throw NSError(
                 domain: "ModelRuntime",
@@ -1132,7 +1131,6 @@ public actor ModelRuntime {
                 userInfo: [NSLocalizedDescriptionKey: "Installed model not found for preload: \(trimmed)"]
             )
         }
-        if modelCache[found.name] != nil { return }
         _ = try await loadContainer(
             id: found.id,
             name: found.name,

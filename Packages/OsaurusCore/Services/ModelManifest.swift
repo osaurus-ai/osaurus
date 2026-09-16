@@ -37,17 +37,17 @@ struct ModelManifest: Equatable, Sendable {
     static func decode(_ data: Data) throws -> ModelManifest {
         guard data.count <= maximumBytes else { throw invalid("The file exceeds 64 KiB.") }
         struct Fields: Decodable {
-            let required_osaurus_version: String?
-            let model_version: String?
+            let required_osaurus_version: String
+            let model_version: String
         }
         let fields: Fields
         do { fields = try JSONDecoder().decode(Fields.self, from: data) } catch {
             throw invalid("Expected a JSON object with string version fields.")
         }
-        if let required = fields.required_osaurus_version, Version(required) == nil {
+        if Version(fields.required_osaurus_version) == nil {
             throw invalid("required_osaurus_version must be a semantic version, such as 0.25.0.")
         }
-        if let revision = fields.model_version, !isDecimal(revision) {
+        if !isDecimal(fields.model_version) {
             throw invalid("model_version must be a non-negative decimal revision string, such as 1.")
         }
         return ModelManifest(

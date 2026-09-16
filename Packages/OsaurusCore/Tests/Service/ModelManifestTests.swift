@@ -14,18 +14,23 @@ struct ModelManifestTests {
 
     @Test(arguments: ["0.24.9", "0.25.0-rc.1", "0.1.999"])
     func refusesOldHosts(host: String) throws {
-        let manifest = try ModelManifest.decode(Data(#"{"required_osaurus_version":"0.25.0"}"#.utf8))
+        let manifest = try ModelManifest.decode(
+            Data(#"{"required_osaurus_version":"0.25.0","model_version":"1"}"#.utf8)
+        )
         #expect(manifest.compatibilityFailure(hostVersion: host)?.reason == .requiresOsaurusUpdate)
     }
 
     @Test(arguments: ["", "dev", "1.bad", "1.0.0.0", "-1.0.0", "1.0.0-", "1.0.0+", "01.0.0"])
     func unknownHostNeverBypassesRequirement(host: String) throws {
-        let manifest = try ModelManifest.decode(Data(#"{"required_osaurus_version":"0.25.0"}"#.utf8))
+        let manifest = try ModelManifest.decode(
+            Data(#"{"required_osaurus_version":"0.25.0","model_version":"1"}"#.utf8)
+        )
         #expect(manifest.compatibilityFailure(hostVersion: host)?.reason == .unknownOsaurusVersion)
     }
 
     @Test(arguments: [
-        "[]", "null", "{", #"{"model_version":1}"#, #"{"model_version":"v1"}"#,
+        "[]", "null", "{", "{}", #"{"required_osaurus_version":"0.25.0"}"#, #"{"model_version":"1"}"#,
+        #"{"model_version":1}"#, #"{"model_version":"v1"}"#,
         #"{"model_version":"-1"}"#, #"{"required_osaurus_version":""}"#,
         #"{"required_osaurus_version":"0.25.0-01"}"#, #"{"required_osaurus_version":25}"#,
     ])
@@ -113,6 +118,20 @@ struct ModelManifestTests {
                 try await service.fetchModelManifest(repoId: "org/repo", revision: String(repeating: "a", count: 40))
             }
         }
+    }
+
+    @Test func resumedDownloadRetainsItsImmutableRevision() async throws {
+        let revision = String(repeating: "b", count: 40)
+        let service = HuggingFaceService(metadataRequest: { request in
+            let url = try #require(request.url)
+            // A resume must not consult a moving main branch.
+            #expect(url.path == "/api/models/org/repo/tree/\(revision)")
+            let body = Data(#"[{"path":"config.json","type":"file","size":5,"oid":"abc"}]"#.utf8)
+            return (body, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        })
+        let files = try await service.fetchDownloadFiles(repoId: "org/repo", patterns: ["*.json"], revision: revision)
+        #expect(files.count == 1)
+        #expect(files.first?.revision == revision)
     }
 
     @Test func versionRefusalsUseClientErrorEnvelopes() {
