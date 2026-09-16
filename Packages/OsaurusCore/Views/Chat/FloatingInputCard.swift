@@ -4649,6 +4649,7 @@ extension FloatingInputCard {
         )
         .overlay(shape.stroke(tint.opacity(0.35), lineWidth: 1))
         .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(verbatim: advisory.shortLabel))
     }
 
@@ -8983,7 +8984,7 @@ private struct FloatingContextChip: View {
     /// Read the shared disk-cache gauge. Returns nil when no quota is
     /// configured (disk cache off), so the popover hides the section rather
     /// than showing a meaningless 0 GB.
-    static func readDiskCacheUsage() async -> DiskCacheUsage? {
+    nonisolated static func readDiskCacheUsage() async -> DiskCacheUsage? {
         // Preferred source: a resident model's coordinator, which reports both
         // the live payload bytes and the cap it is actually enforcing.
         if let snapshot = await MLXBatchAdapter.snapshotDiagnostics(),

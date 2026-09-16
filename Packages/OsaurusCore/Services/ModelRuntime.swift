@@ -318,7 +318,8 @@ public actor ModelRuntime {
             isBlocked: status.isExplicitlyBlocked
                 || status.nativeMTPTuning?.manualBlocked == true,
             measuredFamilyAutoDepth: status.measuredFamilyAutoDepth,
-            statusLine: status.statusLine)
+            statusLine: status.statusLine
+        )
     }
 
     /// Reads `config.json`'s `model_type` (top-level or nested `text_config`)
@@ -476,8 +477,7 @@ public actor ModelRuntime {
     /// Callers that arrive while the same exact teardown is already active
     /// join it. Returning immediately would let destructive consumers unlink
     /// weights while the first caller was still draining the resident model.
-    private var residencyUnloadWaiters:
-        [String: [CheckedContinuation<Void, Never>]] = [:]
+    private var residencyUnloadWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
 
     /// Canonical model deletion quarantine. Each lease is indexed by both the
     /// stable model id and picker/runtime name (plus their final path
@@ -511,14 +511,10 @@ public actor ModelRuntime {
         case resolved
     }
 
-    private var modelDeletionAccessWaiters:
-        [UUID: [ModelDeletionWaiter]] = [:]
-    private var modelDeletionLeaseWaiters:
-        [UUID: [ModelDeletionWaiter]] = [:]
-    private var modelDeletionDrainWaiters:
-        [UUID: [ModelDeletionWaiter]] = [:]
-    private var modelDeletionWaiterStates:
-        [UUID: ModelDeletionWaiterState] = [:]
+    private var modelDeletionAccessWaiters: [UUID: [ModelDeletionWaiter]] = [:]
+    private var modelDeletionLeaseWaiters: [UUID: [ModelDeletionWaiter]] = [:]
+    private var modelDeletionDrainWaiters: [UUID: [ModelDeletionWaiter]] = [:]
+    private var modelDeletionWaiterStates: [UUID: ModelDeletionWaiterState] = [:]
 
     /// On-disk weight bytes reserved by loads that are past the pre-load gate
     /// but not yet resident in `modelCache`, keyed by model name. The
@@ -1381,9 +1377,11 @@ public actor ModelRuntime {
                 bytes: holder.weightsSizeBytes,
                 isCurrent: holder.name == currentModelName,
                 draftStrategyDescription: Self.describeDraftStrategy(
-                    Self.requestDraftStrategy(holder.draftStrategy)),
+                    Self.requestDraftStrategy(holder.draftStrategy)
+                ),
                 nativeMTPDepth: Self.nativeMTPDepth(
-                    Self.requestDraftStrategy(holder.draftStrategy)),
+                    Self.requestDraftStrategy(holder.draftStrategy)
+                ),
                 dflash2BlockSize: holder.dflash2BlockSize,
                 nativeMTPStatus: holder.nativeMTPStatus,
                 nativeMTPReason: holder.nativeMTPReason,
@@ -2946,7 +2944,8 @@ public actor ModelRuntime {
         // loaded coordinator receives. The old raw-field lookup used 8K when
         // the saved override was blank even though Safe Auto actually loaded
         // a 64K cap, materially under-reporting projected KV headroom.
-        let maxPositions = requestPositionLimit
+        let maxPositions =
+            requestPositionLimit
             ?? kvRetentionCap.map { min(declaredPositions, max($0, 4096)) }
             ?? declaredPositions
         guard let kvHeads, let headDim, kvHeads > 0, headDim > 0, maxPositions > 0 else {
@@ -2998,7 +2997,8 @@ public actor ModelRuntime {
         let ssmState = intValue(config["ssm_state_size"]) ?? intValue(config["mamba_d_state"]) ?? 0
         let convKernel = intValue(config["conv_kernel"]) ?? intValue(config["mamba_d_conv"]) ?? 0
         let mambaHeadDim = intValue(config["mamba_head_dim"]) ?? 0
-        let mambaStatePerLayer = Int64(max(0, mambaHeads))
+        let mambaStatePerLayer =
+            Int64(max(0, mambaHeads))
             * Int64(max(0, ssmState + convKernel * max(1, mambaHeadDim)))
         // GDN/GLA linear-attention layers (qwen3_5, Bailing KDA) keep a
         // per-head (keyDim x valueDim) matmul state instead of mamba-style
@@ -3006,7 +3006,8 @@ public actor ModelRuntime {
         let linearVHeads = intValue(config["linear_num_value_heads"]) ?? 0
         let linearKeyDim = intValue(config["linear_key_head_dim"]) ?? 0
         let linearValueDim = intValue(config["linear_value_head_dim"]) ?? 0
-        let linearStatePerLayer = Int64(max(0, linearVHeads))
+        let linearStatePerLayer =
+            Int64(max(0, linearVHeads))
             * Int64(max(0, linearKeyDim))
             * Int64(max(0, linearValueDim))
         let ssmBytes =
@@ -3058,7 +3059,8 @@ public actor ModelRuntime {
             // The shared suffix reads earlier layers' KV; Gemma creates no
             // independent cache for those layers. Count only actual owners.
             let shared = max(0, intValue(config["num_kv_shared_layers"]) ?? 0)
-            let owners = shared > 0 && shared < types.count
+            let owners =
+                shared > 0 && shared < types.count
                 ? Array(types.prefix(types.count - shared)) : types
             for raw in owners {
                 switch stringValue(raw)?.lowercased() ?? "" {
@@ -3514,15 +3516,13 @@ public actor ModelRuntime {
         )
         let targetLoadFootprintBytes: Int64? =
             rawWeightsBytes > 0
-            ? (
-                preliminaryPlan.loadConfiguration.useMmapSafetensors
+            ? (preliminaryPlan.loadConfiguration.useMmapSafetensors
                 ? Self.effectiveLoadFootprintBytes(
                     rawWeightsBytes: rawWeightsBytes,
                     modelDirectory: localURL,
                     modelName: canonicalName
                 )
-                : rawWeightsBytes
-            )
+                : rawWeightsBytes)
             : nil
         let perActiveChildHeadroomBytes = targetLoadFootprintBytes.map {
             Self.estimatedKVHeadroomBytes(
@@ -3611,7 +3611,9 @@ public actor ModelRuntime {
     ) async -> SubagentBatchMemoryFacts? {
         guard
             let profile = await subagentMemoryProfile(
-                for: modelName, requestEstimate: requestEstimate)
+                for: modelName,
+                requestEstimate: requestEstimate
+            )
         else {
             return nil
         }
@@ -4376,7 +4378,10 @@ public actor ModelRuntime {
         let task = Task<SessionHolder, Error> {
             if let activity = alignmentRepairActivity {
                 await AlignmentPreparationState.shared.begin(
-                    id: activity, modelID: id, sessionID: alignmentRepairSession)
+                    id: activity,
+                    modelID: id,
+                    sessionID: alignmentRepairSession
+                )
             }
             defer {
                 if let activity = alignmentRepairActivity {
@@ -4409,7 +4414,8 @@ public actor ModelRuntime {
             let container: ModelContainer
             do {
                 var loadConfiguration = mtpPlan.loadConfiguration
-                loadConfiguration.alignmentRepairAuthorization = alignmentRepairActivity == nil
+                loadConfiguration.alignmentRepairAuthorization =
+                    alignmentRepairActivity == nil
                     ? .disabled : .directUserSend
                 let observer: @Sendable (AlignmentRepairProgress) -> Void = { progress in
                     guard let activity = alignmentRepairActivity else { return }
@@ -4421,13 +4427,13 @@ public actor ModelRuntime {
                 }
                 container = try await AlignmentRepairProgress.$observer.withValue(observer) {
                     try await loadModelContainer(
-                    from: localURL,
-                    using: tokenizerLoader,
-                    configuration: serverSettings.resolvedModelConfiguration(
-                        base: ModelConfiguration(directory: localURL)
-                    ),
-                    loadConfiguration: loadConfiguration
-                )
+                        from: localURL,
+                        using: tokenizerLoader,
+                        configuration: serverSettings.resolvedModelConfiguration(
+                            base: ModelConfiguration(directory: localURL)
+                        ),
+                        loadConfiguration: loadConfiguration
+                    )
                 }
             } catch {
                 // Drain the load's GPU tail before releasing the exclusive gate
@@ -4459,10 +4465,14 @@ public actor ModelRuntime {
             }
             if LocalVisionEvidence.inspect(localURL).hasVision && !constructedVision {
                 container.disableCaching()
-                throw NSError(domain: "OsaurusModelMedia", code: 1, userInfo: [
-                    NSLocalizedDescriptionKey:
-                        "The installed bundle has vision configuration and weights, but its loaded runtime has no vision tower. The model was not admitted as text-only. Check the bundle's processor configuration and model-load diagnostics."
-                ])
+                throw NSError(
+                    domain: "OsaurusModelMedia",
+                    code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "The installed bundle has vision configuration and weights, but its loaded runtime has no vision tower. The model was not admitted as text-only. Check the bundle's processor configuration and model-load diagnostics."
+                    ]
+                )
             }
             if Task.isCancelled {
                 container.disableCaching()
@@ -4548,7 +4558,9 @@ public actor ModelRuntime {
             // baseline behind (unless another model remains resident, whose
             // episode continues).
             SwapPressureMonitor.shared.endEpisodeOnLoadFailure(
-                model: name, residentCount: modelCache.count)
+                model: name,
+                residentCount: modelCache.count
+            )
             throw error
         }
     }
@@ -5109,7 +5121,8 @@ public actor ModelRuntime {
                 .attributesOfItem(atPath: url.path),
                 let owner = attributes[.ownerAccountName] as? String
             {
-                let permissions = (attributes[.posixPermissions] as? NSNumber)
+                let permissions =
+                    (attributes[.posixPermissions] as? NSNumber)
                     .map { String($0.intValue, radix: 8) } ?? "?"
                 detail += " (owner=\(owner) mode=\(permissions), current user=\(NSUserName()))"
             }
@@ -6215,7 +6228,7 @@ public actor ModelRuntime {
         // legacy Auto draft-token cap, regardless of the resident head's depth.
         // It sets the initial depth and the request's exploration ceiling.
         if mtp.mode == .forceOn, let manual = mtp.explicitDepth,
-            (1...3).contains(manual)
+            (1 ... 3).contains(manual)
         {
             return .nativeMTP(depth: manual, verifierMode: verifierMode)
         }
