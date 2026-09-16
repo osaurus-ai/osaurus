@@ -158392,40 +158392,6 @@
         }
       }
     },
-    "Open the full editor to change the prompt, avatar, or tools before creating" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Öffne den vollständigen Editor, um Prompt, Avatar oder Tools vor dem Erstellen zu ändern"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Open the full editor to change the prompt, avatar, or tools before creating"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "생성 전에 프롬프트, 아바타, 도구를 바꾸려면 전체 편집기를 여세요"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Откройте полный редактор, чтобы изменить промпт, аватар или инструменты перед созданием"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "打开完整编辑器，在创建前修改提示词、头像或工具"
-          }
-        }
-      }
-    },
     "Open the Images pane in Settings" : {
       "comment" : "Description text in the EmptyStateView for the \"Images\" tab.",
       "extractionState" : "stale",
