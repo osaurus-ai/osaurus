@@ -2,24 +2,84 @@
 
 ## Current isolated integration — September 15
 
-Status: PARTIAL. The idle policy from PR #2771 is integrated with the SSD
-notice from #2783, core-utility owner preservation, and persistence of the
-explicit Use chat model choice. The vMLX pin remains main
-`5b0c8e6b8b29a7ead21fe785688bc0621580cc62`. Fresh Release, native UI and
-applicable eval results for this integration are pending. Historical results
-below belong to the named earlier commits and do not qualify this source.
+Status: PARTIAL pending matched handoff/failure attribution and final-head CI.
+The current production source is `3f2294c96abaf0320d9f934e327e4f6d4e51716b`;
+ancestry-only `60fd8c769578b5e8e767d5170a066221e77fba89` has the identical tracked
+tree. The SSD notice is already merged as #2783. This PR changes idle ownership,
+warning UI and explicit Core Model fallback persistence; it does not change RAM
+reserve arithmetic, model generation defaults, parser behavior or vision support.
+The vMLX pin remains `5b0c8e6b8b29a7ead21fe785688bc0621580cc62`.
 
-Private tests use the user-approved 24 GiB reclaimable-RAM floor, normal
-pressure, 1 GiB swap-growth limit, 28 GiB owned physical-footprint cap,
-1800-second timeout and process-identity cleanup. Existing swap is observational.
+SOURCE EVIDENCE: `CoreModelService.swift:204` borrows the existing residency
+owner for utility requests; `ModelRuntime.swift:1273` protects API ownership and
+active leases at chat close, `:2448` refreshes saved policies, and `:2463` arms
+idle release after leases drain. `AppConfiguration.swift:77` encodes explicit
+Core Model null so legacy migration cannot overwrite Use chat model.
+
+LIVE EVIDENCE: fresh Release binary SHA256
+`fb9c7d4828fea3845633385902a28e98940e4b7dca0d7723bf3b19f518c1a06c`;
+[native proof and limitations](https://github.com/osaurus-ai/osaurus/pull/2771#issuecomment-5691166970).
+CI35045206418: seven CI jobs passed plus the separate release-draft check;
+Core XCTest400 total/8 skipped/0 failures, Swift Testing passed, Evals harness350/350.
+
+- Native Settings: default30-second idle unloaded while focused; next request
+  reloaded. Keep Loaded ON saved, survived relaunch and remained resident46.9s
+  after close. Saving OFF rearmed an already-resident model without generation.
+  Core Use chat model and titles/suggestions ON persisted through relaunch.
+- Actual Coordinator, RAM Safety ON/Handoff ON/coexistence OFF, local batch1 and
+  same-model ceiling1: three fresh SysAdmin chats followed by a fresh sequential
+  SysAdmin/Writer chat, without restart, with utilities OFF and again ON. All10
+  minimal child envelopes returned exactly the requested codes,16.4–34.9tok/s;
+  parent follow-ups completed. This is not proof on physical16GiB hardware.
+- Utility-on close released residency at the next0.219s sample, before its
+  original deadline. A real API request96.849tok/s retained its API deadline
+  after chat close. An active Writer story stayed leased until completion,
+ 88.8tok/s; reopened contextual follow-up83.4tok/s. Native Stop unlocked input
+  and a new request completed80.8tok/s. Cancellation's partial child still
+  incorrectly returned ok=true with missing usage: separate #2752 remains needed.
+- Two Qwen3-0.6B handoffs performed unload/load/run/unload/restore, but task
+  fidelity failed: bare-code child inputs produced unrelated answers7.5/5.7tok/s
+  and the parent fabricated HANDOFF-OK. Three cache-control prompts in the same
+  history also unnecessarily delegated bare codes. None counts as child fidelity
+  proof. Matched pre-change native attribution is pending.
+- SSD integration: saved .005% (191MB), real quota popup, one-click clear of
+ 165,982,920 indexed bytes while preserving an unindexed sentinel, then a cold
+  response80.1tok/s. Cache OFF was reflected in active runtime telemetry;
+  cache restored afterward. Visuals remain private, not in the repository.
+- Full current AgentLoop36/7/4 (pass/fail/skip), Frontier20/19/0; total56/26/4.
+  Pre-idle baseline a6ad602 AgentLoop33/10/4, Frontier23/16/0; also56/26/4.
+  Five cases failed only in each build. Equal totals do not establish no
+  regression; targeted matched repeats are running with original assertions.
+  The same Gemma judges prose; file/tool assertions are retained, not replaced
+  with judge opinions. Missing throughput in tool-only steps remains unqualified.
+- Current CacheProof14/14 scored cases. Seven length-stopped turns and six
+  non-hybrid conditional assertions skipped: not complete answer-coherency or
+  hybrid-companion proof. Effective Gemma topology3 KV+12 rotating layers,
+  disk-backed restore, TurboQuant layer count0, paged RAM OFF.
+
+Models: OsaurusAI/gemma-4-E2B-it-8bit revision
+`433003a1e3fbfd10819ad15179d5e3c4d02d7ea7`, T1/top-p.95/top-k64/min-p0,
+parent16384/child2048 tokens; main adapter enable_thinking=false, not native
+reasoning proof. Qwen3-0.6B-8bit revision
+`11de96878523501bcaa86104e3c186de07ff9068`, unchanged bundle/settings.
+
+Private artifacts under `/Users/eric/vmlx-private-evidence/ornith-vision-2026-09-14`:
+`idle-utility-run2-receipt.json`, `idle-utility-run3-receipt.json`,
+`idle-utility-run3-final-history.json`, native `idle-utility-run3-*.png/.ax.txt`,
+`idle-utility-full-baseline-comparison.json`,
+`evals-idle-utility-3f2294c96-agent-full`, `evals-idle-baseline-a6ad-agent-full`,
+`evals-idle-utility-3f2294c96-cache`. Full run logs:
+`SWIFTTEST_IdleUtilityAgent0915__194536.log`,
+`SWIFTTEST_IdleBaselineAgent0915__195755.log`,
+`SWIFTTEST_IdleUtilityCache0915__201408.log`.
+
+Private guards: user-approved24GiB reclaimable-RAM floor, normal pressure,
+1GiB swap-growth limit,28GiB owned physical-footprint cap,1800-second timeout
+and process-identity cleanup. Existing swap is observational. Native peak3.18GiB,
+current full eval2.68GiB, baseline2.30GiB, cache1.76GiB; no resource aborts and
+zero owned processes at cleanup. Critical swap emulation was sampled631times
+and excluded from telemetry. This is an M5 Max128GiB host, not M4/16GiB proof.
 No macOS swap or app admission policy is changed by these test guards.
-
-Required current rows: Keep Loaded off/on/save/relaunch, timed idle despite
-focus, chat close with utilities off/on and Core Model set to Use chat model,
-API-owner protection, active-request close/cancellation, repeated and sequential
-Gemma children, different-model handoff/restore, restored SSD notice controls,
-full applicable eval scores with failures retained, exact-head CI.
-The M4/16 GiB reporter outcome remains unverified.
 
 ## Historical PR #2771 record
 
