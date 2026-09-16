@@ -534,6 +534,7 @@ final class ModelDownloadService: ObservableObject {
                             // surface as cancellations, which the
                             // aggregation above ignores.
                             await MainActor.run {
+                                guard self.downloadTokens[model.id] == token else { return }
                                 self.invalidateDownloaders(for: model.id)
                             }
                         }
@@ -742,6 +743,9 @@ final class ModelDownloadService: ObservableObject {
         token: UUID,
         resumeData: Data?
     ) async -> FileTransferOutcome {
+        guard downloadTokens[model.id] == token, !Task.isCancelled else {
+            return .failed(path: file.path, error: CancellationError())
+        }
         guard
             let destination = HuggingFaceService.destinationURL(
                 forRemotePath: file.path,

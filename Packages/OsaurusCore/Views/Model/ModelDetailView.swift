@@ -1349,7 +1349,7 @@ struct ModelDetailView: View, Identifiable {
                         .foregroundColor(theme.accentColor)
                 }
                 .buttonStyle(PlainButtonStyle())
-                .help("Verify model files against Hugging Face and restore missing or changed files.")
+                .localizedHelp("Verify model files against Hugging Face and restore missing or changed files.")
             }
 
             Spacer()

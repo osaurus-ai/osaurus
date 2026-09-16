@@ -271099,6 +271099,380 @@
           }
         }
       }
+    },
+    "All model files match Hugging Face.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All model files match Hugging Face."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Alle Modelldateien stimmen mit Hugging Face überein."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "모든 모델 파일이 Hugging Face와 일치합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Все файлы модели совпадают с файлами на Hugging Face."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "所有模型文件均与 Hugging Face 一致。"
+          }
+        }
+      }
+    },
+    "All model files match Hugging Face. No repair was needed.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All model files match Hugging Face. No repair was needed."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Alle Modelldateien stimmen mit Hugging Face überein. Keine Reparatur erforderlich."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "모든 모델 파일이 Hugging Face와 일치합니다. 복구가 필요하지 않았습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Все файлы модели совпадают с файлами на Hugging Face. Восстановление не требовалось."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "所有模型文件均与 Hugging Face 一致，无需修复。"
+          }
+        }
+      }
+    },
+    "Checking %@ (%lld/%lld)…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checking %@ (%lld/%lld)…"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Prüfe %@ (%lld/%lld)…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%@ 확인 중 (%lld/%lld)…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Проверка %@ (%lld/%lld)…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在检查 %@（%lld/%lld）…"
+          }
+        }
+      }
+    },
+    "Checking model files…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checking model files…"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Modelldateien werden geprüft…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "모델 파일 확인 중…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Проверка файлов модели…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在检查模型文件…"
+          }
+        }
+      }
+    },
+    "External models are managed by their original application.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "External models are managed by their original application."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Externe Modelle werden von ihrer ursprünglichen Anwendung verwaltet."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "외부 모델은 원래 애플리케이션에서 관리합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Внешние модели управляются исходным приложением."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "外部模型由其原始应用管理。"
+          }
+        }
+      }
+    },
+    "Repair cancelled. Completed files were kept.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Repair cancelled. Completed files were kept."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Reparatur abgebrochen. Fertiggestellte Dateien wurden behalten."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "복구가 취소되었습니다. 완료된 파일은 유지되었습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Восстановление отменено. Готовые файлы сохранены."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "修复已取消，已完成的文件已保留。"
+          }
+        }
+      }
+    },
+    "Repair complete. Restored %lld file(s).": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Repair complete. Restored %lld file(s)."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Reparatur abgeschlossen. %lld Datei(en) wiederhergestellt."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "복구가 완료되었습니다. 파일 %lld개를 복원했습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Восстановление завершено. Восстановлено файлов: %lld."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "修复完成，已恢复 %lld 个文件。"
+          }
+        }
+      }
+    },
+    "Repair failed: %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Repair failed: %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Reparatur fehlgeschlagen: %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "복구 실패: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ошибка восстановления: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "修复失败：%@"
+          }
+        }
+      }
+    },
+    "Restoring %lld model file(s)…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restoring %lld model file(s)…"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%lld Modelldatei(en) werden wiederhergestellt…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "모델 파일 %lld개 복원 중…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Восстановление файлов модели: %lld…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在恢复 %lld 个模型文件…"
+          }
+        }
+      }
+    },
+    "Waiting for the model to finish before repairing…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for the model to finish before repairing…"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Vor der Reparatur wird auf den Abschluss des Modells gewartet…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "복구하기 전에 모델 작업이 끝날 때까지 기다리는 중…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ожидание завершения работы модели перед восстановлением…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "正在等待模型完成后再修复…"
+          }
+        }
+      }
+    },
+    "Verify model files against Hugging Face and restore missing or changed files.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verify model files against Hugging Face and restore missing or changed files."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Modelldateien mit Hugging Face vergleichen und fehlende oder geänderte Dateien wiederherstellen."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "모델 파일을 Hugging Face와 비교하고 누락되거나 변경된 파일을 복원합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Сверить файлы модели с Hugging Face и восстановить отсутствующие или изменённые файлы."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "将模型文件与 Hugging Face 进行比对，并恢复缺失或已更改的文件。"
+          }
+        }
+      }
     }
   },
   "version": "1.1"
