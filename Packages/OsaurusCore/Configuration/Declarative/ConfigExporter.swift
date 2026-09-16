@@ -137,6 +137,7 @@ enum ConfigExporter {
         entry.sandbox = exportSandbox(of: agent)
         entry.subagents = exportSubagents(of: agent, agents: agents)
         entry.workingFolder = agent.workingFolderPath.map { .value($0) } ?? .null
+        entry.sourceTemplate = agent.sourceTemplateName
         return entry
     }
 

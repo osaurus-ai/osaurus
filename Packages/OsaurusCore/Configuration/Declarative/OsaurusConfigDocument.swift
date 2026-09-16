@@ -360,6 +360,8 @@ public struct AgentEntry: Equatable, Sendable {
     /// security-scoped bookmark can be minted; otherwise the result asks
     /// the user to pick it. Explicit `null` detaches the folder.
     public var workingFolder: ConfigField<String> = .absent
+    /// Provenance: the agent template this agent was created from.
+    public var sourceTemplate: String?
 
     public init(name: String) {
         self.name = name
@@ -380,6 +382,7 @@ extension AgentEntry: Codable {
         case sandbox
         case subagents
         case workingFolder = "working_folder"
+        case sourceTemplate = "source_template"
     }
 
     public init(from decoder: Decoder) throws {
@@ -398,6 +401,7 @@ extension AgentEntry: Codable {
         sandbox = try c.decodeIfPresent(AgentSandboxEntry.self, forKey: .sandbox)
         subagents = try c.decodeIfPresent(AgentSubagentsEntry.self, forKey: .subagents)
         workingFolder = try c.configField(String.self, forKey: .workingFolder)
+        sourceTemplate = try c.decodeIfPresent(String.self, forKey: .sourceTemplate)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -416,6 +420,7 @@ extension AgentEntry: Codable {
         try c.encodeIfPresent(sandbox, forKey: .sandbox)
         try c.encodeIfPresent(subagents, forKey: .subagents)
         try c.encode(configField: workingFolder, forKey: .workingFolder)
+        try c.encodeIfPresent(sourceTemplate, forKey: .sourceTemplate)
     }
 }
 

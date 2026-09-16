@@ -678,7 +678,9 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         document.version = 1
         // Knowledge collection names resolve to this Mac's ids here, and a
         // missing `preferred` model becomes null (default model).
-        document.agents = [template.resolvedEntry(overrides: overrides)]
+        var entry = template.resolvedEntry(overrides: overrides)
+        entry.sourceTemplate = template.name
+        document.agents = [entry]
         return .success(document, basedOn: template)
     }
 

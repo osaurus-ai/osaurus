@@ -263,6 +263,9 @@ public enum ConfigManifest {
                         "working_folder", .scalar(.string, example: "null", nullable: true),
                         comment: "folder PATH hint; attached when it exists locally,",
                         moreComments: ["otherwise the apply asks the user to pick it"]),
+                    ConfigKeySpec(
+                        "source_template", .scalar(.string, example: "\"\""),
+                        comment: "provenance: agent template this agent came from"),
                 ],
                 requiredKey: "name")),
 

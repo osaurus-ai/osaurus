@@ -486,6 +486,9 @@ enum ConfigApplier {
             patchSubagents(&agent, from: subagents, outcome: &outcome)
         }
         patchWorkingFolder(&agent, from: entry.workingFolder, outcome: &outcome)
+        if let source = entry.sourceTemplate {
+            agent.sourceTemplateName = source.isEmpty ? nil : source
+        }
         guard let caps = entry.capabilities else { return outcome }
         patchCapabilities(&agent, from: caps)
         return outcome

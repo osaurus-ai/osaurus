@@ -1185,6 +1185,7 @@ enum ConfigPlanner {
                 changes.append("subagents.models: \(models.count) model(s)")
             }
         }
+        diff("source_template", desired: entry.sourceTemplate, current: agent.sourceTemplateName, into: &changes)
         switch entry.workingFolder {
         case .absent:
             break
