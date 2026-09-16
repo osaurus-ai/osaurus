@@ -533,7 +533,11 @@ private struct ModelStep: View {
                     OrSeparator()
                     if requestedIsLocal {
                         StepActionButton(title: "Download \(requested)", icon: "arrow.down.circle") {
-                            AppDelegate.shared?.showManagementWindow(initialTab: .models, deeplinkModelId: requested)
+                            // Only a real Hugging Face repo id ("org/name") can be
+                            // resolved into a model card; a bare alias would
+                            // produce an empty phantom entry in the Models tab.
+                            let repoId = requested.contains("/") ? requested : nil
+                            AppDelegate.shared?.showManagementWindow(initialTab: .models, deeplinkModelId: repoId)
                         }
                     } else {
                         StepActionButton(title: "Configure Provider", icon: "cloud") {
