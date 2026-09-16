@@ -152,6 +152,24 @@ struct ModelManifestTests {
         #expect(ModelDownloadService.filesToFetch(remote: files, under: directory, intent: .explicitRepair).count == 2)
     }
 
+    @Test(arguments: [false, true], [false, true])
+    func obsoleteManifestRemovalRequiresExplicitRepairAndRemoteAbsence(explicitRepair: Bool, advertised: Bool) throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sidecar = directory.appendingPathComponent(ModelManifest.filename)
+        try Data("broken manifest".utf8).write(to: sidecar)
+        try Data("user note".utf8).write(to: directory.appendingPathComponent("notes.txt"))
+        let removed = try ModelManifest.removeObsoleteManifest(
+            at: directory,
+            advertised: advertised,
+            explicitRepair: explicitRepair
+        )
+        #expect(removed == (explicitRepair && !advertised))
+        #expect(FileManager.default.fileExists(atPath: sidecar.path) != removed)
+        #expect(try String(contentsOf: directory.appendingPathComponent("notes.txt"), encoding: .utf8) == "user note")
+    }
+
     @Test func versionRefusalsUseClientErrorEnvelopes() {
         let failure = ModelManifest.Failure(reason: .requiresOsaurusUpdate, message: "Update Osaurus.")
         #expect(HTTPHandler.localRuntimeHTTPStatus(for: failure).code == 400)

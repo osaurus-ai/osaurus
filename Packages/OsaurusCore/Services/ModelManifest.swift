@@ -120,6 +120,22 @@ struct ModelManifest: Equatable, Sendable {
         if let failure = loadFailure(at: directory, hostVersion: hostVersion) { throw failure }
     }
 
+    /// Only explicit Repair may remove a sidecar no longer advertised by the
+    /// pinned repository, after every remaining file has been verified/restored.
+    @discardableResult
+    static func removeObsoleteManifest(at directory: URL, advertised: Bool, explicitRepair: Bool) throws -> Bool {
+        guard explicitRepair, !advertised else { return false }
+        let url = directory.appendingPathComponent(filename)
+        guard FileManager.default.fileExists(atPath: url.path) else { return false }
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        guard let type = attributes[.type] as? FileAttributeType, type == .typeRegular || type == .typeSymbolicLink
+        else {
+            throw invalid("osaurus.json is not a file.")
+        }
+        try FileManager.default.removeItem(at: url)
+        return true
+    }
+
     /// Publisher revisions are decimal counters, not lexicographic strings or app versions.
     /// Missing/unknown revisions do not imply that an installed model is version zero.
     func isNewer(than installed: ModelManifest) -> Bool {

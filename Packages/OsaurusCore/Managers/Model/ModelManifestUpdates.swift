@@ -16,12 +16,21 @@ extension ModelManager {
     /// Detail views and catalog refresh share one result per repository. No network
     /// request is made from SwiftUI body evaluation or from runtime admission.
     func checkModelManifest(_ model: MLXModel, force: Bool = false) async {
-        guard !manifestChecksInFlight.contains(model.id) else { return }
+        guard !manifestChecksInFlight.contains(model.id) else {
+            if force { pendingManifestChecks[model.id] = model }
+            return
+        }
         if !force, let previous = manifestChecks[model.id], Date().timeIntervalSince(previous.checkedAt) < 300 {
             return
         }
         manifestChecksInFlight.insert(model.id)
-        defer { manifestChecksInFlight.remove(model.id) }
+        defer {
+            manifestChecksInFlight.remove(model.id)
+            // Download completion must not lose its refresh to an older check.
+            if let pending = pendingManifestChecks.removeValue(forKey: model.id) {
+                Task { await checkModelManifest(pending, force: true) }
+            }
+        }
         let remote: HuggingFaceService.ManifestSnapshot?
         let errorMessage: String?
         do {

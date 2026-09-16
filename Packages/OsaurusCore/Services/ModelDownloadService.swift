@@ -454,6 +454,9 @@ final class ModelDownloadService: ObservableObject {
             let verifiesPublisherRevision = files.contains { $0.path == ModelManifest.filename }
             let totalBytes = files.reduce(Int64(0)) { $0 + $1.size }
             let directory = model.localDirectory
+            let hasObsoleteManifest =
+                isRepair && !verifiesPublisherRevision
+                && FileManager.default.fileExists(atPath: directory.appendingPathComponent(ModelManifest.filename).path)
             // Hashing an installed multi-GB bundle must remain cancellable
             // and must never run on MainActor.
             if isRepair { repairCheckingTokens.insert(token) }
@@ -533,7 +536,7 @@ final class ModelDownloadService: ObservableObject {
             // mixture of old and new files. Keep a persistent marker on failure,
             // pause or cancellation; Repair verifies all files before clearing it.
             let pendingUpdate = directory.appendingPathComponent(ModelManifest.pendingUpdateFilename)
-            if !filesToDownload.isEmpty {
+            if !filesToDownload.isEmpty || hasObsoleteManifest {
                 try Data((files.first?.revision ?? "").utf8).write(to: pendingUpdate, options: .atomic)
             }
             let transferFiles = filesToDownload.filter { $0.path != ModelManifest.filename }
@@ -678,7 +681,17 @@ final class ModelDownloadService: ObservableObject {
                     return size == file.size ? nil : file.path
                 }
             }.value
+            try Task.checkCancellation()
+            guard downloadTokens[model.id] == token else { return }
             let isComplete = missing.isEmpty
+            let removedObsoleteManifest =
+                isComplete
+                ? try ModelManifest.removeObsoleteManifest(
+                    at: directory,
+                    advertised: verifiesPublisherRevision,
+                    explicitRepair: isRepair
+                )
+                : false
             let finalState: DownloadState
             if isComplete {
                 if FileManager.default.fileExists(atPath: pendingUpdate.path) {
@@ -718,7 +731,9 @@ final class ModelDownloadService: ObservableObject {
                     failureFilePath: missing.first
                 )
                 if didFinalize && isComplete {
-                    if isRepair {
+                    if isRepair, removedObsoleteManifest {
+                        self.repairMessages[model.id] = L("Repair complete. Removed obsolete osaurus.json.")
+                    } else if isRepair {
                         self.repairMessages[model.id] =
                             filesToDownload.isEmpty
                             ? L("All model files match Hugging Face. No repair was needed.")

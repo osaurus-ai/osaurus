@@ -271584,6 +271584,17 @@
           }
         }
       }
+    },
+    "Repair complete. Removed obsolete osaurus.json.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Repair complete. Removed obsolete osaurus.json."
+          }
+        }
+      }
     }
   },
   "version": "1.1"

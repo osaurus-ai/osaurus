@@ -1,6 +1,9 @@
 # Model manifest admission and updates
 
-Status: implementation in progress; live Release proof and CI pending.
+Status: diagnostic Release d155473f5 rejected future999 in native Chat and HTTP400,
+and displayed the Raptor revision0-to1 update badge/detail/action. Final refresh and
+obsolete-manifest repair hardening, full live matrix, and exact-head CI are pending.
+Diagnostic screenshots/API: `/Users/eric/vmlx-private-evidence/manifest-fix-2026-09-16`.
 
 The 39fc21b baseline downloaded `osaurus.json` without reading its version contract.
 The isolated Release audit accepted required version 999.0.0 in Chat and API and
@@ -33,7 +36,10 @@ Model uses the tracked Repair downloader, exclusive model lease, hash checking,
 progress, pause/resume/cancel and atomic file replacement. The publisher sidecar
 commits last. Pause/resume keeps the same immutable HF revision. A persistent incomplete-update marker prevents loading mixed files
 after interruption and clears only after successful completion. External bundles
-remain managed by their original application. This does not implement automatic
+remain managed by their original application. Explicit Repair removes an obsolete
+osaurus.json only after successful verification when the pinned repository no longer
+advertises it; automatic top-up never removes it. Forced refreshes arriving during
+another check are coalesced and run afterwards, including download completion. This does not implement automatic
 updates or rollbacks; a cancelled update needs Resume or Repair.
 
 Acceptance still required: focused parser/HTTP/admission tests, current CI, fresh

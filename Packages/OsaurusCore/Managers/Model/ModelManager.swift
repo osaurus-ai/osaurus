@@ -213,6 +213,7 @@ public final class ModelManager: NSObject, ObservableObject {
     @Published var suggestedModels: [MLXModel] = ModelManager.curatedSuggestedModels
     @Published var manifestChecks: [String: ModelManifestCheck] = [:]
     @Published var manifestChecksInFlight: Set<String> = []
+    var pendingManifestChecks: [String: MLXModel] = [:]
     @Published var deprecationNotices: [DeprecationNotice] = []
 
     /// True while a refresh of the OsaurusAI org listing is in flight. Drives
