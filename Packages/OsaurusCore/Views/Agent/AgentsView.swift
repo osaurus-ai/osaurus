@@ -54,10 +54,21 @@ struct AgentsView: View {
     @State private var selectedAgent: Agent?
     @State private var selectedRemoteAgentId: UUID?
     @State private var isCreating = false
+    /// Prefill for the Create Agent sheet when starting from a template.
+    /// Set together with `isCreating`; cleared when the sheet closes.
+    @State private var creationSeed: AgentEditorSeed?
     @State private var isReordering = false
     @State private var hasAppeared = false
     @State private var successMessage: String?
     @State private var consumedDeeplinkAgentId: UUID?
+    /// Agents | Templates switch under the header.
+    @State private var section: AgentsSection = .agents
+    /// Template library sheets. `templateImportText` is non-nil while the
+    /// import sheet is up (empty string = open on the paste field).
+    @State private var templateImportText: String?
+    @State private var templateSourceAgent: Agent?
+    @State private var templateToRename: AgentTemplate?
+    @ObservedObject private var templateStore = AgentTemplateStore.shared
     /// One-shot inner-tab target paired with an agent id, set by the
     /// `.agentDetailDeeplink` handler so the detail view opens on a specific
     /// tab (e.g. Subagents). Kept as the RAW deep-link string (not a resolved
@@ -177,17 +188,51 @@ struct AgentsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
-        .sheet(isPresented: $isCreating) {
+        .sheet(isPresented: $isCreating, onDismiss: { creationSeed = nil }) {
             AgentEditorSheet(
+                seed: creationSeed,
                 onSave: { agent in
                     agentManager.add(agent)
                     isCreating = false
                     showSuccess("Created \"\(agent.name)\"")
+                    withAnimation(Self.navTransition) { section = .agents }
                 },
                 onCancel: {
                     isCreating = false
                 }
             )
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { templateImportText != nil },
+                set: { if !$0 { templateImportText = nil } }
+            )
+        ) {
+            AgentTemplateImportSheet(
+                initialText: templateImportText ?? "",
+                onImported: { template in
+                    templateImportText = nil
+                    showSuccess("Imported \"\(template.name)\"")
+                },
+                onCancel: { templateImportText = nil }
+            )
+            .environment(\.theme, themeManager.currentTheme)
+        }
+        .sheet(item: $templateSourceAgent) { agent in
+            SaveAgentTemplateSheet(
+                agent: agent,
+                onSaved: { template in
+                    templateSourceAgent = nil
+                    showSuccess("Saved template \"\(template.name)\"")
+                    withAnimation(Self.navTransition) { section = .templates }
+                },
+                onCancel: { templateSourceAgent = nil }
+            )
+            .environment(\.theme, themeManager.currentTheme)
+        }
+        .sheet(item: $templateToRename) { template in
+            RenameAgentTemplateSheet(template: template, onDone: { templateToRename = nil })
+                .environment(\.theme, themeManager.currentTheme)
         }
         .sheet(isPresented: $isReordering) {
             AgentReorderSheet()
@@ -269,12 +314,18 @@ struct AgentsView: View {
                 .managerHeaderEntrance(hasAppeared: hasAppeared)
                 .settingsLandingAnchor("agents.overview")
 
-            // First-agent onboarding stays reachable as long as the user has no
-            // *local* agents — even if they've already paired a remote agent.
-            // That way the "Create Your First Agent" CTA never silently
-            // disappears just because someone else's agent is sitting in the
-            // grid. When both lists exist, we fall through to the normal grid.
-            if customAgents.isEmpty {
+            sectionPicker
+                .opacity(hasAppeared ? 1 : 0)
+
+            if section == .templates {
+                templatesContent
+                    .transition(.opacity)
+            } else if customAgents.isEmpty {
+                // First-agent onboarding stays reachable as long as the user has no
+                // *local* agents — even if they've already paired a remote agent.
+                // That way the "Create Your First Agent" CTA never silently
+                // disappears just because someone else's agent is sitting in the
+                // grid. When both lists exist, we fall through to the normal grid.
                 ScrollView {
                     VStack(spacing: 24) {
                         SettingsEmptyState(
@@ -323,6 +374,7 @@ struct AgentsView: View {
                                     withAnimation(Self.navTransition) { selectedAgent = agent }
                                 },
                                 onDuplicate: { duplicateAgent(agent) },
+                                onSaveTemplate: { templateSourceAgent = agent },
                                 onDelete: { deleteAgent(agent) },
                                 onOpenDatabase: { openDatabase(for: agent) }
                             )
@@ -417,18 +469,81 @@ struct AgentsView: View {
             subtitle: L("Create custom assistant personalities with unique behaviors"),
             count: totalCount == 0 ? nil : totalCount
         ) {
-            HeaderIconButton("arrow.clockwise", help: "Refresh agents") {
-                agentManager.refresh()
-            }
-            if !customAgents.isEmpty {
-                HeaderIconButton("list.bullet.indent", help: "Reorder agents") {
-                    isReordering = true
+            switch section {
+            case .agents:
+                HeaderIconButton("arrow.clockwise", help: "Refresh agents") {
+                    agentManager.refresh()
+                }
+                if !customAgents.isEmpty {
+                    HeaderIconButton("list.bullet.indent", help: "Reorder agents") {
+                        isReordering = true
+                    }
+                }
+                HeaderPrimaryButton("Create Agent", icon: "plus") {
+                    isCreating = true
+                }
+            case .templates:
+                HeaderIconButton("arrow.clockwise", help: "Refresh templates") {
+                    templateStore.reload()
+                }
+                HeaderPrimaryButton("Import Template", icon: "square.and.arrow.down") {
+                    templateImportText = ""
                 }
             }
-            HeaderPrimaryButton("Create Agent", icon: "plus") {
-                isCreating = true
-            }
         }
+    }
+
+    /// Agents | Templates switch. Lives under the header on both tabs so the
+    /// user always sees where they are.
+    private var sectionPicker: some View {
+        HStack {
+            AgentsSectionPicker(
+                selection: $section,
+                counts: [
+                    .agents: customAgents.count,
+                    .templates: templateStore.templates.count,
+                ]
+            )
+            Spacer()
+        }
+        .padding(.horizontal, 24)
+        .padding(.bottom, 12)
+    }
+
+    /// Templates tab body. Using a template builds an unsaved draft through
+    /// the same mapping `osaurus_config apply` uses and opens the Create
+    /// Agent sheet prefilled; unresolved requirements ride along as notices.
+    private var templatesContent: some View {
+        AgentTemplatesView(
+            columns: Self.gridColumns,
+            hasAppeared: hasAppeared,
+            onUse: { template in useTemplate(template) },
+            onImport: { templateImportText = "" },
+            onImportText: { text in templateImportText = text },
+            onRename: { template in templateToRename = template },
+            showSuccess: showSuccess,
+            showError: { message in _ = ToastManager.shared.error(L("Template"), message: message) }
+        )
+    }
+
+    private func useTemplate(_ template: AgentTemplate) {
+        let entry = template.resolvedEntry()
+        let draft = ConfigApplier.draftAgent(from: entry)
+        var notices = draft.outcome.notes
+        // Knowledge names the template needs but this Mac does not have.
+        let localNames = Set(KnowledgeCollectionStore.loadAll().map { $0.name.lowercased() })
+        let missingKnowledge = template.knowledgeCollectionNames.filter { !localNames.contains($0.lowercased()) }
+        if !missingKnowledge.isEmpty {
+            notices.append(
+                L("Knowledge collections to create or grant: \(missingKnowledge.joined(separator: ", ")).")
+            )
+        }
+        creationSeed = AgentEditorSeed(
+            subtitle: L("Based on \(template.name)"),
+            agent: draft.agent,
+            notices: notices
+        )
+        isCreating = true
     }
 
     // MARK: - Success Toast
@@ -557,6 +672,8 @@ private struct AgentCard: View {
     let hasAppeared: Bool
     let onSelect: () -> Void
     let onDuplicate: () -> Void
+    /// Snapshots the agent into the template library (Templates tab).
+    let onSaveTemplate: () -> Void
     let onDelete: () -> Void
     /// Opens the agent's detail view directly on the Database workspace
     /// (Knowledge › Database) — surfaced in the card menu so users can jump
@@ -570,6 +687,7 @@ private struct AgentCard: View {
         hasAppeared: Bool,
         onSelect: @escaping () -> Void,
         onDuplicate: @escaping () -> Void,
+        onSaveTemplate: @escaping () -> Void,
         onDelete: @escaping () -> Void,
         onOpenDatabase: @escaping () -> Void
     ) {
@@ -579,6 +697,7 @@ private struct AgentCard: View {
         self.hasAppeared = hasAppeared
         self.onSelect = onSelect
         self.onDuplicate = onDuplicate
+        self.onSaveTemplate = onSaveTemplate
         self.onDelete = onDelete
         self.onOpenDatabase = onOpenDatabase
     }
@@ -668,6 +787,13 @@ private struct AgentCard: View {
                                 Text("Duplicate", bundle: .module)
                             } icon: {
                                 Image(systemName: "doc.on.doc")
+                            }
+                        }
+                        Button(action: onSaveTemplate) {
+                            Label {
+                                Text("Save as Template", bundle: .module)
+                            } icon: {
+                                Image(systemName: "square.on.square.dashed")
                             }
                         }
                         Button(action: onOpenDatabase) {
