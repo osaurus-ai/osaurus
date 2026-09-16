@@ -73,7 +73,7 @@ struct AgentTemplatesIntroCard: View {
     /// The diagram is drawn in fixed coordinates at this size and scaled as
     /// a whole to fill the space beside the copy, up or down, so it stays
     /// legible on a wide window and never reflows on a narrow one.
-    static let canvasDesignSize = CGSize(width: 360, height: 250)
+    static let canvasDesignSize = CGSize(width: 380, height: 250)
     /// Largest enlargement before the pills start to look oversized.
     static let maxCanvasScale: CGFloat = 1.7
     private static let copyWidth: CGFloat = 220
@@ -330,8 +330,8 @@ private struct AgentTemplatesIntroCanvas: View {
     ]
 
     private enum Layout {
-        static let size = CGSize(width: 360, height: 250)
-        static let center = CGPoint(x: 180, y: 125)
+        static let size = CGSize(width: 380, height: 250)
+        static let center = CGPoint(x: 190, y: 125)
         static let cardWidth: CGFloat = 200
         static let rowHeight: CGFloat = 26
         static let rowGap: CGFloat = 6
@@ -342,14 +342,15 @@ private struct AgentTemplatesIntroCanvas: View {
         static let copyWidth: CGFloat = 170
         static let copyHeight: CGFloat = 150
         /// Beat 3: fan spacing and tilt per card away from the middle one.
-        static let fanSpread: CGFloat = 78
+        static let fanSpread: CGFloat = 80
         static let fanAngle: Double = 13
-        static let fanBadgeY: CGFloat = center.y + copyHeight / 2 + 24
+        /// Fanned copies shrink so the outer two stay inside the canvas.
+        static let fanScale: CGFloat = 0.85
         /// Beat 2 pill under the cards.
         static let stayPillY: CGFloat = 232
         /// Beat 4 laptop.
         static let screenSize = CGSize(width: 250, height: 176)
-        static let screenCenter = CGPoint(x: 180, y: 108)
+        static let screenCenter = CGPoint(x: 190, y: 108)
         static let baseY: CGFloat = 206
         static let laptopLabelY: CGFloat = 228
         static let screenCardScale: CGFloat = 0.82
@@ -376,7 +377,6 @@ private struct AgentTemplatesIntroCanvas: View {
             stayPill
             ForEach(0..<3, id: \.self) { index in
                 fanCopy(index)
-                fanBadge(index)
             }
             newCard
         }
@@ -477,6 +477,7 @@ private struct AgentTemplatesIntroCanvas: View {
             if fanned {
                 position = CGPoint(x: Layout.center.x + offset * Layout.fanSpread, y: Layout.center.y + abs(offset) * 8)
                 rotation = Double(offset) * Layout.fanAngle
+                scale = Layout.fanScale
             }
         case .reuse:
             visible = isMiddle && phase == 0
@@ -484,7 +485,9 @@ private struct AgentTemplatesIntroCanvas: View {
             scale = phase == 0 ? Layout.screenCardScale : 1.05
         }
 
-        return templateCopy
+        // Once dealt, each copy is headed by the way it travels.
+        let channel: Channel? = fanned ? Self.channels[index] : nil
+        return templateCopy(channel: channel)
             .rotationEffect(.degrees(rotation), anchor: .bottom)
             .scaleEffect(visible ? scale : scale * 0.92)
             .opacity(visible ? 1 : 0)
@@ -492,15 +495,17 @@ private struct AgentTemplatesIntroCanvas: View {
             .zIndex(isMiddle ? 1 : 0)
     }
 
-    private var templateCopy: some View {
+    private func templateCopy(channel: Channel?) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
-                Image(systemName: "square.on.square.dashed")
+                Image(systemName: channel?.glyph ?? "square.on.square.dashed")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(theme.accentColor)
-                Text(L("Template"))
+                    .foregroundStyle(channel == nil ? theme.accentColor : theme.infoColor)
+                    .contentTransition(.symbolEffect(.replace))
+                Text(channel?.label ?? L("Template"))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(theme.primaryText)
+                    .lineLimit(1)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 12)
@@ -538,29 +543,6 @@ private struct AgentTemplatesIntroCanvas: View {
                 .strokeBorder(theme.accentColor.opacity(0.6), style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
         )
         .shadow(color: Color.black.opacity(theme.isDark ? 0.35 : 0.12), radius: 8, y: 4)
-    }
-
-    /// Channel tag under each fanned copy.
-    private func fanBadge(_ index: Int) -> some View {
-        let channel = Self.channels[index]
-        let visible = stage == .share && phase >= 1
-        let offset = CGFloat(index - 1)
-        return HStack(spacing: 5) {
-            Image(systemName: channel.glyph)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(theme.infoColor)
-            Text(channel.label)
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(theme.primaryText)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 9)
-        .frame(height: 22)
-        .background(Capsule().fill(theme.cardBackground))
-        .overlay(Capsule().stroke(theme.infoColor.opacity(0.45), lineWidth: 1))
-        .scaleEffect(visible ? 1 : 0.7)
-        .opacity(visible ? 1 : 0)
-        .position(x: Layout.center.x + offset * Layout.fanSpread, y: visible ? Layout.fanBadgeY : Layout.fanBadgeY - 12)
     }
 
     // MARK: Scene 4: another Mac
