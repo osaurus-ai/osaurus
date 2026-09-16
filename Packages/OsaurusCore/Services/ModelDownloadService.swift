@@ -424,14 +424,15 @@ final class ModelDownloadService: ObservableObject {
             // Hashing an installed multi-GB bundle must remain cancellable
             // and must never run on MainActor.
             if isRepair { repairCheckingTokens.insert(token) }
-            let scan = Task.detached(priority: .utility) { [weak self] in
+            let service = self
+            let scan = Task.detached(priority: .utility) {
                 try Self.filesNeedingDownload(files, under: directory, verifyContents: isRepair) { path, index in
                     guard isRepair else { return }
-                    Task { @MainActor [weak self] in
-                        guard let self, self.downloadTokens[model.id] == token,
-                            self.repairCheckingTokens.contains(token)
+                    Task { @MainActor in
+                        guard service.downloadTokens[model.id] == token,
+                            service.repairCheckingTokens.contains(token)
                         else { return }
-                        self.repairMessages[model.id] = L("Checking \(path) (\(index)/\(files.count))…")
+                        service.repairMessages[model.id] = L("Checking \(path) (\(index)/\(files.count))…")
                     }
                 }
             }
@@ -755,7 +756,11 @@ final class ModelDownloadService: ObservableObject {
         let downloader = DirectDownloader()
         activeDownloaders[model.id, default: [:]][file.path] = downloader
         defer {
-            activeDownloaders[model.id]?[file.path] = nil
+            // A cancelled run can finish unwinding after a retry has started.
+            // Its cleanup must not remove the new transfer's cancellation handle.
+            if downloadTokens[model.id] == token {
+                activeDownloaders[model.id]?[file.path] = nil
+            }
             downloader.invalidate()
         }
 
