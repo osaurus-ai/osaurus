@@ -304,6 +304,8 @@ struct SaveAgentTemplateSheet: View {
     @State private var name: String = ""
     @State private var summary: String = ""
     @State private var availableToOrchestrator = true
+    /// Sections the user chose to leave out of the shared JSON.
+    @State private var excluded: Set<AgentTemplate.Section> = []
     @State private var draft: AgentTemplate?
     @State private var overwrite = false
     @State private var errorMessage: String?
@@ -338,6 +340,7 @@ struct SaveAgentTemplateSheet: View {
                             placeholder: L("One line about what this agent is for"), text: $summary,
                             icon: "text.alignleft")
                     }
+                    includeSection
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Available to the Orchestrator", bundle: .module)
@@ -421,7 +424,7 @@ struct SaveAgentTemplateSheet: View {
                 hint: nil
             )
         }
-        .fittedSheetFrame(width: 560, height: 520)
+        .fittedSheetFrame(width: 560, height: 660)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(theme.primaryBorder.opacity(0.5), lineWidth: 1))
@@ -439,13 +442,120 @@ struct SaveAgentTemplateSheet: View {
         }
     }
 
+    /// What goes into the JSON. Everything is on by default; a user who
+    /// wants to share a tool setup but keep the prompt private, or drop the
+    /// folder hint, flips the section off here.
+    private var includeSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            AgentSheetSectionLabel("Include in Template")
+            VStack(spacing: 0) {
+                ForEach(Array(availableSections.enumerated()), id: \.element) { index, section in
+                    if index > 0 { Divider().opacity(0.4) }
+                    HStack(spacing: 12) {
+                        Image(systemName: Self.icon(for: section))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(theme.tertiaryText)
+                            .frame(width: 16)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(Self.title(for: section))
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(theme.primaryText)
+                            if let preview = preview(for: section) {
+                                Text(preview)
+                                    .font(.system(size: 10))
+                                    .foregroundColor(theme.tertiaryText)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                        }
+                        Spacer(minLength: 12)
+                        Toggle("", isOn: Binding(
+                            get: { !excluded.contains(section) },
+                            set: { on in
+                                if on { excluded.remove(section) } else { excluded.insert(section) }
+                            }))
+                            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                            .labelsHidden()
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                }
+            }
+            .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground.opacity(0.6)))
+        }
+    }
+
+    /// Only sections the agent actually has something in.
+    private var availableSections: [AgentTemplate.Section] {
+        guard let draft else { return [] }
+        let entry = draft.agent
+        return AgentTemplate.Section.allCases.filter { section in
+            switch section {
+            case .systemPrompt: return !(entry.systemPrompt ?? "").isEmpty
+            case .description: return !(entry.description ?? "").isEmpty
+            case .model: return entry.model.valueOrNil != nil
+            case .tools: return entry.tools?.mode == "manual" || entry.mcpServers != nil || entry.plugins != nil
+            case .sandbox: return entry.sandbox != nil
+            case .subagents: return entry.subagents?.enabled == true
+            case .workingFolder: return entry.workingFolder.valueOrNil != nil
+            case .knowledge: return entry.capabilities?.knowledgeEnabled == true || !draft.knowledgeCollectionNames.isEmpty
+            case .pluginInstructions: return !(entry.pluginInstructions ?? [:]).isEmpty
+            }
+        }
+    }
+
+    private func preview(for section: AgentTemplate.Section) -> String? {
+        guard let entry = draft?.agent else { return nil }
+        switch section {
+        case .systemPrompt: return entry.systemPrompt
+        case .description: return entry.description
+        case .model: return entry.model.valueOrNil
+        case .tools:
+            let count = (entry.tools?.enabled?.count ?? 0) + (entry.mcpServers?.enabled?.count ?? 0) + (entry.plugins?.enabled?.count ?? 0)
+            return L("\(count) tools")
+        case .sandbox: return entry.sandbox?.enabled == true ? L("Sandbox on") : L("Sandbox off")
+        case .subagents: return L("Can use subagents")
+        case .workingFolder: return entry.workingFolder.valueOrNil
+        case .knowledge: return draft?.knowledgeCollectionNames.joined(separator: ", ")
+        case .pluginInstructions: return L("\(entry.pluginInstructions?.count ?? 0) plugins")
+        }
+    }
+
+    private static func title(for section: AgentTemplate.Section) -> String {
+        switch section {
+        case .systemPrompt: return L("System Prompt")
+        case .description: return L("Description")
+        case .model: return L("Model")
+        case .tools: return L("Tools")
+        case .sandbox: return L("Sandbox")
+        case .subagents: return L("Subagents")
+        case .workingFolder: return L("Working Folder")
+        case .knowledge: return L("Knowledge")
+        case .pluginInstructions: return L("Plugin Instructions")
+        }
+    }
+
+    private static func icon(for section: AgentTemplate.Section) -> String {
+        switch section {
+        case .systemPrompt: return "text.alignleft"
+        case .description: return "text.quote"
+        case .model: return "cube"
+        case .tools: return "wrench.and.screwdriver"
+        case .sandbox: return "shippingbox"
+        case .subagents: return "person.2"
+        case .workingFolder: return "folder"
+        case .knowledge: return "books.vertical"
+        case .pluginInstructions: return "puzzlepiece.extension"
+        }
+    }
+
     private func save() {
         let template = AgentTemplate.make(
             from: agent,
             name: name,
             summary: summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : summary,
             availableToOrchestrator: availableToOrchestrator
-        )
+        ).excluding(excluded)
         do {
             try store.save(template)
             onSaved(template)
