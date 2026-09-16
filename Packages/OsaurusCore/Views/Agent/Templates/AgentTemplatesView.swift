@@ -124,6 +124,7 @@ struct AgentTemplatesView: View {
                         hasAppeared: hasAppeared,
                         onUse: { onUse(template) },
                         onCopyJSON: { copyJSON(template) },
+                        onCopyShareLink: { copyShareLink(template) },
                         onExportFile: { exportFile(template) },
                         onToggleOrchestrator: { toggleOrchestrator(template) },
                         onRename: { onRename(template) },
@@ -147,6 +148,17 @@ struct AgentTemplatesView: View {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(json, forType: .string)
             showSuccess(L("Copied \"\(template.name)\" as JSON"))
+        } catch {
+            showError(error.localizedDescription)
+        }
+    }
+
+    private func copyShareLink(_ template: AgentTemplate) {
+        do {
+            let url = try AgentTemplateShareLink.url(for: template)
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(url.absoluteString, forType: .string)
+            showSuccess(L("Copied a share link for \"\(template.name)\""))
         } catch {
             showError(error.localizedDescription)
         }

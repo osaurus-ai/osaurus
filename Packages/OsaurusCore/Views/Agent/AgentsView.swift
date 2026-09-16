@@ -264,6 +264,18 @@ struct AgentsView: View {
             }
             setupAgentId = SetupTarget(id: pending)
         }
+        .onReceive(managementState.$pendingTemplateImportText) { pending in
+            // `osaurus://templates-import?t=…` share link: land on the
+            // Templates tab with the Import sheet prefilled.
+            guard let pending else { return }
+            managementState.pendingTemplateImportText = nil
+            withAnimation(Self.navTransition) {
+                selectedAgent = nil
+                selectedRemoteAgentId = nil
+                section = .templates
+            }
+            templateImportText = pending
+        }
         .sheet(isPresented: $isReordering) {
             AgentReorderSheet()
                 .environment(\.theme, themeManager.currentTheme)

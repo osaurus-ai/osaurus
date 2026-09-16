@@ -2226,6 +2226,19 @@ extension AppDelegate {
                 return
             }
 
+            if AgentTemplateShareLink.claims(url) {
+                // Decode only; the Import sheet validates, previews, and
+                // asks before anything is written to the library.
+                switch Result(catching: { try AgentTemplateShareLink.templateJSON(from: url) }) {
+                case .success(let json):
+                    ManagementStateManager.shared.pendingTemplateImportText = json
+                    showManagementWindow(initialTab: .agents)
+                case .failure(let error):
+                    _ = ToastManager.shared.error(L("Could not open template link"), message: error.localizedDescription)
+                }
+                return
+            }
+
             if WorkspacesDeepLinkRouter.claims(url) {
                 showManagementWindow(initialTab: .workspaces)
                 _ = WorkspacesDeepLinkRouter.handle(url)

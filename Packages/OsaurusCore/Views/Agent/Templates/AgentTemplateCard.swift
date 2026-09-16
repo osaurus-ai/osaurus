@@ -21,6 +21,8 @@ struct AgentTemplateCard: View {
     let hasAppeared: Bool
     let onUse: () -> Void
     let onCopyJSON: () -> Void
+    /// Puts an `osaurus://templates-import` link on the clipboard.
+    var onCopyShareLink: () -> Void = {}
     let onExportFile: () -> Void
     let onToggleOrchestrator: () -> Void
     let onRename: () -> Void
@@ -164,6 +166,9 @@ struct AgentTemplateCard: View {
             }
             Button(action: onCopyJSON) {
                 Label { Text("Copy JSON", bundle: .module) } icon: { Image(systemName: "doc.on.clipboard") }
+            }
+            Button(action: onCopyShareLink) {
+                Label { Text("Copy Share Link", bundle: .module) } icon: { Image(systemName: "link") }
             }
             Button(action: onExportFile) {
                 Label { Text("Export File…", bundle: .module) } icon: { Image(systemName: "square.and.arrow.up") }
