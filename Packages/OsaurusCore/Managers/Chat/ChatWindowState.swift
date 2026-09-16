@@ -1975,6 +1975,9 @@ final class ChatWindowState: ObservableObject {
         refreshTheme()
         refreshAgentConfig()
         AgentManager.shared.setActiveAgent(newAgentId)
+        // First-run readiness: a freshly created agent (any path) is checked
+        // the first time a window shows it. Clean agents clear silently.
+        AgentSetupPromptCoordinator.shared.agentShown(newAgentId, windowId: windowId)
     }
 
     private func flushCurrentSession() {
