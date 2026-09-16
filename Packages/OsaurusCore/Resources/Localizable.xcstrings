@@ -273479,6 +273479,390 @@
           }
         }
       }
+    },
+    "The agent points at %@ but Osaurus has no access to it. Pick the folder to grant access.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Agent verweist auf %@, aber Osaurus hat keinen Zugriff darauf. Wähle den Ordner, um Zugriff zu gewähren."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The agent points at %@ but Osaurus has no access to it. Pick the folder to grant access."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "에이전트가 %@을(를) 가리키지만 Osaurus에 접근 권한이 없습니다. 폴더를 선택해 권한을 부여하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Агент указывает на %@, но у Osaurus нет к ней доступа. Выберите папку, чтобы предоставить доступ."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "该代理指向 %@，但 Osaurus 没有访问权限。请选择该文件夹以授予访问权限。"
+          }
+        }
+      },
+      "comment": "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
+      "extractionState": "manual"
+    },
+    "%@ is not installed or its provider is not connected. Install it or choose another model.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ ist nicht installiert oder der Anbieter ist nicht verbunden. Installiere es oder wähle ein anderes Modell."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is not installed or its provider is not connected. Install it or choose another model."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@이(가) 설치되어 있지 않거나 제공자가 연결되지 않았습니다. 설치하거나 다른 모델을 선택하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ не установлена или её провайдер не подключён. Установите её или выберите другую модель."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 未安装或其提供商未连接。请安装它或选择其他模型。"
+          }
+        }
+      },
+      "comment": "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
+      "extractionState": "manual"
+    },
+    "Knowledge is on but no collection is granted. Grant or create one so the agent has something to search.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wissen ist aktiviert, aber keine Sammlung freigegeben. Gib eine frei oder erstelle eine, damit der Agent etwas durchsuchen kann."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Knowledge is on but no collection is granted. Grant or create one so the agent has something to search."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "지식 기능이 켜져 있지만 권한이 부여된 컬렉션이 없습니다. 에이전트가 검색할 수 있도록 하나를 부여하거나 만드세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Знания включены, но ни одна коллекция не предоставлена. Предоставьте или создайте коллекцию, чтобы агенту было где искать."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "知识功能已开启，但未授权任何集合。请授权或创建一个，让代理有内容可搜索。"
+          }
+        }
+      }
+    },
+    "Computer Use needs the Accessibility permission. Grant it in System Settings.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Computersteuerung benötigt die Berechtigung für Bedienungshilfen. Erteile sie in den Systemeinstellungen."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Computer Use needs the Accessibility permission. Grant it in System Settings."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "컴퓨터 사용에는 손쉬운 사용 권한이 필요합니다. 시스템 설정에서 허용하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Для управления компьютером нужно разрешение «Универсальный доступ». Выдайте его в Системных настройках."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "电脑操作需要辅助功能权限。请在“系统设置”中授予。"
+          }
+        }
+      }
+    },
+    "AppleScript will ask for Automation permission the first time it controls an app.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AppleScript fragt beim ersten Steuern einer App nach der Automation-Berechtigung."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AppleScript will ask for Automation permission the first time it controls an app."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AppleScript는 처음 앱을 제어할 때 자동화 권한을 요청합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AppleScript запросит разрешение «Автоматизация» при первом управлении приложением."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AppleScript 首次控制某个 App 时会请求自动化权限。"
+          }
+        }
+      }
+    },
+    "Not available on this Mac: %@. Add the MCP server or plugin that provides them, or remove them from the agent.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Auf diesem Mac nicht verfügbar: %@. Füge den MCP-Server oder das Plugin hinzu, das sie bereitstellt, oder entferne sie aus dem Agenten."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not available on this Mac: %@. Add the MCP server or plugin that provides them, or remove them from the agent."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 Mac에서 사용할 수 없음: %@. 이를 제공하는 MCP 서버나 플러그인을 추가하거나 에이전트에서 제거하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Недоступно на этом Mac: %@. Добавьте MCP-сервер или плагин, который их предоставляет, или удалите их из агента."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此 Mac 上不可用：%@。请添加提供这些工具的 MCP 服务器或插件，或将其从代理中移除。"
+          }
+        }
+      },
+      "comment": "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
+      "extractionState": "manual"
+    },
+    "Finish setting up %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Einrichtung von %@ abschließen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Finish setting up %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 설정 마무리"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Завершите настройку %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完成 %@ 的设置"
+          }
+        }
+      },
+      "comment": "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
+      "extractionState": "manual"
+    },
+    "This agent was created with settings this Mac cannot honour yet. It will not work as intended until these are fixed.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieser Agent wurde mit Einstellungen erstellt, die dieser Mac noch nicht erfüllen kann. Er funktioniert erst wie vorgesehen, wenn diese behoben sind."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This agent was created with settings this Mac cannot honour yet. It will not work as intended until these are fixed."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 에이전트는 이 Mac에서 아직 충족할 수 없는 설정으로 만들어졌습니다. 이를 해결하기 전까지는 의도한 대로 작동하지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Этот агент создан с настройками, которые этот Mac пока не может выполнить. Он не будет работать как задумано, пока это не исправлено."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此代理创建时使用了此 Mac 尚无法满足的设置。在修复这些问题之前，它无法按预期工作。"
+          }
+        }
+      }
+    },
+    "A few things are worth confirming before you rely on this agent.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ein paar Dinge solltest du prüfen, bevor du dich auf diesen Agenten verlässt."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A few things are worth confirming before you rely on this agent."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 에이전트를 사용하기 전에 확인할 만한 몇 가지 사항이 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Прежде чем полагаться на этого агента, стоит проверить несколько вещей."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在依赖此代理之前，有几件事值得确认。"
+          }
+        }
+      }
+    },
+    "Open Agent Settings": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent-Einstellungen öffnen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Agent Settings"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "에이전트 설정 열기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открыть настройки агента"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开代理设置"
+          }
+        }
+      }
+    },
+    "Setup needed for %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Einrichtung für %@ erforderlich"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Setup needed for %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 설정 필요"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Требуется настройка %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 需要设置"
+          }
+        }
+      },
+      "comment": "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
+      "extractionState": "manual"
     }
   },
   "version" : "1.1"
