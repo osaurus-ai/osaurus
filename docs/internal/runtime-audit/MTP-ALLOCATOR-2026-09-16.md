@@ -45,3 +45,21 @@ or causal attribution of the reporter's historical 13.8 GiB swap is claimed.
 Full model/video/audio/performance results and failures are retained privately
 in README.md, live-results.json and UPSTREAM-CROSSCHECK.md. These tests do not
 establish a general MTP speedup. Video temporal fidelity remains a failed row.
+
+## Retest on 6d286647 / follow-up before merge
+
+Release hash 5af830e17335d89e4d190ddf659dfe9e0692a18fdacca7f33f11b89e4136bba9.
+Manual D3 API completed 350 tokens at 28.7859 tok/s, client TTFT 2.092 s;
+active generation cap remained 128 MiB. Warm Force On without tuning was
+rejected in 6.64 ms with no generated tokens and no model reload, but the
+SSE writer mislabeled it internal_error. Cold Chat displayed the refusal and
+unlocked input; selecting D2 then completed 80 tokens at 27.7 tok/s, TTFT
+1.11 s + 1.6 s loading. Run4 peak owned footprint 5.46 GiB, swap unchanged.
+
+High-frequency samples also caught sanitize raising the loading cap to 1 GiB.
+The initial 130.6 GB limit preceded any active request with <1 MiB cached; it
+is not a 130 GB allocation or swap-growth finding. The engine follow-up now
+retains explicit caps during load and sanitize; app protocol writers now keep
+runtime error classifications in actual streaming envelopes. Post-change
+Release/API/UI validation is pending. Raw artifacts remain under the private
+root: live/postfix-cap-d3*, live/postfix-warm-force-on*, ui-postfix-*.png/.ax.txt.

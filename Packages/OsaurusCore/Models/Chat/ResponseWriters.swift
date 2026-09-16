@@ -35,6 +35,8 @@ protocol ResponseWriter {
     )
     /// Emit an error payload over the current streaming format and flush
     func writeError(_ message: String, context: ChannelHandlerContext)
+    func writeErrorFromThrown(_ error: Error, context: ChannelHandlerContext)
+    func writeStructuredError(message: String, type: String, code: String?, context: ChannelHandlerContext)
     func writeEnd(_ context: ChannelHandlerContext)
 }
 
@@ -43,9 +45,8 @@ extension ResponseWriter {
     /// from a thrown `Error`. Privacy Filter errors are surfaced
     /// with `type = "privacy_filter"` and a stable `code` (e.g.
     /// `privacy_filter_scrub_leaked`) so API clients can route them
-    /// to a privacy-specific UI; everything else falls back to the
-    /// legacy `writeError(message:context:)` behaviour with
-    /// `type = "internal_error"`.
+    /// to a privacy-specific UI. Runtime policy/resource errors retain their
+    /// protocol classification instead of becoming generic internal errors.
     func writeErrorFromThrown(_ error: Error, context: ChannelHandlerContext) {
         if let pfError = error as? PrivacyFilterPipelineError {
             writeStructuredError(
@@ -56,7 +57,12 @@ extension ResponseWriter {
             )
             return
         }
-        writeError(error.localizedDescription, context: context)
+        writeStructuredError(
+            message: error.localizedDescription,
+            type: HTTPHandler.openAIErrorType(for: error),
+            code: nil,
+            context: context
+        )
     }
 
     /// Backstop encoder that any concrete writer can reuse. Falls
@@ -652,13 +658,13 @@ final class NDJSONResponseWriter: ResponseWriter {
     }
 
     func writeError(_ message: String, context: ChannelHandlerContext) {
-        let response: [String: Any] = [
-            "error": [
-                "message": message,
-                "type": "internal_error",
-            ],
-            "done": true,
-        ]
+        writeStructuredError(message: message, type: "internal_error", code: nil, context: context)
+    }
+
+    func writeStructuredError(message: String, type: String, code: String?, context: ChannelHandlerContext) {
+        var error = ["message": message, "type": type]
+        if let code { error["code"] = code }
+        let response: [String: Any] = ["error": error, "done": true]
         if let jsonData = try? JSONSerialization.data(withJSONObject: response, options: .osaurusCanonical) {
             var buffer = context.channel.allocator.buffer(capacity: 256)
             buffer.writeBytes(jsonData)
@@ -743,7 +749,12 @@ final class OllamaGenerateNDJSONResponseWriter {
             )
             return
         }
-        writeError(error.localizedDescription, context: context)
+        writeStructuredError(
+            message: error.localizedDescription,
+            type: HTTPHandler.ollamaErrorType(for: error),
+            code: nil,
+            context: context
+        )
     }
 
     func writeEnd(_ context: ChannelHandlerContext) {
@@ -959,7 +970,11 @@ final class AnthropicSSEResponseWriter {
             )
             return
         }
-        writeError(error.localizedDescription, context: context)
+        writeAnthropicError(
+            message: error.localizedDescription,
+            errorType: HTTPHandler.anthropicErrorType(for: error),
+            context: context
+        )
     }
 
     private func writeAnthropicError(
@@ -1400,7 +1415,11 @@ final class OpenResponsesSSEWriter {
             )
             return
         }
-        writeError(error.localizedDescription, context: context)
+        writeStructuredOpenResponsesError(
+            message: error.localizedDescription,
+            code: HTTPHandler.openResponsesErrorCode(for: error),
+            context: context
+        )
     }
 
     private func writeStructuredOpenResponsesError(
