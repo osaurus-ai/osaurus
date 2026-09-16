@@ -75,7 +75,11 @@ public final class AgentSetupPromptCoordinator {
                 },
             ],
             showsCloseButton: true,
-            customContent: AnyView(checklist)
+            customContent: AnyView(checklist),
+            onDismiss: {
+                // Closing the card is "Later": the marker stays so the spawn
+                // gate and the card badge keep pointing at the gap.
+            }
         )
         ThemedAlertCenter.shared.present(request, scope: scope)
     }
