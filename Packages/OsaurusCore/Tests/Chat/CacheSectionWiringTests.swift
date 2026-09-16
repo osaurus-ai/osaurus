@@ -4,9 +4,8 @@
 //
 //  Source-coverage for the Clear SSD Cache control.
 //
-//  The purge ACTION is proven by execution in vmlx's
-//  DiskCacheQuotaEnforcementTests, which drives a real DiskCache and asserts
-//  that clear() removes indexed payloads and orphaned safetensors alike. What
+//  The indexed purge is executed by SafeDiskCachePurgeTests using real
+//  SQLite indexes and payload files, including linked companion payloads. What
 //  that cannot cover is whether the button in Settings is actually connected to
 //  it — a button wired to nothing compiles, renders, and does nothing, which is
 //  the exact shape of the decode-path defect earlier in this campaign (vmlx
@@ -21,6 +20,13 @@
 import XCTest
 
 final class CacheSectionWiringTests: XCTestCase {
+    func testQuotaPollingAndVisibleNoticeFollowCurrentChatEligibility() throws {
+        let src = try source("Views/Chat/FloatingInputCard.swift")
+        XCTAssertTrue(src.contains(".task(id: ssdQuotaNoticePollContext)"))
+        XCTAssertTrue(src.contains("session: inputHistoryKey,\n            eligible: canPresentSSDQuotaNotice"))
+        XCTAssertTrue(src.contains("if canPresentSSDQuotaNotice, let snapshot = ssdWarningSnapshot"))
+    }
+
 
     private func source(_ relativePath: String) throws -> String {
         // Tests/Chat/... -> package root
@@ -38,7 +44,8 @@ final class CacheSectionWiringTests: XCTestCase {
         XCTAssertTrue(src.contains("Clear SSD Cache"), "the control is missing entirely")
         XCTAssertTrue(
             src.contains("await ModelRuntime.shared.clearDiskCaches()"),
-            "Clear SSD Cache is not wired to the purge")
+            "Clear SSD Cache is not wired to the purge"
+        )
     }
 
     /// It must report the outcome. A purge that silently does nothing — because
@@ -58,15 +65,16 @@ final class CacheSectionWiringTests: XCTestCase {
         XCTAssertTrue(src.contains(".disabled(isClearingDiskCache)"))
     }
 
-    /// The purge must route through the coordinator when a model is resident,
-    /// because that path takes MLXDiskCacheIOLock before deleting. Sweeping the
-    /// directory directly while a restore is mid-read is the race this avoids.
-    func testPurgeRoutesThroughTheCoordinatorWhenResident() throws {
+    /// The purge must serialize with runtime cache IO and use indexed ownership.
+    /// This source check complements the executable purge tests and native UI proof.
+    func testPurgeUsesSerializedIndexedOwnership() throws {
         let src = try source("Services/ModelRuntime.swift")
-        XCTAssertTrue(src.contains("coordinator.clear()"), "does not use the locked path")
+        XCTAssertTrue(src.contains("MLXCacheIOLock.withSerializedMLXCacheIO"), "does not use the locked path")
+        XCTAssertTrue(src.contains("SafeDiskCachePurge.clear(directory: root)"), "does not use indexed ownership")
         XCTAssertTrue(
             src.contains("clearedWithoutResidentModel"),
-            "the no-resident-model case is not reported back to the caller")
+            "the no-resident-model case is not reported back to the caller"
+        )
     }
 
     /// The footer readout must measure the CONFIGURED cache directory. Reading
@@ -76,10 +84,12 @@ final class CacheSectionWiringTests: XCTestCase {
         let src = try source("Views/Chat/FloatingInputCard.swift")
         XCTAssertTrue(
             src.contains("ModelRuntime.cacheDiskDirectoryOverride(for: settings.cache)"),
-            "footer ignores a configured Disk Cache Directory")
+            "footer ignores a configured Disk Cache Directory"
+        )
         XCTAssertFalse(
             src.contains("usedBytes: OsaurusPaths.diskKVCacheUsageBytes()"),
-            "footer reverted to the hardcoded default cache path")
+            "footer reverted to the hardcoded default cache path"
+        )
     }
 
     /// The size control must edit the PERCENT, not the legacy GB field.
@@ -93,10 +103,12 @@ final class CacheSectionWiringTests: XCTestCase {
         let src = try source("Views/Settings/ServerSettings/CacheSection.swift")
         XCTAssertTrue(
             src.contains("$draft.cache.blockDisk.maxSizePercent"),
-            "the size control is not bound to the percent")
+            "the size control is not bound to the percent"
+        )
         XCTAssertFalse(
             src.contains("$draft.cache.blockDisk.maxSizeGB"),
-            "the control reverted to editing gigabytes")
+            "the control reverted to editing gigabytes"
+        )
         XCTAssertTrue(src.contains("Disk Cache Size (% of disk)"), "label still says GB")
     }
 
@@ -107,7 +119,8 @@ final class CacheSectionWiringTests: XCTestCase {
         let src = try source("Views/Settings/ServerSettings/CacheSection.swift")
         XCTAssertTrue(
             src.contains("VMLXServerRuntimeSettings.resolveDiskCacheMaxGB("),
-            "the readout does not use the resolver the coordinator uses")
+            "the readout does not use the resolver the coordinator uses"
+        )
         XCTAssertTrue(src.contains("VMLXServerRuntimeSettings.cacheVolumeCapacityGB("))
     }
 
@@ -119,7 +132,8 @@ final class CacheSectionWiringTests: XCTestCase {
         XCTAssertTrue(src.contains("\"block_disk_max_size_percent\""))
         XCTAssertTrue(
             src.contains("\"block_disk_max_size_gb\": VMLXServerRuntimeSettings.resolveDiskCacheMaxGB("),
-            "diagnostics still report the raw stored field")
+            "diagnostics still report the raw stored field"
+        )
     }
 
     /// The row must survive an idle chat. Gating it on a resident model's cap
@@ -129,7 +143,8 @@ final class CacheSectionWiringTests: XCTestCase {
         XCTAssertTrue(src.contains("directorySizeIfExists(at: dir)"))
         XCTAssertTrue(
             src.contains("diskCache.usedBytes > 0 || diskCache.maxBytes > 0"),
-            "the section is gated such that it disappears without a cap")
+            "the section is gated such that it disappears without a cap"
+        )
     }
 
     /// The readout must show the cap the ENGINE enforces, not the share in
@@ -148,10 +163,12 @@ final class CacheSectionWiringTests: XCTestCase {
             let src = try source(path)
             XCTAssertTrue(
                 src.contains("ModelRuntime.hostAwareDiskCacheDecision("),
-                "\(path) reports the raw share and would over-promise on a full disk")
+                "\(path) reports the raw share and would over-promise on a full disk"
+            )
             XCTAssertTrue(
                 src.contains("OsaurusPaths.volumeFreeBytes("),
-                "\(path) never measures free space, so it cannot apply the ceiling")
+                "\(path) never measures free space, so it cannot apply the ceiling"
+            )
         }
     }
 
@@ -174,7 +191,8 @@ final class CacheSectionWiringTests: XCTestCase {
         let src = try source("Views/Settings/ServerSettings/CacheSection.swift")
         XCTAssertFalse(
             src.contains("value: $draft.cache.blockDisk.maxSizePercent,\n                format: \"%.1f\""),
-            "the share field truncates small values to one decimal place")
+            "the share field truncates small values to one decimal place"
+        )
         XCTAssertTrue(src.contains("format: \"%g\""), "share field lost its precision-preserving format")
     }
 
@@ -186,6 +204,7 @@ final class CacheSectionWiringTests: XCTestCase {
         let src = try source("Views/Settings/ServerSettings/CacheSection.swift")
         XCTAssertTrue(
             src.contains("stored.map { $0 > 0 }"),
-            "the label echoes the raw field and can print a share nothing enforces")
+            "the label echoes the raw field and can print a share nothing enforces"
+        )
     }
 }
