@@ -8072,11 +8072,26 @@ private struct AgentConnectionsSection: View {
 
 // MARK: - Agent Editor Sheet (Smart Create)
 
+/// Prefill for `AgentEditorSheet` when the user starts from an agent
+/// template. `agent` is an UNSAVED record (built by
+/// `ConfigApplier.draftAgent`) whose tool selection, sandbox, subagent and
+/// capability settings are carried through to the saved agent verbatim; the
+/// sheet only edits the fields it shows. `notices` are the requirements the
+/// template could not resolve on this Mac (folder, MCP server, plugin) and
+/// are shown as an informational checklist above the form.
+struct AgentEditorSeed {
+    /// Verbatim header subtitle, e.g. "Based on Cloud Agent".
+    var subtitle: String
+    var agent: Agent
+    var notices: [String] = []
+}
+
 private struct AgentEditorSheet: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
+    var seed: AgentEditorSeed? = nil
     let onSave: (Agent) -> Void
     let onCancel: () -> Void
 
@@ -8200,6 +8215,22 @@ private struct AgentEditorSheet: View {
     private func seedDraftIfNeeded() {
         guard !draftSeeded else { return }
         draftSeeded = true
+        if let seed {
+            // Template prefill: the form mirrors the draft record. The name
+            // counts as user-chosen so starter presets never clobber it.
+            name = seed.agent.name
+            nameUserEdited = true
+            systemPrompt = seed.agent.systemPrompt
+            selectedModel = seed.agent.defaultModel
+            selectedAvatar = seed.agent.avatar
+            draftMode = seed.agent.toolSelectionMode ?? .auto
+            if draftMode == .manual {
+                draftToolNames = Set(seed.agent.manualToolNames ?? [])
+            } else {
+                draftToolNames = Set(ToolRegistry.shared.listDynamicTools().map(\.name))
+            }
+            return
+        }
         draftToolNames = Set(ToolRegistry.shared.listDynamicTools().map(\.name))
     }
 
@@ -8208,7 +8239,13 @@ private struct AgentEditorSheet: View {
     private var formColumn: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                templatesStrip
+                if let seed {
+                    if !seed.notices.isEmpty {
+                        seedNoticesBanner(seed.notices)
+                    }
+                } else {
+                    templatesStrip
+                }
                 nameField
                 avatarField
                 modelField
@@ -8217,6 +8254,43 @@ private struct AgentEditorSheet: View {
             }
             .padding(20)
         }
+    }
+
+    /// Informational checklist of template requirements this Mac could not
+    /// satisfy automatically. Phase 1 surfaces them; the setup wizard later
+    /// turns each into a step.
+    private func seedNoticesBanner(_ notices: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "checklist")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.warningColor)
+                Text("Finish setting up after creating", bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+            }
+            ForEach(Array(notices.enumerated()), id: \.offset) { _, notice in
+                HStack(alignment: .top, spacing: 6) {
+                    Text("•")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                    Text(notice)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.warningColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(theme.warningColor.opacity(0.25), lineWidth: 1)
+                )
+        )
     }
 
     private var templatesStrip: some View {
@@ -8601,13 +8675,23 @@ private struct AgentEditorSheet: View {
 
     // MARK: Header / Footer
 
+    @ViewBuilder
     private var headerView: some View {
-        AgentSheetHeader(
-            icon: "person.crop.circle.badge.plus",
-            title: "Create Agent",
-            subtitle: "Pick a starter, name it, write a prompt",
-            onClose: onCancel
-        )
+        if let seed {
+            AgentSheetHeader(
+                icon: "square.on.square.dashed",
+                title: "Create Agent from Template",
+                subtitleText: seed.subtitle,
+                onClose: onCancel
+            )
+        } else {
+            AgentSheetHeader(
+                icon: "person.crop.circle.badge.plus",
+                title: "Create Agent",
+                subtitle: "Pick a starter, name it, write a prompt",
+                onClose: onCancel
+            )
+        }
     }
 
     private var footerView: some View {
@@ -8649,13 +8733,24 @@ private struct AgentEditorSheet: View {
         // agent so `seedEnabledCapabilitiesIfNeeded` is a no-op on first
         // Capabilities-tab open. The auto-grow path keeps these sets fresh
         // when new plugins are installed later.
-        var agent = AgentManager.newCustomAgentRecord(
-            name: trimmedName,
-            description: "",
-            systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
-            themeId: nil,
-            defaultModel: selectedModel
-        )
+        var agent: Agent
+        if let seed {
+            // Keep everything the template carried (sandbox, subagents,
+            // capabilities, plugin instructions); overwrite only the fields
+            // this form edits.
+            agent = seed.agent
+            agent.name = trimmedName
+            agent.systemPrompt = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            agent.defaultModel = selectedModel
+        } else {
+            agent = AgentManager.newCustomAgentRecord(
+                name: trimmedName,
+                description: "",
+                systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
+                themeId: nil,
+                defaultModel: selectedModel
+            )
+        }
         agent.toolSelectionMode = draftMode
         agent.manualToolNames = Array(draftToolNames)
         agent.avatar = selectedAvatar
