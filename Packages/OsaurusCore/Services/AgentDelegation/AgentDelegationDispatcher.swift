@@ -376,7 +376,7 @@ enum AgentDelegationDispatcher {
             )
         }
         let db = ChatHistoryDatabase.shared
-        try? db.open()
+        if !db.isOpen { try? db.open() }
         guard let session = db.loadSession(id: sessionId) else {
             throw SubagentError.unavailable(
                 "No delegated worker session \(sessionId.uuidString) exists to continue. "

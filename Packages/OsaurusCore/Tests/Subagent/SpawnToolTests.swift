@@ -139,13 +139,19 @@ struct SpawnToolTests {
         #expect(malformed.contains(#""field":"continue""#))
 
         // A well-formed handle that no delegated run produced is refused with
-        // an actionable message (never silently starts a fresh worker).
-        let foreign = try await SpawnAgentTool().execute(
-            argumentsJSON:
-                #"{"input":"next step","continue":"00000000-0000-4000-8000-0000000000AB"}"#
-        )
-        #expect(ToolEnvelope.isError(foreign))
-        #expect(ToolEnvelope.failureMessage(foreign).contains("session"))
+        // an actionable message (never silently starts a fresh worker). The
+        // lookup opens the chat-history DB, so run it against an isolated
+        // store that is closed again on exit — a handle left open here would
+        // be re-opened inside a later suite's temp root by the storage
+        // migration coordinator.
+        try await ChatHistoryTestStorage.run {
+            let foreign = try await SpawnAgentTool().execute(
+                argumentsJSON:
+                    #"{"input":"next step","continue":"00000000-0000-4000-8000-0000000000AB"}"#
+            )
+            #expect(ToolEnvelope.isError(foreign))
+            #expect(ToolEnvelope.failureMessage(foreign).contains("session"))
+        }
     }
 
     @Test func bypassesRegistryTimeout() {

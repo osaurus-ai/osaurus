@@ -139,7 +139,7 @@ enum DelegationRecordLoader {
     /// Most recent `limit` records per direction, newest first.
     static func load(limit: Int = 40) -> (sent: [DelegationRecord], received: [DelegationRecord]) {
         let db = ChatHistoryDatabase.shared
-        try? db.open()
+        if !db.isOpen { try? db.open() }
         let sentMeta = db.loadMetadata(forAgent: nil, source: .delegation).prefix(limit)
         let receivedMeta = db.loadMetadata(forAgent: nil, source: .workspace)
             .filter { $0.workspace?.isServedForTeammate == true }

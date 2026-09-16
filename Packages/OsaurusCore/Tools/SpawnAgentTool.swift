@@ -244,7 +244,7 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
     @MainActor
     static func resumeTarget(for sessionId: UUID) -> String? {
         let db = ChatHistoryDatabase.shared
-        try? db.open()
+        if !db.isOpen { try? db.open() }
         guard let session = db.loadSession(id: sessionId), session.source == .delegation else {
             return nil
         }

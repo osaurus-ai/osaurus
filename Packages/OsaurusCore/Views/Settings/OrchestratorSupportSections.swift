@@ -499,7 +499,7 @@ struct OrchestratorDelegationsSection: View {
             return
         }
         let db = ChatHistoryDatabase.shared
-        try? db.open()
+        if !db.isOpen { try? db.open() }
         guard let session = db.loadSession(id: row.id) else {
             ToastManager.shared.error(L("This delegation's chat is no longer available."))
             return
