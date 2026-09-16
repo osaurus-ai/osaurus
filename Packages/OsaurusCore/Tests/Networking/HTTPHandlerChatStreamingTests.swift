@@ -1868,7 +1868,7 @@ struct HTTPHandlerChatStreamingTests {
 
 // MARK: - Test server bootstrap
 
-private struct TestServer {
+struct TestServer {
     let group: MultiThreadedEventLoopGroup
     let channel: Channel
     let lease: HTTPServerTestLease
@@ -1885,7 +1885,7 @@ private struct TestServer {
 }
 
 @discardableResult
-private func startTestServer(
+func startTestServer(
     with engine: ChatEngineProtocol,
     trustLoopback: Bool = false
 ) async throws -> TestServer {

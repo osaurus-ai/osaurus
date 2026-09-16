@@ -35,7 +35,7 @@ struct InputTokenUsageHTTPTests {
         #expect(!text.contains("input_tokens:"))
         let frames: [[String: Any]]
         if streaming {
-            frames = text.components(separatedBy: .newlines).compactMap { line in
+            frames = text.components(separatedBy: CharacterSet.newlines).compactMap { line in
                 let json = line.hasPrefix("data: ") ? String(line.dropFirst(6)) : line
                 return (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any]
             }
