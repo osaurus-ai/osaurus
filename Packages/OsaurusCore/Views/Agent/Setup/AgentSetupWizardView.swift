@@ -717,7 +717,6 @@ private struct KnowledgeStep: View {
                 if !collections.isEmpty { OrSeparator() }
                 StepActionButton(title: "Create From Folder…", icon: "folder.badge.plus") { createFromFolder() }
                     .disabled(isCreating)
-                OrSeparator()
                 StepActionButton(title: "Turn Knowledge Off", icon: "book.closed", primary: false) {
                     mutate { $0.settings.knowledgeEnabled = false }
                 }
