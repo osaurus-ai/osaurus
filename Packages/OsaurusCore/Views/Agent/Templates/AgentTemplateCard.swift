@@ -22,6 +22,8 @@ struct AgentTemplateCard: View {
     let onToggleOrchestrator: () -> Void
     let onRename: () -> Void
     let onDelete: () -> Void
+    /// Built-ins only: copy into the user library so it can be edited.
+    var onSaveToLibrary: (() -> Void)? = nil
 
     @State private var isHovered = false
     @State private var showDeleteConfirm = false
@@ -155,6 +157,12 @@ struct AgentTemplateCard: View {
             Button(action: onExportFile) {
                 Label { Text("Export File…", bundle: .module) } icon: { Image(systemName: "square.and.arrow.up") }
             }
+            if isBuiltIn, let onSaveToLibrary {
+                Divider()
+                Button(action: onSaveToLibrary) {
+                    Label { Text("Save to Library", bundle: .module) } icon: { Image(systemName: "tray.and.arrow.down") }
+                }
+            }
             if !isBuiltIn {
                 Divider()
                 Button(action: onToggleOrchestrator) {
@@ -227,7 +235,7 @@ struct AgentTemplateCard: View {
             chips.append(("person.2", L("Subagents")))
         }
         if !template.requires.isEmpty {
-            chips.append(("checklist", String(format: L("%d to set up"), template.requires.count)))
+            chips.append(("checklist", L("\(template.requires.count) to set up")))
         }
         return chips
     }

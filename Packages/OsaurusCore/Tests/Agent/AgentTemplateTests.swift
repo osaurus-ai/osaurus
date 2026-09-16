@@ -212,7 +212,9 @@ struct AgentTemplateStoreTests {
             #expect(store.template(named: "CLOUD-AGENT")?.id == "cloud-agent")
 
             try store.setAvailableToOrchestrator(false, slug: "cloud-agent")
-            #expect(store.orchestratorVisible.isEmpty)
+            // The library copy shadows the bundled Cloud Agent, so hiding it
+            // removes the name from the orchestrator's list entirely.
+            #expect(!store.orchestratorVisible.contains { $0.id == "cloud-agent" })
 
             try store.rename(slug: "cloud-agent", to: "Sky Agent")
             #expect(AgentTemplateStore.loadAll().map(\.id) == ["sky-agent"])

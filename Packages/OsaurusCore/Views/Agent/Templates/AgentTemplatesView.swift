@@ -99,7 +99,7 @@ struct AgentTemplatesView: View {
 
     var body: some View {
         Group {
-            if store.templates.isEmpty {
+            if store.allTemplates.isEmpty {
                 emptyState
             } else {
                 grid
@@ -147,10 +147,11 @@ struct AgentTemplatesView: View {
     private var grid: some View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 20) {
-                ForEach(Array(store.templates.enumerated()), id: \.element.id) { index, template in
+                ForEach(Array(store.allTemplates.enumerated()), id: \.element.id) { index, template in
+                    let builtIn = store.isBuiltIn(template)
                     AgentTemplateCard(
                         template: template,
-                        isBuiltIn: false,
+                        isBuiltIn: builtIn,
                         animationDelay: Double(index) * 0.05,
                         hasAppeared: hasAppeared,
                         onUse: { onUse(template) },
@@ -158,13 +159,14 @@ struct AgentTemplatesView: View {
                         onExportFile: { exportFile(template) },
                         onToggleOrchestrator: { toggleOrchestrator(template) },
                         onRename: { onRename(template) },
-                        onDelete: { delete(template) }
+                        onDelete: { delete(template) },
+                        onSaveToLibrary: builtIn ? { saveToLibrary(template) } : nil
                     )
                     .gridDiffCell()
                 }
             }
             .padding(24)
-            .gridDiffAnimation(token: store.templates.map(\.id).joined(separator: ","))
+            .gridDiffAnimation(token: store.allTemplates.map(\.id).joined(separator: ","))
         }
         .opacity(hasAppeared ? 1 : 0)
     }
@@ -204,6 +206,20 @@ struct AgentTemplatesView: View {
             showSuccess(
                 template.availableToOrchestrator
                     ? L("Hidden from the Orchestrator") : L("Visible to the Orchestrator"))
+        } catch {
+            showError(error.localizedDescription)
+        }
+    }
+
+    /// A built-in copied into the library keeps its slug, so it shadows the
+    /// bundled one and becomes editable (rename, hide, delete).
+    private func saveToLibrary(_ template: AgentTemplate) {
+        var copy = template
+        copy.author = nil
+        copy.createdAt = Date()
+        do {
+            try store.save(copy)
+            showSuccess(L("Saved \"\(template.name)\" to your library"))
         } catch {
             showError(error.localizedDescription)
         }

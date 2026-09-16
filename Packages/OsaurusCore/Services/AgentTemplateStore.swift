@@ -20,8 +20,24 @@ import Foundation
 public final class AgentTemplateStore: ObservableObject {
     public static let shared = AgentTemplateStore()
 
-    /// Library contents, sorted by name. Reloaded on demand and after writes.
+    /// User library contents, sorted by name. Reloaded on demand and after writes.
     @Published public private(set) var templates: [AgentTemplate] = []
+
+    /// Templates shipped inside the app bundle (`Resources/Templates/
+    /// agent-template-*.json`). Read-only: they can be used, copied, and
+    /// saved into the library, never renamed or deleted. A library template
+    /// with the same slug shadows the built-in one.
+    public let builtIn: [AgentTemplate] = AgentTemplateStore.loadBuiltIn()
+
+    /// Built-ins not shadowed by a library entry, followed by the library.
+    public var allTemplates: [AgentTemplate] {
+        let userSlugs = Set(templates.map(\.id))
+        return builtIn.filter { !userSlugs.contains($0.id) } + templates
+    }
+
+    public func isBuiltIn(_ template: AgentTemplate) -> Bool {
+        !templates.contains { $0.id == template.id } && builtIn.contains { $0.id == template.id }
+    }
 
     public nonisolated static let fileExtension = "json"
     /// Same ceiling as `osaurus_config` documents.
@@ -102,20 +118,47 @@ public final class AgentTemplateStore: ObservableObject {
         return try AgentTemplate.parse(text)
     }
 
-    /// Case-insensitive lookup by display name or slug, for the orchestrator
-    /// ("use the Cloud Agent template").
+    /// Case-insensitive lookup by display name or slug across the library
+    /// and the built-ins, for the orchestrator ("use the Cloud Agent template").
     public func template(named raw: String) -> AgentTemplate? {
         let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return nil }
         let slug = AgentTemplate.slug(for: key)
-        return templates.first {
+        return allTemplates.first {
             $0.name.caseInsensitiveCompare(key) == .orderedSame || $0.id == slug
         }
     }
 
-    /// Templates the orchestrator may see.
+    /// Templates the orchestrator may see (library and built-in).
     public var orchestratorVisible: [AgentTemplate] {
-        templates.filter(\.availableToOrchestrator)
+        allTemplates.filter(\.availableToOrchestrator)
+    }
+
+    /// Bundled templates. A malformed resource is a packaging error and is
+    /// skipped rather than crashing the store.
+    private nonisolated static func loadBuiltIn() -> [AgentTemplate] {
+        let prefix = "agent-template-"
+        var urls: [URL] = []
+        if let nested = Bundle.module.urls(forResourcesWithExtension: "json", subdirectory: "Templates") {
+            urls.append(contentsOf: nested)
+        }
+        // Flat fallback for toolchains that flatten processed resources.
+        if let flat = Bundle.module.urls(forResourcesWithExtension: "json", subdirectory: nil) {
+            urls.append(contentsOf: flat.filter { $0.lastPathComponent.hasPrefix(prefix) })
+        }
+        var seen = Set<String>()
+        var out: [AgentTemplate] = []
+        for url in urls where url.lastPathComponent.hasPrefix(prefix) {
+            guard seen.insert(url.lastPathComponent).inserted else { continue }
+            guard let text = try? String(contentsOf: url, encoding: .utf8),
+                let template = try? AgentTemplate.parse(text)
+            else {
+                assertionFailure("Bundled agent template failed to parse: \(url.lastPathComponent)")
+                continue
+            }
+            out.append(template)
+        }
+        return out.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     public func exists(named name: String) -> Bool {

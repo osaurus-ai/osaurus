@@ -1,0 +1,28 @@
+{
+  "format": "osaurus.agent-template",
+  "version": 1,
+  "name": "Local Agent",
+  "summary": "Private, on-device worker. Tools and memory on, can delegate to subagents.",
+  "author": "Osaurus",
+  "created_at": "2026-09-16T00:00:00Z",
+  "available_to_orchestrator": true,
+  "agent": {
+    "name": "Local Agent",
+    "description": "An on-device assistant that remembers context between chats.",
+    "system_prompt": "You are a private assistant running entirely on this Mac. Use your memory of earlier conversations to stay consistent, use tools when they add real information, and delegate well-bounded subtasks to subagents when that is faster. Keep answers practical and to the point.",
+    "model": "qwen3-coder-next-mlx",
+    "capabilities": {
+      "tools_enabled": true,
+      "memory_enabled": true,
+      "search_memory_enabled": true,
+      "web_search_enabled": false,
+      "knowledge_enabled": false
+    },
+    "tools": { "mode": "manual", "enabled": ["fetch", "time"] },
+    "sandbox": { "enabled": true, "network_enabled": true, "allowed_domains": [] },
+    "subagents": { "enabled": true, "agents": [], "models": [] }
+  },
+  "requires": [
+    { "kind": "model", "value": "qwen3-coder-next-mlx", "policy": "preferred" }
+  ]
+}
