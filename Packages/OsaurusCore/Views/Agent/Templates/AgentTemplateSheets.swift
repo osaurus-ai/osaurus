@@ -520,7 +520,13 @@ struct SaveAgentTemplateSheet: View {
         case .sandbox: return entry.sandbox?.enabled == true ? L("Sandbox on") : L("Sandbox off")
         case .subagents: return L("Can use subagents")
         case .workingFolder: return entry.workingFolder.valueOrNil
-        case .knowledge: return draft?.knowledgeCollectionNames.joined(separator: ", ")
+        case .knowledge:
+            // Only names travel; the receiving Mac creates or picks its own
+            // collections. Say so, or people expect their documents to ship.
+            let names = draft?.knowledgeCollectionNames ?? []
+            return names.isEmpty
+                ? L("Collection names only, never the files")
+                : L("Collection names only, never the files: \(names.joined(separator: ", "))")
         case .pluginInstructions: return L("\(entry.pluginInstructions?.count ?? 0) plugins")
         }
     }
@@ -531,10 +537,10 @@ struct SaveAgentTemplateSheet: View {
         case .description: return L("Description")
         case .model: return L("Model")
         case .tools: return L("Tools")
-        case .sandbox: return L("Sandbox")
+        case .sandbox: return L("Enable Sandbox")
         case .subagents: return L("Subagents")
         case .workingFolder: return L("Working Folder")
-        case .knowledge: return L("Knowledge")
+        case .knowledge: return L("Enable Knowledge")
         case .pluginInstructions: return L("Plugin Instructions")
         }
     }
