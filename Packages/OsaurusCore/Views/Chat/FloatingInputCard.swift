@@ -480,6 +480,7 @@ struct FloatingInputCard: View {
     @State private var ssdWarningSnapshot: DiskCacheQuotaSnapshot?
     @State private var ssdClearInProgress = false
     @State private var ssdClearResult: String?
+    @State private var ssdCacheSettings = ServerRuntimeSettingsStore.snapshot().cache
 
 
     // MARK: - RAM Tight-Fit State
@@ -995,10 +996,21 @@ struct FloatingInputCard: View {
             .overlay(alignment: .top) {
                 configContextErrorOverlay
             }
+            .onReceive(
+                NotificationCenter.default.publisher(for: ServerRuntimeSettingsStore.didSaveNotification)
+                    .receive(on: DispatchQueue.main)
+            ) { _ in
+                let latest = ServerRuntimeSettingsStore.snapshot().cache
+                if ssdCacheSettings != latest {
+                    ssdCacheSettings = latest
+                    ssdWarningSnapshot = nil
+                    ssdClearResult = nil
+                }
+            }
             .task(id: ssdQuotaNoticePollContext) {
                 while !Task.isCancelled {
                     if canPresentSSDQuotaNotice, ssdWarningSnapshot == nil {
-                        let snapshots = await ModelRuntime.shared.diskCacheQuotaSnapshots()
+                        let snapshots = await ModelRuntime.shared.diskCacheQuotaSnapshots(matching: ssdCacheSettings)
                         guard !Task.isCancelled else { return }
                         if canPresentSSDQuotaNotice,
                             let snapshot = snapshots.first(where: { DiskCacheQuotaNotices.shared.claim($0) })
@@ -4918,12 +4930,14 @@ extension FloatingInputCard {
         SSDQuotaNoticePollContext(
             model: selectedModel,
             session: inputHistoryKey,
-            eligible: canPresentSSDQuotaNotice
+            eligible: canPresentSSDQuotaNotice,
+            cacheSettings: ssdCacheSettings
         )
     }
 
     private var canPresentSSDQuotaNotice: Bool {
-        guard isSelectedModelLocal, !isRemoteAgentRun, !isStreaming,
+        guard ModelRuntime.cacheDiskDirectoryOverride(for: ssdCacheSettings) != nil,
+            isSelectedModelLocal, !isRemoteAgentRun, !isStreaming,
             !configContextTooSmall, modelSwitchContinuityWarning == nil,
             mtpLayoutAdvisory == nil, !ThemedAlertCenter.shared.hasAnyActiveAlert,
             let windowId, ChatWindowManager.shared.isChatWindowActive(id: windowId),
@@ -4969,12 +4983,14 @@ extension FloatingInputCard {
                     ssdClearResult = nil
                     Task {
                         let result = await ModelRuntime.shared.clearDiskCaches(directory: snapshot.directory)
-                        ssdClearResult =
-                            result.error
-                            ?? String(
-                                format: L("Cleared %@"),
-                                DiskCacheUsage.format(bytes: result.reclaimedBytes)
-                            )
+                        if ssdWarningSnapshot?.key == snapshot.key {
+                            ssdClearResult =
+                                result.error
+                                ?? String(
+                                    format: L("Cleared %@"),
+                                    DiskCacheUsage.format(bytes: result.reclaimedBytes)
+                                )
+                        }
                         ssdClearInProgress = false
                     }
                 }

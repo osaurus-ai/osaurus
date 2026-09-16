@@ -397,6 +397,9 @@ public actor ModelRuntime {
         /// a generation is active; neither may retain it between requests.
         let requiresAdmittedMLXAllocatorCeiling: Bool
         var cacheTopology: ModelCacheTopologySnapshot?
+        /// Saved cache contract used to create this holder's coordinator.
+        /// Notices must not replay its old quota after a settings change.
+        var cacheSettings: VMLXServerCacheSettings?
         init(
             name: String,
             container: ModelContainer,
@@ -1432,8 +1435,9 @@ public actor ModelRuntime {
     }
 
     /// Live quotas may differ from saved settings until the next model load.
-    func diskCacheQuotaSnapshots() -> [DiskCacheQuotaSnapshot] {
+    func diskCacheQuotaSnapshots(matching settings: VMLXServerCacheSettings? = nil) -> [DiskCacheQuotaSnapshot] {
         modelCache.values.compactMap { holder in
+            if let settings, holder.cacheSettings != settings { return nil }
             guard let coordinator = holder.container.cacheCoordinator,
                 coordinator.config.enableDiskCache,
                 let stats = coordinator.snapshotStats().diskStats,
@@ -4604,9 +4608,9 @@ public actor ModelRuntime {
     private nonisolated static func buildCacheCoordinatorConfig(
         modelName: String,
         weightsFingerprint: String,
-        cacheTopology: ModelCacheTopologySnapshot? = nil
+        cacheTopology: ModelCacheTopologySnapshot? = nil,
+        settings: VMLXServerRuntimeSettings
     ) -> CacheCoordinatorConfig {
-        let settings = ServerRuntimeSettingsStore.snapshot()
         // Build the live cache coordinator from the RESOLVED memory-safety
         // plan's cache, not the raw snapshot, so the RAM-safety slider actually
         // governs the live KV/context cap and prefix-memory limits. With a nil
@@ -5108,11 +5112,14 @@ public actor ModelRuntime {
     private nonisolated static func installCacheCoordinator(on holder: SessionHolder) async {
         let cacheTopology = await holder.container.cacheTopologySnapshot()
         holder.cacheTopology = cacheTopology
+        let settings = ServerRuntimeSettingsStore.snapshot()
         let cacheConfig = buildCacheCoordinatorConfig(
             modelName: holder.name,
             weightsFingerprint: holder.weightsFingerprint,
-            cacheTopology: cacheTopology
+            cacheTopology: cacheTopology,
+            settings: settings
         )
+        holder.cacheSettings = settings.cache
         await holder.container.enableCachingAsync(config: cacheConfig)
         let topologyTags = cacheTopology.topologyTags.joined(separator: ",")
 

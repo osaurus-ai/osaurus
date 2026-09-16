@@ -10,6 +10,12 @@ import Testing
         #expect(idle != SSDQuotaNoticePollContext(model: "shared-model", session: session, eligible: false))
         #expect(idle != SSDQuotaNoticePollContext(model: "different-model", session: session, eligible: true))
         #expect(idle == SSDQuotaNoticePollContext(model: "shared-model", session: session, eligible: true))
+        var changed = idle
+        changed.cacheSettings.blockDisk.maxSizePercent = 2
+        #expect(idle != changed)
+        changed = idle
+        changed.cacheSettings.blockDisk.enabled.toggle()
+        #expect(idle != changed)
     }
 
     private func snapshot(

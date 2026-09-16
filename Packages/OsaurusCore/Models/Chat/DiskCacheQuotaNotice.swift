@@ -1,4 +1,5 @@
 import Foundation
+import MLXLMCommon
 
 /// A polling task must never keep the previous chat's identity or an old
 /// streaming/alert gate after SwiftUI updates the input card.
@@ -6,6 +7,7 @@ struct SSDQuotaNoticePollContext: Equatable {
     let model: String?
     let session: UUID?
     let eligible: Bool
+    var cacheSettings: VMLXServerCacheSettings = .init()
 }
 
 /// A resident coordinator's real directory and enforced quota, including linked
