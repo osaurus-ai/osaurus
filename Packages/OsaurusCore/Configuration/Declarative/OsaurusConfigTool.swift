@@ -571,25 +571,28 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         let templates = ConfigTemplateStore.list()
         // Agent templates the user flagged for the orchestrator. Hidden ones
         // are not listed at all, so the model cannot discover them by name.
-        let agentTemplates: [[String: Any]] = await MainActor.run {
+        // `AgentTemplate` is Sendable; the `[String: Any]` rows are built
+        // outside the actor hop.
+        let visible: [AgentTemplate] = await MainActor.run {
             AgentTemplateStore.shared.reload()
-            return AgentTemplateStore.shared.orchestratorVisible.map { template in
-                var row: [String: Any] = [
-                    "name": template.name,
-                    "kind": "agent",
-                ]
-                if let summary = template.summary, !summary.isEmpty { row["summary"] = summary }
-                if let model = template.agent.model.valueOrNil { row["model"] = model }
-                if let tools = template.agent.tools?.enabled, !tools.isEmpty { row["tools"] = tools }
-                if let mcp = template.agent.mcpServers?.enabled, !mcp.isEmpty { row["mcp_servers"] = mcp }
-                if let plugins = template.agent.plugins?.enabled, !plugins.isEmpty { row["plugins"] = plugins }
-                if let sandbox = template.agent.sandbox?.enabled { row["sandbox"] = sandbox }
-                if let subagents = template.agent.subagents?.enabled { row["subagents"] = subagents }
-                if !template.requires.isEmpty {
-                    row["requires"] = template.requires.map { "\($0.kind.rawValue): \($0.value)" }
-                }
-                return row
+            return AgentTemplateStore.shared.orchestratorVisible
+        }
+        let agentTemplates: [[String: Any]] = visible.map { template in
+            var row: [String: Any] = [
+                "name": template.name,
+                "kind": "agent",
+            ]
+            if let summary = template.summary, !summary.isEmpty { row["summary"] = summary }
+            if let model = template.agent.model.valueOrNil { row["model"] = model }
+            if let tools = template.agent.tools?.enabled, !tools.isEmpty { row["tools"] = tools }
+            if let mcp = template.agent.mcpServers?.enabled, !mcp.isEmpty { row["mcp_servers"] = mcp }
+            if let plugins = template.agent.plugins?.enabled, !plugins.isEmpty { row["plugins"] = plugins }
+            if let sandbox = template.agent.sandbox?.enabled { row["sandbox"] = sandbox }
+            if let subagents = template.agent.subagents?.enabled { row["subagents"] = subagents }
+            if !template.requires.isEmpty {
+                row["requires"] = template.requires.map { "\($0.kind.rawValue): \($0.value)" }
             }
+            return row
         }
         var result: [String: Any] = [
             "templates": templates,
