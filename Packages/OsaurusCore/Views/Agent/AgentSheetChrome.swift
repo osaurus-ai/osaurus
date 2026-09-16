@@ -180,7 +180,7 @@ struct AgentSheetFooter: View {
                     }
                     .foregroundColor(theme.warningColor)
                     .frame(maxWidth: 420, alignment: .leading)
-                    .transition(.opacity.combined(with: .move(edge: .leading)))
+                    .transition(.opacity)
                 } else if let hint {
                     HStack(spacing: 4) {
                         Text("\u{2318}", bundle: .module)

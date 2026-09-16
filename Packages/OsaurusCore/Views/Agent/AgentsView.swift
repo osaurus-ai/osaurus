@@ -8677,7 +8677,9 @@ private struct AgentEditorSheet: View {
         .settingsSearchHighlight(highlightModelField)
         // Picking a model resolves the warning that pointed here.
         .onChange(of: selectedModel) { _, newValue in
-            if newValue != nil { footerWarning = nil }
+            if newValue != nil {
+                withAnimation(.easeOut(duration: 0.15)) { footerWarning = nil }
+            }
         }
     }
 
@@ -8948,7 +8950,6 @@ private struct AgentEditorSheet: View {
             hint: "+ Enter to create",
             warning: footerWarning
         )
-        .animation(.easeInOut(duration: 0.2), value: footerWarning)
     }
 
     /// Point the user at the Default Model field: inline warning in the
@@ -8956,7 +8957,9 @@ private struct AgentEditorSheet: View {
     /// on a settings-search result). The picker is left closed; the two
     /// cues are enough and opening it uninvited felt pushy.
     private func requestModelChoice(reason: String) {
-        footerWarning = reason
+        // Quick fade, scoped to the warning: animating the whole footer made
+        // the buttons drift and the slide-in reflowed the wrapped text.
+        withAnimation(.easeOut(duration: 0.15)) { footerWarning = reason }
         highlightClearTask?.cancel()
         highlightModelField = false
         highlightModelField = true
