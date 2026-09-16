@@ -517,7 +517,7 @@ struct SaveAgentTemplateSheet: View {
         case .tools:
             let count = (entry.tools?.enabled?.count ?? 0) + (entry.mcpServers?.enabled?.count ?? 0) + (entry.plugins?.enabled?.count ?? 0)
             return L("\(count) tools")
-        case .sandbox: return entry.sandbox?.enabled == true ? L("Sandbox on") : L("Sandbox off")
+        case .sandbox: return nil
         case .subagents: return L("Can use subagents")
         case .workingFolder: return entry.workingFolder.valueOrNil
         case .knowledge:
