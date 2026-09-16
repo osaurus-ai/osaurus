@@ -20,18 +20,26 @@ fileprivate extension URLRequest {
 struct HTTPHandlerChatStreamingTests {
 
     @MainActor
-    @Test(arguments: [true, false], ["stop", "length"])
-    func agentRunRelaysFinalRuntimeUsageOnlyWhenRequested(includeUsage: Bool, stopReason: String) async throws {
+    @Test(arguments: [true, false], [
+        (reason: "stop", inputTokens: 7),
+        (reason: "stop", inputTokens: nil),
+        (reason: "length", inputTokens: 7),
+    ] as [(reason: String, inputTokens: Int?)])
+    func agentRunRelaysFinalRuntimeUsageOnlyWhenRequested(
+        includeUsage: Bool, terminal: (reason: String, inputTokens: Int?)
+    ) async throws {
+        let stopReason = terminal.reason
         try await SandboxTestLock.runWithStoragePaths {
             let agent = Agent(name: "Runtime usage fixture", defaultModel: "fake",
                               toolsEnabled: false, memoryEnabled: false)
             AgentManager.shared.add(agent)
             defer { AgentStore.delete(id: agent.id); AgentManager.shared.refresh() }
             let engine = MockChatEngine(deltas: [
+                StreamingInputTokenHint.encode(257),
                 "red",
                 StreamingStatsHint.encode(tokenCount: 20, tokensPerSecond: 10),
                 StreamingStatsHint.encode(tokenCount: 40, tokensPerSecond: 20,
-                                          stopReason: stopReason, inputTokenCount: 7),
+                                          stopReason: stopReason, inputTokenCount: terminal.inputTokens),
             ], completeText: "", model: "fake")
             let server = try await startChatStreamingTestServer(with: engine, trustLoopback: true)
             defer { Task { await server.shutdown() } }
@@ -47,6 +55,7 @@ struct HTTPHandlerChatStreamingTests {
             ])
             let (data, response) = try await URLSession.shared.data(for: request)
             #expect((response as? HTTPURLResponse)?.statusCode == 200)
+            #expect(!String(decoding: data, as: UTF8.self).contains("\u{FFFE}"))
             let payloads = String(decoding: data, as: UTF8.self).components(separatedBy: .newlines)
                 .filter { $0.hasPrefix("data: ") }.map { String($0.dropFirst(6)) }
             #expect(payloads.last == "[DONE]")
@@ -60,7 +69,7 @@ struct HTTPHandlerChatStreamingTests {
                 #expect(!String(decoding: data, as: UTF8.self).contains("\"finish_reason\":\"stop\""))
             } else if includeUsage {
                 #expect(usage.first?["completion_tokens"] as? Int == 40)
-                #expect(usage.first?["prompt_tokens"] as? Int == 7)
+                #expect(usage.first?["prompt_tokens"] as? Int == (terminal.inputTokens ?? 257))
                 #expect(usage.first?["tokens_per_second"] as? Double == 20)
             }
         }

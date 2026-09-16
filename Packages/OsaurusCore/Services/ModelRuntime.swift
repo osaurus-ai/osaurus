@@ -5687,6 +5687,15 @@ public actor ModelRuntime {
         let producerTask = Task {
             do {
                 for try await ev in events {
+                    // Terminal usage must survive cancellation just as it does
+                    // in streamWithTools; only generated deltas are suppressed.
+                    if case .completionInfo(let count, let rate, let unclosed, let stop, let prefill, let mtp) = ev {
+                        continuation.yield(StreamingStatsHint.encode(
+                            tokenCount: count, tokensPerSecond: rate, unclosedReasoning: unclosed,
+                            stopReason: stop, prefillTokensPerSecond: prefill, mtp: mtp
+                        ))
+                        continue
+                    }
                     if Task.isCancelled {
                         continuation.finish()
                         return
@@ -5694,11 +5703,6 @@ public actor ModelRuntime {
                     switch ev {
                     case .inputTokenCount(let count):
                         continuation.yield(StreamingInputTokenHint.encode(count))
-                    case .completionInfo(let count, let rate, let unclosed, let stop, let prefill, let mtp):
-                        continuation.yield(StreamingStatsHint.encode(
-                            tokenCount: count, tokensPerSecond: rate, unclosedReasoning: unclosed,
-                            stopReason: stop, prefillTokensPerSecond: prefill, mtp: mtp
-                        ))
                     case .tokens(let text) where !text.isEmpty:
                         continuation.yield(text)
                     default:

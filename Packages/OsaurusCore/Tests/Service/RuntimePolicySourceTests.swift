@@ -1520,8 +1520,13 @@ struct RuntimePolicySourceTests {
             !runtime.contains(
                 "for try await ev in events {\n                    if Task.isCancelled {\n                        continuation.finish()\n                        return\n                    }\n                    switch ev"
             ),
-            "ModelRuntime.streamWithTools must encode `.completionInfo` into StreamingStatsHint before honoring cancellation"
+            "ModelRuntime stream wrappers must encode `.completionInfo` into StreamingStatsHint before honoring cancellation"
         )
+        let rawStream = try Self.functionBody("func streamRawText(", in: runtime)
+        let terminal = try #require(rawStream.range(of: "if case .completionInfo"))
+        let cancellation = try #require(rawStream.range(of: "if Task.isCancelled"))
+        #expect(terminal.lowerBound < cancellation.lowerBound)
+        #expect(rawStream[terminal.lowerBound ..< cancellation.lowerBound].contains("StreamingStatsHint.encode("))
         #expect(
             !chatEngine.contains(
                 "for try await delta in inner {\n                    // Check for task cancellation to allow early termination\n                    if Task.isCancelled"
@@ -1685,11 +1690,15 @@ struct RuntimePolicySourceTests {
         let segments = handler.components(separatedBy: "StreamingToolHint.isSentinel(delta)")
 
         #expect(
-            segments.count == 7,
-            "HTTPHandler should have six generic StreamingToolHint sentinel filters; update this guard when adding another HTTP stream writer"
+            segments.count == 9,
+            "HTTPHandler should have eight generic StreamingToolHint sentinel filters, including streaming and non-streaming raw completions"
         )
 
         for segment in segments.dropLast() {
+            #expect(
+                segment.contains("StreamingInputTokenHint.decode(delta)"),
+                "Each HTTP stream writer must preserve prepared prompt usage before filtering metadata"
+            )
             #expect(
                 segment.contains("StreamingStatsHint.decode(delta)"),
                 "Each HTTP stream writer must decode StreamingStatsHint before the generic U+FFFE sentinel filter, otherwise API usage stats and unclosedReasoning are dropped"

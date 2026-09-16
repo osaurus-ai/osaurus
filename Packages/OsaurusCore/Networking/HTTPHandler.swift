@@ -6688,11 +6688,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 }
                                 continue
                             }
+                            if let count = StreamingInputTokenHint.decode(delta) {
+                                stepPromptTokens = count
+                                continue
+                            }
                             if let stats = StreamingStatsHint.decode(delta) {
                                 // Keep the final cumulative stats for this step;
                                 // intermediate updates must not be counted twice.
                                 stepCompletionTokens = stats.tokenCount
-                                stepPromptTokens = stats.inputTokenCount
+                                stepPromptTokens = stats.inputTokenCount ?? stepPromptTokens
                                 stepTokensPerSecond = stats.tokensPerSecond
                                 stepStopReason = stats.stopReason
                                 continue
