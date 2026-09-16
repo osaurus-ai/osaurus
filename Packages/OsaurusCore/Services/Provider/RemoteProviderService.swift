@@ -1220,6 +1220,7 @@ public actor RemoteProviderService: ToolCapableService {
         var toolHintDeltas: Int = 0
         var billingHintDeltas: Int = 0
         var prefillHintDeltas: Int = 0
+        var artifactHintDeltas: Int = 0
         var toolCallFinishes: Int = 0
         var errorFinishes: Int = 0
         var finishMarker: String?
@@ -1310,6 +1311,8 @@ public actor RemoteProviderService: ToolCapableService {
                 billingHintDeltas += 1
             } else if StreamingPrefillProgressHint.decode(delta) != nil {
                 prefillHintDeltas += 1
+            } else if StreamingArtifactHint.decode(delta) != nil {
+                artifactHintDeltas += 1
             } else if StreamingReasoningHint.decode(delta) != nil {
                 reasoningDeltas += 1
             } else if StreamingToolHint.isSentinel(delta) {
@@ -1666,6 +1669,21 @@ public actor RemoteProviderService: ToolCapableService {
                     endRun: (trace["end_run"] as? Bool) ?? false
                 )
             )
+            state.routerDiagnostics?.recordYield(hint)
+            continuation.yield(hint)
+            return false
+        }
+
+        // Artifacts a teammate's host shared during a Mode 2 run
+        // (`osaurus_artifacts`, one chunk before finish). Carried as a
+        // sentinel so `ChatSession` can import the files into the session's
+        // store; never visible text.
+        if providerType == .osaurus,
+            dataContent.contains("\"osaurus_artifacts\""),
+            let chunk = try? state.decoder.decode(RemoteRunArtifactsChunk.self, from: jsonData),
+            let artifacts = chunk.osaurus_artifacts, !artifacts.isEmpty
+        {
+            let hint = StreamingArtifactHint.encode(artifacts)
             state.routerDiagnostics?.recordYield(hint)
             continuation.yield(hint)
             return false

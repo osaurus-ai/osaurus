@@ -27,5 +27,5 @@ The server exposes an OpenAI-compatible endpoint at `POST /v1/images/generations
 
 ## Notes
 
-- Per-agent: enable **Image** under a custom agent's Subagents section (pick the gen/edit models and permission there). For the Default assistant it lives under General settings → Subagents → Main Chat Capabilities → Image.
+- Per-agent: enable **Image** under a custom agent's Subagents section (pick the gen/edit models and permission there). The built-in Orchestrator has no image tool of its own — add an image-enabled agent to Settings → Orchestrator → Subagents → Allowed subagents and the Orchestrator delegates "generate an image of …" to it.
 - If no image model is installed, the tool is not offered — download one in Models → Images → Models first.

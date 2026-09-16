@@ -269,14 +269,11 @@ public final class ToolRegistry: ObservableObject {
             // plain "what is the time?" (a common first-message smoke test)
             // otherwise makes them guess. Always loaded; no side effects.
             CurrentTimeTool(),
-            // Text-delegation family: `spawn_agent` hands a task to a configured
-            // agent (its prompt + model); `spawn_model` hands a task to a bare
-            // spawnable model id; `spawn_batch` performs bounded fan-out over
-            // either pool. All three gate per-agent (their pools) in
+            // Delegation: `spawn_agent` hands a task to a configured agent
+            // (its prompt + model + tools). Several calls in one message form
+            // one wave (`SpawnWaveGate`). Gated per-agent (its pool) in
             // `SystemPromptComposer.resolveTools` via `SubagentToolVisibility`.
             SpawnAgentTool(),
-            SpawnModelTool(),
-            SpawnBatchTool(),
             // Native local image generation/editing (one `image` tool; source_paths
             // → edit). Tool body enforces the separate Agent Delegation permission
             // defaults and low-RAM unload policy.
@@ -2746,7 +2743,7 @@ public final class ToolRegistry: ObservableObject {
         // strips them otherwise, with no capabilities_load carve-out.
         // Discovering them on an agent with the flag off produced a
         // discover→load dead loop ("gated built-in and cannot be enabled").
-        "spawn_agent", "spawn_model", "spawn_batch",
+        "spawn_agent",
         "applescript", "mac_query",
     ]
 
@@ -2931,13 +2928,10 @@ extension ToolRegistry {
     //     `spawnedWorkerBaselineToolNames`, minus the spawn family and
     //     `clarify` (`TextSubagentKind.isExcludedChildTool`), intersected
     //     with `specsForSpawnedOperations` (cancellation audit).
-    //   * `.bareModelWorker` — a bare-model spawned child: only the curated
-    //     read-only file set (`TextSubagentKind.readOnlyChildToolNames`).
     public enum ToolSurface: Sendable {
         case orchestrator
         case customAgent
         case spawnedWorker
-        case bareModelWorker
     }
 
     /// Tools the orchestrator (Default agent) must NEVER carry, because its
@@ -2951,13 +2945,18 @@ extension ToolRegistry {
     /// are a basic orchestrator capability (heavy research still dispatches
     /// to workers).
     nonisolated static let orchestratorExcludedToolNames: Set<String> = [
-        "share_artifact"
+        "share_artifact",
+        // The Orchestrator reads its working folder (`file_read` /
+        // `file_search`) to brief workers and read their deliverables; the
+        // workers do the writing and shell work in that folder.
+        "file_write", "file_edit", "shell_run", "redact_file",
     ]
 
     /// Baseline names every agent-target spawned worker carries regardless
     /// of the target's capability toggles: time for grounding, and
-    /// `share_artifact` because a worker's shared file is the ONLY way its
-    /// output artifacts reach the user (the parent receives just a digest).
+    /// `share_artifact` so a worker can hand a file straight to the user
+    /// (deliverables otherwise land in the working folder and the parent
+    /// receives a short summary naming them).
     nonisolated static let spawnedWorkerBaselineToolNames: Set<String> = [
         "get_current_time", "share_artifact",
     ]

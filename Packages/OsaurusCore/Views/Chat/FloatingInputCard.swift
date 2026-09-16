@@ -2905,10 +2905,10 @@ extension FloatingInputCard {
             // change/refresh/clear affordances). The Default (configuration)
             // agent keeps its quiet indicator. Hidden in Mode 2.
             if !isRemoteAgentRun {
-                if isDefaultConfigAgent {
-                    configurationOnlyChip(compact: compact)
-                } else if folderState.hasActiveFolder {
+                if folderState.hasActiveFolder {
                     folderContextChip(compact: compact)
+                } else if isDefaultConfigAgent {
+                    configurationOnlyChip(compact: compact)
                 }
             }
 
@@ -3457,10 +3457,11 @@ extension FloatingInputCard {
         agentId ?? Agent.defaultId
     }
 
-    /// The built-in Default ("Osaurus") agent is a configuration-only
-    /// surface: it configures Osaurus and never uses the sandbox or a
-    /// working folder, so we hide those chips and show a quiet
-    /// "Configuration" indicator instead.
+    /// The built-in Default ("Osaurus") agent is the Orchestrator: it
+    /// configures Osaurus and delegates work. It never uses the sandbox, so
+    /// the sandbox chip is hidden; it shows a quiet "Orchestrator" indicator
+    /// until a working folder is attached (read-only for itself, inherited
+    /// by folder-less subagents).
     private var isDefaultConfigAgent: Bool {
         effectiveAgentId == Agent.defaultId
     }
@@ -3677,12 +3678,12 @@ extension FloatingInputCard {
     }
 
     /// Whether this composer's folder picks/clears should write through to
-    /// the agent's sticky working folder. False for the Default agent (it
-    /// never carries a folder) and for a remote teammate run (the folder
-    /// belongs to the remote host's agent, not the local hosting agent —
-    /// same rule `ChatSession` applies to model pins).
+    /// the agent's sticky working folder (the Orchestrator's lands in
+    /// `DefaultAgentConfiguration`). False for a remote teammate run (the
+    /// folder belongs to the remote host's agent, not the local hosting
+    /// agent — same rule `ChatSession` applies to model pins).
     private var persistsWorkingFolderToAgent: Bool {
-        !isDefaultConfigAgent && !isRemoteAgentRun
+        !isRemoteAgentRun
     }
 
     /// Write the chip's current folder onto the agent.

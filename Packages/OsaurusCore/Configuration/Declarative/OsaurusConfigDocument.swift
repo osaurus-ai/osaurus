@@ -72,7 +72,9 @@ extension KeyedEncodingContainer {
 public enum ConfigSectionID: String, CaseIterable, Sendable {
     case memory
     case defaultAgent = "default_agent"
-    case activeAgent = "active_agent"
+    /// Which agent NEW chats open with. `active_agent` is accepted as a
+    /// legacy alias on input.
+    case activeAgent = "new_chat_agent"
     case agents
     case tools
     case delegation
@@ -88,6 +90,15 @@ public enum ConfigSectionID: String, CaseIterable, Sendable {
     case watchers
 
     public static var allNames: [String] { allCases.map { $0.rawValue } }
+
+    /// Case-insensitive lookup that also accepts legacy section spellings
+    /// (`active_agent` → `.activeAgent`).
+    public static func parse(_ raw: String) -> ConfigSectionID? {
+        let lowered = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let id = ConfigSectionID(rawValue: lowered) { return id }
+        if lowered == OsaurusConfigDocument.legacyNewChatAgentKey { return .activeAgent }
+        return nil
+    }
 }
 
 // MARK: - Document
@@ -97,7 +108,8 @@ public struct OsaurusConfigDocument: Equatable, Sendable {
     public var version: Int?
     public var memory: MemorySection?
     public var defaultAgent: DefaultAgentSection?
-    /// Name of the agent to make active ("default" or a custom agent's name).
+    /// Name of the agent NEW chats open with ("default" or a custom agent's
+    /// name). Serialized as `new_chat_agent`; `active_agent` still decodes.
     public var activeAgent: String?
     public var agents: [AgentEntry]?
     public var tools: ToolsSection?
@@ -168,7 +180,9 @@ extension OsaurusConfigDocument: Codable {
         case version
         case memory
         case defaultAgent = "default_agent"
-        case activeAgent = "active_agent"
+        case activeAgent = "new_chat_agent"
+        /// Legacy spelling, read-only: older documents and habits.
+        case legacyActiveAgent = "active_agent"
         case agents, tools
         case delegation
         case commands
@@ -178,6 +192,55 @@ extension OsaurusConfigDocument: Codable {
         case models, plugins, providers
         case searchProviders = "search_providers"
         case schedules, watchers
+    }
+
+    /// Alias for the legacy key on input documents (validation accepts it
+    /// too; see `ConfigYAML.checkMapping`).
+    public static let legacyNewChatAgentKey = "active_agent"
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decodeIfPresent(Int.self, forKey: .version)
+        memory = try c.decodeIfPresent(MemorySection.self, forKey: .memory)
+        defaultAgent = try c.decodeIfPresent(DefaultAgentSection.self, forKey: .defaultAgent)
+        activeAgent =
+            try c.decodeIfPresent(String.self, forKey: .activeAgent)
+            ?? c.decodeIfPresent(String.self, forKey: .legacyActiveAgent)
+        agents = try c.decodeIfPresent([AgentEntry].self, forKey: .agents)
+        tools = try c.decodeIfPresent(ToolsSection.self, forKey: .tools)
+        delegation = try c.decodeIfPresent(DelegationSection.self, forKey: .delegation)
+        commands = try c.decodeIfPresent([CommandEntry].self, forKey: .commands)
+        knowledgeCollections = try c.decodeIfPresent(
+            [KnowledgeCollectionEntry].self, forKey: .knowledgeCollections)
+        channels = try c.decodeIfPresent(ChannelsSection.self, forKey: .channels)
+        mcpServers = try c.decodeIfPresent([MCPServerEntry].self, forKey: .mcpServers)
+        models = try c.decodeIfPresent([String].self, forKey: .models)
+        plugins = try c.decodeIfPresent([String].self, forKey: .plugins)
+        providers = try c.decodeIfPresent([ProviderEntry].self, forKey: .providers)
+        searchProviders = try c.decodeIfPresent(SearchProvidersSection.self, forKey: .searchProviders)
+        schedules = try c.decodeIfPresent([ScheduleEntry].self, forKey: .schedules)
+        watchers = try c.decodeIfPresent([WatcherEntry].self, forKey: .watchers)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(version, forKey: .version)
+        try c.encodeIfPresent(memory, forKey: .memory)
+        try c.encodeIfPresent(defaultAgent, forKey: .defaultAgent)
+        try c.encodeIfPresent(activeAgent, forKey: .activeAgent)
+        try c.encodeIfPresent(agents, forKey: .agents)
+        try c.encodeIfPresent(tools, forKey: .tools)
+        try c.encodeIfPresent(delegation, forKey: .delegation)
+        try c.encodeIfPresent(commands, forKey: .commands)
+        try c.encodeIfPresent(knowledgeCollections, forKey: .knowledgeCollections)
+        try c.encodeIfPresent(channels, forKey: .channels)
+        try c.encodeIfPresent(mcpServers, forKey: .mcpServers)
+        try c.encodeIfPresent(models, forKey: .models)
+        try c.encodeIfPresent(plugins, forKey: .plugins)
+        try c.encodeIfPresent(providers, forKey: .providers)
+        try c.encodeIfPresent(searchProviders, forKey: .searchProviders)
+        try c.encodeIfPresent(schedules, forKey: .schedules)
+        try c.encodeIfPresent(watchers, forKey: .watchers)
     }
 }
 
@@ -261,6 +324,12 @@ public struct AgentCapabilitiesEntry: Codable, Equatable, Sendable {
     public var selfSchedulingEnabled: Bool?
     public var computerUseEnabled: Bool?
     public var browserUseEnabled: Bool?
+    /// Image generation/editing on this agent (`AgentSettings.imageEnabled`).
+    /// Image lives on custom agents only; the Orchestrator delegates to one.
+    public var imageEnabled: Bool?
+    /// AppleScript / `mac_query` on this agent
+    /// (`AgentSettings.appleScriptEnabled`). Custom agents only, as above.
+    public var applescriptEnabled: Bool?
     public var speakEnabled: Bool?
     public var renderChartEnabled: Bool?
     /// Whether the relay tunnel forwards to this agent (Wave 3b).
@@ -279,6 +348,8 @@ public struct AgentCapabilitiesEntry: Codable, Equatable, Sendable {
         case selfSchedulingEnabled = "self_scheduling_enabled"
         case computerUseEnabled = "computer_use_enabled"
         case browserUseEnabled = "browser_use_enabled"
+        case imageEnabled = "image_enabled"
+        case applescriptEnabled = "applescript_enabled"
         case speakEnabled = "speak_enabled"
         case renderChartEnabled = "render_chart_enabled"
         case relayEnabled = "relay_enabled"
@@ -289,6 +360,11 @@ public struct AgentCapabilitiesEntry: Codable, Equatable, Sendable {
 /// an unmatched entry is created, a matched one is patched.
 public struct AgentEntry: Equatable, Sendable {
     public var name: String
+    /// Optional `AgentStarterTemplate` id (`coder`, `researcher`, `writer`,
+    /// `assistant`, `productivity`): seeds description + system prompt when
+    /// the entry omits them, so `agents: [{name: Coder, template: coder}]`
+    /// creates a runnable agent in one line.
+    public var template: String?
     public var description: String?
     public var systemPrompt: String?
     public var model: ConfigField<String> = .absent
@@ -303,7 +379,7 @@ public struct AgentEntry: Equatable, Sendable {
 
 extension AgentEntry: Codable {
     enum CodingKeys: String, CodingKey {
-        case name, description
+        case name, template, description
         case systemPrompt = "system_prompt"
         case model, temperature
         case maxTokens = "max_tokens"
@@ -313,6 +389,7 @@ extension AgentEntry: Codable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decode(String.self, forKey: .name)
+        template = try c.decodeIfPresent(String.self, forKey: .template)
         description = try c.decodeIfPresent(String.self, forKey: .description)
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
         model = try c.configField(String.self, forKey: .model)
@@ -324,6 +401,7 @@ extension AgentEntry: Codable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(name, forKey: .name)
+        try c.encodeIfPresent(template, forKey: .template)
         try c.encodeIfPresent(description, forKey: .description)
         try c.encodeIfPresent(systemPrompt, forKey: .systemPrompt)
         try c.encode(configField: model, forKey: .model)

@@ -1,15 +1,15 @@
 {
-  "id": "subagent.scripted-batch-user-stop-all-cancelled",
+  "id": "subagent.scripted-wave-user-stop-all-cancelled",
   "domain": "subagent",
-  "label": "Subagent • user stop settles batch as all_cancelled",
+  "label": "Subagent • user stop settles a wave as all_cancelled",
   "query": "Stop a two-child remote fan-out and preserve one terminal row per caller-stable job id.",
-  "notes": "Model-free. Both remote-class children enter the real production batch host, then the real interrupt-center path stops them. The aggregate must settle exactly two rows in caller order, classify both as user_denied, report all_cancelled, and never duplicate a child row.",
+  "notes": "Model-free. Both remote-class children enter the real SubagentSession host as one spawn_agent wave, then the real interrupt-center path stops them. The aggregate must settle exactly two rows in caller order, classify both as user_denied, report all_cancelled, and never duplicate a child row.",
   "fixtures": {},
   "expect": {
     "subagent": {
       "lane": "scripted",
       "decision": "allow",
-      "scriptedBatch": [
+      "scriptedWave": [
         {
           "id": "cancel-a",
           "target": "scripted-remote",
@@ -28,15 +28,15 @@
       "interruptAfterMs": 100,
       "expectSuccess": false,
       "expectEnvelopeKind": "user_denied",
-      "expectResultKind": "spawn_batch_result",
+      "expectResultKind": "spawn_wave_result",
       "expectRunsCompleted": 0,
       "expectRunsSettled": 2,
       "expectRunEnvelopeKinds": [
         "user_denied",
         "user_denied"
       ],
-      "expectBatchAggregateStatus": "all_cancelled",
-      "expectBatchJobIDs": [
+      "expectWaveAggregateStatus": "all_cancelled",
+      "expectWaveJobIDs": [
         "cancel-a",
         "cancel-b"
       ]

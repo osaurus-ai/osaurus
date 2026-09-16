@@ -57,8 +57,6 @@ struct AgentAbilityContextPreview: Equatable {
         var videoEnabled: Bool? = nil
         var appleScriptEnabled: Bool? = nil
         var spawnableAgentIDs: [UUID]? = nil
-        var spawnableModelNames: [String]? = nil
-        var spawnableModelNotes: [String: String]? = nil
         var spawnConfiguration: AgentSpawnConfigSnapshot? = nil
         /// Full live Sandbox-tab configuration. `codeExecutionEnabled`
         /// remains the compatibility fallback for Overview-only callers.
@@ -208,8 +206,6 @@ struct AgentAbilityContextPreview: Equatable {
             appleScriptEnabled: draft.appleScriptEnabled ?? base.appleScriptEnabled,
             spawnableAgentIDs: draft.spawnableAgentIDs ?? base.spawnableAgentIDs,
             spawnableAgentNames: base.legacySpawnableAgentNames,
-            spawnableModelNames: draft.spawnableModelNames ?? base.spawnableModelNames,
-            spawnableModelNotes: draft.spawnableModelNotes ?? base.spawnableModelNotes,
             spawnConfiguration: draft.spawnConfiguration ?? base.spawnConfiguration,
             // Fold the draft flags with the persisted grant list the way
             // `capture` pre-folds them: no grants means no knowledge tools

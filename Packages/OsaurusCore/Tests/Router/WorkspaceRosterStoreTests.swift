@@ -224,4 +224,57 @@ struct WorkspaceRosterStoreTests {
         #expect(store.lastRefreshedAt == clock)
         #expect(store.rosters == [roster])
     }
+
+    // MARK: - Orchestrator spawn-pool auto-join hook
+
+    /// `apply` hands the reconciler the shared agents not hosted here and
+    /// the workspaces whose membership is known: the verified ones plus any
+    /// workspace that vanished from the list (left / deleted). Without an
+    /// installed reconciler nothing is called — roster fixtures in other
+    /// suites never touch the delegation store.
+    @Test func apply_reportsSharedAgentsAndKnownWorkspacesToSpawnPoolReconciler() throws {
+        let store = makeStore()
+        let previous = WorkspaceRosterStore.spawnPoolReconciler
+        defer { WorkspaceRosterStore.spawnPoolReconciler = previous }
+
+        final class Box: @unchecked Sendable {
+            var calls: [(refs: [WorkspaceAgentRef], loaded: Set<String>)] = []
+        }
+        let box = Box()
+        WorkspaceRosterStore.spawnPoolReconciler = { refs, loaded in
+            box.calls.append((refs, loaded))
+        }
+
+        let ws1 = WorkspaceRosterStore.WorkspaceRoster(
+            workspace: try Self.workspace(id: "ws-1", name: "Acme"),
+            agents: [try Self.agent(address: "0xaa", online: "true")]
+        )
+        let ws2 = WorkspaceRosterStore.WorkspaceRoster(
+            workspace: try Self.workspace(id: "ws-2", name: "Beta"),
+            agents: [try Self.agent(address: "0xbb", online: "false")]
+        )
+        // Full refresh where only ws-1's agent list was fetched.
+        store.apply(rosters: [ws1, ws2], verifiedWorkspaceIds: ["ws-1"])
+        #expect(box.calls.count == 1)
+        #expect(
+            Set(box.calls[0].refs)
+                == [
+                    WorkspaceAgentRef(workspaceId: "ws-1", agentAddress: "0xaa"),
+                    WorkspaceAgentRef(workspaceId: "ws-2", agentAddress: "0xbb"),
+                ]
+        )
+        #expect(box.calls[0].loaded == ["ws-1"], "unverified ws-2 is not reported as known")
+
+        // The user leaves ws-2: it disappears from the list, so it is known
+        // (its refs must prune) even though nothing loaded for it.
+        store.apply(rosters: [ws1])
+        #expect(box.calls.count == 2)
+        #expect(box.calls[1].loaded == ["ws-1", "ws-2"])
+        #expect(box.calls[1].refs.map(\.workspaceId) == ["ws-1"])
+
+        // No reconciler installed → no call.
+        WorkspaceRosterStore.spawnPoolReconciler = nil
+        store.apply(rosters: [ws1, ws2])
+        #expect(box.calls.count == 2)
+    }
 }

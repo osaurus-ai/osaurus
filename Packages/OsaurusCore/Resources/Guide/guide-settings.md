@@ -14,14 +14,15 @@ Ask the assistant to change declarative settings in chat (`osaurus_config`); eac
 
 - The Orchestrator (itself): display name, model, temperature, max output tokens, persona (system prompt).
 - Memory: enabled, budget tokens, retention days.
-- Agents: create/update custom agents, capability toggles, the active agent.
-- Tools: global enablement and permission policies; delegation settings and child budgets.
+- Agents: create/update custom agents, capability toggles, which agent new chats open with (`new_chat_agent`).
+- Tools: global enablement and permission policies.
+- Delegation: allowed subagents (custom agents and teammates' shared agents as `Name@Workspace`), per-workspace auto-join, spawn permissions, and the per-subagent limits (tokens, turns, seconds, local/remote parallelism).
 - Plus everything else the declarative document covers: models, providers, MCP servers, plugins, commands, knowledge collections, channel routing, schedules, watchers, and web-search providers.
 
 ## What lives only in the Settings UI
 
 - Server: port, expose to network, generation defaults, batching/concurrency, prefix/paged-KV/disk cache, **Context Window Cap**, KV retention, memory safety, model exposure. (Port and exposure changes restart the server; cache changes unload loaded models.)
-- Orchestrator: the identity fields above are also editable in Settings → Orchestrator, alongside its delegation helpers (spawn allow-list, budgets, RAM safety).
+- Orchestrator: Settings → Orchestrator holds Identity, Model & Generation (with the **Model readiness** row), **Working Folder**, Subagents (**Allowed subagents**, **Create starter agents**, **Permission**, **Permission for shared (workspace) agents**, **Limits**, **Advanced**, Local Models & Memory), and the **Delegations** list (Sent / Received). The working folder, model override, RAM-safety helpers and the Delegations list are UI-only; the rest is also declarative (`default_agent`, `delegation`).
 - Chat behavior: compaction model, clipboard monitoring, smooth streaming, thinking display, chat titles, follow-ups. **Not** the context window — that is Server → Cache.
 - App: start at login, hide dock icon, appearance, global hotkey, notifications/toasts.
 - Voice: speech-to-text models, dictation, wake phrase, text-to-speech engine and voice.
@@ -38,7 +39,10 @@ Ask the assistant to change declarative settings in chat (`osaurus_config`); eac
 | Context window / context budget / context length | Context Window Cap (tokens) | ⌘⇧M → Server → Settings → Cache → Context & KV Policy |
 | Context budget (in chat) | Context Budget popover | Chat composer — read-only; Open Context Window Cap jumps to Server → Cache |
 | Memory budget / token budget (memories) | Memory Budget | ⌘⇧M → Memory → Configuration |
-| Max tokens (reply length) | Max Output Tokens | ⌘⇧M → Orchestrator → Generation |
+| Max tokens (reply length) | Max Output Tokens | ⌘⇧M → Orchestrator → Model & Generation |
+| Subagent limits / "agents end too fast" | Limits (Max output tokens per subagent, Max turns per subagent, Time limit per subagent) | ⌘⇧M → Orchestrator → Subagents → Limits |
+| Orchestrator folder / file access | Working Folder | ⌘⇧M → Orchestrator → Working Folder (or the chat Folder chip) |
+| Ask before delegating | Permission / Permission for shared (workspace) agents | ⌘⇧M → Orchestrator → Subagents → Permission |
 | Max tokens (API defaults) | Generation Defaults → Max Tokens | ⌘⇧M → Server → Settings → Sampling Defaults |
 | KV / cache window | KV Retention Override | Same Cache panel as the context cap |
 | Tool permissions | Could be Tools catalog, Chat folder tools, or macOS Permissions — ask `find` |
@@ -70,7 +74,7 @@ General, Chat, Voice, Themes, Credits, Workspaces, Identity, Permissions, Privac
 
 ## Where settings are stored
 
-Config JSON lives under `~/.osaurus/config/` (`server.json`, `server-runtime.json`, `chat.json`, `default-agent.json`, `memory.json`, …). Secrets live in the macOS Keychain.
+Config JSON lives under `~/.osaurus/config/` (`server.json`, `server-runtime.json`, `chat.json`, `default-agent.json`, `agent-delegation.json`, `memory.json`, …). Secrets live in the macOS Keychain.
 
 ### SSD cache limit notice
 

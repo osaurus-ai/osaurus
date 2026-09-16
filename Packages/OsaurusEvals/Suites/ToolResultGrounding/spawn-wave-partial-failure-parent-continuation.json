@@ -1,0 +1,102 @@
+{
+  "id": "tool_result_grounding.spawn-wave-partial-failure-parent-continuation",
+  "domain": "tool_result_grounding",
+  "label": "spawn_agent wave • one failed sibling does not discard the other; parent finalizes once",
+  "query": "Delegate both jobs in one message, preserve the successful sibling, report the failed sibling honestly, and finish once.",
+  "notes": "Model-free committed-transcript contract. Two spawn_agent calls in one message form one wave (expectedWaveSizes [2]). The structured scorer pins both exact UUID targets, one ok row and one execution_error row, and a single grounded parent final after both results. This does not replace a live AgentLoop run.",
+  "fixtures": {},
+  "expect": {
+    "toolResultGrounding": {
+      "events": [
+        {
+          "kind": "toolCall",
+          "callId": "wave-a",
+          "tool": "spawn_agent",
+          "arguments": "{\"agent\":\"A11CE001-0000-4000-8000-000000000301\",\"input\":\"Return the sibling result.\"}"
+        },
+        {
+          "kind": "toolCall",
+          "callId": "wave-b",
+          "tool": "spawn_agent",
+          "arguments": "{\"agent\":\"A11CE001-0000-4000-8000-000000000302\",\"input\":\"Run the failure probe.\"}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "wave-a",
+          "tool": "spawn_agent",
+          "content": "{\"ok\":true,\"tool\":\"spawn_agent\",\"result\":{\"kind\":\"spawn_result\",\"model\":\"test/worker-model\",\"summary\":\"PARTIAL_SIBLING_OK_42\",\"session_id\":\"0F0F0F0F-0000-4000-8000-000000000001\",\"needs_input\":false}}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "wave-b",
+          "tool": "spawn_agent",
+          "content": "{\"ok\":false,\"kind\":\"execution_error\",\"message\":\"scripted worker failed\",\"retryable\":false,\"tool\":\"spawn_agent\"}"
+        },
+        {
+          "kind": "assistant",
+          "content": "The first worker returned PARTIAL_SIBLING_OK_42. The second worker reported scripted worker failed, so the delegation completed with a partial failure."
+        }
+      ],
+      "assertions": [
+        {
+          "callId": "wave-a",
+          "answerMustContain": [
+            "PARTIAL_SIBLING_OK_42"
+          ],
+          "resultMustContain": [
+            "PARTIAL_SIBLING_OK_42"
+          ],
+          "argumentsMustNotContain": [
+            "PARTIAL_SIBLING_OK_42"
+          ]
+        },
+        {
+          "callId": "wave-b",
+          "answerMustContain": [
+            "scripted worker failed"
+          ],
+          "resultMustContain": [
+            "\"kind\":\"execution_error\""
+          ],
+          "argumentsMustNotContain": [
+            "scripted worker failed"
+          ]
+        }
+      ],
+      "expectedToolSequence": [
+        "spawn_agent",
+        "spawn_agent"
+      ],
+      "requireSingleFinalAssistant": true,
+      "requireFinalAfterAllToolResults": true,
+      "requireFinalIsLastEvent": true,
+      "spawnWave": {
+        "exactCallCount": 2,
+        "expectedTargets": [
+          "A11CE001-0000-4000-8000-000000000301",
+          "A11CE001-0000-4000-8000-000000000302"
+        ],
+        "expectedSucceeded": 1,
+        "expectedFailed": 1,
+        "expectedWaveSizes": [
+          2
+        ],
+        "expectedRows": [
+          {
+            "target": "A11CE001-0000-4000-8000-000000000301",
+            "ok": true,
+            "model": "test/worker-model",
+            "summaryContains": [
+              "PARTIAL_SIBLING_OK_42"
+            ]
+          },
+          {
+            "target": "A11CE001-0000-4000-8000-000000000302",
+            "ok": false,
+            "failureKind": "execution_error"
+          }
+        ]
+      }
+    }
+  }
+}

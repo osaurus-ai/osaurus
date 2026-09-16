@@ -44,6 +44,7 @@ Packages/OsaurusEvals/
     Subagent/           — SubagentSession host: scripted model-free + live spawn/image/computer_use
     ToolEnvelope/       — ToolEnvelope.{success,failure} JSON shape
     ToolResultGrounding/ — transcript fixtures checking final-answer grounding against tool results
+    WorkspaceDelegation/ — Orchestrator → teammates' shared agents: scripted roster through the production resolver, offline refusal, one-card wave plan, artifact caps (no LLM, no relay)
 ```
 
 A "suite" is just a directory of `*.json` case files. Add a new case by dropping a JSON file in — no Swift edit required.
@@ -1156,3 +1157,25 @@ run these global-setting scenarios serially in the CLI's isolated storage.
 A local 128 GB result does not qualify the reporter's M4 16 GB machine. Retain
 refusals and full `memory_decision` fields instead of lowering safety thresholds
 to make an eval pass.
+
+## Workspace delegation lane (Mode 2, model-free)
+
+`WorkspaceDelegation` is a deterministic, token-free suite in the 1.0 floors
+and `make evals-deterministic`. Each case (`workspace-*.json`, lane
+`workspace`) scripts a roster — local agents by name, teammates' shared agents
+with workspace, address and presence — plus the launcher's `spawn` /
+`spawn_workspace` policies, and replays one `spawn_agent` wave per step
+through `WorkspaceDelegationEvaluator` (OsaurusCore). The observation is what
+production decides: `AgentTargetResolver` resolution (`Name@Workspace`, bare
+name, `0x…` address, durable key; ambiguity → the exact retry forms), the
+typed offline refusal the parent reads (`AgentDelegationDispatcher
+.workspaceRefusal`), `SpawnWaveGate.wavePermissionPlan` (one card per wave,
+workspace Ask + local Always Allow, pool-spend copy, Deny wins) and
+`RemoteRunArtifactRelay.payload` caps (small files back, `too_large` /
+`directory` listed). Cases: `offline-refusal-then-replan`,
+`ambiguous-name-then-qualified`, `mixed-wave-one-card`, `deny-wins`,
+`address-and-key-forms`, `artifacts-back-within-caps`.
+
+It does not stand in for the two-Mac release row (auto-join on roster load,
+the real Ask card, digest + artifact promotion through the relay, `continue`
+on a remote session, Received tab on the host); those stay live proof.

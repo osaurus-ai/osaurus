@@ -370,8 +370,8 @@ struct DefaultAgentSystemPromptBuilderTests {
         #expect(rendered.contains("osaurus_config"))
         #expect(rendered.contains("create"))
         #expect(rendered.contains("spawn_agent"))
-        // `active_agent` stays documented as the NEW-chats pointer only.
-        #expect(rendered.contains("active_agent"))
+        // `new_chat_agent` stays documented as the NEW-chats pointer only.
+        #expect(rendered.contains("new_chat_agent"))
     }
 
     @Test
@@ -467,6 +467,27 @@ struct DefaultAgentSystemPromptBuilderTests {
         let afterRender = DefaultAgentSystemPromptBuilder.render()
         #expect(beforeRender != afterRender)
         #expect(afterRender.contains(probeWrite))
+    }
+
+    /// Discovery of teammates' shared agents is taught in both variants:
+    /// read them with `osaurus_inspect` scope `shared_agents`, address them
+    /// as `Name@Workspace`, and remember they cannot see the folder.
+    @Test
+    func render_teachesSharedAgentDiscoveryInBothVariants() {
+        for compact in [false, true] {
+            let rendered = DefaultAgentSystemPromptBuilder._renderForTests(
+                domains: [Self.probe(id: "config", writeToolNames: ["osaurus_config"])],
+                compact: compact
+            )
+            #expect(rendered.contains("shared_agents"), "compact=\(compact)")
+            #expect(rendered.contains("`Name@Workspace`"), "compact=\(compact)")
+            #expect(rendered.contains("cannot see your folder"), "compact=\(compact)")
+            #expect(rendered.contains("`input`"), "compact=\(compact)")
+        }
+        let full = DefaultAgentSystemPromptBuilder._renderForTests(
+            domains: [Self.probe(id: "config", writeToolNames: ["osaurus_config"])]
+        )
+        #expect(full.contains("delegation.spawnable_workspace_agents"))
     }
 
     @Test

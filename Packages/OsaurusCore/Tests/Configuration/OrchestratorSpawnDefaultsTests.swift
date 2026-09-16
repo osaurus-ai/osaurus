@@ -192,8 +192,8 @@ struct SameTurnSpawnStagingTests {
                 names.contains(SubagentCapabilityRegistry.spawnAgentToolName),
                 "spawn_agent must be staged for the same turn, got \(names)")
             #expect(
-                names.contains(SubagentCapabilityRegistry.spawnBatchToolName),
-                "spawn_batch must be staged alongside spawn_agent, got \(names)")
+                !names.contains("spawn_batch"),
+                "spawn_batch was removed; only spawn_agent is staged, got \(names)")
 
             // The staged schema must already advertise the just-created
             // agent (UUID + display name) — execution validates against the
@@ -369,11 +369,11 @@ struct SpawnPoolSeedMigrationTests {
         var staleBaseline = SubagentConfiguration()
         staleBaseline.spawnPoolSeeded = false
         var editor = staleBaseline
-        editor.imageDelegationEnabled = true
+        editor.ramSafetyPreflightEnabled = false
         let merged = SubagentConfigurationStore.saveEditorSnapshot(
             editor, loadedBaseline: staleBaseline)
         #expect(merged.spawnPoolSeeded, "an editor save must not revert the seed sentinel")
-        #expect(merged.imageDelegationEnabled)
+        #expect(!merged.ramSafetyPreflightEnabled)
     }
 
     @Test("delegation export/apply round-trip is a no-op after seeding")

@@ -1,0 +1,29 @@
+{
+  "id": "subagent.scripted-parallel-wave-exclusive",
+  "domain": "subagent",
+  "label": "Subagent • parallel wave: two local-handoff children serialize, both complete",
+  "query": "Two spawn_agent calls in one message start two local-handoff children.",
+  "notes": "Model-free. Two scripted children that each need the exclusive local GPU lease enter the real SubagentSession host as one spawn_agent wave. The wave-race guard must serialize them (peak overlap exactly 1) while still admitting the queued child, so both caller-stable rows settle successfully and the aggregate is succeeded. The remote fixture proves fan-out overlap; the mixed fixture proves local serialization coexists with remote overlap.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "scripted",
+      "decision": "allow",
+      "needsHandoff": true,
+      "parallel": 2,
+      "runDelayMs": 150,
+      "phases": [
+        "running"
+      ],
+      "expectSuccess": true,
+      "expectMaxConcurrent": 1,
+      "expectRunsCompleted": 2,
+      "expectRunsSettled": 2,
+      "expectRunEnvelopeKinds": [
+        "success",
+        "success"
+      ],
+      "expectWaveAggregateStatus": "succeeded"
+    }
+  }
+}

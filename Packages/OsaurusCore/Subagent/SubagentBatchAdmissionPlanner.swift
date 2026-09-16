@@ -4,7 +4,7 @@
 //
 //  Pure capacity policy for one canonical local-model group plus any remote
 //  jobs that may overlap it. This is deliberately not a scheduler:
-//  `SpawnBatchTool` owns fan-out and vMLX `BatchEngine` owns inference.
+//  the `spawn_agent` wave gate owns fan-out and vMLX `BatchEngine` owns inference.
 //
 
 import Foundation

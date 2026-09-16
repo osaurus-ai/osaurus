@@ -7,7 +7,7 @@
   "fixtures": {},
   "expect": {
     "subagent": {
-      "lane": "spawn_model_residency",
+      "lane": "spawn_residency",
       "orchestrator": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
       "model": "OsaurusAI/gemma-4-E4B-it-4bit",
       "handoffEnabled": false,

@@ -308,7 +308,13 @@ extension ToolPermissionPromptQueueTests {
         #expect(probe.presented.count == 1)
         #expect(ToolPermissionPromptService.presentedExecutionSurfaceForTesting == .nativeHost)
 
-        ToolPermissionPromptService.resolveForTesting(id: probe.presented[0], outcome: .denied)
+        // A bounded wait that expires under full-suite load must fail this
+        // test, not take the whole process down with an out-of-range index.
+        guard let presentedId = probe.presented.first else {
+            Issue.record("permission card was never presented within the bounded wait")
+            return
+        }
+        ToolPermissionPromptService.resolveForTesting(id: presentedId, outcome: .denied)
         #expect(await gate.value == false)
         #expect(ToolPermissionPromptService.presentedExecutionSurfaceForTesting == nil)
     }

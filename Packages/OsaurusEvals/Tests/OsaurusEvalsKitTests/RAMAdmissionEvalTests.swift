@@ -102,7 +102,7 @@ struct RAMAdmissionEvalTests {
         let digest = String(repeating: "x", count: 400) + "RAM_FIRST_OK"
         let envelope = ToolEnvelope.success(tool: "spawn_agent", result: ["kind": "spawn_result", "summary": digest])
         #expect(AgentLoopTranscript.spawnSummary(from: envelope, tool: "spawn_agent") == digest)
-        #expect(AgentLoopTranscript.spawnSummary(from: envelope, tool: "spawn_batch") == nil)
+        #expect(AgentLoopTranscript.spawnSummary(from: envelope, tool: "file_read") == nil)
         #expect(AgentLoopTranscript.spawnSummary(from: "RAM_FIRST_OK", tool: "spawn_agent") == nil)
         #expect(AgentLoopTranscript.spawnSummary(from:
             ToolEnvelope.failure(kind: .rejected, message: digest, tool: "spawn_agent"), tool: "spawn_agent") == nil)

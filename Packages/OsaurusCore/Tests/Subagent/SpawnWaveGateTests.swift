@@ -76,7 +76,6 @@ struct SpawnWaveGateTests {
     @Test("a wave exists only for two or more foreground spawn calls, in model order")
     func waveContextRequiresTwoForegroundSpawnCalls() {
         let spawn = SubagentCapabilityRegistry.spawnAgentToolName
-        let model = SubagentCapabilityRegistry.spawnModelToolName
 
         #expect(SpawnWaveContext.make(for: [(invocation(spawn), "a")]) == nil)
         #expect(
@@ -87,7 +86,7 @@ struct SpawnWaveGateTests {
         let mixed = SpawnWaveContext.make(for: [
             (invocation("file_read", "{}"), "r"),
             (invocation(spawn), "a"),
-            (invocation(model, #"{"input":"x","model":"m"}"#), "b"),
+            (invocation(spawn, #"{"input":"x","agent":"Other"}"#), "b"),
             (invocation(spawn, #"{"input":"x","agent":"W","background":true}"#), "bg"),
             (invocation(spawn), "c"),
         ])
@@ -142,13 +141,21 @@ struct SpawnWaveGateTests {
         #expect(allowed.verdicts.values.allSatisfy { $0 == .allow })
     }
 
-    @Test("the wave's card mixes tool names only when members differ and lists every member")
+    @Test("the wave's card names the one delegation tool and lists every member")
     func cardCopyNamesEveryMember() {
         let same = [member("a"), member("b")]
         #expect(SpawnWaveGate.cardToolName(for: same) == "spawn_agent")
-        let mixed = [member("a"), member("b", tool: "spawn_model")]
-        #expect(SpawnWaveGate.cardToolName(for: mixed) == "spawn_agent / spawn_model")
+        let mixed = [member("a"), member("b", local: false)]
+        #expect(SpawnWaveGate.cardToolName(for: mixed) == "spawn_agent")
         #expect(SpawnWaveGate.cardDescription(count: 3) == "Let this agent run 3 subagents in parallel?")
+        #expect(
+            SpawnWaveGate.cardDescription(count: 3, workspaceCount: 1)
+                == "Let this agent run 3 subagents in parallel? 1 of them run on teammates' Macs and spend those workspaces' pools."
+        )
+        #expect(
+            SpawnWaveGate.cardDescription(count: 2, workspaceCount: 2)
+                == "Let this agent run 2 subagents in parallel? They run on teammates' Macs and spend those workspaces' pools."
+        )
 
         let json = SpawnWaveGate.cardArgumentsJSON(for: mixed)
         let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
@@ -156,7 +163,7 @@ struct SpawnWaveGateTests {
         let entries = object?["subagents"] as? [[String: Any]]
         #expect(entries?.count == 2)
         #expect(entries?[0]["input"] as? String == "task a")
-        #expect(entries?[1]["tool"] as? String == "spawn_model")
+        #expect(entries?[1]["tool"] as? String == "spawn_agent")
     }
 
     // MARK: - Rendezvous

@@ -43,7 +43,9 @@ public struct EvalCaseTranscript: Codable, Sendable {
         public let wasDeduped: Bool?
         public let wasError: Bool?
         public let spawnSummary: String?
-        public let spawnBatch: AgentLoopTranscript.SpawnBatchObservation?
+        /// Model step that issued the call (same step = same wave).
+        public let step: Int?
+        public let spawnCall: AgentLoopTranscript.SpawnCallObservation?
 
         public init(
             name: String,
@@ -52,7 +54,8 @@ public struct EvalCaseTranscript: Codable, Sendable {
             wasDeduped: Bool? = nil,
             wasError: Bool? = nil,
             spawnSummary: String? = nil,
-            spawnBatch: AgentLoopTranscript.SpawnBatchObservation? = nil
+            step: Int? = nil,
+            spawnCall: AgentLoopTranscript.SpawnCallObservation? = nil
         ) {
             self.name = name
             self.arguments = arguments
@@ -60,7 +63,8 @@ public struct EvalCaseTranscript: Codable, Sendable {
             self.wasDeduped = wasDeduped
             self.wasError = wasError
             self.spawnSummary = spawnSummary
-            self.spawnBatch = spawnBatch
+            self.step = step
+            self.spawnCall = spawnCall
         }
     }
 

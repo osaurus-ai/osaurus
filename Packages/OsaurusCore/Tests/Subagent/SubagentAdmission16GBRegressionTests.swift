@@ -405,35 +405,23 @@ struct SubagentAdmission16GBRegressionTests {
         #expect(reason == .insufficientMemory)
     }
 
-    /// CAUSAL: the bare `spawn_model` path IS governed by launcher budgets
-    /// (per-generation `maxDelegateTokens` × at most `maxDelegateTurns`
-    /// iterations, no tool access) — it produces a bounded estimate whose
-    /// output ceiling reflects turns × per-turn, not a single turn.
-    @Test("bare model target produces a turns-aware bounded estimate")
-    func bareModelTargetBoundedEstimate() {
-        let bare = TextSubagentKind(model: "some/model", input: "summarize this")
-        let estimate = bare.admissionRequestEstimate()
-        #expect(estimate != nil)
-        #expect(estimate?.seedCharacters == "summarize this".count)
-        // Defaults: maxDelegateTokens 2048 × maxDelegateTurns 2.
-        #expect(estimate?.maxOutputTokens == 2048 * 2)
-    }
-
     /// The enforced delegated contract, derived for the REPORTED shape: a
-    /// tool-enabled target agent (SysAdmin has tools) with the default
-    /// launcher budgets (2,048 tokens × 2 turns) against a 64K window.
+    /// tool-enabled target agent (SysAdmin has tools) with small launcher
+    /// budgets (2,048 tokens × 2 turns, the pre-2026 defaults) against a
+    /// 64K window.
     /// The ceiling must land far below the window — seed + 4,096 overhead
     /// + 2 × (2,048 response + 4,096 tool allowance) — because THIS is the
     /// number both the session enforces and admission prices. Without it,
     /// a tool-enabled delegated child collapsed back to cap pricing.
     @Test("tool-enabled delegated contract stays far below the window")
     func toolEnabledDelegatedContractBounded() throws {
+        let small = SubagentBudgets(maxDelegateTokens: 2048, maxDelegateTurns: 2)
         let contract = try #require(
             DelegatedRunContract.derive(
                 seedCharacters: 800,
                 systemPromptCharacters: 2_000,
                 toolSchemaTokens: 375,
-                budgets: SubagentBudgets(),  // defaults: 2048 tokens × 2 turns
+                budgets: small,
                 toolEnabled: true,
                 resolvedContextWindow: 65_536
             ))
@@ -451,7 +439,7 @@ struct SubagentAdmission16GBRegressionTests {
             seedCharacters: 800,
             systemPromptCharacters: 2_000,
             toolSchemaTokens: 375,
-            budgets: SubagentBudgets(),
+            budgets: small,
             toolEnabled: false,
             resolvedContextWindow: 65_536
         )
@@ -463,7 +451,7 @@ struct SubagentAdmission16GBRegressionTests {
             seedCharacters: 800,
             systemPromptCharacters: 40_000,
             toolSchemaTokens: 375,
-            budgets: SubagentBudgets(),
+            budgets: small,
             toolEnabled: true,
             resolvedContextWindow: 65_536
         )
@@ -475,7 +463,7 @@ struct SubagentAdmission16GBRegressionTests {
             seedCharacters: 800,
             systemPromptCharacters: 2_000,
             toolSchemaTokens: 375,
-            budgets: SubagentBudgets(),
+            budgets: small,
             toolEnabled: true,
             resolvedContextWindow: 8_192
         )
@@ -490,10 +478,11 @@ struct SubagentAdmission16GBRegressionTests {
             toolEnabled: false,
             resolvedContextWindow: 1_000_000
         )
-        // tokens clamp to 32,768, turns to 8 → 8×32,768 = 262,144.
-        #expect(wild?.contextPositions == 262_144)
-        #expect(wild?.responseTokens == 32_768)
-        #expect(wild?.assistantTurns == 8)
+        // tokens clamp to the upper bound (65,536); 99 turns is within
+        // bounds, so 99×65,536 overflows the window and clamps to it.
+        #expect(wild?.contextPositions == 1_000_000)
+        #expect(wild?.responseTokens == SubagentBudgets.tokenBounds.upperBound)
+        #expect(wild?.assistantTurns == 99)
     }
 
     /// Overflow and degenerate inputs FAIL CLOSED (nil — cap pricing, no

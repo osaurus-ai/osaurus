@@ -832,7 +832,7 @@ extension SharedArtifact {
     /// Resolves an artifact destination under `contextDir`, refusing anything
     /// that would escape the context directory via `..`, symlinks, or an
     /// absolute path smuggled in through the filename.
-    private static func resolveDestinationPath(filename: String, contextDir: URL) -> URL? {
+    static func resolveDestinationPath(filename: String, contextDir: URL) -> URL? {
         let contextRoot = canonicalizedURL(contextDir)
         let destination = contextRoot.appendingPathComponent(filename).standardizedFileURL
         guard isContained(destination, in: contextRoot) else { return nil }
@@ -857,7 +857,7 @@ extension SharedArtifact {
         return resolved
     }
 
-    private static func sanitizeArtifactFilename(_ rawFilename: String) -> String {
+    static func sanitizeArtifactFilename(_ rawFilename: String) -> String {
         extractPathComponent(rawFilename) ?? "artifact"
     }
 

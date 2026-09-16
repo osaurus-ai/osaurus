@@ -3,7 +3,7 @@
   "domain": "agent_loop",
   "label": "same-model RAM admission: single-child",
   "query": "Delegate only to RAM Admission Research. Ask it to return exactly RAM_FIRST_OK. Do not give it additional tasks or context. Return its result.",
-  "notes": "Four fresh parent chats in one process, strict all-trials threshold. RAM ON, handoff ON, coexistence OFF, same-model and batch ceiling 1; exact executed child digests required. Bundle sampling defaults remain unchanged.",
+  "notes": "Four fresh parent chats in one process, strict all-trials threshold. RAM ON, handoff ON, coexistence OFF, same-model and wave ceiling 1; exact executed child digests required. Bundle sampling defaults remain unchanged.",
   "fixtures": {
     "agentCapabilities": {
       "spawnAgents": [
@@ -17,7 +17,6 @@
       "childBudgets": {
         "maxDelegateTokens": 2048,
         "maxDelegateTurns": 2,
-        "maxToolCalls": 0,
         "maxElapsedSeconds": 120,
         "maxParallelSpawns": 1
       }
@@ -38,10 +37,6 @@
       "maxModelSteps": 3,
       "mustCallTools": [
         "spawn_agent"
-      ],
-      "mustNotCallTools": [
-        "spawn_batch",
-        "spawn_model"
       ],
       "maxToolCalls": 1,
       "noDuplicateExecutedCalls": true,

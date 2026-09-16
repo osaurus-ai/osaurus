@@ -112,6 +112,26 @@ struct SettingsSearchSelfFindProbe {
             ("allowed senders", "agentChannels.n8n.pendingApprovals"),
             ("edit allowlists by hand", "agentChannels.n8n.pendingApprovals"),
             ("channel enabled", "agentChannels.n8n.enabled"),
+            // Settings → Orchestrator controls.
+            ("model readiness", "settings.orchestrator.modelReadiness"),
+            ("working folder", "settings.orchestrator.workingFolder"),
+            ("allowed subagents", "settings.orchestrator.delegation.mainChat"),
+            ("allowed agents", "settings.orchestrator.delegation.mainChat"),
+            ("shared workspace agents", "settings.orchestrator.delegation.mainChat"),
+            ("create starter agents", "settings.orchestrator.delegation.starterAgents"),
+            ("permission for shared", "settings.orchestrator.delegation.permission"),
+            ("max output tokens per subagent", "settings.orchestrator.delegation.limits"),
+            ("max turns per subagent", "settings.orchestrator.delegation.limits"),
+            ("max local subagents at once", "settings.orchestrator.delegation.limits"),
+            ("max remote subagents at once", "settings.orchestrator.delegation.limits"),
+            ("time limit per subagent", "settings.orchestrator.delegation.limits"),
+            ("agent-target model override", "settings.orchestrator.delegation.advanced"),
+            ("swap local models", "settings.orchestrator.delegation.handoff"),
+            ("check memory before delegating", "settings.orchestrator.delegation.handoff"),
+            ("delegations", "settings.orchestrator.delegations"),
+            // Workspaces → Shared agents: the per-workspace auto-join switch.
+            ("let the orchestrator delegate to shared agents", "workspaces.agents.orchestratorAutoJoin"),
+            ("auto-join", "workspaces.agents.orchestratorAutoJoin"),
         ]
 
         let missed = labels.filter { label in

@@ -372,6 +372,7 @@ final class WorkspaceRosterStore: ObservableObject {
     func apply(rosters next: [WorkspaceRoster], verifiedWorkspaceIds: Set<String>? = nil) {
         stateGeneration = UUID()
         dropHostReachable(supersededBy: next)
+        let previousWorkspaceIds = Set(rosters.map { $0.id.lowercased() })
         let verified = verifiedWorkspaceIds ?? Set(next.map(\.id))
         verifiedAt = Dictionary(uniqueKeysWithValues: verified.map { ($0, now()) })
         objectWillChange.send()
@@ -408,6 +409,67 @@ final class WorkspaceRosterStore: ObservableObject {
         connectService.pruneFailures(keeping: listed)
         if next != rosters { rosters = next }
         lastRefreshedAt = now()
+        reconcileSpawnPool(verified: verified, previousWorkspaceIds: previousWorkspaceIds)
+    }
+
+    // MARK: - Orchestrator spawn-pool auto-join
+
+    /// Receives, after every roster apply, the teammates' shared agents
+    /// (every roster entry not hosted here) and the workspaces whose
+    /// membership is now KNOWN: the ones just verified plus any workspace
+    /// that vanished from the list (left / deleted). Production installs
+    /// `SubagentConfigurationStore.reconcileWorkspaceAgents` through
+    /// `installSpawnPoolAutoJoin()` at launch so shared agents join the
+    /// Orchestrator's pool (respecting removal tombstones and the
+    /// per-workspace auto-join switch) and unshared ones are pruned. Tests
+    /// leave it nil: roster fixtures never touch the delegation store.
+    typealias SpawnPoolReconciler = @Sendable (
+        _ rosterRefs: [WorkspaceAgentRef],
+        _ loadedWorkspaceIds: Set<String>
+    ) -> Void
+
+    static var spawnPoolReconciler: SpawnPoolReconciler?
+
+    /// Wire the roster to the Orchestrator's delegation pool. Idempotent.
+    static func installSpawnPoolAutoJoin() {
+        spawnPoolReconciler = { refs, loaded in
+            SubagentConfigurationStore.reconcileWorkspaceAgents(
+                rosterRefs: refs,
+                loadedWorkspaceIds: loaded
+            )
+        }
+    }
+
+    /// The shared agents the Orchestrator may delegate to: every roster
+    /// entry across the loaded workspaces that is not one of this
+    /// instance's own agents, once per (workspace, address).
+    func sharedAgentRefs() -> [WorkspaceAgentRef] {
+        var out: [WorkspaceAgentRef] = []
+        var seen = Set<WorkspaceAgentRef>()
+        for roster in rosters {
+            for agent in roster.agents where !isHostedHere(address: agent.agentAddress) {
+                let ref = WorkspaceAgentRef(workspaceId: roster.id, agentAddress: agent.agentAddress)
+                if seen.insert(ref).inserted { out.append(ref) }
+            }
+        }
+        return out
+    }
+
+    /// Re-run the join/prune step against the rosters already loaded (after
+    /// the per-workspace auto-join switch changes). Every loaded workspace
+    /// counts as known.
+    func reconcileSpawnPoolNow() {
+        reconcileSpawnPool(verified: Set(rosters.map(\.id)), previousWorkspaceIds: [])
+    }
+
+    private func reconcileSpawnPool(verified: Set<String>, previousWorkspaceIds: Set<String>) {
+        guard let reconciler = Self.spawnPoolReconciler else { return }
+        // A workspace that was on the list and no longer is has been left or
+        // deleted: its refs are stale even though nothing "loaded" for it.
+        let currentIds = Set(rosters.map { $0.id.lowercased() })
+        var loaded = Set(verified.map { $0.lowercased() })
+        loaded.formUnion(previousWorkspaceIds.subtracting(currentIds))
+        reconciler(sharedAgentRefs(), loaded)
     }
 
     /// A `verified` heartbeat from `/workspaces/sync`: the server re-confirmed

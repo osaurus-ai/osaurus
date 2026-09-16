@@ -1181,6 +1181,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         continue
                     }
 
+                    // Artifacts returned by a teammate's host (Mode 2): pass
+                    // through for `ChatSession` to import; not tokens.
+                    if StreamingArtifactHint.decode(delta) != nil {
+                        continuation.yield(delta)
+                        continue
+                    }
+
                     // Pass through tool-hint sentinels without counting as tokens
                     if StreamingToolHint.isSentinel(delta) {
                         toolHintCount += 1

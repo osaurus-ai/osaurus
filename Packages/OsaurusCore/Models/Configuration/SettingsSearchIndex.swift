@@ -159,6 +159,10 @@ public enum SettingsSearchIndex {
         "settings.orchestrator.delegation",
         "settings.orchestrator.delegation.mainChat",
         "settings.orchestrator.delegation.handoff",
+        "settings.orchestrator.delegation.starterAgents",
+        "settings.orchestrator.delegation.permission",
+        "settings.orchestrator.delegation.limits",
+        "settings.orchestrator.delegation.advanced",
     ]
 
     /// Every searchable setting, grouped by tab in declaration order.
@@ -1027,12 +1031,31 @@ public enum SettingsSearchIndex {
 
         // MARK: Subagents (Orchestrator delegation policy + runtime knobs)
         // There is no global master switch and no dedicated Spawn tab anymore.
-        // The built-in main chat has no AgentDetailView, so its allowed agents,
-        // models, notes, permission, worker tools, and budgets live alongside
-        // shared handoff/RAM-safety knobs on the Orchestrator tab. Custom-agent
-        // spawn/image policy remains in each agent's Subagents tab. Global
-        // image-generation settings live in the Image Generation tab (indexed
-        // above).
+        // Settings → Orchestrator: Model readiness, Working Folder, Subagents
+        // (Allowed subagents / Permission / Limits / Advanced), Delegations.
+        // Custom-agent spawn policy remains in each agent's Subagents tab.
+        .init(
+            id: "settings.orchestrator.modelReadiness",
+            tab: .orchestrator,
+            section: "Model & Generation",
+            title: "Model readiness",
+            keywords: [
+                "orchestrator model", "context window", "tools ok", "tools limited",
+                "recommended model", "model too small", "readiness", "can the orchestrator use tools",
+            ]
+        ),
+        .init(
+            id: "settings.orchestrator.workingFolder",
+            tab: .orchestrator,
+            section: "Working Folder",
+            title: "Working Folder",
+            keywords: [
+                "orchestrator folder", "folder access", "file access", "read files",
+                "file_read", "file_search", "deliverables", "project folder",
+                "subagent folder", "inherit folder", "choose folder",
+            ],
+            disambiguation: "The Orchestrator's folder. Custom agents set theirs in Agents → Abilities."
+        ),
         .init(
             id: "settings.orchestrator.delegation",
             tab: .orchestrator,
@@ -1041,9 +1064,8 @@ public enum SettingsSearchIndex {
             keywords: [
                 "spawn", "delegate", "delegation", "subagent", "subagents",
                 "helper jobs", "agent delegation", "allowed agents",
-                "allowed models", "allowed subagents", "main chat",
-                "batch subagents", "orchestrator",
-                "image subagent", "applescript", "child budgets",
+                "allowed subagents", "main chat", "orchestrator",
+                "parallel subagents", "child budgets", "spawn_agent",
             ],
             declarativeSection: "delegation"
         ),
@@ -1051,13 +1073,61 @@ public enum SettingsSearchIndex {
             id: "settings.orchestrator.delegation.mainChat",
             tab: .orchestrator,
             section: "Subagents",
-            title: "Subagents the Orchestrator can delegate to",
+            title: "Allowed subagents",
             keywords: [
                 "default agent", "built-in chat", "spawn pool", "main chat spawn",
-                "model notes", "worker tools", "model subagent tools",
-                "read-only files", "max subagents", "limits", "permission",
-                "cloud model", "local model",
+                "allowed agents", "shared workspace agents", "workspace agents",
+                "teammate agents", "auto-join", "remove agent",
+            ],
+            declarativeSection: "delegation"
+        ),
+        .init(
+            id: "settings.orchestrator.delegation.starterAgents",
+            tab: .orchestrator,
+            section: "Subagents",
+            title: "Create starter agents",
+            keywords: [
+                "starter agents", "coder", "researcher", "writer", "create agents",
+                "no agents yet", "first agents", "quick start",
             ]
+        ),
+        .init(
+            id: "settings.orchestrator.delegation.permission",
+            tab: .orchestrator,
+            section: "Subagents",
+            title: "Permission",
+            keywords: [
+                "ask before delegating", "always allow", "approval card", "spawn permission",
+                "local agents permission", "shared agents permission", "workspace permission",
+                "permission for shared (workspace) agents", "deny delegation", "one approval per wave",
+            ],
+            disambiguation: "Whether to ask before subagents run. For every tool, see Chat → Auto-allow all tools.",
+            declarativeSection: "delegation"
+        ),
+        .init(
+            id: "settings.orchestrator.delegation.limits",
+            tab: .orchestrator,
+            section: "Subagents",
+            title: "Limits",
+            keywords: [
+                "max output tokens per subagent", "max turns per subagent",
+                "time limit per subagent (seconds)", "max local subagents at once",
+                "max remote subagents at once", "max parallel", "parallel subagents",
+                "remote parallel", "budgets", "subagent limits", "agents end too fast",
+                "delegation limits", "max delegate tokens", "elapsed seconds",
+            ],
+            declarativeSection: "delegation"
+        ),
+        .init(
+            id: "settings.orchestrator.delegation.advanced",
+            tab: .orchestrator,
+            section: "Subagents",
+            title: "Advanced",
+            keywords: [
+                "agent-target model override", "model override", "subagent model",
+                "run subagents on model", "override model", "advanced delegation",
+            ],
+            declarativeSection: "delegation"
         ),
         .init(
             id: "settings.orchestrator.delegation.handoff",
@@ -1067,6 +1137,18 @@ public enum SettingsSearchIndex {
             keywords: [
                 "handoff", "swap local models", "swap", "ram safety", "memory check",
                 "residency", "unload", "preflight", "coexistence", "keep chat model loaded",
+                "check memory before delegating",
+            ]
+        ),
+        .init(
+            id: "settings.orchestrator.delegations",
+            tab: .orchestrator,
+            section: "Delegations",
+            title: "Delegations",
+            keywords: [
+                "delegation history", "sent", "received", "worker runs", "subagent runs",
+                "open chat", "tok/s", "artifacts", "delegated tasks", "inbound runs",
+                "shared agent runs",
             ]
         ),
         .init(
@@ -1122,6 +1204,18 @@ public enum SettingsSearchIndex {
             keywords: [
                 "share agent", "shared agent", "relay", "presence", "workspace billing", "team billing",
             ]
+        ),
+        .init(
+            id: "workspaces.agents.orchestratorAutoJoin",
+            tab: .workspaces,
+            section: "Shared Agents",
+            title: "Let the Orchestrator delegate to shared agents",
+            keywords: [
+                "auto-join", "auto join", "workspace auto join", "orchestrator shared agents",
+                "delegate to teammates", "shared agents pool", "stop joining", "workspace delegation",
+            ],
+            disambiguation: "Per-workspace switch. The pool itself is Settings → Orchestrator → Allowed subagents.",
+            declarativeSection: "delegation"
         ),
         // The standalone Storage tab is gone: the models directory +
         // external sources live on the General tab, and the encryption

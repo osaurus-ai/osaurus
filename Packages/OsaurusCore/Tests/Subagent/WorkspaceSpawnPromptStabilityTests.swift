@@ -53,18 +53,12 @@ struct WorkspaceSpawnPromptStabilityTests {
     private static func promptSurface() -> String {
         let availability = SpawnDescriptors.resolveForPreview(
             agentIDs: [],
-            modelNames: [],
-            modelNotes: [:],
             launcherModelOverride: nil,
             workspaceAgents: [ref]
         )
         let guidance = SystemPromptTemplates.spawnGuidance(
             agents: [],
-            models: [],
             workspaceAgents: availability.workspaceAgents,
-            availableToolNames: [
-                SubagentCapabilityRegistry.spawnAgentToolName, SubagentCapabilityRegistry.spawnBatchToolName,
-            ],
             maxParallel: 2
         )
         let addresses = availability.runnableWorkspaceAgents.map(\.agentAddress)
@@ -140,14 +134,13 @@ struct WorkspaceSpawnPromptStabilityTests {
 
             store.apply(rosters: [.init(workspace: try Self.workspace(), agents: [])])
             let availability = SpawnDescriptors.resolveForPreview(
-                agentIDs: [], modelNames: [], modelNotes: [:], launcherModelOverride: nil, workspaceAgents: [Self.ref]
+                agentIDs: [], launcherModelOverride: nil, workspaceAgents: [Self.ref]
             )
             #expect(availability.workspaceAgentTargets.map(\.state) == [.missing])
             #expect(availability.runnableWorkspaceAgents.isEmpty)
             #expect(!availability.hasRunnableAgentTargets)
             let guidance = SystemPromptTemplates.spawnGuidance(
-                agents: [], models: [], workspaceAgents: availability.workspaceAgents,
-                availableToolNames: [SubagentCapabilityRegistry.spawnAgentToolName]
+                agents: [], workspaceAgents: availability.workspaceAgents
             )
             #expect(!guidance.contains(Self.address))
         }

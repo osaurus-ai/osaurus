@@ -1222,13 +1222,6 @@ struct AgentDetailView: View {
     /// Per-agent shared workspace agents this agent may delegate to. Mirrored
     /// from / into `AgentSettings.spawnableWorkspaceAgents`.
     @State private var spawnableWorkspaceAgents: [WorkspaceAgentRef] = []
-    /// Per-agent `spawn_model` allow-list (raw model ids this agent may spawn).
-    /// Mirrored from / into `AgentSettings.spawnableModelNames`; empty hides the
-    /// `spawn_model` tool.
-    @State private var spawnableModelNames: [String] = []
-    /// Per-agent "when/how to use" notes keyed by spawnable model id. Mirrored
-    /// from / into `AgentSettings.spawnableModelNotes`; pruned to the pool on save.
-    @State private var spawnableModelNotes: [String: String] = [:]
     /// Per-agent autonomy ceiling for Computer Use (PR2). `nil` means no
     /// ceiling. Mirrored from / into `AgentSettings.computerUseCeiling`.
     @State private var computerUseCeiling: AutonomyCeiling? = nil
@@ -1262,7 +1255,6 @@ struct AgentDetailView: View {
     @State private var loadedSubagentPermissions: SubagentPermissionDefaults =
         SubagentPermissionDefaults()
     @State private var subagentBudgets: SubagentBudgets = SubagentBudgets()
-    @State private var spawnToolAccess: SpawnToolAccess = .none
     /// Per-agent subagent model overrides keyed by capability id (computer_use /
     /// spawn). Empty/absent = inherit the kind's default model.
     /// Mirrored from / into `AgentSettings.subagentModelOverrides`.
@@ -3273,13 +3265,10 @@ struct AgentDetailView: View {
             .map(\.grantDescriptor)
         let spawnConfiguration = AgentSpawnConfigSnapshot(
             agentIDs: spawnableAgentIDs.filter { $0 != agent.id },
-            modelNames: spawnableModelNames,
-            modelNotes: spawnableModelNotes,
             budgets: SpawnBatchConcurrencyContract.applyingSharedLimit(
                 from: globalSubagentConfig,
                 to: subagentBudgets
             ),
-            toolAccess: spawnToolAccess,
             launcherModelOverride:
                 subagentModelOverrides[SubagentCapabilityRegistry.spawn.id],
             workspaceAgents: spawnableWorkspaceAgents
@@ -3307,8 +3296,6 @@ struct AgentDetailView: View {
             videoEnabled: videoEnabled,
             appleScriptEnabled: appleScriptEnabled,
             spawnableAgentIDs: spawnableAgentIDs,
-            spawnableModelNames: spawnableModelNames,
-            spawnableModelNotes: spawnableModelNotes,
             spawnConfiguration: spawnConfiguration,
             autonomousConfig: autonomous,
             knowledgeCollections: collections,
@@ -4190,23 +4177,18 @@ struct AgentDetailView: View {
         if flag == .spawn {
             let configuredAgentIDs = spawnableAgentIDs.filter { $0 != agent.id }
             configuredSpawnTargetCount =
-                configuredAgentIDs.count + spawnableModelNames.count
-                + spawnableWorkspaceAgents.count
+                configuredAgentIDs.count + spawnableWorkspaceAgents.count
             let availability = SpawnDescriptors.resolveForPreview(
                 agentIDs: configuredAgentIDs,
-                modelNames: spawnableModelNames,
-                modelNotes: spawnableModelNotes,
                 launcherModelOverride:
                     subagentModelOverrides[SubagentCapabilityRegistry.spawn.id],
                 workspaceAgents: spawnableWorkspaceAgents
             )
             runnableSpawnTargetCount =
                 availability.runnableAgentIDs.count
-                + availability.runnableModelIds.count
                 + availability.runnableWorkspaceAgents.count
             checkingSpawnTargets =
                 availability.agentTargets.contains { $0.state == .checking }
-                || availability.modelTargets.contains { $0.state == .checking }
         }
 
         let permissionKindId: String = {
@@ -4462,15 +4444,12 @@ struct AgentDetailView: View {
                 modelOverride: spawnModelOverrideBinding,
                 spawnableAgentIDs: $spawnableAgentIDs,
                 spawnableWorkspaceAgents: $spawnableWorkspaceAgents,
-                spawnableModelNames: $spawnableModelNames,
-                spawnableModelNotes: $spawnableModelNotes,
                 permissionDefaults: $subagentPermissions,
                 budgets: sharedSpawnBudgetsBinding,
-                toolAccess: $spawnToolAccess,
                 onChange: debouncedSave
             )
             subagentFootnote(
-                "Local model swapping and memory checks for subagents are system settings in Settings → Subagents."
+                "Local model swapping and memory checks for subagents are system settings in Settings → Orchestrator."
             )
         case .image:
             imageModelPickerRows
@@ -6911,8 +6890,6 @@ struct AgentDetailView: View {
         screenContextEnabled = agent.settings.screenContextEnabled
         spawnableAgentIDs = agent.settings.spawnableAgentIDs
         spawnableWorkspaceAgents = agent.settings.spawnableWorkspaceAgents
-        spawnableModelNames = agent.settings.spawnableModelNames
-        spawnableModelNotes = agent.settings.spawnableModelNotes
         imageGenerationTarget = agent.settings.imageGenerationTarget
         imageEditModelId = agent.settings.imageEditModelId
         textToVideoTarget = agent.settings.textToVideoTarget
@@ -6926,7 +6903,6 @@ struct AgentDetailView: View {
             to: agent.settings.subagentBudgets
         )
         subagentModelOverrides = agent.settings.subagentModelOverrides
-        spawnToolAccess = agent.settings.spawnToolAccess
         // Snapshot the global subagent config for the spawn-handoff warning.
         globalSubagentConfig = globalSpawnConfiguration
         workingFolderPath = agent.workingFolderPath
@@ -7140,20 +7116,11 @@ struct AgentDetailView: View {
                 appleScriptEnabled: appleScriptEnabled,
                 appleScriptModelId: appleScriptModelId,
                 appleScriptExecutionMode: appleScriptExecutionMode,
-                // Persist the configured pools even while Spawn is off. The
-                // capability flag still hides/refuses the tools, while a later
-                // re-enable restores the user's deliberate agents, models, and
-                // routing notes instead of silently destroying them.
+                // Persist the configured pool even while Spawn is off. The
+                // capability flag still hides/refuses the tool, while a later
+                // re-enable restores the user's deliberate agents instead of
+                // silently destroying them.
                 spawnableAgentIDs: spawnableAgentIDs,
-                spawnableModelNames: SubagentConfiguration.normalizedSpawnableModelNames(
-                    spawnableModelNames
-                ),
-                spawnableModelNotes: SubagentConfiguration.normalizedSpawnableModelNotes(
-                    spawnableModelNotes,
-                    names: SubagentConfiguration.normalizedSpawnableModelNames(
-                        spawnableModelNames
-                    )
-                ),
                 // Image models / permissions / budgets persist unconditionally —
                 // a stored model id is ignored while the capability is off, so a
                 // toggle round-trip keeps the user's choices (unlike the spawn
@@ -7172,7 +7139,6 @@ struct AgentDetailView: View {
                 knowledgeEnabled: knowledgeEnabled,
                 knowledgeCollectionIds: knowledgeCollectionIds,
                 knowledgeCuratorEnabled: knowledgeCuratorEnabled,
-                spawnToolAccess: spawnToolAccess,
                 spawnableWorkspaceAgents: spawnableWorkspaceAgents
             ),
             order: current.order

@@ -1017,15 +1017,15 @@ final class ChatWindowState: ObservableObject {
     /// the agent editor). A default, not a lock: a project's folder applied
     /// afterwards (`adoptProjectFolder`) or a pick in the chat replaces it,
     /// and a session restored from history keeps its own persisted folder.
-    /// The Default agent never carries a folder, and a chat that already
-    /// has one (or is mid-restore) is left alone. Returns the follow-up
-    /// task (nil when nothing was applied) so tests can await the sandbox
-    /// change.
+    /// The Orchestrator's folder (Settings → Orchestrator → Working Folder)
+    /// is adopted the same way; a chat that already has one (or is
+    /// mid-restore) is left alone. Returns the follow-up task (nil when
+    /// nothing was applied) so tests can await the sandbox change.
     @discardableResult
     func adoptAgentWorkingFolder(on target: ChatSession? = nil) -> Task<Void, Never>? {
         let target = target ?? session
-        guard let agentId = target.agentId, agentId != Agent.defaultId,
-            target.workspaceContext == nil,
+        let agentId = target.agentId ?? Agent.defaultId
+        guard target.workspaceContext == nil,
             let folder = AgentManager.shared.workingFolder(for: agentId),
             !target.folderState.hasActiveFolder,
             target.folderState.pendingRestore == nil,

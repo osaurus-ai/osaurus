@@ -148,7 +148,7 @@ public enum ConfigManifest {
 
         ConfigSectionSpec(
             .activeAgent,
-            comment: "\"default\" or a custom agent's name",
+            comment: "which agent NEW chats open with: \"default\" or a custom agent's name (legacy key: active_agent)",
             value: .scalar(.string, example: "default")),
 
         ConfigSectionSpec(
@@ -157,11 +157,15 @@ public enum ConfigManifest {
             value: .entityList(
                 [
                     ConfigKeySpec("name", .scalar(.string, example: "Research Agent")),
+                    ConfigKeySpec(
+                        "template", .scalar(.string, example: "researcher", nullable: true),
+                        comment: "optional starter: coder | researcher | writer | assistant | productivity",
+                        moreComments: ["(fills description + system_prompt when omitted)"]),
                     ConfigKeySpec("description", .scalar(.string, example: "\"\"")),
                     ConfigKeySpec("system_prompt", .scalar(.string, example: "\"\"")),
                     ConfigKeySpec(
                         "model", .scalar(.string, example: "null", nullable: true),
-                        comment: "same format as default_agent.model"),
+                        comment: "same format as default_agent.model; omitted = the Orchestrator's model"),
                     ConfigKeySpec(
                         "temperature", .scalar(.number, example: "null", nullable: true),
                         comment: "0..2"),
@@ -191,6 +195,12 @@ public enum ConfigManifest {
                             ConfigKeySpec(
                                 "browser_use_enabled", .scalar(.boolean, example: "false"),
                                 comment: "HIGH RISK"),
+                            ConfigKeySpec(
+                                "image_enabled", .scalar(.boolean, example: "false"),
+                                comment: "image generation/editing (needs an installed image model)"),
+                            ConfigKeySpec(
+                                "applescript_enabled", .scalar(.boolean, example: "false"),
+                                comment: "AppleScript + mac_query (needs an AppleScript model)"),
                             ConfigKeySpec("speak_enabled", .scalar(.boolean, example: "false")),
                             ConfigKeySpec(
                                 "render_chart_enabled", .scalar(.boolean, example: "false")),
@@ -220,12 +230,10 @@ public enum ConfigManifest {
 
         ConfigSectionSpec(
             .delegation,
-            comment: "main-chat subagent delegation and child budgets",
+            comment: "Orchestrator delegation: who it may spawn, permission, worker limits",
             value: .mapping([
                 ConfigKeySpec("local_text_enabled", .scalar(.boolean, example: "true")),
-                ConfigKeySpec("image_enabled", .scalar(.boolean, example: "false")),
                 ConfigKeySpec("video_enabled", .scalar(.boolean, example: "false")),
-                ConfigKeySpec("applescript_enabled", .scalar(.boolean, example: "false")),
                 ConfigKeySpec(
                     "applescript_execution_mode",
                     .scalar(
@@ -235,43 +243,36 @@ public enum ConfigManifest {
                     moreComments: ["(auto_run is HIGH RISK)"]),
                 ConfigKeySpec(
                     "spawnable_agents", .scalarList(.string, example: []),
-                    comment: "custom agent NAMES the main chat may spawn;",
+                    comment: "custom agent NAMES the Orchestrator may spawn;",
                     moreComments: ["replaces the pool"]),
-                ConfigKeySpec(
-                    "spawnable_models", .scalarList(.string, example: []),
-                    comment: "raw model ids; replaces the pool"),
                 ConfigKeySpec(
                     "spawnable_workspace_agents", .scalarList(.string, example: []),
-                    comment: "teammates' shared agents as <workspace_id>:<0x-address>;",
-                    moreComments: ["replaces the pool"]),
+                    comment: "teammates' shared agents as Name@Workspace or",
+                    moreComments: ["<workspace_id>:<0x-address>; replaces the pool"]),
                 ConfigKeySpec(
-                    "spawn_tool_access",
-                    .scalar(
-                        .string, example: "none",
-                        allowed: ConfigAppBehaviorEnums.spawnToolAccessValues),
-                    comment: "none | read_only child tool grant"),
+                    "workspace_auto_join",
+                    .freeformMap(.boolean, exampleKey: "<workspace name or id>", exampleValue: "true"),
+                    comment: "false stops that workspace's shared agents joining",
+                    moreComments: ["the pool (default true); merge"]),
                 ConfigKeySpec(
                     "permission_defaults",
                     .freeformMap(
                         .string, allowedValues: ConfigAppBehaviorEnums.permissionPolicies,
-                        exampleKey: "spawn", exampleValue: "ask"),
-                    comment: "kind id (spawn | image | video | applescript |",
+                        exampleKey: "spawn", exampleValue: "always_allow"),
+                    comment: "kind id (spawn | spawn_workspace | image | video |",
                     moreComments: [
-                        "computer_use | browser_use) -> ask | deny |",
-                        "always_allow (always_allow is HIGH RISK); merge",
+                        "applescript | computer_use | browser_use) -> ask |",
+                        "deny | always_allow; merge",
                     ]),
                 ConfigKeySpec(
-                    "budget_max_tokens", .scalar(.integer, example: "2048"),
-                    comment: "256..32768 per child"),
+                    "budget_max_tokens", .scalar(.integer, example: "8192"),
+                    comment: "256..65536 per worker turn"),
                 ConfigKeySpec(
-                    "budget_max_turns", .scalar(.integer, example: "2"),
-                    comment: "1..8"),
+                    "budget_max_turns", .scalar(.integer, example: "24"),
+                    comment: "1..100 tool-call rounds per worker"),
                 ConfigKeySpec(
-                    "budget_max_tool_calls", .scalar(.integer, example: "0"),
-                    comment: "0..32 (0 = built-in default cap)"),
-                ConfigKeySpec(
-                    "budget_max_seconds", .scalar(.integer, example: "120"),
-                    comment: "15..1800"),
+                    "budget_max_seconds", .scalar(.integer, example: "900"),
+                    comment: "15..3600"),
                 ConfigKeySpec(
                     "budget_max_parallel_spawns", .scalar(.integer, example: "3"),
                     comment: "1..32 local workers per wave (mirrors Server Concurrent Sessions)"),

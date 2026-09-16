@@ -1,5 +1,5 @@
 {
-  "id": "subagent.scripted-batch-one-failure-siblings-settle",
+  "id": "subagent.scripted-wave-one-failure-siblings-settle",
   "domain": "subagent",
   "label": "Subagent • one child fails while siblings settle",
   "query": "One child fails in a three-child remote fan-out and the parent receives the complete aggregate.",
@@ -10,7 +10,7 @@
       "lane": "scripted",
       "decision": "allow",
       "phases": ["running"],
-      "scriptedBatch": [
+      "scriptedWave": [
         {
           "id": "remote-ok-a",
           "target": "scripted-remote",
@@ -40,19 +40,19 @@
       ],
       "expectSuccess": true,
       "expectEnvelopeKind": "success",
-      "expectResultKind": "spawn_batch_result",
+      "expectResultKind": "spawn_wave_result",
       "expectMaxConcurrent": 3,
       "expectRunsCompleted": 2,
       "expectRunsSettled": 3,
       "expectRunEnvelopeKinds": ["success", "execution_error", "success"],
-      "expectBatchAggregateStatus": "partial_failure",
-      "expectBatchJobIDs": ["remote-ok-a", "remote-fail", "remote-ok-b"],
-      "expectBatchSummaries": [
+      "expectWaveAggregateStatus": "partial_failure",
+      "expectWaveJobIDs": ["remote-ok-a", "remote-fail", "remote-ok-b"],
+      "expectWaveSummaries": [
         "remote A complete",
         "scripted execution failure (run)",
         "remote B complete"
       ],
-      "expectBatchPayloadFields": [
+      "expectWavePayloadFields": [
         {
           "kind": "remote_result",
           "model": "scripted-remote",

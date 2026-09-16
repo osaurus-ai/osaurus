@@ -269,12 +269,18 @@ public final class AgentManager: ObservableObject {
     /// Reload agents from disk
     public func refresh() {
         let loaded = AgentStore.loadAll()
+        let liveIDs = Set(loaded.map(\.id))
         let migrated = loaded.map { agent -> Agent in
-            guard !agent.isBuiltIn, !agent.settings.legacySpawnableAgentNames.isEmpty else {
-                return agent
-            }
+            guard !agent.isBuiltIn else { return agent }
             var updated = agent
-            updated.settings = agent.settings.migratingLegacySpawnableAgents(using: loaded)
+            if !agent.settings.legacySpawnableAgentNames.isEmpty {
+                updated.settings = agent.settings.migratingLegacySpawnableAgents(using: loaded)
+            }
+            // Stale allow-list entries (deleted agents) are dropped on every
+            // load so no launcher can advertise a target that cannot resolve.
+            updated.settings.spawnableAgentIDs = updated.settings.spawnableAgentIDs.filter {
+                liveIDs.contains($0)
+            }
             if updated.settings != agent.settings {
                 AgentStore.save(updated)
             }
@@ -283,6 +289,7 @@ public final class AgentManager: ObservableObject {
         installAgentSnapshot(migrated)
         SubagentConfigurationStore.migrateLegacyAgentNames(using: migrated)
         SubagentConfigurationStore.seedSpawnPoolIfNeeded(with: migrated)
+        SubagentConfigurationStore.reconcile(with: migrated)
     }
 
     /// Return one Agent plus the three Spawn-scoped generations from the same
@@ -817,6 +824,9 @@ public final class AgentManager: ObservableObject {
         _ = SubagentConfigurationStore.mutate { config in
             config.spawnableAgentIDs.removeAll { $0 == id }
         }
+        // …and from every remaining custom agent's own allow-list, so no
+        // launcher anywhere keeps advertising a target that no longer exists.
+        pruneSpawnableAgentID(id)
 
         refresh()
 
@@ -877,6 +887,72 @@ public final class AgentManager: ObservableObject {
 
         let cleanupNotice = await SandboxAgentProvisioner.shared.unprovision(agentId: id).notice
         return AgentDeleteResult(deleted: true, sandboxCleanupNotice: cleanupNotice)
+    }
+
+    /// Remove `id` from every stored custom agent's `spawnableAgentIDs` and
+    /// persist the ones that changed. Runs on delete; `pruneStaleSpawnableAgentIDs`
+    /// runs the same sweep across all ids on load.
+    private func pruneSpawnableAgentID(_ id: UUID) {
+        for var agent in AgentStore.loadAll() where !agent.isBuiltIn {
+            guard agent.settings.spawnableAgentIDs.contains(id) else { continue }
+            agent.settings.spawnableAgentIDs.removeAll { $0 == id }
+            agent.updatedAt = Date()
+            AgentStore.save(agent)
+        }
+    }
+
+    /// Drop every `spawnableAgentIDs` entry (Orchestrator pool and each custom
+    /// agent's allow-list) that no longer names a live agent. Agent UUIDs are
+    /// never reused, so an id with no agent behind it can only be a leftover
+    /// from a deletion that raced an open editor or an older build.
+    func pruneStaleSpawnableAgentIDs() {
+        let stored = AgentStore.loadAll()
+        let live = Set(stored.map(\.id)).union([Agent.defaultId])
+        for var agent in stored where !agent.isBuiltIn {
+            let pruned = agent.settings.spawnableAgentIDs.filter { live.contains($0) }
+            guard pruned.count != agent.settings.spawnableAgentIDs.count else { continue }
+            agent.settings.spawnableAgentIDs = pruned
+            AgentStore.save(agent)
+        }
+        _ = SubagentConfigurationStore.mutate { config in
+            config.spawnableAgentIDs.removeAll { !live.contains($0) }
+        }
+    }
+
+    /// Create the three starter agents (Coder, Researcher, Writer) from
+    /// `AgentStarterTemplate` and add them to the Orchestrator's pool. Skips
+    /// a template whose name already exists (case-insensitive) so the action
+    /// is idempotent. New agents inherit the Orchestrator's current model so
+    /// delegation never triggers a model swap out of the box.
+    @discardableResult
+    func createStarterAgents(
+        _ templates: [AgentStarterTemplate] = [.coder, .researcher, .writer]
+    ) -> [Agent] {
+        let existing = Set(agents.map { $0.name.lowercased() })
+        let model = orchestratorModelForNewAgents()
+        var created: [Agent] = []
+        for template in templates where template != .blank {
+            let name = template.defaultName
+            guard !existing.contains(name.lowercased()) else { continue }
+            let agent = create(
+                name: name,
+                description: template.tagline,
+                systemPrompt: template.systemPrompt,
+                defaultModel: model
+            )
+            created.append(agent)
+        }
+        return created
+    }
+
+    /// The model a new agent inherits when none is given: the Orchestrator's
+    /// current model (falling back to the chat default). Same-model workers
+    /// never trigger a local model swap out of the box.
+    public func orchestratorModelForNewAgents() -> String? {
+        let model = DefaultAgentConfigurationStore.load().defaultModel
+            ?? ChatConfigurationStore.load().defaultModel
+        let trimmed = model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
     }
 
     /// Get an agent by ID
@@ -1018,12 +1094,19 @@ extension AgentManager {
 
     // MARK: - Working folder (sticky per agent)
 
-    /// The agent's persisted working folder, or nil when the agent has none,
-    /// is unknown, or is the built-in Default agent (which never carries a
-    /// folder — its chats show no folder chip). Either component may be nil
-    /// on its own: a stale bookmark leaves the path as a plain-path fallback.
+    /// The agent's persisted working folder, or nil when the agent has none
+    /// or is unknown. The built-in Orchestrator (`Agent.defaultId`) stores
+    /// its folder in `DefaultAgentConfiguration` (read-only for itself,
+    /// inherited read/write by folder-less subagents). Either component may
+    /// be nil on its own: a stale bookmark leaves the path as a plain-path
+    /// fallback.
     public func workingFolder(for agentId: UUID) -> (bookmark: Data?, path: String?)? {
-        guard agentId != Agent.defaultId, let agent = agent(for: agentId) else { return nil }
+        if agentId == Agent.defaultId {
+            let config = DefaultAgentConfigurationStore.load()
+            guard config.hasWorkingFolder else { return nil }
+            return (config.workingFolderBookmark, config.workingFolderPath)
+        }
+        guard let agent = agent(for: agentId) else { return nil }
         let hasFolder =
             agent.workingFolderBookmark != nil || agent.workingFolderPath?.isEmpty == false
         guard hasFolder else { return nil }
@@ -1033,13 +1116,22 @@ extension AgentManager {
     /// Remember `bookmark`/`path` as the agent's working folder so every
     /// fresh chat and every folder-less dispatch for this agent inherits it.
     /// Called by the composer folder chip (the chip is the source of truth:
-    /// the last user pick wins) and by the agent editor. No-op for the
-    /// Default agent and for unknown ids. Pass both nil to forget the folder
-    /// (see `clearWorkingFolder`).
+    /// the last user pick wins) and by the agent editor. The Orchestrator's
+    /// folder lands in `DefaultAgentConfiguration`. No-op for unknown ids.
+    /// Pass both nil to forget the folder (see `clearWorkingFolder`).
     public func updateWorkingFolder(for agentId: UUID, bookmark: Data?, path: String?) {
-        guard agentId != Agent.defaultId else { return }
-        guard var agent = agent(for: agentId), !agent.isBuiltIn else { return }
         let normalizedPath = path?.isEmpty == false ? path : nil
+        if agentId == Agent.defaultId {
+            var config = DefaultAgentConfigurationStore.load()
+            guard config.workingFolderBookmark != bookmark || config.workingFolderPath != normalizedPath
+            else { return }
+            config.workingFolderBookmark = bookmark
+            config.workingFolderPath = normalizedPath
+            DefaultAgentConfigurationStore.save(config)
+            NotificationCenter.default.post(name: .agentUpdated, object: agentId)
+            return
+        }
+        guard var agent = agent(for: agentId), !agent.isBuiltIn else { return }
         guard agent.workingFolderBookmark != bookmark || agent.workingFolderPath != normalizedPath
         else { return }
         agent.workingFolderBookmark = bookmark
@@ -1271,8 +1363,6 @@ extension AgentManager {
             appleScriptEnabled: agent.settings.appleScriptEnabled,
             spawnableAgentIDs: agent.settings.spawnableAgentIDs,
             spawnableAgentNames: agent.settings.legacySpawnableAgentNames,
-            spawnableModelNames: agent.settings.spawnableModelNames,
-            spawnableModelNotes: agent.settings.spawnableModelNotes,
             spawnableWorkspaceAgents: agent.settings.spawnableWorkspaceAgents,
             knowledgeEnabled: agent.settings.knowledgeEnabled,
             knowledgeCollectionIds: agent.settings.knowledgeCollectionIds,

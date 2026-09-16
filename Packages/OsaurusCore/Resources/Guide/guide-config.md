@@ -17,11 +17,11 @@ Osaurus's entities can be configured from a single YAML document that describes 
 The document has 16 sections (plus `version`):
 
 - `memory` — persistent memory: enabled, token budget, retention days.
-- `default_agent` — the built-in Default agent (the Orchestrator): display name, model, temperature, max tokens, persona, tools on/off.
-- `active_agent` — which agent is active in chat (switch by name).
-- `agents` — custom agents: prompt, model, sampling, and per-agent capability toggles (tools, web search, browser, computer use, relay, knowledge collections, …).
+- `default_agent` — the built-in Default agent (the Orchestrator): display name, model, temperature, max tokens, persona.
+- `new_chat_agent` — which agent **new** chats open with: `default` or a custom agent's name. (`active_agent` is still accepted as a legacy spelling; exports write `new_chat_agent`.)
+- `agents` — custom agents: prompt, model, sampling, and per-agent capability toggles (tools, web search, browser, computer use, relay, knowledge collections, …). `template: coder | researcher | writer | assistant | productivity` fills in the description and system prompt when they are omitted; an omitted `model` means the Orchestrator's current model.
 - `tools` — global tool enablement and per-tool policies (`auto` / `ask` / `deny`).
-- `delegation` — subagent budgets (tokens, turns, tool calls, seconds, parallel spawns), spawnable agents, permission defaults, RAM-safety preflight.
+- `delegation` — the Orchestrator's pool and limits: `spawnable_agents` (custom agent names), `spawnable_workspace_agents` (teammates' shared agents), `workspace_auto_join`, `permission_defaults` (`spawn`, `spawn_workspace`, …), the per-subagent budgets (`budget_max_tokens`, `budget_max_turns`, `budget_max_seconds`, `budget_max_parallel_spawns`, `budget_max_remote_parallel_spawns`), RAM-safety preflight. See "Delegation" below.
 - `commands` — user slash-command templates.
 - `knowledge_collections` — folder-backed knowledge collections with include/exclude globs.
 - `channels` — messaging platforms (Telegram, Slack, …): read limits, allowlists, write enables, and the global write kill switch.
@@ -33,6 +33,29 @@ The document has 16 sections (plus `version`):
 - `schedules` — scheduled agent runs (interval, daily, weekly, cron).
 - `watchers` — folder/file watchers that trigger an agent.
 
+## Delegation
+
+```yaml
+delegation:
+  spawnable_agents: [Coder, Researcher]           # replaces the local pool
+  spawnable_workspace_agents:
+    - Research@Acme                                # Name@Workspace …
+    - ws-1234:0x0123456789abcdef0123456789abcdef01234567   # … or the durable key
+  workspace_auto_join:
+    Acme: false                                    # stop this workspace's shared agents auto-joining
+  permission_defaults:
+    spawn: always_allow                            # local agents (default)
+    spawn_workspace: ask                           # teammates' shared agents (default)
+  budget_max_tokens: 8192                          # per worker turn, 256..65536
+  budget_max_turns: 24                             # tool-call rounds per worker, 1..100
+  budget_max_seconds: 900                          # 15..3600
+  budget_max_parallel_spawns: 3                    # local workers per wave
+  budget_max_remote_parallel_spawns: 8             # remote workers per wave
+```
+
+- `spawnable_workspace_agents` entries are resolved against the live workspace rosters: `Name@Workspace` (workspace display name or id, case-insensitive), a bare name when it is unique, a `0x…` address, or the durable `<workspace_id>:<address>` key. A name that matches more than one agent fails validation and lists the exact forms that disambiguate. Both `spawnable_*` lists replace the pool; `workspace_auto_join` and `permission_defaults` merge.
+- Removed keys — `spawnable_models`, `spawn_tool_access`, `budget_max_tool_calls`, `image_enabled`, `applescript_enabled` — are still decoded from old documents (with a hint) and never exported. Image and AppleScript are custom-agent capabilities; turns and time bound a worker.
+
 ## Semantics
 
 - **Merge by default.** A key absent from the document is left unchanged. An explicit `null` clears an optional override back to its default.
@@ -41,7 +64,7 @@ The document has 16 sections (plus `version`):
 - **Prune is explicit and destructive.** Prune is a *tool/CLI argument*, never a document key. Applying with prune additionally deletes entries *not* listed in the sections the document declares — it never touches undeclared sections. A prune that would delete an agent while a surviving schedule or watcher still runs on it is refused; delete or reassign them in the same document.
 - **Validation is all-or-nothing.** Any invalid key, value, or reference fails the whole document with every issue listed — nothing is half-applied.
 - **Model ids are grounded.** `default_agent.model` and `agents[].model` accept `foundation` (the built-in Apple Foundation on-device model), an installed local model id, or a cloud model as `<provider>/<model>` (the provider name lowercased, e.g. `anthropic/claude-x`). A bare cloud id is auto-prefixed when exactly one provider offers it; an id nothing offers fails validation instead of silently leaving the agent without a working model.
-- **High-risk changes always require approval**: prune deletions, screen/browser grants, agent relay exposure, new MCP endpoints, stdio MCP commands, channel write enables, setting a tool policy to `auto`, loosening delegation permissions.
+- **High-risk changes always require approval**: prune deletions, screen/browser grants, agent relay exposure, new MCP endpoints, stdio MCP commands, channel write enables, setting a tool policy to `auto`, loosening delegation permissions (including `spawn_workspace` to `always_allow`).
 - **JSON works everywhere YAML does.** `export` and `schema` accept `format: json` (CLI: `--format json`), and `plan`/`apply` accept a JSON document in the same field — JSON is a YAML subset, with the same strict unknown-key validation.
 
 ## Secrets
@@ -77,5 +100,5 @@ Ask the assistant to "show the configuration schema" (it calls `osaurus_config` 
 
 Two classes, both by design:
 
-- **Removed from the declarative surface** (Settings UI only): server runtime (port, network exposure, generation defaults, caches, concurrency, model exposure), chat behavior (core model), app shell (login item, dock icon, appearance/themes/toasts), voice/wake words, global computer-use presets, sandbox resources, privacy filter, and image-generation targets. Per-agent capability *toggles* (computer use, browser, relay, …) remain declarative under `agents[].capabilities`. Skills are read-only via `osaurus_inspect` — installing a skill is content acquisition, not configuration state.
+- **Removed from the declarative surface** (Settings UI only): server runtime (port, network exposure, generation defaults, caches, concurrency, model exposure), chat behavior (core model), app shell (login item, dock icon, appearance/themes/toasts), voice/wake words, global computer-use presets, sandbox resources, privacy filter, image-generation targets, the Orchestrator's working folder, and the agent-target model override. Per-agent capability *toggles* (computer use, browser, relay, …) remain declarative under `agents[].capabilities`. Skills are read-only via `osaurus_inspect` — installing a skill is content acquisition, not configuration state.
 - **Inherently interactive**: macOS permission (TCC) grants, OAuth sign-in and device pairing, hotkey capture, folder pickers/bookmarks, download progress, destructive resets, and payment.

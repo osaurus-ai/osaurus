@@ -1073,273 +1073,147 @@ public enum SystemPromptTemplates {
 
     // MARK: - Spawn (delegation)
 
-    /// Dynamic guidance for the spawn family, rendered by the composer when
-    /// either spawn tool resolves into the schema. Unlike the static capability
-    /// guidance, this enumerates the launching agent's ACTUAL spawnable targets
-    /// (resolved into `SpawnAgentDescriptor` / `SpawnModelDescriptor`) so the
-    /// model sees what `spawn_agent` / `spawn_model` can reach — stable agent
-    /// UUIDs plus display names, locality,
-    /// provider, size/quant, vision, the agent description, and the user's
-    /// per-model note. Each tool's block is included only when that tool is
-    /// available (its pool is non-empty), so the prompt never advertises a spawn
-    /// path the model can't invoke. Editing a pool re-renders this block (a
-    /// one-time cached-prefix bust), matching the other config-driven sections.
+    /// Dynamic guidance for `spawn_agent`, rendered by the composer when the
+    /// tool resolves into the schema. Unlike the static capability guidance,
+    /// this enumerates the launching agent's ACTUAL spawnable targets
+    /// (`SpawnAgentDescriptor` / `SpawnWorkspaceAgentDescriptor`) so the
+    /// model sees exactly who it can delegate to. Deliberately short and
+    /// vocabulary-light (one tool, one parallelism rule, one follow-up rule,
+    /// one results rule) so small local models follow it. Editing a pool
+    /// re-renders this block (a one-time cached-prefix bust), matching the
+    /// other config-driven sections.
     public static func spawnGuidance(
         agents: [SpawnAgentDescriptor],
-        models: [SpawnModelDescriptor],
         workspaceAgents: [SpawnWorkspaceAgentDescriptor] = [],
-        availableToolNames: Set<String>? = nil,
-        toolAccess: SpawnToolAccess = .none,
         maxParallel: Int = 1,
-        maxRemoteParallel: Int = SubagentBudgets.defaultMaxRemoteParallelSpawns
+        maxRemoteParallel: Int = SubagentBudgets.defaultMaxRemoteParallelSpawns,
+        launcherHasFolder: Bool = false
     ) -> String {
-        let agentToolAvailable =
-            availableToolNames?.contains(SubagentCapabilityRegistry.spawnAgentToolName)
-            ?? !(agents.isEmpty && workspaceAgents.isEmpty)
-        let modelToolAvailable =
-            availableToolNames?.contains(SubagentCapabilityRegistry.spawnModelToolName)
-            ?? !models.isEmpty
-        let batchToolAvailable =
-            availableToolNames?.contains(SubagentCapabilityRegistry.spawnBatchToolName)
-            ?? true
-        let singleToolAvailable = agentToolAvailable || modelToolAvailable
-        var lines: [String] = ["## Delegating subtasks (spawn)", ""]
+        var lines: [String] = ["## Delegating work (spawn_agent)", ""]
         lines.append(
-            "- You can hand a bounded, self-contained subtask to a worker and get back ONLY a "
-                + "compact result digest — the worker's transcript never enters this conversation, "
-                + "so delegating context-heavy work costs you a digest instead of everything the "
-                + "worker read and produced. Locating or changing Osaurus Settings is NOT a "
-                + "worker job — use `osaurus_help` find/read yourself; never spawn Computer Use "
-                + "to click through Management."
+            "- `spawn_agent(input, agent)` runs a task on one of your agents and returns its final "
+                + "answer. The agent runs with its own prompt, model, and tools; it cannot see this "
+                + "chat, so `input` must be the complete standalone task (goal, inputs, constraints, "
+                + "expected output). Pick the agent whose description fits the task best."
         )
         lines.append(
-            "- Offload work that would bloat this context: bulk reading + summarization, research "
-                + "and extraction over long material, log/error triage, first drafts. Prefer a "
-                + "small/local worker for that kind of work when one is listed; keep orchestration "
-                + "and the final answer to the user here."
+            parallelSpawnGuidance(maxParallel: maxParallel, maxRemoteParallel: maxRemoteParallel)
         )
         lines.append(
-            parallelSpawnGuidance(
-                singleToolAvailable: singleToolAvailable,
-                batchToolAvailable: batchToolAvailable,
-                maxParallel: maxParallel,
-                maxRemoteParallel: maxRemoteParallel
-            )
+            "- To follow up with the same agent (give feedback, answer its question, ask for the next "
+                + "step), call `spawn_agent` again with `continue` set to the `session_id` from its "
+                + "result. A result that starts with `NEEDS INPUT:` is a question for you: answer "
+                + "it via `continue` (ask the user only when you truly cannot answer)."
+        )
+        lines.append(
+            "- `background: true` returns immediately for long jobs; the result arrives later as a "
+                + "follow-up message. Do not poll or re-send the task."
+        )
+        lines.append(agentWorkingFolderGuidance(agents: agents, launcherHasFolder: launcherHasFolder))
+        lines.append(
+            "- Locating or changing Osaurus settings is never delegated: use `osaurus_help` / "
+                + "`osaurus_config` yourself."
         )
         if !agents.isEmpty {
-            if agentToolAvailable {
-                lines.append(
-                    "- `spawn_agent(input, agent)` runs the task on a configured agent (its own system "
-                        + "prompt + model). Pass the agent's exact display name (or its UUID) as `agent` — "
-                        + "each is shown below. Available agents:"
-                )
-            } else if batchToolAvailable {
-                lines.append("- Available agent targets for `spawn_batch`:")
-            }
+            lines.append("- Your agents (pass the exact name as `agent`):")
             for agent in agents { lines.append("  - " + agentLine(agent)) }
         }
         if !workspaceAgents.isEmpty {
-            // Durable roster facts only (address, name, description, workspace,
-            // owner). No model — the host decides it — and no presence: that
-            // is probed when the spawn runs, and a miss comes back as a tool
-            // result, so this block never changes when a teammate goes offline.
-            if agentToolAvailable {
-                lines.append(
-                    "- `spawn_agent(input, agent)` can also run the task on a teammate's shared "
-                        + "workspace agent (it runs on THEIR Mac, with their agent's prompt, model and "
-                        + "tools). Pass the agent's exact display name (or its `0x…` address) as "
-                        + "`agent`. Available workspace agents:"
-                )
-            } else if batchToolAvailable {
-                lines.append("- Available workspace agent targets for `spawn_batch`:")
-            }
+            // Durable roster facts only (name, description, workspace, owner).
+            // No model — the host decides it — and no presence: that is probed
+            // when the spawn runs, and a miss comes back as a tool result, so
+            // this block never changes when a teammate goes offline.
+            lines.append(
+                "- Teammates' shared agents run on THEIR Mac with their prompt, model, and tools; "
+                    + "pass `Name@Workspace` or the `0x…` address as `agent`. They cannot see your "
+                    + "folder or files — put the content in `input`. If one reports offline, "
+                    + "choose another agent or tell the user. Their files stay on the teammate's "
+                    + "Mac unless returned in the answer or shared as an artifact:"
+            )
             for agent in workspaceAgents { lines.append("  - " + workspaceAgentLine(agent)) }
-            lines.append(
-                "- Workspace agents run on a teammate's Mac; if a spawn reports the agent "
-                    + "offline, choose another target or tell the user. Files a workspace agent "
-                    + "writes or shares stay on its host — ask it to include deliverable content "
-                    + "in its final message."
-            )
         }
-        if !models.isEmpty {
-            if modelToolAvailable {
-                lines.append(
-                    "- `spawn_model(input, model)` runs the task on a bare model id, no agent attached. "
-                        + "Available models:"
-                )
-            } else if batchToolAvailable {
-                lines.append("- Available model targets for `spawn_batch`:")
-            }
-            for model in models { lines.append("  - " + modelLine(model)) }
-        }
-        if batchToolAvailable {
-            lines.append(
-                "- `spawn_batch(jobs)` is the same fan-out written as one explicit job list. "
-                    + "Each job needs a unique `id`, `target_type` (`agent` or `model`), exact `target`, "
-                    + "and complete `input`; every result comes back in one envelope, in input order, "
-                    + "matched by `id`. Use it when you want the whole set of results in one place."
-            )
-        }
-        if !agents.isEmpty, agentToolAvailable || batchToolAvailable {
-            lines.append(agentWorkingFolderGuidance(agents: agents))
-        }
-        switch toolAccess {
-        case .readOnly:
-            lines.append(
-                "- Bare-model workers (`spawn_model`) receive only the added host file_read / "
-                    + "file_search tools within a per-run call budget — so you can delegate "
-                    + "\"read these files and report X\" with exact paths in `input` instead of "
-                    + "pasting file contents. They cannot write files."
-            )
-        case .none:
-            lines.append(
-                "- Bare-model workers (`spawn_model`) have no tools. No extra generic read-only "
-                    + "file tools are added, so include any material not reachable through a "
-                    + "configured target agent in `input`."
-            )
-        }
-        lines.append(
-            "- A direct-chat tool omitted from a worker's schema remains parent-owned. Do not "
-                + "delegate a side effect that the selected worker cannot actually call."
-        )
-        lines.append(
-            "- Workers deliver FILES as artifacts when the file should land in THIS "
-                + "conversation (or the worker has no working folder): a worker's "
-                + "`share_artifact` passes through as an artifact card once the spawn returns "
-                + "(the result carries only an `artifacts_shared` count). For such a file/code "
-                + "deliverable, tell the worker to share the file with `share_artifact` and "
-                + "reply with a short summary — never ask a worker to paste full file contents "
-                + "into its answer; long replies are truncated in the digest."
-        )
-        lines.append(
-            "- `input` must be the COMPLETE task as a self-contained prompt — the worker sees only that, "
-                + "not this conversation. Pick the target whose description or note best fits the task; "
-                + "if none clearly fits, just do it yourself rather than guessing."
-        )
-        lines.append(
-            "- Remote/cloud workers run concurrently. Local workers for the SAME model share one "
-                + "load and may batch together; different local models are serialized so they cannot "
-                + "race GPU residency or repeatedly unload the parent."
-        )
-        lines.append(
-            "- `background: true` on `spawn_agent` / `spawn_model` returns immediately; the worker's "
-                + "result arrives later as a follow-up message. Use it for long jobs you do not need "
-                + "before your next step."
-        )
         return lines.joined(separator: "\n")
     }
 
-    /// The one fan-out story the model is told, regardless of which spawn
-    /// tools are in its schema: several spawn calls in one message ARE a
-    /// batch (one approval, shared limits, concurrent execution), and
-    /// `spawn_batch` is the same thing written as an explicit job list.
-    static func parallelSpawnGuidance(
-        singleToolAvailable: Bool,
-        batchToolAvailable: Bool,
-        maxParallel: Int,
-        maxRemoteParallel: Int
-    ) -> String {
-        let limits =
-            "Limits per wave: up to \(maxParallel) local-model workers and "
-            + "\(maxRemoteParallel) remote-model workers at once; extra calls beyond a limit are "
-            + "refused with a typed result and can be run after the others finish."
-        switch (singleToolAvailable, batchToolAvailable) {
-        case (true, true):
-            return
-                "- Each `spawn_agent` / `spawn_model` call is one worker. To run several INDEPENDENT "
-                + "workers at once, emit all the spawn calls together in ONE message — they run as one "
-                + "batch (one approval, shared limits, concurrent execution) and each call returns its "
-                + "own digest. `spawn_batch(jobs)` is the same fan-out as one explicit job list with one "
-                + "combined result. Never spawn independent work one message at a time. " + limits
-        case (true, false):
-            return
-                "- Each `spawn_agent` / `spawn_model` call is one worker. To run several INDEPENDENT "
-                + "workers at once, emit all the spawn calls together in ONE message — they run as one "
-                + "batch (one approval, shared limits, concurrent execution) and each call returns its "
-                + "own digest. Never spawn independent work one message at a time. " + limits
-        case (false, true):
-            return
-                "- `spawn_batch(jobs)` runs several INDEPENDENT workers at once with one approval and "
-                + "one combined, input-ordered result. Put all independent jobs in one call instead "
-                + "of spawning one message at a time. " + limits
-        case (false, false):
-            return "- " + limits
-        }
+    /// The one fan-out rule: several `spawn_agent` calls in one message run
+    /// in parallel with one approval; extras beyond the limits are refused
+    /// with a retryable result.
+    static func parallelSpawnGuidance(maxParallel: Int, maxRemoteParallel: Int) -> String {
+        "- To run several independent tasks at once, call `spawn_agent` several times in the SAME "
+            + "message (up to \(maxParallel) local and \(maxRemoteParallel) remote/workspace agents at "
+            + "once); each call returns its own answer. Never send independent tasks one message at "
+            + "a time."
     }
 
-    /// One `spawn_agent` target line: `` `uuid` — name `` — description (meta).
+    /// One `spawn_agent` target line: `` `name` `` — description (meta).
     private static func agentLine(_ agent: SpawnAgentDescriptor) -> String {
-        var line = "`\(agent.id.uuidString)` — \(agent.name)"
+        var line = "`\(agent.name)`"
         if let description = agent.description, !description.isEmpty {
             line += " — \(description)"
         }
         var meta: [String] = []
-        if let isLocal = agent.isLocal { meta.append(isLocal ? "local" : "remote") }
-        if let provider = agent.providerName, !provider.isEmpty { meta.append(provider) }
-        if let modelId = agent.modelId, !modelId.isEmpty { meta.append("model: \(modelId)") }
-        if let folder = agent.workingFolderPath, !folder.isEmpty {
-            meta.append("working folder: \(folder)")
+        if let modelId = agent.modelId, !modelId.isEmpty {
+            var model = modelId
+            if let isLocal = agent.isLocal { model += isLocal ? " (local)" : " (remote)" }
+            if let provider = agent.providerName, !provider.isEmpty, agent.isLocal == false {
+                model += " via \(provider)"
+            }
+            meta.append("model: \(model)")
         }
-        if !meta.isEmpty { line += " (" + meta.joined(separator: " · ") + ")" }
+        if let folder = agent.workingFolderPath, !folder.isEmpty {
+            meta.append("own folder: \(folder)")
+        }
+        if !meta.isEmpty { line += " · " + meta.joined(separator: " · ") }
         return line
     }
 
-    /// The agent-target capability line. A delegated agent is a REAL chat
-    /// session of the target agent (`AgentDelegationDispatcher`), so it
-    /// carries that agent's own enabled tools — and, when the agent has a
-    /// configured Working Folder, the host file tools rooted there. The
-    /// orchestrator has no folder of its own, so this is the only way a
-    /// "save X to disk" request can complete through delegation; the line
-    /// names which listed agents can do it (issue #2703). Pure.
-    static func agentWorkingFolderGuidance(agents: [SpawnAgentDescriptor]) -> String {
+    /// The working-folder / deliverables rule. A delegated agent is a REAL
+    /// chat session of the target agent (`AgentDelegationDispatcher`) with
+    /// that agent's own enabled tools (minus spawn tools and `clarify`). It
+    /// works in its own Working Folder when it has one, otherwise in the
+    /// launcher's folder (inherited), so a "save X to disk" request completes
+    /// through delegation whenever either side has a folder. Pure.
+    static func agentWorkingFolderGuidance(
+        agents: [SpawnAgentDescriptor],
+        launcherHasFolder: Bool
+    ) -> String {
         let withFolder = agents.filter { $0.workingFolderPath?.isEmpty == false }
         var text =
-            "- Agent targets run as a full chat session of that agent with its own enabled "
-            + "tools (their spawn tools and `clarify` are removed). "
-        if withFolder.isEmpty {
+            "- Agents run with their own enabled tools (only spawning and `clarify` are removed). "
+        if launcherHasFolder {
             text +=
-                "None of the listed agents has a working folder, so no agent worker can read "
-                + "or write files on disk — use `share_artifact` for file deliverables."
-        } else {
-            let names = withFolder.map { "\($0.name)" }.joined(separator: ", ")
+                "Agents without their own folder work in YOUR working folder, so they can read and "
+                + "write files there; ask them to save deliverables (reports, code, data) to a "
+                + "relative path and reply with a short summary naming the files, then read what "
+                + "you need with `file_read`. "
+        } else if withFolder.isEmpty {
             text +=
-                "An agent that lists a working folder (\(names)) can READ and WRITE files there "
-                + "with its file tools: delegate \"save/write X to <relative path>\" tasks to such "
-                + "an agent and put the exact relative path in `input`; its files land in that "
-                + "folder on disk and its digest names them. Agents without a working folder "
-                + "cannot write to disk — ask those to use `share_artifact` instead."
+                "You have no working folder and none of the listed agents has one, so agents "
+                + "cannot write files to disk — ask for the result in the answer, or for a file "
+                + "via `share_artifact`. "
         }
+        if !withFolder.isEmpty {
+            let names = withFolder.map(\.name).joined(separator: ", ")
+            text +=
+                "\(names) work in their own folder (listed below) and can read and write files "
+                + "there. "
+        }
+        text +=
+            "An agent's `share_artifact` hands a file to the user as a card in this chat."
         return text
     }
 
-    /// One workspace `spawn_agent` target line: `` `0x…` — Name — description
-    /// (workspace: <ws> · owner) ``. Model and presence are deliberately absent
-    /// (see `spawnGuidance`).
+    /// One workspace `spawn_agent` target line: `` `Name@Workspace` `` —
+    /// description (`0x…` · owner). Model and presence are deliberately
+    /// absent (see `spawnGuidance`).
     private static func workspaceAgentLine(_ agent: SpawnWorkspaceAgentDescriptor) -> String {
-        var line = "`\(agent.ref.agentAddress)` — \(agent.name)"
+        var line = "`\(agent.qualifiedName)`"
         if let description = agent.description, !description.isEmpty {
             line += " — \(description)"
         }
-        var meta: [String] = []
-        if let workspace = agent.workspaceName, !workspace.isEmpty {
-            meta.append("workspace: \(workspace)")
-        }
-        if let owner = agent.ownerName, !owner.isEmpty { meta.append(owner) }
-        if !meta.isEmpty { line += " (" + meta.joined(separator: " · ") + ")" }
-        return line
-    }
-
-    /// One `spawn_model` target line: `` `id` `` (meta) — note.
-    private static func modelLine(_ model: SpawnModelDescriptor) -> String {
-        var line = "`\(model.id)`"
-        var meta: [String] = []
-        if let isLocal = model.isLocal { meta.append(isLocal ? "local" : "remote") }
-        if let provider = model.providerName, !provider.isEmpty { meta.append(provider) }
-        if let params = model.parameterCount, !params.isEmpty { meta.append(params) }
-        if let quant = model.quantization, !quant.isEmpty { meta.append(quant) }
-        if model.isVLM { meta.append("vision") }
-        if !meta.isEmpty { line += " (" + meta.joined(separator: " · ") + ")" }
-        if let note = model.note, !note.isEmpty { line += " — \(note)" }
+        var meta: [String] = ["`\(agent.ref.agentAddress)`"]
+        if let owner = agent.ownerName, !owner.isEmpty { meta.append("owner: \(owner)") }
+        line += " · " + meta.joined(separator: " · ")
         return line
     }
 

@@ -577,8 +577,8 @@ extension EvalRunner {
             score.record(reservations.inPlace == 0 && reservations.exclusive == 0 && reservations.remote == 0,
                 note: "post-chat reservations=\(reservations)")
         }
-        if let assertion = exp.spawnBatch {
-            let result = scoreSpawnBatch(assertion, transcript: transcript)
+        if let assertion = exp.spawnWave {
+            let result = scoreSpawnWave(assertion, transcript: transcript)
             score.record(result.passed, note: result.note)
         }
         for audit in exp.toolUsageAudit ?? [] {
@@ -775,7 +775,7 @@ extension EvalRunner {
                 context: transcript.contextAttribution
             ),
             query: resolvedQuery,
-            includeSuccessful: exp.spawnSummaries != nil || exp.spawnBatch != nil
+            includeSuccessful: exp.spawnSummaries != nil || exp.spawnWave != nil
         )
     }
 
@@ -806,7 +806,8 @@ extension EvalRunner {
                         wasDeduped: $0.wasDeduped,
                         wasError: $0.wasError,
                         spawnSummary: $0.spawnSummary,
-                        spawnBatch: $0.spawnBatch
+                        step: $0.step,
+                        spawnCall: $0.spawnCall
                     )
                 },
                 finalText: transcript.finalText,
@@ -1276,7 +1277,7 @@ extension EvalRunner {
         workers: [EvalCase.AgentCapabilitiesFixture.SpawnAgentFixture]
     ) -> (passed: Bool, note: String) {
         guard let expected else { return (true, "spawn targets: no explicit assertion") }
-        let calls = transcript.toolCalls.filter { ["spawn_agent", "spawn_model"].contains($0.name) }
+        let calls = transcript.toolCalls.filter { $0.name == "spawn_agent" }
         let selected: [UUID?] = calls.map { call in
             guard call.name == "spawn_agent", let data = call.arguments.data(using: .utf8),
                 let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -1294,7 +1295,7 @@ extension EvalRunner {
     static func scoreSpawnSummaries(
         _ expected: [String], transcript: AgentLoopTranscript
     ) -> (passed: Bool, note: String) {
-        let calls = transcript.toolCalls.filter { ["spawn_agent", "spawn_model"].contains($0.name) }
+        let calls = transcript.toolCalls.filter { $0.name == "spawn_agent" }
         let observed = calls.map(\.spawnSummary)
         let passed = calls.count == expected.count
             && !calls.contains { $0.wasError || $0.wasDeduped }
@@ -1571,85 +1572,36 @@ extension EvalRunner {
         return (false, "toolUsageAudit \(audit.tool): \(failures.joined(separator: "; "))")
     }
 
-    /// Score complete `spawn_batch` aggregates retained outside the bounded
-    /// transcript preview. Internal so model-free evaluator tests can pin the
-    /// reporting contract without launching a model.
-    static func scoreSpawnBatch(
-        _ assertion: EvalCase.AgentLoopExpectations.SpawnBatchAssertion,
+    /// Score the `spawn_agent` calls of a run as waves: calls that share a
+    /// model step were issued in one message (one wave). Internal so
+    /// model-free evaluator tests can pin the reporting contract without
+    /// launching a model.
+    static func scoreSpawnWave(
+        _ assertion: EvalCase.AgentLoopExpectations.SpawnWaveAssertion,
         transcript: AgentLoopTranscript
     ) -> (passed: Bool, note: String) {
-        let calls = transcript.toolCalls.filter { $0.name == "spawn_batch" }
-        let observations = calls.compactMap(\.spawnBatch)
+        let calls = transcript.toolCalls.filter { $0.name == "spawn_agent" }
+        let rows = calls.compactMap(\.spawnCall)
         var failures: [String] = []
 
-        // A structured spawn-batch assertion is never meaningful without a
-        // real spawn_batch invocation. Do not let omitted `exactCallCount`
-        // turn every other aggregate assertion into a vacuous pass.
+        // A structured wave assertion is never meaningful without a real
+        // spawn_agent invocation. Do not let omitted `exactCallCount` turn
+        // every other assertion into a vacuous pass.
         if calls.isEmpty {
-            failures.append("no spawn_batch call was observed")
+            failures.append("no spawn_agent call was observed")
         }
         if let exact = assertion.exactCallCount, calls.count != exact {
             failures.append("calls \(calls.count) != \(exact)")
         }
-        if observations.count != calls.count {
-            failures.append(
-                "structured results \(observations.count)/\(calls.count)"
-            )
+        if rows.count != calls.count {
+            failures.append("structured results \(rows.count)/\(calls.count)")
         }
 
-        let orderedIds = observations.flatMap(\.orderedJobIds)
-        let succeeded = observations.reduce(0) { $0 + $1.observedSucceeded }
-        let failed = observations.reduce(0) { $0 + $1.observedFailed }
-        if let expected = assertion.expectedJobIds, orderedIds != expected {
-            failures.append("job ids \(orderedIds) != \(expected)")
-        }
-        let childRows = observations.flatMap(\.childRows)
-        if let expectedRows = assertion.expectedRows {
-            if childRows.count != expectedRows.count {
-                failures.append("child rows \(childRows.count) != \(expectedRows.count)")
-            }
-            for (index, pair) in zip(childRows, expectedRows).enumerated() {
-                let (observed, expected) = pair
-                if observed.id != expected.id {
-                    failures.append(
-                        "child[\(index)].id \(String(describing: observed.id)) != \(expected.id)"
-                    )
-                }
-                if let value = expected.targetType, observed.targetType != value {
-                    failures.append(
-                        "child[\(index)].target_type "
-                            + "\(String(describing: observed.targetType)) != \(value)"
-                    )
-                }
-                if let value = expected.target, observed.target != value {
-                    failures.append(
-                        "child[\(index)].target "
-                            + "\(String(describing: observed.target)) != \(value)"
-                    )
-                }
-                if let value = expected.ok, observed.ok != value {
-                    failures.append(
-                        "child[\(index)].ok \(String(describing: observed.ok)) != \(value)"
-                    )
-                }
-                if let value = expected.model, observed.model != value {
-                    failures.append(
-                        "child[\(index)].model "
-                            + "\(String(describing: observed.model)) != \(value)"
-                    )
-                }
-                if let exact = expected.summaryEquals, observed.summary != exact {
-                    failures.append("child[\(index)].summary \(String(describing: observed.summary)) != exact expected output \(exact.debugDescription)")
-                }
-                if let needles = expected.summaryContains {
-                    let summary = observed.summary ?? ""
-                    for needle in needles where !summary.contains(needle) {
-                        failures.append(
-                            "child[\(index)].summary missing '\(needle)'"
-                        )
-                    }
-                }
-            }
+        let targets = rows.map { $0.target ?? "" }
+        let succeeded = rows.filter(\.ok).count
+        let failed = rows.count - succeeded
+        if let expected = assertion.expectedTargets, targets != expected {
+            failures.append("targets \(targets) != \(expected)")
         }
         if let expected = assertion.expectedSucceeded, succeeded != expected {
             failures.append("succeeded \(succeeded) != \(expected)")
@@ -1657,163 +1609,66 @@ extension EvalRunner {
         if let expected = assertion.expectedFailed, failed != expected {
             failures.append("failed \(failed) != \(expected)")
         }
-        if let expected = assertion.expectedMaxParallel,
-            observations.contains(where: { $0.maxParallel != expected })
-                || (observations.isEmpty && !calls.isEmpty)
-        {
-            failures.append(
-                "max_parallel values \(observations.map(\.maxParallel)) do not all equal \(expected)"
-            )
-        }
-        if assertion.requireEveryRowSettled == true,
-            observations.contains(where: { !$0.everyRowSettled })
-                || (observations.isEmpty && !calls.isEmpty)
-        {
-            failures.append("one or more child rows were not settled")
-        }
-        if assertion.requireReportedCountsMatchRows == true {
-            for observation in observations {
-                if observation.reportedSucceeded != observation.observedSucceeded
-                    || observation.reportedFailed != observation.observedFailed
-                {
-                    failures.append(
-                        "reported counts \(observation.reportedSucceeded.map(String.init) ?? "nil")/"
-                            + "\(observation.reportedFailed.map(String.init) ?? "nil") "
-                            + "!= observed \(observation.observedSucceeded)/"
-                            + "\(observation.observedFailed)"
-                    )
-                }
+
+        // Wave sizes: consecutive calls that share a model step.
+        var waveSizes: [Int] = []
+        var lastStep: Int?
+        for call in calls {
+            if let last = lastStep, last == call.step, !waveSizes.isEmpty {
+                waveSizes[waveSizes.count - 1] += 1
+            } else {
+                waveSizes.append(1)
             }
+            lastStep = call.step
         }
-        if let expected = assertion.expectedAggregateStatus,
-            observations.contains(where: { $0.aggregateStatus != expected })
-                || (observations.isEmpty && !calls.isEmpty)
-        {
-            failures.append(
-                "aggregate_status values \(observations.map(\.aggregateStatus)) "
-                    + "do not all equal \(expected)"
-            )
+        if let expected = assertion.expectedWaveSizes, waveSizes != expected {
+            failures.append("wave sizes \(waveSizes) != \(expected)")
         }
 
-        let executionWaves = observations.flatMap { $0.executionWaves ?? [] }
-        if assertion.requireEveryExecutionWaveWellFormed == true,
-            observations.contains(where: { $0.everyExecutionWaveWellFormed != true })
-                || (observations.isEmpty && !calls.isEmpty)
-        {
-            failures.append("one or more execution waves were absent or malformed")
-        }
-        if let expectedWaves = assertion.expectedExecutionWaves {
-            if executionWaves.count != expectedWaves.count {
-                failures.append(
-                    "execution waves \(executionWaves.count) != \(expectedWaves.count)"
-                )
+        if let expectedRows = assertion.expectedRows {
+            if rows.count != expectedRows.count {
+                failures.append("rows \(rows.count) != \(expectedRows.count)")
             }
-            for (index, pair) in zip(executionWaves, expectedWaves).enumerated() {
+            for (index, pair) in zip(rows, expectedRows).enumerated() {
                 let (observed, expected) = pair
-                if let value = expected.wave, observed.wave != value {
+                if let value = expected.target, observed.target != value {
                     failures.append(
-                        "wave[\(index)].wave \(String(describing: observed.wave)) != \(value)"
+                        "row[\(index)].target \(String(describing: observed.target)) != \(value)"
                     )
                 }
-                if let value = expected.remoteJobs, observed.remoteJobs != value {
+                if let value = expected.ok, observed.ok != value {
+                    failures.append("row[\(index)].ok \(observed.ok) != \(value)")
+                }
+                if let value = expected.model, observed.model != value {
                     failures.append(
-                        "wave[\(index)].remote_jobs "
-                            + "\(String(describing: observed.remoteJobs)) != \(value)"
+                        "row[\(index)].model \(String(describing: observed.model)) != \(value)"
                     )
                 }
-                if let value = expected.localJobs, observed.localJobs != value {
+                if let value = expected.failureKind, observed.failureKind != value {
                     failures.append(
-                        "wave[\(index)].local_jobs "
-                            + "\(String(describing: observed.localJobs)) != \(value)"
+                        "row[\(index)].failureKind "
+                            + "\(String(describing: observed.failureKind)) != \(value)"
                     )
                 }
-                if let value = expected.engineRequestedMaximum,
-                    observed.engineRequestedMaximum != value
-                {
+                if let exact = expected.summaryEquals, observed.summary != exact {
                     failures.append(
-                        "wave[\(index)].engine_requested_max "
-                            + "\(String(describing: observed.engineRequestedMaximum)) != \(value)"
+                        "row[\(index)].summary \(String(describing: observed.summary)) "
+                            + "!= exact expected output \(exact.debugDescription)"
                     )
                 }
-                if let value = expected.engineArchitectureMaximum,
-                    observed.engineArchitectureMaximum != value
-                {
-                    failures.append(
-                        "wave[\(index)].engine_architecture_max "
-                            + "\(String(describing: observed.engineArchitectureMaximum)) != \(value)"
-                    )
-                }
-                if expected.requireUncappedArchitecture == true,
-                    observed.hasEngineArchitectureMaximum != true
-                        || observed.engineArchitectureMaximum != nil
-                {
-                    failures.append(
-                        "wave[\(index)].engine_architecture_max expected explicit null "
-                            + "but got present=\(observed.hasEngineArchitectureMaximum) "
-                            + "value=\(String(describing: observed.engineArchitectureMaximum))"
-                    )
-                }
-                if let value = expected.engineEffectiveMaximum,
-                    observed.engineEffectiveMaximum != value
-                {
-                    failures.append(
-                        "wave[\(index)].engine_effective_max "
-                            + "\(String(describing: observed.engineEffectiveMaximum)) != \(value)"
-                    )
-                }
-                if let value = expected.effectiveLocalSlots,
-                    observed.effectiveLocalSlots != value
-                {
-                    failures.append(
-                        "wave[\(index)].effective_local_slots "
-                            + "\(String(describing: observed.effectiveLocalSlots)) != \(value)"
-                    )
-                }
-                if let value = expected.localSubwaves, observed.localSubwaves != value {
-                    failures.append(
-                        "wave[\(index)].local_subwaves "
-                            + "\(String(describing: observed.localSubwaves)) != \(value)"
-                    )
-                }
-                if let value = expected.limitingFactors,
-                    observed.limitingFactors != value
-                {
-                    failures.append(
-                        "wave[\(index)].limited_by "
-                            + "\(String(describing: observed.limitingFactors)) != \(value)"
-                    )
+                if let needles = expected.summaryContains {
+                    let summary = observed.summary ?? ""
+                    for needle in needles where !summary.contains(needle) {
+                        failures.append("row[\(index)].summary missing '\(needle)'")
+                    }
                 }
             }
         }
-        if let expected = assertion.expectedCacheAvailable,
-            observations.contains(where: { $0.cacheAvailable != expected })
-                || (observations.isEmpty && !calls.isEmpty)
-        {
-            failures.append(
-                "cache available values \(observations.map(\.cacheAvailable)) "
-                    + "do not all equal \(expected)"
-            )
-        }
 
-        let executionWaveSummary = executionWaves.map { wave in
-            "wave=\(wave.wave.map(String.init) ?? "nil")"
-                + ",remote=\(wave.remoteJobs.map(String.init) ?? "nil")"
-                + ",local=\(wave.localJobs.map(String.init) ?? "nil")"
-                + ",engineRequested=\(wave.engineRequestedMaximum.map(String.init) ?? "nil")"
-                + ",architectureMax=\(wave.engineArchitectureMaximum.map(String.init) ?? "nil")"
-                + ",engineEffective=\(wave.engineEffectiveMaximum.map(String.init) ?? "nil")"
-                + ",slots=\(wave.effectiveLocalSlots.map(String.init) ?? "nil")"
-                + ",subwaves=\(wave.localSubwaves.map { String(describing: $0) } ?? "nil")"
-                + ",limitedBy=\(wave.limitingFactors.map { String(describing: $0) } ?? "nil")"
-        }
         let summary =
-            "spawnBatch calls=\(calls.count), jobs=\(orderedIds), "
-            + "succeeded=\(succeeded), failed=\(failed), "
-            + "maxParallel=\(observations.map(\.maxParallel)), "
-            + "aggregateStatus=\(observations.map(\.aggregateStatus)), "
-            + "childModels=\(childRows.map(\.model)), "
-            + "executionWaves=[\(executionWaveSummary.joined(separator: " | "))], "
-            + "cacheAvailable=\(observations.map(\.cacheAvailable))"
+            "spawnWave calls=\(calls.count), targets=\(targets), "
+            + "succeeded=\(succeeded), failed=\(failed), waveSizes=\(waveSizes), "
+            + "childModels=\(rows.map(\.model))"
         if failures.isEmpty {
             return (true, "\(summary) — ok")
         }

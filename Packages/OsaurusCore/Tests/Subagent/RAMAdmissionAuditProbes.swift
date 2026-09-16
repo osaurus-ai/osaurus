@@ -13,7 +13,7 @@ struct RAMAdmissionAuditProbes {
         #expect(await admission.reserveLocalInPlace(
             modelKey: "same", requestedSlots: 1, slotCapacity: 2
         ) == .admitted(slots: 1))
-        let window = SpawnBatchTool.engineAdmissionWindow(
+        let window = SpawnFanOutPolicy.engineAdmissionWindow(
             configuredMaximum: 2,
             snapshot: ModelBatchCapacitySnapshot(
                 modelName: "same", configuredMaximum: 2, activeCount: 1,
@@ -55,7 +55,10 @@ struct RAMAdmissionAuditProbes {
         let measuredTokens = 20_000
         let contract = try #require(DelegatedRunContract.derive(
             seedCharacters: input.count, systemPromptCharacters: 0, toolSchemaTokens: 0,
-            budgets: SubagentBudgets(), toolEnabled: false, resolvedContextWindow: 65_536
+            // Small explicit budget so the heuristic contract (≈7.5K seed
+            // tokens + 2×2,048) sits well under the exact 20K measurement.
+            budgets: SubagentBudgets(maxDelegateTokens: 2048, maxDelegateTurns: 2),
+            toolEnabled: false, resolvedContextWindow: 65_536
         ))
         let manager = AgentLoopBudget.makeBudgetManager(
             contextWindow: contract.contextPositions, systemPromptChars: 0,

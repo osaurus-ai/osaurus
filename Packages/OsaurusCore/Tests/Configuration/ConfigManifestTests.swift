@@ -124,8 +124,8 @@ struct ConfigManifestDerivationTests {
         // Enum constraints survive derivation.
         let delegation = try #require(properties["delegation"] as? [String: Any])
         let delegationProps = try #require(delegation["properties"] as? [String: Any])
-        let spawnAccess = try #require(delegationProps["spawn_tool_access"] as? [String: Any])
-        #expect((spawnAccess["enum"] as? [String])?.contains("read_only") == true)
+        let mode = try #require(delegationProps["applescript_execution_mode"] as? [String: Any])
+        #expect((mode["enum"] as? [String])?.contains("confirm_each") == true)
     }
 
     @Test

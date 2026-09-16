@@ -18,145 +18,44 @@ import Foundation
 
 /// Decode-friendly record of one agent-loop eval run.
 public struct AgentLoopTranscript: Sendable, Codable {
-    /// Structured observation extracted from a successful `spawn_batch`
-    /// result. Keeping this alongside the bounded result preview lets evals
-    /// score every child row without retaining arbitrarily large tool output.
-    public struct SpawnBatchObservation: Sendable, Codable, Equatable {
-        public struct ChildRow: Sendable, Codable, Equatable {
-            public let id: String?
-            public let targetType: String?
-            public let target: String?
-            public let ok: Bool?
-            public let model: String?
-            public let summary: String?
-
-            public init(
-                id: String?,
-                targetType: String?,
-                target: String?,
-                ok: Bool?,
-                model: String?,
-                summary: String?
-            ) {
-                self.id = id
-                self.targetType = targetType
-                self.target = target
-                self.ok = ok
-                self.model = model
-                self.summary = summary
-            }
-        }
-
-        public struct ExecutionWave: Sendable, Codable, Equatable {
-            public let wave: Int?
-            public let remoteJobs: Int?
-            public let localJobs: Int?
-            public let engineRequestedMaximum: Int?
-            public let engineArchitectureMaximum: Int?
-            public let engineEffectiveMaximum: Int?
-            public let hasEngineRequestedMaximum: Bool?
-            public let hasEngineArchitectureMaximum: Bool?
-            public let hasEngineEffectiveMaximum: Bool?
-            public let effectiveLocalSlots: Int?
-            public let localSubwaves: [Int]?
-            public let limitingFactors: [String]?
-
-            public init(
-                wave: Int?,
-                remoteJobs: Int?,
-                localJobs: Int? = nil,
-                engineRequestedMaximum: Int? = nil,
-                engineArchitectureMaximum: Int? = nil,
-                engineEffectiveMaximum: Int? = nil,
-                hasEngineRequestedMaximum: Bool? = nil,
-                hasEngineArchitectureMaximum: Bool? = nil,
-                hasEngineEffectiveMaximum: Bool? = nil,
-                effectiveLocalSlots: Int?,
-                localSubwaves: [Int]?,
-                limitingFactors: [String]?
-            ) {
-                self.wave = wave
-                self.remoteJobs = remoteJobs
-                self.localJobs = localJobs
-                self.engineRequestedMaximum = engineRequestedMaximum
-                self.engineArchitectureMaximum = engineArchitectureMaximum
-                self.engineEffectiveMaximum = engineEffectiveMaximum
-                self.hasEngineRequestedMaximum = hasEngineRequestedMaximum
-                self.hasEngineArchitectureMaximum = hasEngineArchitectureMaximum
-                self.hasEngineEffectiveMaximum = hasEngineEffectiveMaximum
-                self.effectiveLocalSlots = effectiveLocalSlots
-                self.localSubwaves = localSubwaves
-                self.limitingFactors = limitingFactors
-            }
-
-            public var isWellFormed: Bool {
-                let base = wave != nil
-                    && remoteJobs != nil
-                    && localJobs != nil
-                    && effectiveLocalSlots != nil
-                    && localSubwaves != nil
-                    && limitingFactors != nil
-                guard base else { return false }
-                guard (localJobs ?? 0) > 0 else { return true }
-                return hasEngineRequestedMaximum == true
-                    && hasEngineArchitectureMaximum == true
-                    && hasEngineEffectiveMaximum == true
-                    && engineRequestedMaximum != nil
-                    && engineEffectiveMaximum != nil
-            }
-        }
-
-        public let resultKind: String
-        public let maxParallel: Int?
-        public let reportedSucceeded: Int?
-        public let reportedFailed: Int?
-        public let observedSucceeded: Int
-        public let observedFailed: Int
-        public let orderedJobIds: [String]
-        /// Ordered, structured child truth retained from the production
-        /// aggregate. Unlike the parent final text, these fields prove which
-        /// target actually ran, which model resolved, and what that child
-        /// returned.
-        public let childRows: [ChildRow]
-        public let aggregateStatus: String?
-        /// nil means the result predates execution diagnostics or omitted
-        /// them. An empty array means an execution object was present but
-        /// reported no parseable waves.
-        public let executionWaves: [ExecutionWave]?
-        public let everyExecutionWaveWellFormed: Bool?
-        public let cacheAvailable: Bool?
-        /// True only when every result row has a non-empty id, an `ok` value,
-        /// and a nested tool envelope whose `ok` agrees with the row.
-        public let everyRowSettled: Bool
+    /// Structured observation extracted from one `spawn_agent` result
+    /// (success or failure). Several `spawn_agent` calls issued in one model
+    /// step form one wave; evals group `ToolInvocation`s by `step` to score
+    /// the fan-out, and read these rows to prove which target ran, which
+    /// model resolved, and what the worker returned — without retaining
+    /// arbitrarily large tool output.
+    public struct SpawnCallObservation: Sendable, Codable, Equatable {
+        /// `agent` argument as the model wrote it (name, UUID, or address).
+        public let target: String?
+        /// `continue` argument when the call resumed an earlier worker.
+        public let continuedSessionId: String?
+        public let ok: Bool
+        public let model: String?
+        public let summary: String?
+        public let sessionId: String?
+        public let needsInput: Bool?
+        /// Failure envelope kind (`execution_error`, `user_denied`, …) when
+        /// `ok` is false.
+        public let failureKind: String?
 
         public init(
-            resultKind: String,
-            maxParallel: Int?,
-            reportedSucceeded: Int?,
-            reportedFailed: Int?,
-            observedSucceeded: Int,
-            observedFailed: Int,
-            orderedJobIds: [String],
-            childRows: [ChildRow] = [],
-            everyRowSettled: Bool,
-            aggregateStatus: String? = nil,
-            executionWaves: [ExecutionWave]? = nil,
-            everyExecutionWaveWellFormed: Bool? = nil,
-            cacheAvailable: Bool? = nil
+            target: String?,
+            continuedSessionId: String? = nil,
+            ok: Bool,
+            model: String? = nil,
+            summary: String? = nil,
+            sessionId: String? = nil,
+            needsInput: Bool? = nil,
+            failureKind: String? = nil
         ) {
-            self.resultKind = resultKind
-            self.maxParallel = maxParallel
-            self.reportedSucceeded = reportedSucceeded
-            self.reportedFailed = reportedFailed
-            self.observedSucceeded = observedSucceeded
-            self.observedFailed = observedFailed
-            self.orderedJobIds = orderedJobIds
-            self.childRows = childRows
-            self.everyRowSettled = everyRowSettled
-            self.aggregateStatus = aggregateStatus
-            self.executionWaves = executionWaves
-            self.everyExecutionWaveWellFormed = everyExecutionWaveWellFormed
-            self.cacheAvailable = cacheAvailable
+            self.target = target
+            self.continuedSessionId = continuedSessionId
+            self.ok = ok
+            self.model = model
+            self.summary = summary
+            self.sessionId = sessionId
+            self.needsInput = needsInput
+            self.failureKind = failureKind
         }
     }
 
@@ -172,8 +71,11 @@ public struct AgentLoopTranscript: Sendable, Codable {
         /// True when the result was an error envelope — drives the opt-in
         /// `noToolErrors` scoring assertion without parsing previews.
         public let wasError: Bool
-        /// Parsed only for successful `spawn_batch` results.
-        public let spawnBatch: SpawnBatchObservation?
+        /// 1-based model step that issued this call. Calls sharing a step
+        /// were emitted in one model message — one `spawn_agent` wave.
+        public let step: Int
+        /// Parsed for every `spawn_agent` result (success or failure).
+        public let spawnCall: SpawnCallObservation?
         /// Complete child digest, extracted before the forensic preview is truncated.
         public let spawnSummary: String?
 
@@ -183,7 +85,8 @@ public struct AgentLoopTranscript: Sendable, Codable {
             resultPreview: String,
             wasDeduped: Bool,
             wasError: Bool = false,
-            spawnBatch: SpawnBatchObservation? = nil,
+            step: Int = 0,
+            spawnCall: SpawnCallObservation? = nil,
             spawnSummary: String? = nil
         ) {
             self.name = name
@@ -191,7 +94,8 @@ public struct AgentLoopTranscript: Sendable, Codable {
             self.resultPreview = resultPreview
             self.wasDeduped = wasDeduped
             self.wasError = wasError
-            self.spawnBatch = spawnBatch
+            self.step = step
+            self.spawnCall = spawnCall
             self.spawnSummary = spawnSummary
         }
     }
@@ -372,7 +276,7 @@ public struct AgentLoopTranscript: Sendable, Codable {
 
     /// Extract an exact successful single-child digest for behavioral scoring.
     public static func spawnSummary(from envelope: String, tool: String) -> String? {
-        guard ["spawn_agent", "spawn_model"].contains(tool),
+        guard tool == SubagentCapabilityRegistry.spawnAgentToolName,
             ToolEnvelope.isSuccess(envelope),
             let result = ToolEnvelope.resultPayload(envelope) as? [String: Any],
             result["kind"] as? String == "spawn_result"
@@ -380,119 +284,44 @@ public struct AgentLoopTranscript: Sendable, Codable {
         return result["summary"] as? String
     }
 
-    /// Parse the stable aggregate fields and ordered child rows from a
-    /// production `spawn_batch` envelope. Failed all-child aggregates retain
-    /// their structured result payload so evals can inspect settled rows and
-    /// terminal status instead of losing them behind the outer failure.
-    public static func spawnBatchObservation(
-        from result: String
-    ) -> SpawnBatchObservation? {
-        guard
-            let payload = ToolEnvelope.resultPayload(result) as? [String: Any],
-            payload["kind"] as? String == "spawn_batch_result",
-            let rows = payload["results"] as? [[String: Any]]
-        else { return nil }
-
-        var ids: [String] = []
-        var observedSucceeded = 0
-        var observedFailed = 0
-        var everyRowSettled = true
-        var childRows: [SpawnBatchObservation.ChildRow] = []
-        for row in rows {
-            let nested = row["envelope"] as? [String: Any]
-            let nestedResult = nested?["result"] as? [String: Any]
-            childRows.append(
-                .init(
-                    id: row["id"] as? String,
-                    targetType: row["target_type"] as? String,
-                    target: row["target"] as? String,
-                    ok: row["ok"] as? Bool,
-                    model: nestedResult?["model"] as? String,
-                    summary: nestedResult?["summary"] as? String
-                )
+    /// Parse one `spawn_agent` call (arguments + result envelope) into a
+    /// structured row. Failures keep their envelope kind so evals can
+    /// inspect a settled-but-failed sibling instead of losing it behind the
+    /// outer error.
+    public static func spawnCallObservation(
+        tool: String,
+        arguments: String,
+        result: String
+    ) -> SpawnCallObservation? {
+        guard tool == SubagentCapabilityRegistry.spawnAgentToolName else { return nil }
+        let args =
+            (arguments.data(using: .utf8)).flatMap {
+                try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+            } ?? [:]
+        let target = (args["agent"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let continued = (args["continue"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let envelope =
+            (result.data(using: .utf8)).flatMap {
+                try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+            } ?? [:]
+        if ToolEnvelope.isSuccess(result) {
+            let payload = ToolEnvelope.resultPayload(result) as? [String: Any]
+            return SpawnCallObservation(
+                target: target?.isEmpty == false ? target : nil,
+                continuedSessionId: continued?.isEmpty == false ? continued : nil,
+                ok: true,
+                model: payload?["model"] as? String,
+                summary: payload?["summary"] as? String,
+                sessionId: payload?["session_id"] as? String,
+                needsInput: payload?["needs_input"] as? Bool
             )
-            guard let id = row["id"] as? String, !id.isEmpty,
-                let ok = row["ok"] as? Bool,
-                let nested,
-                let nestedOK = nested["ok"] as? Bool,
-                nestedOK == ok
-            else {
-                everyRowSettled = false
-                continue
-            }
-            ids.append(id)
-            if ok {
-                observedSucceeded += 1
-            } else {
-                observedFailed += 1
-            }
         }
-        if ids.count != rows.count {
-            everyRowSettled = false
-        }
-
-        var executionWaves: [SpawnBatchObservation.ExecutionWave]?
-        var everyExecutionWaveWellFormed: Bool?
-        var cacheAvailable: Bool?
-        if let execution = payload["execution"] as? [String: Any] {
-            if let rawWaves = execution["waves"] as? [Any] {
-                var parsedWaves: [SpawnBatchObservation.ExecutionWave] = []
-                var allWavesWellFormed = true
-                for rawWave in rawWaves {
-                    guard let wave = rawWave as? [String: Any] else {
-                        allWavesWellFormed = false
-                        continue
-                    }
-                    let parsed = SpawnBatchObservation.ExecutionWave(
-                        wave: wave["wave"] as? Int,
-                        remoteJobs: wave["remote_jobs"] as? Int,
-                        localJobs: wave["local_jobs"] as? Int,
-                        engineRequestedMaximum: wave["engine_requested_max"] as? Int,
-                        engineArchitectureMaximum:
-                            wave["engine_architecture_max"] as? Int,
-                        engineEffectiveMaximum: wave["engine_effective_max"] as? Int,
-                        hasEngineRequestedMaximum:
-                            wave.keys.contains("engine_requested_max"),
-                        hasEngineArchitectureMaximum:
-                            wave.keys.contains("engine_architecture_max"),
-                        hasEngineEffectiveMaximum:
-                            wave.keys.contains("engine_effective_max"),
-                        effectiveLocalSlots: wave["effective_local_slots"] as? Int,
-                        localSubwaves: wave["local_subwaves"] as? [Int],
-                        limitingFactors: wave["limited_by"] as? [String]
-                    )
-                    allWavesWellFormed = allWavesWellFormed && parsed.isWellFormed
-                    parsedWaves.append(parsed)
-                }
-                executionWaves = parsedWaves
-                everyExecutionWaveWellFormed =
-                    allWavesWellFormed && parsedWaves.count == rawWaves.count
-            } else {
-                executionWaves = []
-                everyExecutionWaveWellFormed = false
-            }
-            if let cache = execution["cache"] as? [String: Any] {
-                cacheAvailable = cache["available"] as? Bool
-            }
-        } else if payload["execution"] != nil {
-            executionWaves = []
-            everyExecutionWaveWellFormed = false
-        }
-
-        return SpawnBatchObservation(
-            resultKind: "spawn_batch_result",
-            maxParallel: payload["max_parallel"] as? Int,
-            reportedSucceeded: payload["succeeded"] as? Int,
-            reportedFailed: payload["failed"] as? Int,
-            observedSucceeded: observedSucceeded,
-            observedFailed: observedFailed,
-            orderedJobIds: ids,
-            childRows: childRows,
-            everyRowSettled: everyRowSettled,
-            aggregateStatus: payload["aggregate_status"] as? String,
-            executionWaves: executionWaves,
-            everyExecutionWaveWellFormed: everyExecutionWaveWellFormed,
-            cacheAvailable: cacheAvailable
+        return SpawnCallObservation(
+            target: target?.isEmpty == false ? target : nil,
+            continuedSessionId: continued?.isEmpty == false ? continued : nil,
+            ok: false,
+            summary: envelope["message"] as? String,
+            failureKind: envelope["kind"] as? String
         )
     }
 
@@ -1197,7 +1026,9 @@ public enum AgentLoopEvaluator {
                     resultPreview: String(result.prefix(300)),
                     wasDeduped: false,
                     wasError: isError,
-                    spawnBatch: AgentLoopTranscript.spawnBatchObservation(from: result),
+                    step: modelStepCount,
+                    spawnCall: AgentLoopTranscript.spawnCallObservation(
+                        tool: inv.toolName, arguments: inv.jsonArguments, result: result),
                     spawnSummary: AgentLoopTranscript.spawnSummary(from: result, tool: inv.toolName)
                 )
             )
@@ -1626,7 +1457,9 @@ public enum AgentLoopEvaluator {
                         arguments: inv.jsonArguments,
                         resultPreview: String(held.prefix(300)),
                         wasDeduped: true,
-                        spawnBatch: AgentLoopTranscript.spawnBatchObservation(from: held),
+                        step: modelStepCount,
+                        spawnCall: AgentLoopTranscript.spawnCallObservation(
+                            tool: inv.toolName, arguments: inv.jsonArguments, result: held),
                         spawnSummary: AgentLoopTranscript.spawnSummary(from: held, tool: inv.toolName)
                     )
                 )

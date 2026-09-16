@@ -1,0 +1,127 @@
+{
+  "id": "workspace_delegation.ambiguous-name-then-qualified",
+  "domain": "subagent",
+  "label": "Workspace delegation • ambiguous bare name → exact forms → qualified retry",
+  "query": "A bare name collides with a local agent and two shared agents; the resolver lists the exact forms and the qualified retry resolves.",
+  "notes": "Model-free. `Research` matches a local agent and two teammates' agents: the typed ambiguity lists the local UUID and both Name@Workspace forms (the hint the model retries with). The qualified pair then resolves to the two workspace targets as one wave under the workspace kind; the workspace id form and an unknown workspace behave as documented.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "workspace",
+      "workspaceDelegation": {
+        "scenario": {
+          "localAgents": [
+            "Research"
+          ],
+          "sharedAgents": [
+            {
+              "name": "Research",
+              "workspaceId": "ws-acme",
+              "workspaceName": "Acme",
+              "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01",
+              "online": true,
+              "lastSeenSecondsAgo": null
+            },
+            {
+              "name": "Research",
+              "workspaceId": "ws-beta",
+              "workspaceName": "Beta Team",
+              "address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb01",
+              "online": true,
+              "lastSeenSecondsAgo": null
+            }
+          ],
+          "localPolicy": "always_allow",
+          "workspacePolicy": "ask",
+          "steps": [
+            {
+              "targets": [
+                "Research"
+              ],
+              "artifacts": null
+            },
+            {
+              "targets": [
+                "Research@Acme",
+                "research @ beta team"
+              ],
+              "artifacts": null
+            },
+            {
+              "targets": [
+                "Research@ws-beta"
+              ],
+              "artifacts": null
+            },
+            {
+              "targets": [
+                "Research@Nowhere"
+              ],
+              "artifacts": null
+            }
+          ]
+        },
+        "expected": [
+          {
+            "resolutions": [
+              "ambiguous:00000000-0000-4000-8000-000000000001|Research@Acme|Research@Beta Team"
+            ],
+            "refusals": [
+              ""
+            ],
+            "policy": "",
+            "cardKinds": [],
+            "cardDescription": "",
+            "returnedArtifacts": [],
+            "omittedArtifacts": []
+          },
+          {
+            "resolutions": [
+              "workspace:Research@Acme",
+              "workspace:Research@Beta Team"
+            ],
+            "refusals": [
+              "",
+              ""
+            ],
+            "policy": "ask",
+            "cardKinds": [
+              "spawn_workspace"
+            ],
+            "cardDescription": "Let this agent run 2 subagents in parallel? They run on teammates' Macs and spend those workspaces' pools.",
+            "returnedArtifacts": [],
+            "omittedArtifacts": []
+          },
+          {
+            "resolutions": [
+              "workspace:Research@Beta Team"
+            ],
+            "refusals": [
+              ""
+            ],
+            "policy": "ask",
+            "cardKinds": [
+              "spawn_workspace"
+            ],
+            "cardDescription": "Let this agent run 1 subagents in parallel? They run on teammates' Macs and spend those workspaces' pools.",
+            "returnedArtifacts": [],
+            "omittedArtifacts": []
+          },
+          {
+            "resolutions": [
+              "not_found"
+            ],
+            "refusals": [
+              ""
+            ],
+            "policy": "",
+            "cardKinds": [],
+            "cardDescription": "",
+            "returnedArtifacts": [],
+            "omittedArtifacts": []
+          }
+        ]
+      }
+    }
+  }
+}

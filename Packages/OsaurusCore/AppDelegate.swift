@@ -210,6 +210,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // `ConfigurationDomainBootstrap`.
         ConfigurationDomainBootstrap.registerBuiltIns()
 
+        // Teammates' shared agents join the Orchestrator's delegation pool as
+        // rosters load (removals persist as tombstones; unshared agents are
+        // pruned). Installed here rather than in the store so unit tests
+        // that replay roster fixtures never write the delegation config.
+        WorkspaceRosterStore.installSpawnPoolAutoJoin()
+
         // Warm the GitHub API token cache off the main thread so the first
         // plugin browse/import/update doesn't pay a synchronous keychain read
         // (and so an in-app token authenticates the very first request).

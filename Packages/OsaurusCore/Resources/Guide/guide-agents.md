@@ -22,9 +22,10 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 
 ## The Orchestrator (default agent) vs custom agents
 
-- The Orchestrator only configures and explains Osaurus, and delegates work to the agents and models you allow. It cannot use skills, knowledge, browser, computer use, or file tools — that keeps setup safe and predictable. The chat composer does not offer a working-folder chip on the Orchestrator.
-- For filesystem work (list, read, or edit a folder), create or switch to a custom agent, then pick the working folder on that agent — or ask the Orchestrator to create the agent and switch to it.
-- Custom agents get the full capability surface, gated by your per-agent feature toggles and tool permissions.
+- The Orchestrator configures and explains Osaurus, answers short questions inline, and delegates everything else to the agents you allow. It has a working folder it can **read** (`file_read`, `file_search`) but no shell, sandbox, browser, computer use, skills, knowledge, or media tools — that keeps setup safe and predictable.
+- For hands-on work (edit files, run code, browse, generate images) the Orchestrator delegates to a custom agent. An agent without its own working folder works inside the Orchestrator's folder, so a fresh agent can write deliverables there right away. You can also switch to the agent and work with it directly.
+- Custom agents get the full capability surface, gated by your per-agent feature toggles and tool permissions. Delegated agents run with their normal tools; only the delegation tool itself is withheld from a worker.
+- New agents the Orchestrator creates with no model default to its current model. `template: coder | researcher | writer | assistant | productivity` fills in a description and system prompt; Settings → Orchestrator → Subagents → **Create starter agents** makes Coder, Researcher, and Writer in one click.
 
 ## Agent identity and settings
 
@@ -33,4 +34,4 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 
 ## Subagents and delegation
 
-Agents can delegate work to subagents (other agents or local/cloud models, in parallel), with limits and permission modes you control. The Orchestrator's allowed subagents and limits live in Settings → Orchestrator → Subagents; each custom agent's "Delegate to subagents" settings live in its own Subagents tab.
+Agents can delegate work to other agents with `spawn_agent` — several calls in one message run in parallel as one wave — with limits and permission modes you control. Targets are your custom agents and, in workspaces you belong to, teammates' shared agents (`Name@Workspace`; see the Workspaces topic). The Orchestrator's allowed subagents, permissions, and limits live in Settings → Orchestrator → Subagents; each custom agent's "Delegate to subagents" settings live in its own Subagents tab. Deleting an agent removes it from every allow-list at once.

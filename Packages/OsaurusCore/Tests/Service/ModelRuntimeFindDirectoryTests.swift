@@ -263,7 +263,10 @@ struct ModelRuntimeFindDirectoryTests {
                 seedCharacters: 800,
                 systemPromptCharacters: 2_000,
                 toolSchemaTokens: 375,
-                budgets: SubagentBudgets(),
+                // The 13,713-position shape: 2,048 tokens × 2 turns (the
+                // pre-rework defaults). The shipped defaults (8,192 × 24)
+                // price honestly at the window; this pins the pricing curve.
+                budgets: SubagentBudgets(maxDelegateTokens: 2048, maxDelegateTurns: 2),
                 toolEnabled: true,
                 resolvedContextWindow: 65_536
             ))
@@ -313,7 +316,7 @@ struct ModelRuntimeFindDirectoryTests {
                 seedCharacters: 800,
                 systemPromptCharacters: 2_000,
                 toolSchemaTokens: 375,
-                budgets: SubagentBudgets(),
+                budgets: SubagentBudgets(maxDelegateTokens: 2048, maxDelegateTurns: 2),
                 toolEnabled: true,
                 resolvedContextWindow: 32_768
             ))

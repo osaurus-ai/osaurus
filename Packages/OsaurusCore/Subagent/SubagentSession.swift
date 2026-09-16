@@ -109,9 +109,10 @@ enum SubagentPreparationResult: Sendable {
 }
 
 /// Presentation/interrupt plumbing for one prepared run. Normal single-worker
-/// calls let the host create and register these values. `spawn_batch` supplies
-/// an unregistered child feed and the batch's shared interrupt token so one
-/// visible parent row owns Stop while sibling runs remain isolated.
+/// calls let the host create and register these values. A `spawn_agent` wave
+/// (several calls in one message) supplies an unregistered child feed and the
+/// wave's shared interrupt token so one visible parent row owns Stop while
+/// sibling runs remain isolated.
 struct SubagentRunPresentation: Sendable {
     let feed: SubagentFeed
     let interrupt: InterruptToken
@@ -161,7 +162,7 @@ public enum SubagentSession {
     /// The ordinary host historically registered those only after preparation,
     /// which meant a direct spawn panel had no run-owned Stop path.
     ///
-    /// This is deliberately opt-in (spawn_agent / spawn_model only) so kinds
+    /// This is deliberately opt-in (spawn_agent only) so kinds
     /// whose existing presentation contract starts after preparation do not
     /// change behavior.
     static func runWithVisiblePreparation(
@@ -324,7 +325,7 @@ public enum SubagentSession {
 
     /// Resolve and authorize a kind without admitting it or changing model
     /// residency. This is the reject-before-load boundary used by both the
-    /// compatibility tools and `spawn_batch`.
+    /// single spawn and the wave gate.
     static func prepare(
         _ kind: any SubagentKind,
         tool: String,
@@ -1176,7 +1177,7 @@ public enum SubagentSession {
             // process cache snapshot for an isolated local run. Batched
             // siblings disable this child-local field because one process-wide
             // snapshot cannot be attributed to one concurrent child;
-            // SpawnBatchTool records one aggregate before/after delta instead.
+            // the wave records one aggregate before/after delta instead.
             var payload = result.payload
             var residency: [String: Any] = [:]
             let phases = Self.residencyPhaseTimings(
@@ -1264,8 +1265,8 @@ public enum SubagentSession {
     }
 
     /// Process-wide same-model callers share the active BatchEngine, so their
-    /// aggregate width must honor the same server/agent/RAM ceiling as
-    /// `spawn_batch`. This computes that ceiling for an ordinary one-child
+    /// aggregate width must honor the same server/agent/RAM ceiling as a
+    /// wave. This computes that ceiling for an ordinary one-child
     /// spawn; the admission actor accounts for already-reserved sibling slots.
     private struct LocalInPlaceCapacityDecision: Sendable {
         var capacity: Int
@@ -1286,7 +1287,11 @@ public enum SubagentSession {
             for: prepared.resolved.name, reconcilingTo: configuredEngineSlots
         )
         let engineSlots = min(configuredEngineSlots, engineSnapshot?.configuredMaximum ?? configuredEngineSlots)
-        let maxParallel = await SpawnBatchTool.effectiveMaxParallel(
+        let engineWindow = SpawnFanOutPolicy.engineAdmissionWindow(
+            configuredMaximum: configuredEngineSlots,
+            snapshot: engineSnapshot
+        )
+        let maxParallel = await SpawnFanOutPolicy.effectiveMaxParallel(
             scope: prepared.scope
         )
         let requested = max(
@@ -1309,16 +1314,19 @@ public enum SubagentSession {
             residencyPlan: residencyPlan,
             requestEstimate: prepared.kind.admissionRequestEstimate()
         )
-        let plan = SpawnBatchTool.makeLocalAdmissionPlan(
+        var plan = SpawnFanOutPolicy.makeLocalAdmissionPlan(
             localJobCount: requested,
             remoteJobCount: 0,
             maxParallel: maxParallel,
             engineParallelLimit: engineSlots,
+            engineSubmissionLimit: engineWindow.parallelLimit,
             continuousBatchingEnabled: runtime.concurrency.continuousBatching,
             residencyPlan: residencyPlan,
             memoryFacts: memoryFacts,
             failClosedWhenEstimateUnknown: true
         )
+        plan.engineOccupancy = engineSnapshot
+        plan.engineQueuedAtAdmission = engineWindow.queued
         if case .admitted = plan.verdict {
             return .init(capacity: max(1, plan.localCapacity), plan: plan)
         }
@@ -1328,7 +1336,7 @@ public enum SubagentSession {
 
         // A wider batch can be unsafe while the one already-reserved direct
         // child still fits. Re-evaluate exactly that child before refusing.
-        let singleRunPlan = SpawnBatchTool.makeLocalAdmissionPlan(
+        let singleRunPlan = SpawnFanOutPolicy.makeLocalAdmissionPlan(
             localJobCount: 1,
             remoteJobCount: 0,
             maxParallel: maxParallel,

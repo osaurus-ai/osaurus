@@ -166,7 +166,7 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         }
         var resolved = Set<ConfigSectionID>()
         for candidate in names {
-            guard let id = ConfigSectionID(rawValue: candidate.lowercased()) else {
+            guard let id = ConfigSectionID.parse(candidate) else {
                 var message = "Unknown section `\(candidate)`."
                 if let suggestion = Self.closestSectionName(to: candidate) {
                     message += " Did you mean `\(suggestion)`?"

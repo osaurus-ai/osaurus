@@ -3,9 +3,14 @@
 //  osaurus
 //
 //  Shared editor for the spawn capability's persisted policy. The custom-agent
-//  Subagents tab and the built-in main chat's Settings surface both use this
-//  view so target pools, model notes, permissions, worker tools, and budgets
-//  cannot drift into two independently maintained control stacks.
+//  Subagents tab and the Orchestrator's Settings tab both use this view so
+//  target pools, permissions, and limits cannot drift into two independently
+//  maintained control stacks.
+//
+//  Layout (top to bottom): Allowed subagents (agents, then teammates' shared
+//  agents) → Permission (local, then shared) → Limits (open by default) →
+//  Advanced (model override). Every control carries a settings anchor when
+//  `anchorPrefix` is set so Management search can scroll to it.
 //
 
 import SwiftUI
@@ -20,55 +25,55 @@ struct SpawnConfigurationEditor: View {
     /// prefix (see `SpawnDescriptors.resolveWorkspaceTargets`).
     @ObservedObject private var roster = WorkspaceRosterStore.shared
 
-    /// A custom agent cannot spawn itself. `nil` identifies the built-in main
-    /// chat, whose picker contains custom agents only.
+    /// A custom agent cannot spawn itself. `nil` identifies the built-in
+    /// Orchestrator, whose picker contains custom agents only.
     let excludedAgentID: UUID?
     let localHandoffEnabled: Bool
     @Binding var modelOverride: String?
     @Binding var spawnableAgentIDs: [UUID]
     @Binding var spawnableWorkspaceAgents: [WorkspaceAgentRef]
-    @Binding var spawnableModelNames: [String]
-    @Binding var spawnableModelNotes: [String: String]
+    /// Tombstones for shared agents the user removed (Orchestrator only; the
+    /// pool auto-joins roster agents, so a removal must be remembered).
+    /// `nil` for custom agents, whose workspace list is manual opt-in.
+    var removedWorkspaceAgents: Binding<[WorkspaceAgentRef]>? = nil
     @Binding var permissionDefaults: SubagentPermissionDefaults
     @Binding var budgets: SubagentBudgets
-    @Binding var toolAccess: SpawnToolAccess
+    /// When set (Orchestrator tab), every control gets
+    /// `"\(anchorPrefix).<control>"` as its settings landing anchor.
+    var anchorPrefix: String? = nil
     let onChange: () -> Void
 
     @State private var agentPickerPresented = false
     @State private var workspaceAgentPickerPresented = false
-    @State private var modelPickerPresented = false
     @State private var agentSearch = ""
     @State private var workspaceAgentSearch = ""
-    @State private var modelSearch = ""
-    @State private var limitsExpanded = false
+    @State private var advancedExpanded = false
     @State private var isRefreshingModels = false
     @State private var connectedSpawnTargetIndex =
         RemoteProviderManager.ConnectedSpawnModelTargetIndex.empty
 
+    private var isOrchestrator: Bool { excludedAgentID == nil }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            modelOverrideRow
-            divider
-            handoffWarning
             allowedSubagentsHeading
             allowedAgents
             divider
             allowedWorkspaceAgents
             divider
-            allowedModels
-            divider
             permissionRow
-            divider
-            modelSubagentToolsRow
+            workspacePermissionRow
             divider
             budgetRows
+            divider
+            advancedSection
         }
-        .task(id: modelPickerPresented) {
-            if modelPickerPresented {
+        .task(id: advancedExpanded) {
+            if advancedExpanded {
                 await refreshModelCandidates()
             } else if modelPickerCache.isLoaded {
                 captureConnectedSpawnTargetIndex()
-                migrateLegacyRemoteSelections()
+                migrateLegacyRemoteOverride()
             }
         }
         .task(id: workspaceAgentPickerPresented) {
@@ -78,109 +83,42 @@ struct SpawnConfigurationEditor: View {
                 await roster.refresh(reason: .manual)
             }
         }
-        .onAppear { roster.beginObserving() }
+        .onAppear {
+            roster.beginObserving()
+            pruneMissingAgents()
+        }
         .onDisappear { roster.endObserving() }
+        .onReceive(agentManager.$agents) { _ in pruneMissingAgents() }
     }
 
-    // MARK: - Model and runtime policy
-
-    private var modelOverrideRow: some View {
-        controlRow(
-            "Agent-target model override",
-            subtitle:
-                "Optional. Replaces the selected target agent's own model for agent jobs only. Bare model jobs always use the exact allowed model selected by the orchestrator."
-        ) {
-            Picker("", selection: modelOverrideSelection) {
-                Text("Use each target agent's model", bundle: .module).tag("")
-                if let current = normalized(modelOverride),
-                    modelCandidate(forStoredId: current) == nil
-                {
-                    Text("\(current) (unavailable)", bundle: .module).tag(current)
-                }
-                ForEach(selectableModelCandidates, id: \.self) { item in
-                    if let targetId = selectionID(for: item) {
-                        Text(item.displayName).tag(targetId)
-                    }
-                }
-            }
-            .labelsHidden()
-            .frame(maxWidth: 220, alignment: .trailing)
-        }
-    }
-
-    @ViewBuilder
-    private var handoffWarning: some View {
-        if !localHandoffEnabled {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.warningColor)
-                Text(
-                    "\"Swap local models for subagents\" is off. A local subagent with a different model runs WITHOUT the unload chat model → load subagent model → run → unload → reload sequence, so the server eviction policy decides whether the chat model stays loaded. Turn it on in Settings → Subagents to enforce the sequence for every agent.",
-                    bundle: .module
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.warningColor.opacity(0.12))
-            )
-        }
-    }
-
-    private var permissionRow: some View {
-        controlRow("Permission") {
-            Picker("", selection: permissionSelection) {
-                ForEach(SubagentPermissionPolicy.allCases, id: \.self) { policy in
-                    Text(LocalizedStringKey(policy.displayName), bundle: .module).tag(policy)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: 240)
-        }
-    }
-
-    private var modelSubagentToolsRow: some View {
-        controlRow(
-            "Let model subagents read files (read-only)",
-            subtitle:
-                "Model subagents (an allowed model with no agent attached) have no tools of their own. Turn this on to give them read-only file tools so they can inspect files without copying them into this chat. Agent subagents use their own enabled tools and Working Folder instead."
-        ) {
-            Toggle("", isOn: modelSubagentReadOnlyFilesSelection)
-                .toggleStyle(.switch)
-                .labelsHidden()
-        }
+    private func anchor(_ suffix: String) -> String? {
+        anchorPrefix.map { "\($0).\(suffix)" }
     }
 
     // MARK: - Allowed subagents
 
-    /// One heading for the three allow-lists below (agents, teammates'
-    /// shared agents, bare models): together they are the subagents this
-    /// agent may delegate to.
     private var allowedSubagentsHeading: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Allowed subagents", bundle: .module)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(theme.primaryText)
             Text(
-                "The agents, teammates' shared agents, and models this agent may delegate a task to. An empty list keeps delegation off.",
+                isOrchestrator
+                    ? "The agents the Orchestrator may hand a task to. Each runs with its own prompt, model, and tools. New agents join automatically; remove one to keep it out."
+                    : "The agents this agent may hand a task to. Each runs with its own prompt, model, and tools. An empty list keeps delegation off.",
                 bundle: .module
             )
             .font(.system(size: 11))
             .foregroundColor(theme.tertiaryText)
             .fixedSize(horizontal: false, vertical: true)
         }
+        .settingsLandingAnchor(anchor("allowedSubagents"))
     }
 
     // MARK: - Allowed agents
 
     private var allowedAgents: some View {
-        let selected = spawnableAgentIDs
+        let selected = spawnableAgentIDs.filter { id in agentCandidates.contains { $0.id == id } }
         let addable = agentCandidates.filter { candidate in
             !selected.contains(candidate.id)
         }
@@ -188,44 +126,67 @@ struct SpawnConfigurationEditor: View {
             AgentSheetSectionLabel("Allowed agents")
             if selected.isEmpty {
                 emptyHint(
-                    "None yet. Add an agent to delegate a task to it (using its own prompt + model)."
+                    isOrchestrator
+                        ? "No agents yet. Create starter agents below, or create your own in Agents — every new agent joins this list."
+                        : "None yet. Add an agent to delegate a task to it (using its own prompt + model)."
                 )
             } else {
                 FlowLayout(spacing: 6) {
                     ForEach(selected, id: \.self) { id in
-                        let candidate = agentCandidates.first { $0.id == id }
-                        removableChip(
-                            label: candidate?.name ?? id.uuidString,
-                            unavailable: candidate == nil
-                        ) {
-                            setAgent(id, included: false)
+                        if let candidate = agentCandidates.first(where: { $0.id == id }) {
+                            removableChip(label: candidate.name) {
+                                setAgent(id, included: false)
+                            }
                         }
                     }
                 }
-                // A delegated agent runs as a real chat session of that agent,
-                // so its file access is its own Working Folder — the launcher's
-                // folder is never passed down. Point at where that is set so a
-                // "save this to disk" delegation can be made to work (#2703).
                 emptyHint(
-                    "Delegated agents run with their own tools. An agent with a Working Folder (agent editor → Abilities → Working Folder) reads and writes files there; agents without one deliver files as artifacts."
+                    isOrchestrator
+                        ? "Agents with their own Working Folder read and write files there. Agents without one inherit the Orchestrator's Working Folder for the run."
+                        : "Agents with their own Working Folder read and write files there. Agents without one inherit this agent's chat folder for the run."
                 )
             }
-            if agentCandidates.isEmpty {
-                emptyHint(
-                    selected.isEmpty
-                        ? "No other agents yet — create another agent to make it spawnable."
-                        : "Configured agents marked unavailable can still be removed."
-                )
-            } else {
-                addButton(
-                    title: "Add agent",
-                    isPresented: $agentPickerPresented,
-                    disabled: addable.isEmpty
-                ) {
-                    agentAddList
+            HStack(spacing: 14) {
+                if agentCandidates.isEmpty {
+                    emptyHint("No other agents yet — create one to make it spawnable.")
+                } else {
+                    addButton(
+                        title: "Add agent",
+                        isPresented: $agentPickerPresented,
+                        disabled: addable.isEmpty
+                    ) {
+                        agentAddList
+                    }
+                }
+                if isOrchestrator, selected.isEmpty {
+                    starterAgentsButton
                 }
             }
         }
+        .settingsLandingAnchor(anchor("allowedAgents"))
+    }
+
+    /// One-click runnable pool for a fresh install: Coder + Researcher +
+    /// Writer, on the Orchestrator's own model, auto-joined to the pool.
+    private var starterAgentsButton: some View {
+        Button {
+            let created = agentManager.createStarterAgents()
+            guard !created.isEmpty else { return }
+            var ids = spawnableAgentIDs
+            for agent in created where !ids.contains(agent.id) { ids.append(agent.id) }
+            spawnableAgentIDs = SpawnableAgentIdentity.normalizedIDs(ids)
+            onChange()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "sparkles").font(.system(size: 10, weight: .bold))
+                Text("Create starter agents", bundle: .module)
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(theme.accentColor)
+        }
+        .buttonStyle(.plain)
+        .help(L("Creates Coder, Researcher, and Writer agents on your current model and adds them here."))
+        .settingsLandingAnchor(anchor("starterAgents"))
     }
 
     private var agentAddList: some View {
@@ -303,14 +264,20 @@ struct SpawnConfigurationEditor: View {
     }
 
     private var allowedWorkspaceAgents: some View {
-        let selected = spawnableWorkspaceAgents
         let candidates = workspaceAgentCandidates
+        // Once the roster has loaded, a ref it does not list is stale
+        // (unshared / teammate left) and must never render as a bare address.
+        let selected = spawnableWorkspaceAgents.filter { ref in
+            !roster.hasWorkspaces || candidates.contains { $0.ref == ref }
+        }
         let addable = candidates.filter { !selected.contains($0.ref) }
         return VStack(alignment: .leading, spacing: 8) {
-            AgentSheetSectionLabel("Allowed workspace agents")
+            AgentSheetSectionLabel("Allowed shared agents")
             if selected.isEmpty {
                 emptyHint(
-                    "None yet. Add a teammate's shared agent to delegate a task to it. It runs on their Mac with their prompt and model; results come back over the relay."
+                    isOrchestrator
+                        ? "Teammates' shared agents join here automatically. They run on their owner's Mac with their prompt and model; results come back over the relay."
+                        : "None yet. Add a teammate's shared agent to delegate a task to it. It runs on their Mac with their prompt and model; results come back over the relay."
                 )
             } else {
                 FlowLayout(spacing: 6) {
@@ -323,20 +290,12 @@ struct SpawnConfigurationEditor: View {
                 }
             }
             if !roster.hasWorkspaces {
-                emptyHint(
-                    selected.isEmpty
-                        ? "No workspaces yet — join one in Settings → Workspaces to delegate to shared agents."
-                        : "Workspace roster unavailable. Configured agents marked unavailable can still be removed."
-                )
+                emptyHint("No workspaces yet — join one in Settings → Workspaces to delegate to shared agents.")
             } else if candidates.isEmpty {
-                emptyHint(
-                    selected.isEmpty
-                        ? "No teammate agents are shared into your workspaces yet."
-                        : "Configured agents marked unavailable can still be removed."
-                )
+                emptyHint("No teammate agents are shared into your workspaces yet.")
             } else {
                 addButton(
-                    title: "Add workspace agent",
+                    title: "Add shared agent",
                     isPresented: $workspaceAgentPickerPresented,
                     disabled: addable.isEmpty
                 ) {
@@ -344,10 +303,12 @@ struct SpawnConfigurationEditor: View {
                 }
             }
         }
+        .settingsLandingAnchor(anchor("allowedWorkspaceAgents"))
     }
 
-    /// Chip label: name · workspace, with a cached presence dot. Presence is
-    /// advisory (the spawn-time probe is authoritative) and UI-only.
+    /// Chip label: name @ workspace, owner, with a cached presence dot.
+    /// Presence is advisory (the spawn-time probe is authoritative) and
+    /// UI-only.
     private func workspaceAgentChip(
         ref: WorkspaceAgentRef,
         candidate: WorkspaceAgentCandidate?,
@@ -369,15 +330,16 @@ struct SpawnConfigurationEditor: View {
                 .foregroundColor(theme.primaryText)
                 .lineLimit(1)
             if let workspaceName, !workspaceName.isEmpty {
-                Text("· \(workspaceName)")
+                Text("@\(workspaceName)")
                     .font(.system(size: 10))
                     .foregroundColor(theme.tertiaryText)
                     .lineLimit(1)
             }
-            if candidate == nil {
-                Text("Unavailable", bundle: .module)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(theme.warningColor)
+            if let owner = candidate?.ownerName, !owner.isEmpty {
+                Text("· \(owner)")
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+                    .lineLimit(1)
             }
             Button(action: onRemove) {
                 Image(systemName: "xmark")
@@ -419,7 +381,7 @@ struct SpawnConfigurationEditor: View {
         return VStack(alignment: .leading, spacing: 8) {
             SearchField(
                 text: $workspaceAgentSearch,
-                placeholder: "Search workspace agents",
+                placeholder: "Search shared agents",
                 width: 296,
                 compact: true
             )
@@ -432,7 +394,7 @@ struct SpawnConfigurationEditor: View {
                         }
                         .padding(.vertical, 6)
                     } else if filtered.isEmpty {
-                        emptyHint("No matching workspace agents.").padding(.vertical, 6)
+                        emptyHint("No matching shared agents.").padding(.vertical, 6)
                     } else {
                         ForEach(filtered) { candidate in
                             let presence = roster.presence(
@@ -440,7 +402,7 @@ struct SpawnConfigurationEditor: View {
                                 workspaceId: candidate.ref.workspaceId
                             )
                             addRow(
-                                title: candidate.name,
+                                title: "\(candidate.name)@\(candidate.workspaceName)",
                                 subtitle: workspaceAgentSubtitle(candidate, presence: presence)
                             ) {
                                 setWorkspaceAgent(candidate.ref, included: true)
@@ -459,7 +421,7 @@ struct SpawnConfigurationEditor: View {
         _ candidate: WorkspaceAgentCandidate,
         presence: WorkspaceRosterStore.Presence
     ) -> String {
-        var parts: [String] = [candidate.workspaceName]
+        var parts: [String] = []
         if let owner = candidate.ownerName, !owner.isEmpty { parts.append(owner) }
         parts.append(presenceLabel(presence))
         if let description = candidate.description { parts.append(description) }
@@ -470,216 +432,110 @@ struct SpawnConfigurationEditor: View {
         var refs = spawnableWorkspaceAgents.filter { $0 != ref }
         if included { refs.append(ref) }
         spawnableWorkspaceAgents = SubagentConfiguration.normalizedWorkspaceAgents(refs)
+        if let removed = removedWorkspaceAgents {
+            var tombstones = removed.wrappedValue.filter { $0 != ref }
+            if !included { tombstones.append(ref) }
+            removed.wrappedValue = SubagentConfiguration.normalizedWorkspaceAgents(tombstones)
+        }
         onChange()
     }
 
-    // MARK: - Allowed models
+    // MARK: - Permission
 
-    private var allowedModels: some View {
-        let selected = spawnableModelNames
-        return VStack(alignment: .leading, spacing: 8) {
-            AgentSheetSectionLabel("Allowed models")
-            if selected.isEmpty {
-                emptyHint(
-                    "None yet. Add a local or remote model to delegate to it directly, with no agent attached."
-                )
-            } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(selected, id: \.self) { id in
-                        modelRow(id)
-                    }
+    private var permissionRow: some View {
+        controlRow(
+            "Permission",
+            subtitle:
+                "Whether to ask before the Orchestrator's agents run. Always Allow is the default: each agent keeps its own permission cards for anything sensitive."
+        ) {
+            Picker("", selection: permissionSelection(for: SubagentCapabilityRegistry.spawn.id)) {
+                ForEach(SubagentPermissionPolicy.allCases, id: \.self) { policy in
+                    Text(LocalizedStringKey(policy.displayName), bundle: .module).tag(policy)
                 }
             }
-            addButton(
-                title: "Add model",
-                isPresented: $modelPickerPresented,
-                // A cold cache must not make the only refresh affordance
-                // unreachable. Opening the popover performs the authoritative
-                // local + connected-provider refresh above.
-                disabled: false
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 240)
+        }
+        .settingsLandingAnchor(anchor("permission"))
+    }
+
+    private var workspacePermissionRow: some View {
+        controlRow(
+            "Permission for shared (workspace) agents",
+            subtitle:
+                "A shared agent runs on a teammate's Mac and spends that workspace's pool. Ask is the default; one card covers every shared agent in a wave."
+        ) {
+            Picker(
+                "",
+                selection: permissionSelection(for: SubagentPermissionDefaults.workspaceSpawnKindId)
             ) {
-                modelAddList
-            }
-        }
-    }
-
-    private func modelRow(_ id: String) -> some View {
-        let item = modelCandidate(forStoredId: id)
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Text(item?.displayName ?? id)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-                if let badge = modelBadge(item) {
-                    badgePill(badge)
-                }
-                Spacer(minLength: 8)
-                Button {
-                    setModel(id, included: false)
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .buttonStyle(.plain)
-            }
-            modelNoteField(id)
-        }
-        .padding(8)
-        .background(roundedSurface(fill: theme.inputBackground, stroke: theme.inputBorder))
-    }
-
-    private func modelNoteField(_ id: String) -> some View {
-        let binding = modelNoteBinding(id)
-        return ZStack(alignment: .leading) {
-            if binding.wrappedValue.isEmpty {
-                Text("When/how to use this model (optional)", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.placeholderText)
-                    .allowsHitTesting(false)
-            }
-            TextField("", text: binding)
-                .textFieldStyle(.plain)
-                .font(.system(size: 11))
-                .foregroundColor(theme.primaryText)
-        }
-    }
-
-    private var modelAddList: some View {
-        let selected = spawnableModelNames
-        let filtered =
-            selectableModelCandidates
-            .filter { item in
-                guard let targetId = selectionID(for: item) else { return false }
-                return !selected.contains(targetId)
-            }
-            .filter { $0.matches(searchQuery: modelSearch) }
-        let grouped = filtered.groupedBySource()
-        return VStack(alignment: .leading, spacing: 8) {
-            SearchField(
-                text: $modelSearch,
-                placeholder: "Search models",
-                width: 296,
-                compact: true
-            )
-            ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
-                    if isRefreshingModels || !modelPickerCache.isLoaded {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .controlSize(.small)
-                            emptyHint("Refreshing local and connected cloud models…")
-                        }
-                        .padding(.vertical, 6)
-                    } else if grouped.isEmpty, selectableModelCandidates.isEmpty {
-                        emptyHint("No local or connected cloud models are available.")
-                            .padding(.vertical, 6)
-                    } else if grouped.isEmpty,
-                        selectableModelCandidates.allSatisfy({ item in
-                            selectionID(for: item).map(selected.contains) ?? false
-                        })
-                    {
-                        emptyHint("All available models are already allowed.")
-                            .padding(.vertical, 6)
-                    } else if grouped.isEmpty {
-                        emptyHint("No matching models.").padding(.vertical, 6)
-                    } else {
-                        ForEach(Array(grouped.enumerated()), id: \.offset) { _, group in
-                            Text(group.source.displayName)
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundColor(theme.tertiaryText)
-                                .padding(.top, 4)
-                            ForEach(group.models, id: \.self) { item in
-                                addRow(
-                                    title: item.displayName,
-                                    subtitle: modelSubtitle(item)
-                                ) {
-                                    if let targetId = selectionID(for: item) {
-                                        setModel(targetId, included: true)
-                                    }
-                                }
-                            }
-                        }
-                    }
+                ForEach(SubagentPermissionPolicy.allCases, id: \.self) { policy in
+                    Text(LocalizedStringKey(policy.displayName), bundle: .module).tag(policy)
                 }
             }
-            .frame(maxHeight: 260)
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 240)
         }
-        .padding(12)
-        .frame(width: 324)
+        .settingsLandingAnchor(anchor("workspacePermission"))
     }
 
     // MARK: - Limits
 
     private var budgetRows: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    limitsExpanded.toggle()
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(theme.tertiaryText)
-                        .rotationEffect(.degrees(limitsExpanded ? 90 : 0))
-                    AgentSheetSectionLabel("Limits")
-                    Spacer(minLength: 8)
-                    if !limitsExpanded {
-                        Text(limitsSummary)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                            .lineLimit(1)
-                    }
-                }
-                .contentShape(Rectangle())
+            HStack(spacing: 8) {
+                AgentSheetSectionLabel("Limits")
+                Spacer(minLength: 8)
+                Text(limitsSummary)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .lineLimit(1)
             }
-            .buttonStyle(.plain)
-
-            if limitsExpanded {
-                VStack(alignment: .leading, spacing: 8) {
-                    budgetStepper(
-                        title: "Max output tokens per subagent",
-                        keyPath: \.maxDelegateTokens,
-                        range: SubagentBudgets.tokenBounds,
-                        step: 256
-                    )
-                    budgetStepper(
-                        title: "Max turns per subagent",
-                        keyPath: \.maxDelegateTurns,
-                        range: SubagentBudgets.turnBounds,
-                        step: 1
-                    )
-                    budgetStepper(
-                        title: "Max tool calls per subagent (0 = default 8)",
-                        keyPath: \.maxToolCalls,
-                        range: SubagentBudgets.toolCallBounds,
-                        step: 1
-                    )
-                    budgetStepper(
-                        title: "Time limit per subagent (seconds)",
-                        keyPath: \.maxElapsedSeconds,
-                        range: SubagentBudgets.elapsedBounds,
-                        step: 15
-                    )
-                    budgetStepper(
-                        title: "Max local subagents at once",
-                        keyPath: \.maxParallelSpawns,
-                        range: SubagentBudgets.parallelSpawnBounds,
-                        step: 1
-                    )
-                    budgetStepper(
-                        title: "Max remote subagents at once",
-                        keyPath: \.maxRemoteParallelSpawns,
-                        range: SubagentBudgets.remoteParallelSpawnBounds,
-                        step: 1
-                    )
-                    currentLocalExecutionContract
-                }
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
+            budgetStepper(
+                title: "Max output tokens per subagent",
+                help: "Output tokens one subagent may produce per turn. Long reports need more.",
+                keyPath: \.maxDelegateTokens,
+                range: SubagentBudgets.tokenBounds,
+                step: 256,
+                anchor: "maxTokens"
+            )
+            budgetStepper(
+                title: "Max turns per subagent",
+                help: "Model turns (tool-call rounds) one subagent may take before it must answer.",
+                keyPath: \.maxDelegateTurns,
+                range: SubagentBudgets.turnBounds,
+                step: 1,
+                anchor: "maxTurns"
+            )
+            budgetStepper(
+                title: "Time limit per subagent (seconds)",
+                help: "Wall-clock limit for one subagent, including model loading.",
+                keyPath: \.maxElapsedSeconds,
+                range: SubagentBudgets.elapsedBounds,
+                step: 15,
+                anchor: "timeLimit"
+            )
+            budgetStepper(
+                title: "Max local subagents at once",
+                help: "Local (on-device) subagents that may run in parallel in one wave. Shares the Server Concurrent Sessions ceiling.",
+                keyPath: \.maxParallelSpawns,
+                range: SubagentBudgets.parallelSpawnBounds,
+                step: 1,
+                anchor: "maxLocal"
+            )
+            budgetStepper(
+                title: "Max remote subagents at once",
+                help: "Cloud, provider, and shared workspace subagents that may run in parallel in one wave.",
+                keyPath: \.maxRemoteParallelSpawns,
+                range: SubagentBudgets.remoteParallelSpawnBounds,
+                step: 1,
+                anchor: "maxRemote"
+            )
+            currentLocalExecutionContract
         }
+        .settingsLandingAnchor(anchor("limits"))
     }
 
     private var limitsSummary: String {
@@ -706,12 +562,12 @@ struct SpawnConfigurationEditor: View {
     }
 
     private var localExecutionContractSubtitle: LocalizedStringKey {
-        if excludedAgentID == nil {
+        if isOrchestrator {
             return
-                "The Orchestrator and Server Concurrent Sessions share one configured local limit. Existing engine work and the memory check can queue or split it into smaller waves at run time. Different local models run in serial model waves. Remote subagents use the separate remote limit and run concurrently."
+                "The Orchestrator and Server Concurrent Sessions share one configured local limit. Existing engine work and the memory check can queue or split it into smaller waves at run time. Different local models run one model at a time. Remote subagents use the separate remote limit and run concurrently."
         }
         return
-            "This agent and Server Concurrent Sessions share one configured local limit. Existing engine work and the memory check can queue or split it into smaller waves at run time. Different local models run in serial model waves. Remote subagents use the separate remote limit and run concurrently."
+            "This agent and Server Concurrent Sessions share one configured local limit. Existing engine work and the memory check can queue or split it into smaller waves at run time. Different local models run one model at a time. Remote subagents use the separate remote limit and run concurrently."
     }
 
     /// Reuse the runtime admission planner for the static settings-level
@@ -740,12 +596,14 @@ struct SpawnConfigurationEditor: View {
 
     private func budgetStepper(
         title: LocalizedStringKey,
+        help: LocalizedStringKey,
         keyPath: WritableKeyPath<SubagentBudgets, Int>,
         range: ClosedRange<Int>,
-        step: Int
+        step: Int,
+        anchor suffix: String
     ) -> some View {
         let value = budgetBinding(keyPath)
-        return controlRow(title) {
+        return controlRow(title, subtitle: help) {
             Stepper(value: value, in: range, step: step) {
                 Text("\(value.wrappedValue)")
                     .font(.system(size: 12, design: .monospaced))
@@ -753,6 +611,94 @@ struct SpawnConfigurationEditor: View {
                     .frame(width: 64, alignment: .trailing)
             }
             .frame(maxWidth: 180)
+        }
+        .settingsLandingAnchor(anchor(suffix))
+    }
+
+    // MARK: - Advanced
+
+    private var advancedSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    advancedExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(theme.tertiaryText)
+                        .rotationEffect(.degrees(advancedExpanded ? 90 : 0))
+                    AgentSheetSectionLabel("Advanced")
+                    Spacer(minLength: 8)
+                    if !advancedExpanded, let current = normalized(modelOverride) {
+                        Text(current)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if advancedExpanded {
+                VStack(alignment: .leading, spacing: 10) {
+                    modelOverrideRow
+                    handoffWarning
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .settingsLandingAnchor(anchor("advanced"))
+    }
+
+    private var modelOverrideRow: some View {
+        controlRow(
+            "Agent-target model override",
+            subtitle:
+                "Optional. Runs every delegated agent on this model instead of the agent's own. Leave it on \"Use each agent's model\" unless you need one model for all subagents."
+        ) {
+            Picker("", selection: modelOverrideSelection) {
+                Text("Use each agent's model", bundle: .module).tag("")
+                if let current = normalized(modelOverride),
+                    modelCandidate(forStoredId: current) == nil
+                {
+                    Text("\(current) (unavailable)", bundle: .module).tag(current)
+                }
+                ForEach(selectableModelCandidates, id: \.self) { item in
+                    if let targetId = selectionID(for: item) {
+                        Text(item.displayName).tag(targetId)
+                    }
+                }
+            }
+            .labelsHidden()
+            .frame(maxWidth: 220, alignment: .trailing)
+        }
+        .settingsLandingAnchor(anchor("modelOverride"))
+    }
+
+    @ViewBuilder
+    private var handoffWarning: some View {
+        if !localHandoffEnabled {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.warningColor)
+                Text(
+                    "\"Swap local models for subagents\" is off. A local subagent with a different model runs WITHOUT the unload chat model → load subagent model → run → unload → reload sequence, so the server eviction policy decides whether the chat model stays loaded. Turn it on in Settings → Orchestrator to enforce the sequence for every agent.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.warningColor.opacity(0.12))
+            )
         }
     }
 
@@ -765,6 +711,20 @@ struct SpawnConfigurationEditor: View {
             }
             return !candidate.isBuiltIn
         }
+    }
+
+    /// Drop ids that no longer name a live agent from the bound list, so a
+    /// deletion that raced this editor can never be re-persisted by its
+    /// next save (and never renders as a bare UUID chip).
+    private func pruneMissingAgents() {
+        // The manager loads synchronously at init, so an empty list means it
+        // has not been materialized yet — never prune against nothing.
+        guard !agentManager.agents.isEmpty else { return }
+        let live = Set(agentManager.agents.map(\.id))
+        let pruned = spawnableAgentIDs.filter { live.contains($0) }
+        guard pruned.count != spawnableAgentIDs.count else { return }
+        spawnableAgentIDs = pruned
+        onChange()
     }
 
     private var modelCandidates: [ModelPickerItem] {
@@ -796,10 +756,9 @@ struct SpawnConfigurationEditor: View {
         }
     }
 
-    /// Resolve a persisted spawn id back to its current picker row. Canonical
-    /// remote ids use provider UUID + raw model slug; a legacy name-prefixed id
-    /// is accepted only when one current provider owns it. Exact duplicate
-    /// picker ids deliberately render unavailable rather than picking `.first`.
+    /// Resolve a persisted override id back to its current picker row.
+    /// Canonical remote ids use provider UUID + raw model slug; a legacy
+    /// name-prefixed id is accepted only when one current provider owns it.
     private func modelCandidate(forStoredId id: String) -> ModelPickerItem? {
         let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -822,7 +781,7 @@ struct SpawnConfigurationEditor: View {
         await RemoteProviderManager.shared.refreshConnectedProviders()
         await modelPickerCache.buildModelPickerItems()
         captureConnectedSpawnTargetIndex()
-        migrateLegacyRemoteSelections()
+        migrateLegacyRemoteOverride()
     }
 
     @MainActor
@@ -831,68 +790,26 @@ struct SpawnConfigurationEditor: View {
             RemoteProviderManager.shared.connectedSpawnModelTargetIndex()
     }
 
-    /// Upgrade only unambiguous legacy remote ids after the live provider
-    /// catalog refresh. Notes follow their target. Duplicate provider names /
-    /// model slugs remain untouched and unavailable so the user must choose the
-    /// intended UUID-backed row explicitly.
-    private func migrateLegacyRemoteSelections() {
-        var migratedNames = spawnableModelNames
-        var migratedNotes = spawnableModelNotes
-        var migratedOverride = modelOverride
-
-        func canonicalRemoteID(for id: String) -> String? {
-            // Preserve local/Foundation precedence if an old remote picker id
-            // happens to collide with a local id.
-            if modelCandidates.contains(where: { item in
-                guard item.id == id else { return false }
-                switch item.source {
-                case .local, .foundation, .imageGeneration, .claudeCode: return true
-                case .remote: return false
-                }
-            }) {
-                return nil
+    /// Upgrade an unambiguous legacy remote override id after the live
+    /// provider catalog refresh.
+    private func migrateLegacyRemoteOverride() {
+        guard let current = normalized(modelOverride) else { return }
+        // Preserve local/Foundation precedence if an old remote picker id
+        // happens to collide with a local id.
+        if modelCandidates.contains(where: { item in
+            guard item.id == current else { return false }
+            switch item.source {
+            case .local, .foundation, .imageGeneration, .claudeCode: return true
+            case .remote: return false
             }
-            guard
-                let remote = connectedSpawnTargetIndex.target(forStoredId: id),
-                remote.id != id
-            else {
-                return nil
-            }
-            return remote.id
-        }
-
-        for index in migratedNames.indices {
-            let legacy = migratedNames[index]
-            guard let canonical = canonicalRemoteID(for: legacy) else { continue }
-            migratedNames[index] = canonical
-            if let note = migratedNotes.removeValue(forKey: legacy),
-                migratedNotes[canonical] == nil
-            {
-                migratedNotes[canonical] = note
-            }
-        }
-        migratedNames = SubagentConfiguration.normalizedSpawnableModelNames(migratedNames)
-        migratedNotes = SubagentConfiguration.normalizedSpawnableModelNotes(
-            migratedNotes,
-            names: migratedNames
-        )
-
-        if let current = normalized(migratedOverride),
-            let canonical = canonicalRemoteID(for: current)
-        {
-            migratedOverride = canonical
-        }
-
-        guard
-            migratedNames != spawnableModelNames
-                || migratedNotes != spawnableModelNotes
-                || migratedOverride != modelOverride
-        else {
+        }) {
             return
         }
-        spawnableModelNames = migratedNames
-        spawnableModelNotes = migratedNotes
-        modelOverride = migratedOverride
+        guard
+            let remote = connectedSpawnTargetIndex.target(forStoredId: current),
+            remote.id != current
+        else { return }
+        modelOverride = remote.id
         onChange()
     }
 
@@ -906,27 +823,13 @@ struct SpawnConfigurationEditor: View {
         )
     }
 
-    private var permissionSelection: Binding<SubagentPermissionPolicy> {
+    private func permissionSelection(for kindId: String) -> Binding<SubagentPermissionPolicy> {
         Binding(
-            get: {
-                permissionDefaults.policy(for: SubagentCapabilityRegistry.spawn.id)
-            },
+            get: { permissionDefaults.policy(for: kindId) },
             set: { newValue in
                 var updated = permissionDefaults
-                updated.setPolicy(newValue, for: SubagentCapabilityRegistry.spawn.id)
+                updated.setPolicy(newValue, for: kindId)
                 permissionDefaults = updated
-                onChange()
-            }
-        )
-    }
-
-    /// `SpawnToolAccess` has exactly two cases today, so the UI is a single
-    /// switch; the stored enum is kept for forward compatibility.
-    private var modelSubagentReadOnlyFilesSelection: Binding<Bool> {
-        Binding(
-            get: { toolAccess == .readOnly },
-            set: { newValue in
-                toolAccess = newValue ? .readOnly : .none
                 onChange()
             }
         )
@@ -946,42 +849,10 @@ struct SpawnConfigurationEditor: View {
         )
     }
 
-    private func modelNoteBinding(_ id: String) -> Binding<String> {
-        let key = id.trimmingCharacters(in: .whitespacesAndNewlines)
-        return Binding(
-            get: { spawnableModelNotes[key] ?? "" },
-            set: { newValue in
-                var notes = spawnableModelNotes
-                if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    notes.removeValue(forKey: key)
-                } else {
-                    notes[key] = newValue
-                }
-                spawnableModelNotes = notes
-                onChange()
-            }
-        )
-    }
-
     private func setAgent(_ id: UUID, included: Bool) {
         var ids = spawnableAgentIDs.filter { $0 != id }
         if included { ids.append(id) }
         spawnableAgentIDs = SpawnableAgentIdentity.normalizedIDs(ids)
-        onChange()
-    }
-
-    private func setModel(_ id: String, included: Bool) {
-        let key = id.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else { return }
-        var names = spawnableModelNames.filter { $0 != key }
-        var notes = spawnableModelNotes
-        if included {
-            names.append(key)
-        } else {
-            notes.removeValue(forKey: key)
-        }
-        spawnableModelNames = names
-        spawnableModelNotes = notes
         onChange()
     }
 
@@ -1019,15 +890,6 @@ struct SpawnConfigurationEditor: View {
         Divider().overlay(theme.inputBorder)
     }
 
-    private func roundedSurface(fill: Color, stroke: Color) -> some View {
-        RoundedRectangle(cornerRadius: 8)
-            .fill(fill)
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(stroke, lineWidth: 1)
-            )
-    }
-
     private func emptyHint(_ text: LocalizedStringKey) -> some View {
         Text(text, bundle: .module)
             .font(.system(size: 11))
@@ -1037,7 +899,6 @@ struct SpawnConfigurationEditor: View {
 
     private func removableChip(
         label: String,
-        unavailable: Bool = false,
         onRemove: @escaping () -> Void
     ) -> some View {
         HStack(spacing: 6) {
@@ -1045,11 +906,6 @@ struct SpawnConfigurationEditor: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.primaryText)
                 .lineLimit(1)
-            if unavailable {
-                Text("Unavailable", bundle: .module)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(theme.warningColor)
-            }
             Button(action: onRemove) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))
@@ -1114,39 +970,5 @@ struct SpawnConfigurationEditor: View {
             .padding(.horizontal, 4)
         }
         .buttonStyle(.plain)
-    }
-
-    private func modelBadge(_ item: ModelPickerItem?) -> String? {
-        guard let item else {
-            return isRefreshingModels || !modelPickerCache.isLoaded
-                ? L("Checking…")
-                : L("Unavailable")
-        }
-        switch item.source {
-        case .remote(let providerName, _): return providerName
-        case .local, .foundation: return L("Local")
-        case .imageGeneration: return L("Image")
-        // Distinct from "Local": it runs through the user's signed-in Claude
-        // Code CLI, so its limits and privacy story differ from on-device MLX.
-        case .claudeCode: return L("Claude Code")
-        }
-    }
-
-    private func badgePill(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundColor(theme.tertiaryText)
-            .lineLimit(1)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(theme.tertiaryBackground))
-    }
-
-    private func modelSubtitle(_ item: ModelPickerItem) -> String? {
-        var parts: [String] = []
-        if let params = item.parameterCount, !params.isEmpty { parts.append(params) }
-        if let quant = item.quantization, !quant.isEmpty { parts.append(quant) }
-        if item.isVLM { parts.append(L("Vision")) }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }

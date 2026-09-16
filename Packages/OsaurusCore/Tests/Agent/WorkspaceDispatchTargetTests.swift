@@ -226,11 +226,11 @@ struct WorkspaceTargetStoredModelTests {
         // A malformed entry never discards the whole delegation config.
         let malformed = """
             {"spawnableWorkspaceAgents":[{"workspace_id":"ws","agent_address":42}],
-             "spawnableModelNames":["m"]}
+             "ramSafetyPreflightEnabled":false}
             """
         let lenient = try decode(SubagentConfiguration.self, malformed)
         #expect(lenient.spawnableWorkspaceAgents.isEmpty)
-        #expect(lenient.spawnableModelNames == ["m"])
+        #expect(lenient.ramSafetyPreflightEnabled == false)
 
         var settings = Agent(name: "Launcher").settings
         settings.spawnDelegationEnabled = true

@@ -62,7 +62,7 @@ struct OsaurusGuideTests {
             "server-api", "settings", "voice", "themes", "channels",
             "automation", "privacy-storage", "troubleshooting",
             "commands", "images", "watchers", "agent-db", "knowledge",
-            "identity",
+            "identity", "orchestrator", "config", "workspaces",
         ] {
             #expect(ids.contains(required), "guide topic `\(required)` missing")
         }

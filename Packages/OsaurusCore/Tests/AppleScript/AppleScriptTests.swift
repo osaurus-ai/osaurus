@@ -3320,17 +3320,19 @@ struct AppleScriptCapabilityGatingTests {
         #expect(!disabledWithModel.contains(AppleScriptTool.toolName))
     }
 
-    @Test("the Default agent is gated by the global switch, not the snapshot flag")
-    func defaultAgentUsesGlobalSwitch() {
-        let config = SubagentConfiguration(appleScriptDelegationEnabled: true)
+    @Test("the Default agent (Orchestrator) never resolves AppleScript, even with a ready model")
+    func defaultAgentNeverResolvesAppleScript() {
+        // AppleScript lives on custom agents only; the Orchestrator delegates
+        // to such an agent instead of carrying the tools itself.
         let names = SubagentToolVisibility.visibleDelegationToolNames(
             agentId: Agent.defaultId,
-            snapshot: snapshot(agentId: Agent.defaultId, appleScript: false),
-            config: config,
+            snapshot: snapshot(agentId: Agent.defaultId, appleScript: true),
+            config: SubagentConfiguration(),
             hasReadyImageModel: false,
             hasReadyAppleScriptModel: true
         )
-        #expect(names.contains(AppleScriptTool.toolName))
+        #expect(!names.contains(AppleScriptTool.toolName))
+        #expect(!names.contains(MacQueryTool.toolName))
     }
 
     @Test("the applescript capability gates both sibling tools (applescript + mac_query)")
@@ -3342,11 +3344,13 @@ struct AppleScriptCapabilityGatingTests {
         #expect(cap.perAgentFlag == .appleScript)
         #expect(cap.supportsModelOverride == false)
         #expect(SubagentCapabilityRegistry.delegationFamily.contains { $0.id == "applescript" })
-        // Both tools gate together: enabling AppleScript exposes both.
+        // Both tools gate together: enabling AppleScript on a custom agent
+        // exposes both.
+        let agentId = UUID()
         let names = SubagentToolVisibility.visibleDelegationToolNames(
-            agentId: Agent.defaultId,
-            snapshot: snapshot(agentId: Agent.defaultId, appleScript: false),
-            config: SubagentConfiguration(appleScriptDelegationEnabled: true),
+            agentId: agentId,
+            snapshot: snapshot(agentId: agentId, appleScript: true),
+            config: SubagentConfiguration(),
             hasReadyImageModel: false,
             hasReadyAppleScriptModel: true
         )

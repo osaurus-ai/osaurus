@@ -1188,6 +1188,10 @@ struct ChatCompletionChunk: Codable, Sendable {
     /// Osaurus extension chunk for determinate local prefill progress. Emitted
     /// with empty choices before the first token when the runtime reports it.
     var osaurus_prefill: PrefillProgressState? = nil
+    /// Osaurus extension chunk on a hosted `/agents/{id}/run`: the small
+    /// files the agent shared with `share_artifact`, emitted once with empty
+    /// choices right before the finish chunk (see `RemoteRunArtifacts`).
+    var osaurus_artifacts: [RemoteRunArtifact]? = nil
 }
 
 // MARK: - Error Response

@@ -140,7 +140,10 @@ public final class ExecutionContext: ObservableObject {
         reattaching existing: ChatSessionData,
         folderBookmark: Data? = nil,
         folderPath: String? = nil,
-        workspace prepared: WorkspaceAgentRunClient.Prepared? = nil
+        workspace prepared: WorkspaceAgentRunClient.Prepared? = nil,
+        loadIntent: ModelLoadIntent = .interactive,
+        delegationBudget: DelegatedRunContract? = nil,
+        delegationModel: String? = nil
     ) {
         self.id = existing.id
         self.agentId = existing.agentId ?? Agent.defaultId
@@ -151,6 +154,12 @@ public final class ExecutionContext: ObservableObject {
 
         let session = ChatSession()
         session.agentId = existing.agentId
+        session.loadIntent = loadIntent
+        // A resumed delegation (`spawn_agent` `continue`) re-applies the
+        // launcher's enforced contract so the follow-up turn is clamped and
+        // priced exactly like the first one.
+        session.delegationBudget = delegationBudget
+        session.delegationModel = existing.source == .delegation ? delegationModel : nil
         // Apply identity + history immediately so observers (e.g. the
         // BackgroundTaskState activity feed) see the existing turns from
         // the very first publish.

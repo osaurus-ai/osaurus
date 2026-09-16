@@ -2,10 +2,9 @@
 //  SpawnToolsetTests.swift
 //  OsaurusCoreTests
 //
-//  Unit coverage for the spawn child toolset (Phase 2 context offload):
-//  the `SpawnToolAccess` gate, the allowlist refusal, and the per-run
-//  `maxToolCalls` cap — using the injection seams so no live ToolRegistry
-//  or model is needed.
+//  Unit coverage for the spawn child toolset: the allowlist refusal, the
+//  child exclusions, and the child scope/identity seams — using the
+//  injection seams so no live ToolRegistry or model is needed.
 //
 
 import Foundation
@@ -26,23 +25,9 @@ struct SpawnToolsetTests {
         ServiceToolInvocation(toolName: name, jsonArguments: "{}")
     }
 
-    @Test("access none yields no toolset (text-only run)")
-    func noneYieldsNil() async {
-        let toolset = await TextSubagentKind.makeToolset(
-            access: SpawnToolAccess.none,
-            maxToolCalls: 4,
-            feed: nil,
-            specs: [spec("file_read")],
-            dispatch: { _ in "unreachable" }
-        )
-        #expect(toolset == nil)
-    }
-
-    @Test("readOnly with no registered tools yields no toolset")
+    @Test("no specs yields no toolset (text-only run)")
     func emptySpecsYieldNil() async {
         let toolset = await TextSubagentKind.makeToolset(
-            access: .readOnly,
-            maxToolCalls: 4,
             feed: nil,
             specs: [],
             dispatch: { _ in "unreachable" }
@@ -53,8 +38,6 @@ struct SpawnToolsetTests {
     @Test("allowed tool dispatches; non-allowlisted tool is refused")
     func allowlistEnforced() async throws {
         let toolset = await TextSubagentKind.makeToolset(
-            access: .readOnly,
-            maxToolCalls: 4,
             feed: nil,
             specs: [spec("file_read"), spec("file_search")],
             dispatch: { inv in "ran:\(inv.toolName)" }
@@ -70,43 +53,19 @@ struct SpawnToolsetTests {
         #expect(ToolEnvelope.failureMessage(refused).contains("not available inside this subagent"))
     }
 
-    @Test("maxToolCalls cap refuses further calls with budget copy")
-    func toolCallCapEnforced() async throws {
+    @Test("there is no per-run tool-call cap: repeated calls keep dispatching")
+    func noToolCallCap() async throws {
         let toolset = await TextSubagentKind.makeToolset(
-            access: .readOnly,
-            maxToolCalls: 2,
             feed: nil,
             specs: [spec("file_read")],
             dispatch: { _ in "ok" }
         )
         let set = try #require(toolset)
-
-        let first = await set.execute(invocation("file_read"))
-        let second = await set.execute(invocation("file_read"))
-        let third = await set.execute(invocation("file_read"))
-        #expect(first == "ok")
-        #expect(second == "ok")
-        #expect(ToolEnvelope.isError(third))
-        #expect(ToolEnvelope.failureMessage(third).contains("Tool-call budget (2) exhausted"))
-    }
-
-    @Test("maxToolCalls 0 falls back to the default read-only cap")
-    func zeroCapUsesDefault() async throws {
-        let toolset = await TextSubagentKind.makeToolset(
-            access: .readOnly,
-            maxToolCalls: 0,
-            feed: nil,
-            specs: [spec("file_read")],
-            dispatch: { _ in "ok" }
-        )
-        let set = try #require(toolset)
-
         var successes = 0
-        for _ in 0 ..< (TextSubagentKind.defaultReadOnlyToolCallCap + 1) {
-            let result = await set.execute(invocation("file_read"))
-            if result == "ok" { successes += 1 }
+        for _ in 0 ..< 40 {
+            if await set.execute(invocation("file_read")) == "ok" { successes += 1 }
         }
-        #expect(successes == TextSubagentKind.defaultReadOnlyToolCallCap)
+        #expect(successes == 40)
     }
 
     @Test("tool-carrying children get at least 2 turns; text-only budgets stay untouched")
@@ -122,29 +81,11 @@ struct SpawnToolsetTests {
         #expect(TextSubagentKind.effectiveMaxTurns(configured: 6, hasToolset: false) == 6)
     }
 
-    @Test("refused non-allowlisted call does not consume the cap")
-    func refusalDoesNotBurnBudget() async throws {
-        let toolset = await TextSubagentKind.makeToolset(
-            access: .readOnly,
-            maxToolCalls: 1,
-            feed: nil,
-            specs: [spec("file_read")],
-            dispatch: { _ in "ok" }
-        )
-        let set = try #require(toolset)
-
-        _ = await set.execute(invocation("not_allowed"))
-        let allowed = await set.execute(invocation("file_read"))
-        #expect(allowed == "ok")
-    }
-
     // MARK: - Agent-mode child tools (spawn_agent carries the persona's tool policy)
 
-    @Test("agent specs alone yield a toolset even without a read-only grant")
-    func agentSpecsWithoutGrant() async throws {
+    @Test("agent specs alone yield a toolset")
+    func agentSpecsAlone() async throws {
         let toolset = await TextSubagentKind.makeToolset(
-            access: SpawnToolAccess.none,
-            maxToolCalls: 4,
             feed: nil,
             agentSpecs: [spec("create_event"), spec("search_events")],
             dispatch: { inv in "ran:\(inv.toolName)" }
@@ -158,11 +99,9 @@ struct SpawnToolsetTests {
         #expect(ToolEnvelope.isError(refused))
     }
 
-    @Test("agent specs union with the read-only grant; agent spec wins a name collision")
-    func agentSpecsUnionReadOnly() async throws {
+    @Test("agent specs union with extra specs; agent spec wins a name collision")
+    func agentSpecsUnionExtras() async throws {
         let toolset = await TextSubagentKind.makeToolset(
-            access: .readOnly,
-            maxToolCalls: 8,
             feed: nil,
             agentSpecs: [spec("create_event"), spec("file_read")],
             specs: [spec("file_read"), spec("file_search")],
@@ -175,28 +114,10 @@ struct SpawnToolsetTests {
         #expect(ok == "ran:create_event")
     }
 
-    @Test("agent-tool calls share the same per-run cap")
-    func agentToolsShareCap() async throws {
-        let toolset = await TextSubagentKind.makeToolset(
-            access: SpawnToolAccess.none,
-            maxToolCalls: 1,
-            feed: nil,
-            agentSpecs: [spec("create_event")],
-            dispatch: { _ in "ok" }
-        )
-        let set = try #require(toolset)
-        let first = await set.execute(invocation("create_event"))
-        let second = await set.execute(invocation("create_event"))
-        #expect(first == "ok")
-        #expect(ToolEnvelope.isError(second))
-    }
-
     @Test("agent tool dispatch publishes the child scope instead of inheriting the parent scope")
     func agentToolDispatchUsesChildExecutionScope() async throws {
         let parentScope = ToolExecutionScope(exposed: [spec("spawn_agent")])
         let toolset = await TextSubagentKind.makeToolset(
-            access: SpawnToolAccess.none,
-            maxToolCalls: 4,
             feed: nil,
             agentSpecs: [spec("get_events")],
             dispatch: { invocation in
@@ -229,8 +150,6 @@ struct SpawnToolsetTests {
             launcherAgentId: launcher
         )
         let toolset = await TextSubagentKind.makeToolset(
-            access: .none,
-            maxToolCalls: 1,
             feed: nil,
             agentSpecs: [spec(tool.name)],
             executionAgentId: executionAgentId
@@ -249,9 +168,9 @@ struct SpawnToolsetTests {
         #expect(ChatExecutionContext.currentAgentId == nil)
     }
 
-    @Test("bare-model tool dispatch preserves the launcher UUID")
+    @Test("tool dispatch without a target persona preserves the launcher UUID")
     @MainActor
-    func bareModelDispatchUsesLauncherIdentity() async throws {
+    func noTargetDispatchUsesLauncherIdentity() async throws {
         let launcher = UUID()
         let tool = SpawnAgentIdentityProbeTool()
         ToolRegistry.shared.register(tool)
@@ -262,8 +181,6 @@ struct SpawnToolsetTests {
             launcherAgentId: launcher
         )
         let toolset = await TextSubagentKind.makeToolset(
-            access: .readOnly,
-            maxToolCalls: 1,
             feed: nil,
             specs: [spec(tool.name)],
             executionAgentId: executionAgentId
@@ -282,13 +199,19 @@ struct SpawnToolsetTests {
         #expect(ChatExecutionContext.currentAgentId == nil)
     }
 
-    @Test("subagent-capability tools and clarify are excluded from a child schema")
+    @Test("only the spawn family and clarify are excluded from a child schema")
     func childExclusions() {
         #expect(TextSubagentKind.isExcludedChildTool("spawn_agent"))
-        #expect(TextSubagentKind.isExcludedChildTool("spawn_model"))
         #expect(TextSubagentKind.isExcludedChildTool("clarify"))
         #expect(!TextSubagentKind.isExcludedChildTool("create_event"))
         #expect(!TextSubagentKind.isExcludedChildTool("web_search"))
+        // Fully capable workers: knowledge/skill mutation is no longer
+        // stripped structurally — their own approval cards gate them.
+        #expect(!TextSubagentKind.isExcludedChildTool("write_knowledge"))
+        #expect(!TextSubagentKind.isExcludedChildTool("delete_knowledge"))
+        #expect(!TextSubagentKind.isExcludedChildTool("update_skill"))
+        #expect(!TextSubagentKind.isExcludedChildTool("file_write"))
+        #expect(!TextSubagentKind.isExcludedChildTool("shell_run"))
     }
 
     @Test("cancel-reason mapping: user stop / parent cancel / deadline get distinct honest copy")
@@ -382,12 +305,11 @@ struct SpawnToolsetTests {
                 capabilities: capabilities(knowledge: true)
             )
         )
-        // Knowledge MUTATION stays with the parent (`isExcludedChildTool`):
-        // a child carries the retrieval/ticket subset, never write/delete.
+        // A child carries the agent's full knowledge surface (the
+        // spawn-safety audit, not `isExcludedChildTool`, is the final gate).
         let childKnowledgeNames = SystemPromptComposer.knowledgeToolNames
             .filter { !TextSubagentKind.isExcludedChildTool($0) }
         #expect(knowledge.isSuperset(of: childKnowledgeNames))
-        #expect(knowledge.isDisjoint(with: ["write_knowledge", "delete_knowledge"]))
         #expect(knowledge.isDisjoint(with: SystemPromptComposer.knowledgeCuratorToolNames))
 
         let curator = Set(
@@ -450,39 +372,6 @@ struct SpawnToolsetTests {
         #expect(
             TextSubagentKind.seedUserContent(input: "task", memorySection: "recall")
                 == "[Memory]\nrecall\n[/Memory]\n\ntask"
-        )
-    }
-
-    @Test("effectiveSpawnToolAccess: default agent uses global, custom uses settings")
-    func effectiveAccessResolution() {
-        var config = SubagentConfiguration()
-        config.spawnToolAccess = .readOnly
-        var settings = AgentSettings.defaultDisabled
-        settings.spawnToolAccess = SpawnToolAccess.none
-
-        // Default agent → global config value.
-        #expect(
-            SubagentToolVisibility.effectiveSpawnToolAccess(
-                isDefault: true,
-                config: config,
-                settings: settings
-            ) == .readOnly
-        )
-        // Custom agent → its own settings, not the global.
-        #expect(
-            SubagentToolVisibility.effectiveSpawnToolAccess(
-                isDefault: false,
-                config: config,
-                settings: settings
-            ) == SpawnToolAccess.none
-        )
-        // Missing settings → safe text-only default.
-        #expect(
-            SubagentToolVisibility.effectiveSpawnToolAccess(
-                isDefault: false,
-                config: config,
-                settings: nil
-            ) == SpawnToolAccess.none
         )
     }
 }

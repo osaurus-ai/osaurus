@@ -315,11 +315,13 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
         + "needs `scope` + `id`; providers/mcp include runtime connected/last_error; skills, "
         + "knowledge, commands, themes also match by name). "
         + "`scope` ∈ {agents, models, providers, mcp, plugins, schedules, skills, watchers, "
-        + "knowledge, themes, commands, channels, search}. "
+        + "knowledge, themes, commands, channels, search, workspaces, shared_agents}. "
+        + "shared_agents = teammates' agents you can delegate to (name, owner, workspace, "
+        + "presence, `target` for spawn_agent; describe by Name@Workspace). "
         + "Optional `filter` (list only): models: installed|downloading|recommended|all; "
         + "providers/mcp: enabled|disabled|connected|all; plugins: installed|available|failed; "
         + "schedules/watchers/knowledge/channels: enabled|disabled; "
-        + "skills/commands: builtin|custom|plugin."
+        + "skills/commands: builtin|custom|plugin; shared_agents: online|in_pool."
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -346,16 +348,17 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                     .string("mcp"), .string("plugins"), .string("schedules"),
                     .string("skills"), .string("watchers"), .string("knowledge"),
                     .string("themes"), .string("commands"), .string("channels"),
-                    .string("search"),
+                    .string("search"), .string("workspaces"), .string("shared_agents"),
                     .string("mcp_servers"), .string("knowledge_collections"),
                     .string("search_providers"),
                     .string("server"), .string("chat"), .string("app"),
                     .string("memory"), .string("default_agent"),
-                    .string("active_agent"), .string("tools"), .string("delegation"),
+                    .string("new_chat_agent"), .string("active_agent"), .string("tools"),
+                    .string("delegation"),
                 ]),
                 "description": .string(
                     "Configuration scope. Required for list and describe. memory, "
-                        + "default_agent, active_agent, tools, and delegation are settings "
+                        + "default_agent, new_chat_agent (alias active_agent), tools, and delegation are settings "
                         + "document sections — list/describe returns the section's current "
                         + "values (change them with osaurus_config apply). server, chat, and "
                         + "app are Settings-UI-only."),
@@ -902,6 +905,25 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                     "scope": "channels", "filter": filter,
                     "items": Self.filterByEnabledConnected(connections, filter: filter),
                 ]
+            case WorkspaceInspectPayload.workspacesScope:
+                payload = [
+                    "scope": scope,
+                    "items": WorkspaceInspectPayload.workspaces(),
+                    "note": WorkspaceInspectPayload.poolNote,
+                ]
+            case WorkspaceInspectPayload.sharedAgentsScope:
+                let rows = WorkspaceInspectPayload.sharedAgents()
+                let filtered: [[String: Any]]
+                switch filter {
+                case "online": filtered = rows.filter { ($0["presence"] as? String) == "online" }
+                case "in_pool": filtered = rows.filter { ($0["in_orchestrator_pool"] as? Bool) == true }
+                default: filtered = rows
+                }
+                payload = [
+                    "scope": scope, "filter": filter,
+                    "items": filtered,
+                    "note": WorkspaceInspectPayload.poolNote,
+                ]
             case "search":
                 let manager = SearchProviderManager.shared
                 let configured = manager.configuredProviderIds
@@ -945,7 +967,7 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
     /// to the attempt cap. Reading the section is what the call meant.
     /// Returns nil for anything that is not a document section.
     static func documentSectionRead(scope: String, tool: String) async -> String? {
-        guard let section = ConfigSectionID(rawValue: scope.lowercased()),
+        guard let section = ConfigSectionID.parse(scope),
             !settingsUIOnlyScopes.contains(scope.lowercased())
         else { return nil }
         let document = await MainActor.run { ConfigExporter.export(sections: [section]) }
@@ -1419,6 +1441,31 @@ extension OsaurusInspectTool {
                 } else {
                     payload = nil
                 }
+            case WorkspaceInspectPayload.workspacesScope:
+                payload = WorkspaceInspectPayload.describeWorkspace(idStr)
+            case WorkspaceInspectPayload.sharedAgentsScope:
+                switch WorkspaceInspectPayload.describeSharedAgent(idStr) {
+                case .found(let row):
+                    payload = row
+                case .notFound:
+                    payload = nil
+                case .local(let localName):
+                    return ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "`\(idStr)` is one of this Osaurus's own agents (`\(localName)`), not a "
+                            + "teammate's shared agent. Use {action: \"describe\", scope: \"agents\"}.",
+                        field: "id",
+                        tool: name
+                    )
+                case .ambiguous(let forms):
+                    return ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "`\(idStr)` matches more than one shared agent. Use one of: "
+                            + forms.map { "`\($0)`" }.joined(separator: ", ") + ".",
+                        field: "id",
+                        tool: name
+                    )
+                }
             case "search":
                 let manager = SearchProviderManager.shared
                 if let entry = manager.rankedProviders.enumerated().first(where: {
@@ -1468,7 +1515,7 @@ extension OsaurusInspectTool {
     static let knownReadScopes: Set<String> = [
         "agents", "models", "providers", "mcp", "mcp_providers", "plugins",
         "schedules", "skills", "watchers", "knowledge", "themes", "commands",
-        "channels", "search",
+        "channels", "search", "workspaces", "shared_agents",
     ]
 
     /// Declarative entity-section ids that double as natural scope guesses.
@@ -1525,7 +1572,7 @@ extension OsaurusInspectTool {
                 tool: tool
             )
         }
-        if let section = ConfigSectionID(rawValue: scope.lowercased()) {
+        if let section = ConfigSectionID.parse(scope) {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message:

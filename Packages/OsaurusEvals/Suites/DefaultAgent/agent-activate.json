@@ -1,20 +1,42 @@
 {
   "id": "default_agent.agent-activate",
   "domain": "default_agent",
-  "label": "default agent • activate (switch to) an agent by name",
+  "label": "default agent • set the new-chat agent (switch to) by name",
   "query": "Switch to the agent named \"Eval Browser Agent\".",
-  "notes": "Switching agents maps onto `active_agent: <name>` in the document (entities match by name in the declarative model). The agent is seeded so activation SUCCEEDS. The selection assertion pins the active_agent key, proving the model maps \"switch to\" onto activation rather than creating a duplicate agent.",
+  "notes": "Switching agents maps onto `new_chat_agent: <name>` in the document (entities match by name in the declarative model; `active_agent` is the accepted legacy alias). The agent is seeded so activation SUCCEEDS. The selection assertion pins the new_chat_agent key (either spelling), proving the model maps \"switch to\" onto the new-chat pointer rather than creating a duplicate agent or spawning it.",
   "fixtures": {
     "seedAgents": [
-      { "id": "8d3b1f6a-4c20-47e9-b5a1-2f7c9e043d18", "name": "Eval Browser Agent" }
+      {
+        "id": "8d3b1f6a-4c20-47e9-b5a1-2f7c9e043d18",
+        "name": "Eval Browser Agent"
+      }
     ]
   },
   "expect": {
     "defaultAgent": {
-      "mustCallTools": ["osaurus_config"],
-      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "spawn_agent",
+        "capabilities_discover",
+        "capabilities_load"
+      ],
       "argsMustContain": [
-        { "tool": "osaurus_config", "args": { "action": "apply", "yaml": "active_agent" } }
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply"
+          },
+          "argsAnyOf": [
+            {
+              "yaml": "new_chat_agent"
+            },
+            {
+              "yaml": "active_agent"
+            }
+          ]
+        }
       ],
       "maxIterations": 8
     }

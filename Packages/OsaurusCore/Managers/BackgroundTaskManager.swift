@@ -1009,7 +1009,10 @@ public final class BackgroundTaskManager: ObservableObject {
                 reattaching: existing,
                 folderBookmark: folder?.bookmark,
                 folderPath: folder?.path,
-                workspace: workspacePrepared
+                workspace: workspacePrepared,
+                loadIntent: request.loadIntent,
+                delegationBudget: request.delegationContract,
+                delegationModel: request.delegationModel
             )
         } else if let workspacePrepared {
             context = ExecutionContext(

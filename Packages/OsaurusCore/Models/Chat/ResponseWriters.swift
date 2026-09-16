@@ -513,6 +513,26 @@ final class SSEResponseWriter: ResponseWriter {
         writeSSEChunk(chunk, context: context)
     }
 
+    /// Emit the `osaurus_artifacts` extension chunk of a hosted shared-agent
+    /// run (empty `choices`; see `RemoteRunArtifacts`).
+    func writeArtifactsChunk(
+        _ artifacts: [RemoteRunArtifact],
+        model: String,
+        responseId: String,
+        created: Int,
+        context: ChannelHandlerContext
+    ) {
+        var chunk = ChatCompletionChunk(
+            id: responseId,
+            created: created,
+            model: model,
+            choices: [],
+            system_fingerprint: nil
+        )
+        chunk.osaurus_artifacts = artifacts
+        writeSSEChunk(chunk, context: context)
+    }
+
     /// Emit an Osaurus extension progress chunk for local prefill. The chunk
     /// deliberately uses empty `choices` so OpenAI-compatible text parsers can
     /// ignore it while Osaurus UI/API clients render progress.

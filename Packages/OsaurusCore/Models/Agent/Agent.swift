@@ -762,13 +762,6 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// Transitional in-memory payload for callers constructing a capability
     /// snapshot from legacy settings. It is never an authorization key.
     var legacySpawnableAgentNames: [String]
-    /// Raw model ids this agent may hand a task to via `spawn_model` (no agent).
-    /// Empty → the `spawn_model` tool stays hidden. The Default agent ignores
-    /// this and uses the global `SubagentConfiguration.spawnableModelNames` pool.
-    public var spawnableModelNames: [String]
-    /// Optional "when/how to use" note per spawnable model id, surfaced in the
-    /// spawn guidance descriptor. Pure metadata — the gate is `spawnableModelNames`.
-    public var spawnableModelNotes: [String: String]
     /// Shared workspace agents this agent may delegate to via `spawn_agent`.
     /// Empty → no workspace targets. The Default agent ignores this and uses
     /// the global `SubagentConfiguration.spawnableWorkspaceAgents` pool.
@@ -804,8 +797,6 @@ public struct AgentCapabilities: Sendable, Equatable {
         appleScriptEnabled: Bool = false,
         spawnableAgentIDs: [UUID] = [],
         spawnableAgentNames: [String] = [],
-        spawnableModelNames: [String] = [],
-        spawnableModelNotes: [String: String] = [:],
         spawnableWorkspaceAgents: [WorkspaceAgentRef] = [],
         knowledgeEnabled: Bool = false,
         knowledgeCollectionIds: [UUID] = [],
@@ -828,8 +819,6 @@ public struct AgentCapabilities: Sendable, Equatable {
         self.appleScriptEnabled = appleScriptEnabled
         self.spawnableAgentIDs = SpawnableAgentIdentity.normalizedIDs(spawnableAgentIDs)
         self.legacySpawnableAgentNames = spawnableAgentNames
-        self.spawnableModelNames = spawnableModelNames
-        self.spawnableModelNotes = spawnableModelNotes
         self.spawnableWorkspaceAgents = spawnableWorkspaceAgents
         self.knowledgeEnabled = knowledgeEnabled
         self.knowledgeCollectionIds = knowledgeCollectionIds
@@ -1132,14 +1121,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// Decode-only compatibility payload for pre-UUID agent JSON. Runtime
     /// authorization never matches this list directly.
     var legacySpawnableAgentNames: [String]
-    /// Raw model ids this agent may hand a task to via `spawn_model` (no agent;
-    /// per-agent allow-list). Empty → the `spawn_model` tool stays hidden. The
-    /// Default agent ignores this and uses the global
-    /// `SubagentConfiguration.spawnableModelNames` pool.
-    public var spawnableModelNames: [String]
-    /// Optional "when/how to use" note per spawnable model id, surfaced in the
-    /// spawn guidance descriptor. Pure metadata — the gate is `spawnableModelNames`.
-    public var spawnableModelNotes: [String: String]
     /// Teammates' shared workspace agents this agent may delegate to over the
     /// relay via `spawn_agent` (per-agent allow-list, by durable
     /// `(workspaceId, agentAddress)`). Opt-in, empty by default. The Default
@@ -1173,10 +1154,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// Per-agent budgets for `spawn` jobs (token / turn / wall-clock caps). The
     /// Default agent uses the global `SubagentConfiguration.budgets` instead.
     public var subagentBudgets: SubagentBudgets
-    /// What tools this agent's spawned workers may reach (`none` = text-only,
-    /// `readOnly` = curated read-only set). Default `.none`; the Default agent
-    /// uses the global `SubagentConfiguration.spawnToolAccess` instead.
-    public var spawnToolAccess: SpawnToolAccess
     /// Per-agent model override for subagent kinds, keyed by capability id
     /// (`"computer_use"`, `"spawn"`). An entry supersedes the
     /// kind's default model source (the parent agent's model for computer_use;
@@ -1222,8 +1199,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         appleScriptExecutionMode: AppleScriptExecutionMode = .default,
         spawnableAgentIDs: [UUID] = [],
         spawnableAgentNames: [String] = [],
-        spawnableModelNames: [String] = [],
-        spawnableModelNotes: [String: String] = [:],
         imageGenerationModelId: String? = nil,
         imageGenerationTarget: MediaModelTarget? = nil,
         imageEditModelId: String? = nil,
@@ -1235,7 +1210,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         knowledgeEnabled: Bool = false,
         knowledgeCollectionIds: [UUID] = [],
         knowledgeCuratorEnabled: Bool = false,
-        spawnToolAccess: SpawnToolAccess = .none,
         spawnableWorkspaceAgents: [WorkspaceAgentRef] = []
     ) {
         self.dbEnabled = dbEnabled
@@ -1259,8 +1233,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.appleScriptExecutionMode = appleScriptExecutionMode
         self.spawnableAgentIDs = SpawnableAgentIdentity.normalizedIDs(spawnableAgentIDs)
         self.legacySpawnableAgentNames = spawnableAgentNames
-        self.spawnableModelNames = spawnableModelNames
-        self.spawnableModelNotes = spawnableModelNotes
         self.imageGenerationTarget =
             imageGenerationTarget.flatMap { $0.isValid ? $0 : nil }
             ?? imageGenerationModelId.map {
@@ -1275,7 +1247,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.knowledgeEnabled = knowledgeEnabled
         self.knowledgeCollectionIds = knowledgeCollectionIds
         self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
-        self.spawnToolAccess = spawnToolAccess
         self.spawnableWorkspaceAgents = SubagentConfiguration.normalizedWorkspaceAgents(spawnableWorkspaceAgents)
     }
 
@@ -1326,12 +1297,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
             (try? c.decodeIfPresent([UUID].self, forKey: .spawnableAgentIDs)) ?? []
         legacySpawnableAgentNames =
             (try? c.decodeIfPresent([String].self, forKey: .spawnableAgentNames)) ?? []
-        // Raw model ids for `spawn_model` + their notes. Lenient (`try?`) so a
-        // malformed pool/notes map never discards the rest of the settings.
-        spawnableModelNames =
-            (try? c.decodeIfPresent([String].self, forKey: .spawnableModelNames)) ?? []
-        spawnableModelNotes =
-            (try? c.decodeIfPresent([String: String].self, forKey: .spawnableModelNotes)) ?? [:]
         // Optional; absent means no ceiling (user policy applies as-is).
         computerUseCeiling = try c.decodeIfPresent(
             AutonomyCeiling.self,
@@ -1356,9 +1321,12 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         subagentPermissions =
             (try? c.decodeIfPresent(SubagentPermissionDefaults.self, forKey: .subagentPermissions))
             ?? SubagentPermissionDefaults()
+        // Stored budgets equal to the pre-2026 defaults (2048 / 2 / 120) are
+        // upgraded to the current defaults once, so existing agents stop
+        // "ending too fast" (see `SubagentBudgets.migratingLegacyDefaults`).
         subagentBudgets =
-            (try? c.decodeIfPresent(SubagentBudgets.self, forKey: .subagentBudgets))
-            ?? SubagentBudgets()
+            ((try? c.decodeIfPresent(SubagentBudgets.self, forKey: .subagentBudgets))
+            ?? SubagentBudgets()).migratingLegacyDefaults
         // Normalize on decode (trim values, drop blanks) so the per-agent stored
         // shape matches the global `SubagentConfiguration.subagentModelOverrides`
         // — a cleared picker round-trips as "no override", never an empty-string
@@ -1374,10 +1342,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
             (try? c.decodeIfPresent([UUID].self, forKey: .knowledgeCollectionIds)) ?? []
         knowledgeCuratorEnabled =
             try c.decodeIfPresent(Bool.self, forKey: .knowledgeCuratorEnabled) ?? false
-        // Lenient enum decode: an invalid/renamed raw value falls back to the
-        // safe text-only default instead of failing the whole agent decode.
-        spawnToolAccess =
-            (try? c.decodeIfPresent(SpawnToolAccess.self, forKey: .spawnToolAccess)) ?? .none
         // Absent for every agent written before workspace spawn targets
         // existed; lenient so a malformed ref never discards the settings.
         spawnableWorkspaceAgents = SubagentConfiguration.normalizedWorkspaceAgents(
@@ -1434,8 +1398,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case spawnableAgentIDs
         /// Legacy decode-only key.
         case spawnableAgentNames
-        case spawnableModelNames
-        case spawnableModelNotes
         case imageGenerationTarget
         /// Legacy decode-only key.
         case imageGenerationModelId
@@ -1448,7 +1410,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case knowledgeEnabled
         case knowledgeCollectionIds
         case knowledgeCuratorEnabled
-        case spawnToolAccess
         case spawnableWorkspaceAgents
     }
 
@@ -1477,8 +1438,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
             SpawnableAgentIdentity.normalizedIDs(spawnableAgentIDs),
             forKey: .spawnableAgentIDs
         )
-        try c.encode(spawnableModelNames, forKey: .spawnableModelNames)
-        try c.encode(spawnableModelNotes, forKey: .spawnableModelNotes)
         try c.encodeIfPresent(imageGenerationTarget, forKey: .imageGenerationTarget)
         try c.encodeIfPresent(imageEditModelId, forKey: .imageEditModelId)
         try c.encodeIfPresent(textToVideoTarget, forKey: .textToVideoTarget)
@@ -1489,7 +1448,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(knowledgeEnabled, forKey: .knowledgeEnabled)
         try c.encode(knowledgeCollectionIds, forKey: .knowledgeCollectionIds)
         try c.encode(knowledgeCuratorEnabled, forKey: .knowledgeCuratorEnabled)
-        try c.encode(spawnToolAccess, forKey: .spawnToolAccess)
         if !spawnableWorkspaceAgents.isEmpty {
             try c.encode(spawnableWorkspaceAgents, forKey: .spawnableWorkspaceAgents)
         }

@@ -6382,6 +6382,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             defer { accessMonitor?.cancel() }
             let inboundOutcome = InboundSharedRun.Outcome()
+            // Hosted run: `share_artifact` results are processed into the
+            // hosted session's store and travel back to the requester on the
+            // final `osaurus_artifacts` chunk (small files only). Plain API
+            // callers keep the raw marker contract.
+            let artifactRelay: RemoteRunArtifactRelay? = inboundRun.map { run in
+                RemoteRunArtifactRelay(
+                    contextId: run.handle.taskId.uuidString,
+                    executionMode: executionMode
+                )
+            }
             // Messages the host has already mirrored into the hosted
             // transcript; the loop hooks flush anything appended past this.
             let mirroredCount = SendableInt(messages.count)
@@ -6952,7 +6962,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 invocation: outcome.invocation
                             )
                         )
-                        toolResultsByCallId.append((outcome.callId, outcome.result))
+                        let recordedResult: String
+                        if let artifactRelay, outcome.invocation.toolName == "share_artifact",
+                            !outcome.wasError
+                        {
+                            recordedResult = artifactRelay.intercept(rawResult: outcome.result)
+                        } else {
+                            recordedResult = outcome.result
+                        }
+                        toolResultsByCallId.append((outcome.callId, recordedResult))
                         // Host-only tool detail (args + result). Args are the
                         // recorded view so sandbox_secret_set values never
                         // re-enter Insights / agent-run logs. The peer still
@@ -7172,7 +7190,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             let finalUsage = runUsage
             let includeUsage = req.stream_options?.include_usage == true
+            let returnedArtifacts = artifactRelay?.payload() ?? []
             hop {
+                if !returnedArtifacts.isEmpty {
+                    writerBound.value.writeArtifactsChunk(
+                        returnedArtifacts,
+                        model: model, responseId: responseId, created: created, context: ctx.value
+                    )
+                }
                 writerBound.value.writeFinish(model, responseId: responseId, created: created, context: ctx.value)
                 if includeUsage {
                     writerBound.value.writeUsageChunk(

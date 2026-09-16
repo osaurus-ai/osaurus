@@ -22,6 +22,12 @@ enum AgentStarterTemplate: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// Ids accepted by the declarative `agents[].template` key (everything
+    /// but `blank`, which has nothing to seed).
+    static var configTemplateIds: [String] {
+        allCases.filter { $0 != .blank }.map(\.rawValue)
+    }
+
     var label: String {
         switch self {
         case .blank: return L("Blank")

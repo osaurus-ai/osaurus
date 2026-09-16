@@ -6,7 +6,7 @@ order: 50
 
 # Chat and the Agent Loop
 
-Every **custom-agent** chat is an agent loop: the model thinks, calls tools, tracks progress, and finishes with a summary. There is no separate "agent mode" — the loop is always on for custom agents. The built-in Orchestrator is the exception (see The Orchestrator topic): it configures Osaurus and delegates work, and it never receives a working folder or sandbox.
+Every **custom-agent** chat is an agent loop: the model thinks, calls tools, tracks progress, and finishes with a summary. There is no separate "agent mode" — the loop is always on for custom agents. The built-in Orchestrator is the exception (see The Orchestrator topic): it configures Osaurus and delegates work; it can read a working folder but never gets write, shell, or sandbox tools.
 
 ## What you'll see in chat
 
@@ -18,7 +18,7 @@ Every **custom-agent** chat is an agent loop: the model thinks, calls tools, tra
 
 ## Working folder
 
-On a **custom agent**, the folder selector on the chat input bar grants the current chat access to one folder: file read/write/edit/search, shell, and undo/history tools (plus git tools if it's a repo). It's per-chat, persists across relaunch, and new chats start folder-less. The Orchestrator does not show this chip and cannot operate on a selected folder — create or switch to a custom agent first.
+On a **custom agent**, the folder selector on the chat input bar grants the current chat access to one folder: file read/write/edit/search, shell, and undo/history tools (plus git tools if it's a repo). It's per-chat, persists across relaunch, and new chats start folder-less. On the **Orchestrator** the same chip sets its working folder: the Orchestrator can read it (`file_read`, `file_search`), and agents it delegates to that have no folder of their own work inside it — with write access. Hands-on editing still happens through a delegated or directly-used custom agent.
 
 ## Sandbox toggle
 
@@ -35,5 +35,5 @@ On macOS 26+, the sandbox toggle on the input bar runs shell/code work inside an
 ## Tips
 
 - Be specific; let the todo list show progress on long tasks.
-- On a custom agent, use a working folder for repo work, the sandbox for scripts and package installs, and neither for plain Q&A. Stay on the Orchestrator for setup and delegation.
+- On a custom agent, use a working folder for repo work, the sandbox for scripts and package installs, and neither for plain Q&A. On the Orchestrator, set a working folder when you want delegated work to land somewhere you can see; stay on it for setup, questions, and delegation.
 - Tool approvals are per-tool; you can grant "always allow" per agent in Permissions.

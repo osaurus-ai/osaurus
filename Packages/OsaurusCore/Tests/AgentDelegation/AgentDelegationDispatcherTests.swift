@@ -316,11 +316,6 @@ struct AgentDelegationDispatcherTests {
         )
         #expect(!eval.isDelegatedAgentTarget)
         #expect(!eval.suppressActivityMirror)
-
-        // Bare-model spawns keep the ephemeral flow unchanged.
-        let model = TextSubagentKind(model: "some-model", input: "x")
-        #expect(!model.isDelegatedAgentTarget)
-        #expect(!model.suppressActivityMirror)
     }
 
     // MARK: - Feed: mirror suppression + child session link
@@ -366,10 +361,7 @@ struct AgentDelegationDispatcherTests {
         // resolves into its direct-chat schema — the baseline the strip is
         // measured against.
         SubagentConfigurationStore.save(
-            SubagentConfiguration(
-                spawnableAgentIDs: [UUID()],
-                spawnableModelNames: ["some-model"]
-            )
+            SubagentConfiguration(spawnableAgentIDs: [UUID()])
         )
 
         let spawnNames = Set(SubagentCapabilityRegistry.spawn.toolNames)

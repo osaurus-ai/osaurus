@@ -121,10 +121,10 @@ struct ConfigurationReadScopeFunctionalTests {
             OsaurusInspectTool(), #"{"action": "list", "scope": "agents"}"#)
         let result = try #require(dict["result"] as? [String: Any])
         let shape = try #require(result["yaml_shape"] as? String)
-        // Activation ("switch to X") writes `active_agent`, so the agents
+        // Activation ("switch to X") writes `new_chat_agent`, so the agents
         // read must teach both sections.
         #expect(shape.contains("agents:"))
-        #expect(shape.contains("active_agent:"))
+        #expect(shape.contains("new_chat_agent:"))
     }
 
     @Test
@@ -139,6 +139,34 @@ struct ConfigurationReadScopeFunctionalTests {
             let nextStep = try #require(result["next_step"] as? String)
             #expect(nextStep.contains("schema"), "plain hint should still route to schema")
         }
+    }
+
+    /// The two workspace scopes answer "who can I delegate to" from a read.
+    /// The SwiftPM harness has no router session, so the rosters are empty:
+    /// the rows are empty but the envelope, the pool note and the
+    /// `shared_agents` filter must still be well-formed, and a describe by
+    /// `Name@Workspace` against an empty roster is a clean not-found.
+    @Test
+    func list_workspaceScopes_returnRowsAndPoolNote() async throws {
+        for scope in ["workspaces", "shared_agents"] {
+            let dict = try await runAsDefaultAgent(
+                OsaurusInspectTool(), "{\"action\": \"list\", \"scope\": \"\(scope)\"}")
+            let result = try #require(dict["result"] as? [String: Any], "scope \(scope)")
+            #expect(result["scope"] as? String == scope)
+            #expect(result["items"] is [[String: Any]], "scope \(scope) must list rows")
+            let note = try #require(result["note"] as? String)
+            #expect(note.contains("spawn_agent"))
+            #expect(note.contains("spawnable_workspace_agents"))
+        }
+        let online = try await runAsDefaultAgent(
+            OsaurusInspectTool(), #"{"action": "list", "scope": "shared_agents", "filter": "online"}"#)
+        #expect((online["result"] as? [String: Any])?["filter"] as? String == "online")
+
+        let missing = try await runAsDefaultAgent(
+            OsaurusInspectTool(), #"{"action": "describe", "scope": "shared_agents", "id": "Research@Acme"}"#)
+        #expect(missing["ok"] as? Bool == false)
+        let message = try #require(missing["message"] as? String)
+        #expect(message.contains("shared_agents"), Comment(rawValue: message))
     }
 
     @Test

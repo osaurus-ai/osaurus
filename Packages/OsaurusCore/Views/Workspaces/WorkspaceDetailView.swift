@@ -56,6 +56,7 @@ struct WorkspaceDetailView: View {
     /// Invite row whose link was just copied (button reads "Copied").
     @State private var copiedInviteId: String?
     @State private var copiedInviteTask: Task<Void, Never>?
+    @State private var orchestratorAutoJoin = true
 
     private enum PendingDestruction: Identifiable {
         case removeMember(OsaurusRouterWorkspaceMember)
@@ -1294,6 +1295,7 @@ struct WorkspaceDetailView: View {
                 }
             }
         ) {
+            orchestratorAutoJoinToggle
             if service.workspaceAgents.isEmpty {
                 if service.isLoadingDetail {
                     AgentSectionEmptyState(loading: "Loading shared agents…")
@@ -1343,6 +1345,38 @@ struct WorkspaceDetailView: View {
             }
         }
         .settingsLandingAnchor("workspaces.agents")
+    }
+
+    /// Per-workspace switch for the Orchestrator's delegation pool: on
+    /// (default), every teammate agent shared here joins "Allowed
+    /// subagents" automatically as the roster loads; off prunes this
+    /// workspace's agents from the pool and stops auto-joining. Declarative
+    /// twin: `delegation.workspace_auto_join`.
+    private var orchestratorAutoJoinToggle: some View {
+        SettingsToggle(
+            title: L("Let the Orchestrator delegate to shared agents"),
+            description: L(
+                "Teammates' agents shared in this workspace join the Orchestrator's Allowed subagents automatically. Off removes them from the pool; delegating still asks for permission (Settings → Orchestrator)."
+            ),
+            anchorId: "workspaces.agents.orchestratorAutoJoin",
+            isOn: Binding(
+                get: { orchestratorAutoJoin },
+                set: { enabled in
+                    orchestratorAutoJoin = enabled
+                    SubagentConfigurationStore.mutate { config in
+                        config.setWorkspaceAutoJoin(enabled, workspaceId: workspace.id)
+                    }
+                    // Re-run the join/prune step now instead of waiting for
+                    // the next roster tick so the pool reflects the switch.
+                    WorkspaceRosterStore.shared.reconcileSpawnPoolNow()
+                }
+            )
+        )
+        .padding(.bottom, 4)
+        .onAppear {
+            orchestratorAutoJoin =
+                SubagentConfigurationStore.snapshot().workspaceAutoJoinEnabled(workspace.id)
+        }
     }
 
     /// Identity scoped to THIS workspace (an agent shared into several

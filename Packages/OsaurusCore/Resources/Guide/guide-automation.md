@@ -6,7 +6,7 @@ order: 160
 
 # Computer Use, Browser, and Sandbox
 
-Three ways agents can act beyond chat — each isolated, gated, and off by default where it matters.
+Three ways agents can act beyond chat — each isolated, gated, and off by default where it matters. All three (like AppleScript and image generation) are custom-agent abilities: the built-in Orchestrator has none of them itself and reaches them only by delegating to an agent that does (Settings → Orchestrator → Subagents → Allowed subagents).
 
 ## Computer Use (experimental)
 

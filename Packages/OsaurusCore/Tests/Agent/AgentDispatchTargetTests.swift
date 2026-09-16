@@ -226,4 +226,57 @@ struct AgentDispatchTargetTests {
                 == .success(.local(local.id))
         )
     }
+
+    /// `Name@Workspace` picks one shared agent out of a name collision, by
+    /// workspace display name or id; the did-you-mean forms on an ambiguous
+    /// bare name are exactly those spellings (UUID for the local twin).
+    @Test func resolver_acceptsNameAtWorkspaceAndListsItAsDidYouMean() {
+        let local = Self.localAgent(name: "Research")
+        let acme = Self.ref
+        let beta = WorkspaceAgentRef(workspaceId: "ws-2", agentAddress: Self.otherSharedAddress)
+        let shared = [(ref: acme, name: Optional("Research")), (ref: beta, name: Optional("Research"))]
+        let names = [acme.workspaceId.lowercased(): "Acme", "ws-2": "Beta Team"]
+
+        #expect(
+            AgentTargetResolver.resolve(
+                "Research@Acme", scope: .localAndWorkspace, localAgents: [local], sharedAgents: shared,
+                workspaceNames: names
+            ) == .success(.workspace(acme))
+        )
+        // Workspace id and case-insensitive name both qualify.
+        #expect(
+            AgentTargetResolver.resolve(
+                "research @ beta team", scope: .localAndWorkspace, localAgents: [local], sharedAgents: shared,
+                workspaceNames: names
+            ) == .success(.workspace(beta))
+        )
+        #expect(
+            AgentTargetResolver.resolve(
+                "Research@ws-2", scope: .localAndWorkspace, localAgents: [local], sharedAgents: shared,
+                workspaceNames: names
+            ) == .success(.workspace(beta))
+        )
+        // Unknown workspace → not found (never a silent fallback to a twin).
+        #expect(
+            AgentTargetResolver.resolve(
+                "Research@Nowhere", scope: .localAndWorkspace, localAgents: [local], sharedAgents: shared,
+                workspaceNames: names
+            ) == .failure(.notFound)
+        )
+        // The bare name collides three ways; the hint lists the exact forms.
+        let bare = AgentTargetResolver.resolve(
+            "Research", scope: .localAndWorkspace, localAgents: [local], sharedAgents: shared,
+            workspaceNames: names
+        )
+        #expect(
+            bare == .failure(.ambiguous([local.id.uuidString, "Research@Acme", "Research@Beta Team"]))
+        )
+        // localOnly never sees the `@` form.
+        #expect(
+            AgentTargetResolver.resolve(
+                "Research@Acme", scope: .localOnly, localAgents: [local], sharedAgents: shared,
+                workspaceNames: names
+            ) == .failure(.notFound)
+        )
+    }
 }

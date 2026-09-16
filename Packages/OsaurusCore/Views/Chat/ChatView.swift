@@ -4164,12 +4164,13 @@ final class ChatSession: ObservableObject {
     /// container). When the user has a host folder mounted but sandbox is
     /// off, that wins — folder tools must enter the schema or
     /// `excludedToolNames(.none)` will hide them entirely.
-    /// Folder context to thread into an agent's execution mode. The Default
-    /// (configuration) agent never works against a host folder, so it resolves
-    /// to nil even when a folder is globally active — keeping the budget
-    /// preview and the sent prompt folder-less and consistent.
+    /// Folder context to thread into an agent's execution mode. The
+    /// Orchestrator (Default agent) carries a folder too: it reads it
+    /// (`file_read` / `file_search`) and subagents without their own folder
+    /// inherit it read/write; the composer strips the write tools for the
+    /// Orchestrator itself.
     private func activeFolderContext(for agentId: UUID) -> FolderContext? {
-        agentId == Agent.defaultId ? nil : folderState.context
+        folderState.context
     }
 
     /// Per-run options for the Claude Code subprocess backend.
@@ -5164,6 +5165,22 @@ final class ChatSession: ObservableObject {
                 } else if let progress = StreamingPrefillProgressHint.decode(delta) {
                     uiPrefillHintCount += 1
                     InferenceProgressManager.shared.prefillDidUpdateAsync(progress)
+                } else if let remoteArtifacts = StreamingArtifactHint.decode(delta) {
+                    // A teammate's host returned the small files its agent
+                    // shared: import them into THIS session's store and show
+                    // them on the turn exactly like local `share_artifact`
+                    // cards. A delegated (spawn) session's parent adopts them
+                    // from `sharedArtifacts` afterwards.
+                    if let sid = sessionId {
+                        let imported = SharedArtifact.importRemoteArtifacts(
+                            remoteArtifacts, contextId: sid.uuidString)
+                        if !imported.isEmpty {
+                            currentTurn.sharedArtifacts.append(contentsOf: imported)
+                            for artifact in imported {
+                                await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
+                            }
+                        }
+                    }
                 } else if let reasoning = StreamingReasoningHint.decode(delta) {
                     uiReasoningDeltaCount += 1
                     let now = Date()
@@ -7490,10 +7507,8 @@ final class ChatSession: ObservableObject {
                                 // tight window is exactly when offloading bulk
                                 // reading to a worker pays for itself.
                                 let spawnVisible = toolSpecs.contains {
-                                                        $0.function.name
-                                                            == SubagentCapabilityRegistry.spawnAgentToolName
-                                        || $0.function.name
-                                            == SubagentCapabilityRegistry.spawnModelToolName
+                                    $0.function.name
+                                        == SubagentCapabilityRegistry.spawnAgentToolName
                                 }
                                 msgs = AgentLoopBudget.appendingTransientNotices(
                                     [

@@ -395,7 +395,7 @@ enum ConfigPlanner {
             let key = active.lowercased()
             if key != "default" && !effectiveAgentNames(document: document, prune: prune).contains(key) {
                 issues.append(
-                    "active_agent: no agent named `\(active)` exists or is created by this document.")
+                    "new_chat_agent: no agent named `\(active)` exists or is created by this document.")
             }
         }
 
@@ -414,9 +414,6 @@ enum ConfigPlanner {
                 section.applescriptExecutionMode,
                 ConfigAppBehaviorEnums.applescriptExecutionModes,
                 "delegation.applescript_execution_mode", &issues)
-            checkEnum(
-                section.spawnToolAccess, ConfigAppBehaviorEnums.spawnToolAccessValues,
-                "delegation.spawn_tool_access", &issues)
             for (kind, raw) in (section.permissionDefaults ?? [:]).sorted(by: { $0.key < $1.key }) {
                 if !ConfigAppBehaviorEnums.permissionKindIds.contains(kind.lowercased()) {
                     issues.append(
@@ -438,8 +435,6 @@ enum ConfigPlanner {
             }
             checkBudget(section.budgetMaxTokens, SubagentBudgets.tokenBounds, "budget_max_tokens")
             checkBudget(section.budgetMaxTurns, SubagentBudgets.turnBounds, "budget_max_turns")
-            checkBudget(
-                section.budgetMaxToolCalls, SubagentBudgets.toolCallBounds, "budget_max_tool_calls")
             checkBudget(
                 section.budgetMaxSeconds, SubagentBudgets.elapsedBounds, "budget_max_seconds")
             checkBudget(
@@ -464,14 +459,14 @@ enum ConfigPlanner {
                             + "created by this document.")
                 }
             }
-            // Workspace targets are durable `<workspace_id>:<address>` keys;
-            // membership is not checked here (the roster may not be loaded),
-            // only the shape — execution probes the real agent at spawn time.
+            // Workspace targets: the durable `<workspace_id>:<address>` key is
+            // accepted by shape alone (the roster may not be loaded yet);
+            // `Name@Workspace`, a bare name or a `0x…` address must resolve
+            // against the live roster, and an ambiguous name lists the exact
+            // forms that disambiguate.
             for key in section.spawnableWorkspaceAgents ?? [] {
-                if WorkspaceAgentRef(key: key.trimmingCharacters(in: .whitespacesAndNewlines)) == nil {
-                    issues.append(
-                        "delegation.spawnable_workspace_agents: `\(key)` must be a "
-                            + "`<workspace_id>:<0x-agent-address>` key.")
+                if case .failure(let message) = ConfigApplier.resolveWorkspaceAgentKey(key) {
+                    issues.append("delegation.spawnable_workspace_agents: " + message)
                 }
             }
         }
@@ -1090,8 +1085,8 @@ enum ConfigPlanner {
         guard desired.lowercased() != current.lowercased() else { return }
         actions.append(
             ConfigPlanAction(
-                section: "active_agent", target: desired, kind: .update,
-                changes: ["active agent: \(current) -> \(desired)"]))
+                section: ConfigSectionID.activeAgent.rawValue, target: desired, kind: .update,
+                changes: ["new-chat agent: \(current) -> \(desired)"]))
     }
 
     // MARK: - Agents
@@ -1197,6 +1192,12 @@ enum ConfigPlanner {
             "browser_use_enabled", desired: caps.browserUseEnabled,
             current: agent.settings.browserUseEnabled, into: &changes)
         diff(
+            "image_enabled", desired: caps.imageEnabled,
+            current: agent.settings.imageEnabled, into: &changes)
+        diff(
+            "applescript_enabled", desired: caps.applescriptEnabled,
+            current: agent.settings.appleScriptEnabled, into: &changes)
+        diff(
             "speak_enabled", desired: caps.speakEnabled,
             current: agent.settings.speakEnabled, into: &changes)
         diff(
@@ -1262,11 +1263,7 @@ enum ConfigPlanner {
         diff(
             "local_text_enabled", desired: desired.localTextEnabled,
             current: current.localTextEnabled, into: &changes)
-        diff("image_enabled", desired: desired.imageEnabled, current: current.imageEnabled, into: &changes)
         diff("video_enabled", desired: desired.videoEnabled, current: current.videoEnabled, into: &changes)
-        diff(
-            "applescript_enabled", desired: desired.applescriptEnabled,
-            current: current.applescriptEnabled, into: &changes)
         diff(
             "applescript_execution_mode", desired: desired.applescriptExecutionMode?.lowercased(),
             current: current.applescriptExecutionMode, into: &changes)
@@ -1274,15 +1271,16 @@ enum ConfigPlanner {
             "spawnable_agents", desired: desired.spawnableAgents,
             current: current.spawnableAgents, into: &changes)
         diffList(
-            "spawnable_models", desired: desired.spawnableModels,
-            current: current.spawnableModels, into: &changes)
-        diffList(
             "spawnable_workspace_agents",
             desired: desired.spawnableWorkspaceAgents?.map { $0.lowercased() },
             current: current.spawnableWorkspaceAgents?.map { $0.lowercased() }, into: &changes)
-        diff(
-            "spawn_tool_access", desired: desired.spawnToolAccess?.lowercased(),
-            current: current.spawnToolAccess, into: &changes)
+        for (key, autoJoin) in (desired.workspaceAutoJoin ?? [:]).sorted(by: { $0.key < $1.key }) {
+            let currentValue = current.workspaceAutoJoin?[key] ?? true
+            if autoJoin != currentValue {
+                changes.append("workspace_auto_join[\(key)]: \(currentValue) → \(autoJoin)")
+            }
+        }
+        for hint in desired.removedKeyHints { changes.append("(ignored) " + hint) }
         let normalizedDefaults = desired.permissionDefaults.map { map in
             Dictionary(
                 map.map { ($0.key.lowercased(), $0.value.lowercased()) },
@@ -1297,9 +1295,6 @@ enum ConfigPlanner {
         diff(
             "budget_max_turns", desired: desired.budgetMaxTurns,
             current: current.budgetMaxTurns, into: &changes)
-        diff(
-            "budget_max_tool_calls", desired: desired.budgetMaxToolCalls,
-            current: current.budgetMaxToolCalls, into: &changes)
         diff(
             "budget_max_seconds", desired: desired.budgetMaxSeconds,
             current: current.budgetMaxSeconds, into: &changes)

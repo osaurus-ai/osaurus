@@ -983,6 +983,25 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     /// that already shows it (in whichever window), else attach it to the
     /// frontmost window and select it, else open a window for it. Mirrors
     /// have no chat of their own and are ignored.
+    /// Open a persisted session (e.g. a finished delegated worker chat from
+    /// Settings → Orchestrator → Delegations) as a tab: focuses the tab that
+    /// already shows it, else opens it in the preferred window, creating a
+    /// window only when none is open.
+    public func openHistorySession(_ session: ChatSessionData) {
+        if let shownIn = findWindow(bySessionId: session.id), let host = windowStates[shownIn.id] {
+            host.focusTab(forSessionId: session.id)
+            showWindow(id: shownIn.id)
+            return
+        }
+        if let targetId = preferredWindowId(), let target = windowStates[targetId] {
+            target.openSessionInNewTab(session)
+            showWindow(id: targetId)
+            return
+        }
+        let windowId = createWindow(agentId: session.agentId, showImmediately: true)
+        windowStates[windowId]?.openSessionInNewTab(session)
+    }
+
     public func revealTask(_ taskId: UUID) {
         guard let state = BackgroundTaskManager.shared.taskState(for: taskId), !state.isSubagentMirror
         else { return }

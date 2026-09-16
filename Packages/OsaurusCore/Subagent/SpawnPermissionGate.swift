@@ -2,9 +2,13 @@
 //  SpawnPermissionGate.swift
 //  OsaurusCore
 //
-//  One permission owner for spawn_agent, spawn_model, and spawn_batch.
+//  One permission owner for `spawn_agent` (local and workspace targets).
 //  Spawn policies live in SubagentConfiguration / AgentSettings, so "Always
 //  Allow" must persist there rather than in ToolRegistry's generic tool map.
+//  Two permission kinds share this gate: `spawn` (local agents, default
+//  Always Allow) and `spawn_workspace` (teammates' shared agents, default
+//  Ask). A mixed wave shows ONE card covering the kinds that are on Ask;
+//  "Always Allow" on that card persists exactly those kinds.
 //
 
 import Foundation
@@ -31,13 +35,18 @@ enum SpawnPermissionGate {
         (@Sendable (PromptRequest) async throws -> PromptChoice)?
 
     /// Deterministic eval seam. Production never binds this value; scripted
-    /// SpawnBatchTool evaluations still execute the real single batch gate,
-    /// but cannot inherit a developer machine's persisted Deny setting.
+    /// delegation evaluations still execute the real gate, but cannot inherit
+    /// a developer machine's persisted Deny setting.
     @TaskLocal
     static var policyOverrideForTests: SubagentPermissionPolicy?
 
+    /// The launcher's policy for one permission kind: `spawn` (local
+    /// agents, default Always Allow) or `spawn_workspace` (teammates'
+    /// shared agents, default Ask — the run leaves this Mac and spends the
+    /// workspace pool).
     static func effectivePolicy(
-        for scope: SubagentScope
+        for scope: SubagentScope,
+        kindId: String = SubagentCapabilityRegistry.spawn.id
     ) async -> SubagentPermissionPolicy {
         if let policyOverrideForTests {
             return policyOverrideForTests
@@ -48,23 +57,31 @@ enum SpawnPermissionGate {
             AgentManager.shared.agent(for: scope.agentId)?.settings
         }
         return SubagentToolVisibility.effectivePermission(
-            capabilityId: SubagentCapabilityRegistry.spawn.id,
+            capabilityId: kindId,
             isDefault: isDefault,
             config: config,
             settings: settings
         )
     }
 
+    /// The strictest policy across several kinds (a mixed local + workspace
+    /// wave): Deny wins, then Ask, then Always Allow.
+    static func combinedPolicy(_ policies: [SubagentPermissionPolicy]) -> SubagentPermissionPolicy {
+        if policies.contains(.deny) { return .deny }
+        if policies.contains(.ask) { return .ask }
+        return .alwaysAllow
+    }
+
     /// Resolve one spawn policy decision before admission/model loading.
     ///
-    /// `cancellationRequested` is the visible subagent Stop token for direct
-    /// spawn and spawn_batch. The prompt operation is owned and drained, so a
-    /// cancelled panel/test seam cannot outlive the rejected tool call.
+    /// `cancellationRequested` is the visible subagent Stop token. The prompt
+    /// operation is owned and drained, so a cancelled panel/test seam cannot
+    /// outlive the rejected tool call.
     ///
-    /// `waveMember` marks a single `spawn_agent` / `spawn_model` call that may
-    /// belong to a sibling wave (several spawn calls in one model message).
-    /// Members rendezvous in `SpawnWaveGate` for one shared card and one
-    /// fan-out limit check; the batch tool and the wave's own card pass nil.
+    /// `waveMember` marks a `spawn_agent` call that may belong to a sibling
+    /// wave (several spawn calls in one model message). Members rendezvous in
+    /// `SpawnWaveGate` for one shared card and one fan-out limit check; the
+    /// wave's own card passes nil.
     static func authorize(
         scope: SubagentScope,
         policy: SubagentPermissionPolicy,
@@ -72,7 +89,8 @@ enum SpawnPermissionGate {
         description: String,
         argumentsJSON: String,
         cancellationRequested: @escaping @Sendable () -> Bool = { false },
-        waveMember: SpawnWaveGate.Member? = nil
+        waveMember: SpawnWaveGate.Member? = nil,
+        permissionKindIds: Set<String> = [SubagentCapabilityRegistry.spawn.id]
     ) async -> SubagentDecision {
         if case .deny = policy {
             return .denied(
@@ -88,7 +106,7 @@ enum SpawnPermissionGate {
             wave.expectedCallIds.contains(waveMember.callId)
         {
             let limits = await MainActor.run {
-                SpawnBatchTool.effectiveFanOutLimits(scope: scope)
+                SpawnFanOutPolicy.effectiveFanOutLimits(scope: scope)
             }
             let rendezvous = OwnedSubagentOperation<SubagentDecision?> {
                 await SpawnWaveGate.shared.join(waveMember, wave: wave, limits: limits)
@@ -143,7 +161,7 @@ enum SpawnPermissionGate {
         // changed the effective policy meanwhile, settle silently instead of
         // asking the user the same question twice.
         let revalidate: @Sendable () async -> ToolPermissionPromptService.PolicyApprovalOutcome? = {
-            Self.silentResolution(for: await effectivePolicy(for: scope))
+            Self.silentResolution(for: await effectivePolicy(for: scope, kindIds: permissionKindIds))
         }
         let operation = OwnedSubagentOperation<PromptChoice> {
             if let promptOverride {
@@ -183,11 +201,12 @@ enum SpawnPermissionGate {
             // Always Allow. Writing it again would advance the launcher's
             // permission revision a second time and trip the ABA check in
             // `TextSubagentKind.revalidateAfterPermission` for this sibling.
-            if await effectivePolicy(for: scope) == .alwaysAllow {
+            if await effectivePolicy(for: scope, kindIds: permissionKindIds) == .alwaysAllow {
                 return .allow
             }
             let persisted = await persistAlwaysAllow(
-                launchingAgentId: scope.agentId
+                launchingAgentId: scope.agentId,
+                kindIds: permissionKindIds
             )
             if !persisted {
                 // The current click still grants this run. A missing launching
@@ -199,6 +218,18 @@ enum SpawnPermissionGate {
             }
             return .allow
         }
+    }
+
+    /// Combined policy across every kind the card covers.
+    static func effectivePolicy(
+        for scope: SubagentScope,
+        kindIds: Set<String>
+    ) async -> SubagentPermissionPolicy {
+        var policies: [SubagentPermissionPolicy] = []
+        for kind in kindIds.sorted() {
+            policies.append(await effectivePolicy(for: scope, kindId: kind))
+        }
+        return combinedPolicy(policies)
     }
 
     /// Policy re-read for a queued prompt: a persisted Always Allow or Deny
@@ -228,14 +259,15 @@ enum SpawnPermissionGate {
     /// AgentSettings. Never writes ToolRegistry's unrelated generic policy.
     @discardableResult
     static func persistAlwaysAllow(
-        launchingAgentId: UUID
+        launchingAgentId: UUID,
+        kindIds: Set<String> = [SubagentCapabilityRegistry.spawn.id]
     ) async -> Bool {
+        let kinds = kindIds.sorted()
         if launchingAgentId == Agent.defaultId {
             SubagentConfigurationStore.mutate { config in
-                config.permissionDefaults.setPolicy(
-                    .alwaysAllow,
-                    for: SubagentCapabilityRegistry.spawn.id
-                )
+                for kind in kinds {
+                    config.permissionDefaults.setPolicy(.alwaysAllow, for: kind)
+                }
             }
             return true
         }
@@ -246,10 +278,9 @@ enum SpawnPermissionGate {
             else {
                 return false
             }
-            agent.settings.subagentPermissions.setPolicy(
-                .alwaysAllow,
-                for: SubagentCapabilityRegistry.spawn.id
-            )
+            for kind in kinds {
+                agent.settings.subagentPermissions.setPolicy(.alwaysAllow, for: kind)
+            }
             AgentManager.shared.update(agent)
             return true
         }

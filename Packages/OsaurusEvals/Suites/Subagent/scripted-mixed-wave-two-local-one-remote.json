@@ -1,7 +1,7 @@
 {
-  "id": "subagent.scripted-mixed-batch-two-local-one-remote",
+  "id": "subagent.scripted-mixed-wave-two-local-one-remote",
   "domain": "subagent",
-  "label": "Subagent • mixed batch: two local-exclusive plus one remote",
+  "label": "Subagent • mixed wave: two local-exclusive plus one remote",
   "query": "One parent fans out two local-handoff children and one remote child.",
   "notes": "Model-free. Three heterogeneous children enter the real SubagentSession host together. The two handoff children use local-exclusive admission and therefore never overlap each other; the remote child overlaps the first local child. Peak run-body concurrency must be exactly 2, all three terminal envelopes must settle in input order, and the aggregate must return success so the parent can continue.",
   "fixtures": {},
@@ -10,7 +10,7 @@
       "lane": "scripted",
       "decision": "allow",
       "phases": ["running"],
-      "scriptedBatch": [
+      "scriptedWave": [
         {
           "id": "local-a",
           "target": "scripted-local-a",
@@ -40,19 +40,19 @@
       ],
       "expectSuccess": true,
       "expectEnvelopeKind": "success",
-      "expectResultKind": "spawn_batch_result",
+      "expectResultKind": "spawn_wave_result",
       "expectMaxConcurrent": 2,
       "expectRunsCompleted": 3,
       "expectRunsSettled": 3,
       "expectRunEnvelopeKinds": ["success", "success", "success"],
-      "expectBatchAggregateStatus": "succeeded",
-      "expectBatchJobIDs": ["local-a", "local-b", "remote-c"],
-      "expectBatchSummaries": [
+      "expectWaveAggregateStatus": "succeeded",
+      "expectWaveJobIDs": ["local-a", "local-b", "remote-c"],
+      "expectWaveSummaries": [
         "local A complete",
         "local B complete",
         "remote C complete"
       ],
-      "expectBatchPayloadFields": [
+      "expectWavePayloadFields": [
         {
           "kind": "local_result",
           "model": "scripted-local-a",

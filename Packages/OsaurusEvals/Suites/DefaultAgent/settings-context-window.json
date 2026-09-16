@@ -7,11 +7,11 @@
   "fixtures": {},
   "expect": {
     "defaultAgent": {
-      "mustCallTools": ["osaurus_help"],
+      "mustCallTools": [
+        "osaurus_help"
+      ],
       "mustNotCallTools": [
         "spawn_agent",
-        "spawn_batch",
-        "spawn_model",
         "computer_use",
         "capabilities_discover",
         "capabilities_load"

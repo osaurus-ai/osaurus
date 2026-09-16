@@ -1869,7 +1869,7 @@ enum AgentToolLoop {
     ///   assistant `tool_use` never dangles).
     /// - Phase 2 — the approved set executes in parallel with the registry
     ///   gate pre-resolved (`permissionGateResolved: true`). Tools whose
-    ///   approval lives in their own body (`spawn_agent` / `spawn_model`,
+    ///   approval lives in their own body (`spawn_agent`,
     ///   image/video billing, config fallback) still prompt here — the
     ///   prompt service serialises those cards through one FIFO queue, and
     ///   sibling spawn calls collapse into one wave card (`SpawnWaveGate`).
