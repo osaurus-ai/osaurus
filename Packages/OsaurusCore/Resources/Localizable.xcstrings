@@ -17677,40 +17677,6 @@
         }
       }
     },
-    "A template with this name exists. Replace it." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Eine Vorlage mit diesem Namen existiert. Ersetzen."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "A template with this name exists. Replace it."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "같은 이름의 템플릿이 있습니다. 바꿉니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Шаблон с таким именем уже есть. Заменить."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已存在同名模板。替换它。"
-          }
-        }
-      }
-    },
     "A thoughtful partner for drafting, editing, and polishing prose." : {
       "localizations" : {
         "de" : {
@@ -275054,6 +275020,76 @@
           "stringUnit": {
             "state": "translated",
             "value": "包含在模板中"
+          }
+        }
+      }
+    },
+    "A template named \"%@\" already exists. Saving replaces it.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eine Vorlage namens „%@“ existiert bereits. Speichern ersetzt sie."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A template named \"%@\" already exists. Saving replaces it."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"%@\" 이름의 템플릿이 이미 있습니다. 저장하면 바뀝니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Шаблон с именем «%@» уже существует. Сохранение заменит его."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已存在名为“%@”的模板。保存将替换它。"
+          }
+        }
+      },
+      "comment": "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
+      "extractionState": "manual"
+    },
+    "Replace Template": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vorlage ersetzen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replace Template"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "템플릿 바꾸기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Заменить шаблон"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "替换模板"
           }
         }
       }

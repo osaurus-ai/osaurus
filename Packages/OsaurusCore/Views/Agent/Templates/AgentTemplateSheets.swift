@@ -307,7 +307,6 @@ struct SaveAgentTemplateSheet: View {
     /// Sections the user chose to leave out of the shared JSON.
     @State private var excluded: Set<AgentTemplate.Section> = []
     @State private var draft: AgentTemplate?
-    @State private var overwrite = false
     @State private var errorMessage: String?
     @State private var hasAppeared = false
 
@@ -317,7 +316,7 @@ struct SaveAgentTemplateSheet: View {
     }
 
     private var canSave: Bool {
-        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (collision == nil || overwrite)
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
@@ -333,6 +332,23 @@ struct SaveAgentTemplateSheet: View {
                     VStack(alignment: .leading, spacing: 6) {
                         AgentSheetSectionLabel("Template Name")
                         StyledTextField(placeholder: L("e.g., Cloud Agent"), text: $name, icon: "textformat")
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(theme.warningColor.opacity(collision == nil ? 0 : 0.7), lineWidth: 1)
+                            )
+                        if let collision {
+                            // Inline, under the field it concerns: the footer
+                            // button reads Replace Template while this shows.
+                            HStack(alignment: .top, spacing: 6) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .padding(.top, 1)
+                                Text("A template named \"\(collision.name)\" already exists. Saving replaces it.", bundle: .module)
+                                    .font(.system(size: 11))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .foregroundColor(theme.warningColor)
+                        }
                     }
                     VStack(alignment: .leading, spacing: 6) {
                         AgentSheetSectionLabel("Summary")
@@ -391,20 +407,6 @@ struct SaveAgentTemplateSheet: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(RoundedRectangle(cornerRadius: 10).fill(theme.tertiaryBackground.opacity(0.6)))
                     }
-                    if collision != nil {
-                        HStack(spacing: 12) {
-                            Text("A template with this name exists. Replace it.", bundle: .module)
-                                .font(.system(size: 12))
-                                .foregroundColor(theme.warningColor)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Spacer(minLength: 12)
-                            Toggle("", isOn: $overwrite)
-                                .toggleStyle(SwitchToggleStyle(tint: theme.warningColor))
-                                .labelsHidden()
-                        }
-                        .padding(10)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(theme.warningColor.opacity(0.08)))
-                    }
                     if let errorMessage {
                         Text(errorMessage).font(.system(size: 12)).foregroundColor(theme.errorColor)
                     }
@@ -419,7 +421,9 @@ struct SaveAgentTemplateSheet: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             AgentSheetFooter(
-                primary: AgentSheetFooter.Action(label: "Save Template", isEnabled: canSave, handler: save),
+                primary: AgentSheetFooter.Action(
+                    label: collision == nil ? "Save Template" : "Replace Template",
+                    isEnabled: canSave, handler: save),
                 secondary: AgentSheetFooter.Action(label: "Cancel", handler: onCancel),
                 hint: nil
             )
