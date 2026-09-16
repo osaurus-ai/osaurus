@@ -309,6 +309,7 @@ struct AgentSetupWizardView: View {
                 return
             }
             final.name = trimmed
+            final.sourceTemplateName = template?.name
             AgentManager.shared.add(final)
             // `add` flags the agent for first-run setup; the check that just
             // passed is that setup, so clear it right away.

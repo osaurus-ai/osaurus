@@ -819,6 +819,21 @@ private struct AgentCard: View {
                                     )
                                     .help(L("Run Setup from the card menu to finish configuring this agent"))
                             }
+                            if let source = agent.sourceTemplateName, !source.isEmpty {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "square.on.square.dashed")
+                                        .font(.system(size: 8, weight: .semibold))
+                                    Text(source)
+                                        .font(.system(size: 9, weight: .bold))
+                                        .lineLimit(1)
+                                }
+                                .foregroundColor(theme.infoColor)
+                                .fixedSize()
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(theme.infoColor.opacity(0.12)))
+                                .help(L("Created from the \(source) template"))
+                            }
                         }
 
                         // Always render the description line so card heights line
@@ -2147,6 +2162,16 @@ struct AgentDetailView: View {
             onBack: onBack,
             identity: { identityButton },
             status: {
+                if saveIndicator == nil, let source = currentAgent.sourceTemplateName, !source.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.on.square.dashed")
+                            .font(.system(size: 10))
+                        Text(L("From the \(source) template"))
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(theme.tertiaryText)
+                    .help(L("Created from the \(source) template"))
+                }
                 if let indicator = saveIndicator {
                     HStack(spacing: 4) {
                         Image(systemName: "checkmark.circle.fill")

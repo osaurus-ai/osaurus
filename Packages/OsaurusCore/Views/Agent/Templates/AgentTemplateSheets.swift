@@ -169,12 +169,15 @@ struct AgentTemplateImportSheet: View {
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(theme.primaryText)
                     }
-                    Toggle(isOn: $overwrite) {
+                    HStack(spacing: 12) {
                         Text("Replace the existing template", bundle: .module)
                             .font(.system(size: 12))
                             .foregroundColor(theme.secondaryText)
+                        Spacer(minLength: 12)
+                        Toggle("", isOn: $overwrite)
+                            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                            .labelsHidden()
                     }
-                    .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
                     Text("Or change the `name` in the JSON above to keep both.", bundle: .module)
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
@@ -335,7 +338,7 @@ struct SaveAgentTemplateSheet: View {
                             placeholder: L("One line about what this agent is for"), text: $summary,
                             icon: "text.alignleft")
                     }
-                    Toggle(isOn: $availableToOrchestrator) {
+                    HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Available to the Orchestrator", bundle: .module)
                                 .font(.system(size: 12, weight: .semibold))
@@ -346,9 +349,15 @@ struct SaveAgentTemplateSheet: View {
                             )
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
+                            .fixedSize(horizontal: false, vertical: true)
                         }
+                        Spacer(minLength: 12)
+                        Toggle("", isOn: $availableToOrchestrator)
+                            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                            .labelsHidden()
                     }
-                    .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground.opacity(0.6)))
                     if let draft, !draft.requires.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
                             AgentSheetSectionLabel("Travels With the Template")
@@ -380,12 +389,18 @@ struct SaveAgentTemplateSheet: View {
                         .background(RoundedRectangle(cornerRadius: 10).fill(theme.tertiaryBackground.opacity(0.6)))
                     }
                     if collision != nil {
-                        Toggle(isOn: $overwrite) {
+                        HStack(spacing: 12) {
                             Text("A template with this name exists. Replace it.", bundle: .module)
                                 .font(.system(size: 12))
                                 .foregroundColor(theme.warningColor)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 12)
+                            Toggle("", isOn: $overwrite)
+                                .toggleStyle(SwitchToggleStyle(tint: theme.warningColor))
+                                .labelsHidden()
                         }
-                        .toggleStyle(SwitchToggleStyle(tint: theme.warningColor))
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(theme.warningColor.opacity(0.08)))
                     }
                     if let errorMessage {
                         Text(errorMessage).font(.system(size: 12)).foregroundColor(theme.errorColor)
@@ -415,7 +430,9 @@ struct SaveAgentTemplateSheet: View {
         .onAppear {
             hasAppeared = true
             if name.isEmpty {
-                name = agent.name
+                // Re-sharing a tweaked agent defaults to its origin template so
+                // the library updates in place instead of forking silently.
+                name = agent.sourceTemplateName ?? agent.name
                 summary = agent.description
                 draft = AgentTemplate.make(from: agent)
             }
