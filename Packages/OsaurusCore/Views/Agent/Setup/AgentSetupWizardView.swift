@@ -585,6 +585,7 @@ private struct ToolsStep: View {
 
 private struct PermissionsStep: View {
     @Environment(\.theme) private var theme
+    @ObservedObject private var permissionService = SystemPermissionService.shared
     let agent: Agent
     let items: [AgentSetupItem]
     let onChanged: () -> Void
