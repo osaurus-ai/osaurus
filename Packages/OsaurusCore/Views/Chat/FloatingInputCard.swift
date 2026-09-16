@@ -884,56 +884,56 @@ struct FloatingInputCard: View {
     }
 
     private var composerContent: some View {
-                VStack(spacing: 4) {
-                    // Slash command popup — appears above the input card
-                    if showSlashPopup {
-                        SlashCommandPopup(
-                            commands: slashFilteredCommands,
-                            selectedIndex: $slashSelectedIndex,
-                            onSelect: applySlashCommand
-                        )
-                        .padding(.horizontal, 20)
-                        .transition(
-                            .asymmetric(
-                                insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)),
-                                removal: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom))
-                            )
-                        )
-                    }
-
-                    // "@" file menu popup — appears above the input card
-                    atFileMenuPopupView
-
-                    inputCard
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 20)
-                        .onDrop(of: dropAcceptedTypes, isTargeted: $isDragOver) { providers in
-                            handleFileDrop(providers)
-                        }
-                }
+        VStack(spacing: 4) {
+            // Slash command popup — appears above the input card
+            if showSlashPopup {
+                SlashCommandPopup(
+                    commands: slashFilteredCommands,
+                    selectedIndex: $slashSelectedIndex,
+                    onSelect: applySlashCommand
+                )
+                .padding(.horizontal, 20)
                 .transition(
                     .asymmetric(
-                        insertion: .opacity.combined(with: .scale(scale: 0.98)),
-                        removal: .opacity.combined(with: .scale(scale: 0.98))
+                        insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)),
+                        removal: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom))
                     )
                 )
-                .onChange(of: composerText.text) { _, newValue in
-                    onDraftChange?(newValue)
-                    // Reset popup selection whenever the typed query changes.
-                    // Attached here (inside the text observation scope) so the
-                    // change is detected on scope re-renders — the card itself
-                    // no longer re-renders per keystroke.
-                    slashSelectedIndex = 0
-                    atSelectedIndex = 0
-                    // Typing after an Escape-dismissal re-arms the slash popup
-                    if dismissedSlashQuery != nil, activeSlashQuery != dismissedSlashQuery {
-                        dismissedSlashQuery = nil
-                    }
-                    // Re-list the "@" menu off the main actor for the new query.
-                    // (folds in the registry sync so it costs no extra body chain
-                    // link — the whole chain is at the type-checker's limit.)
-                    refreshAtMenu()
+            }
+
+            // "@" file menu popup — appears above the input card
+            atFileMenuPopupView
+
+            inputCard
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
+                .onDrop(of: dropAcceptedTypes, isTargeted: $isDragOver) { providers in
+                    handleFileDrop(providers)
                 }
+        }
+        .transition(
+            .asymmetric(
+                insertion: .opacity.combined(with: .scale(scale: 0.98)),
+                removal: .opacity.combined(with: .scale(scale: 0.98))
+            )
+        )
+        .onChange(of: composerText.text) { _, newValue in
+            onDraftChange?(newValue)
+            // Reset popup selection whenever the typed query changes.
+            // Attached here (inside the text observation scope) so the
+            // change is detected on scope re-renders — the card itself
+            // no longer re-renders per keystroke.
+            slashSelectedIndex = 0
+            atSelectedIndex = 0
+            // Typing after an Escape-dismissal re-arms the slash popup
+            if dismissedSlashQuery != nil, activeSlashQuery != dismissedSlashQuery {
+                dismissedSlashQuery = nil
+            }
+            // Re-list the "@" menu off the main actor for the new query.
+            // (folds in the registry sync so it costs no extra body chain
+            // link — the whole chain is at the type-checker's limit.)
+            refreshAtMenu()
+        }
     }
 
     var body: some View {
@@ -992,8 +992,8 @@ struct FloatingInputCard: View {
                     modelID: selectedModel.flatMap {
                         ModelManager.findInstalledModelFromCache(named: $0)?.id
                     },
-                    sessionID: inputHistoryKey)
-                {
+                    sessionID: inputHistoryKey
+                ) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(L("Preparing this model for efficient loading. This may take a while."))
                             .font(.callout.weight(.semibold))
@@ -1003,7 +1003,10 @@ struct FloatingInputCard: View {
                         if progress.stage == .verifying {
                             Text(L("Verifying model data before replacement…")).font(.caption)
                         } else {
-                            ProgressView(value: Double(progress.copiedBytes), total: Double(max(1, progress.totalBytes)))
+                            ProgressView(
+                                value: Double(progress.copiedBytes),
+                                total: Double(max(1, progress.totalBytes))
+                            )
                         }
                     }
                     .padding(14)
@@ -2522,12 +2525,16 @@ extension FloatingInputCard {
             ),
             // Depth controls speculation, not the user's sampling settings.
             help: manuallyBlocked
-                ? L("Speculative decoding is disabled for this bundle because its MTP head is not safe for production use.")
-                : nativeMTPDefaultOffModels.contains(identity)
-                ? L("Flash Next starts with speculative decoding Off. You can select Auto or a maximum depth of 1–3 explicitly. Your configured sampling stays in effect.")
-                : L(
-                    "Auto activates from tuning or a supported family default and adapts up to depth 5. Depths 1–3 set a maximum; the runtime may lower the depth or use plain decoding when speculation stops paying. Your configured sampling stays in effect."
+                ? L(
+                    "Speculative decoding is disabled for this bundle because its MTP head is not safe for production use."
                 )
+                : nativeMTPDefaultOffModels.contains(identity)
+                    ? L(
+                        "Flash Next starts with speculative decoding Off. You can select Auto or a maximum depth of 1–3 explicitly. Your configured sampling stays in effect."
+                    )
+                    : L(
+                        "Auto activates from tuning or a supported family default and adapts up to depth 5. Depths 1–3 set a maximum; the runtime may lower the depth or use plain decoding when speculation stops paying. Your configured sampling stays in effect."
+                    )
         )
     }
 
@@ -2536,13 +2543,13 @@ extension FloatingInputCard {
         _ mtp: VMLXServerMTPSettings
     ) -> String {
         if mtp.mode == .off { return "off" }
-        if mtp.mode == .forceOn, let depth = mtp.explicitDepth, (1...3).contains(depth) {
+        if mtp.mode == .forceOn, let depth = mtp.explicitDepth, (1 ... 3).contains(depth) {
             return String(depth)
         }
         // Legacy saved state: the old buttons wrote auto + draftTokenLimit,
         // which never activated anything. Render it as the depth it claimed
         // so the migration to a real press is one click, not a mystery.
-        if let limit = mtp.draftTokenLimit, (1...3).contains(limit) { return String(limit) }
+        if let limit = mtp.draftTokenLimit, (1 ... 3).contains(limit) { return String(limit) }
         return "auto"
     }
 
@@ -2645,7 +2652,8 @@ extension FloatingInputCard {
                 summaries.filter {
                     Self.statusIndicatesNativeMTPHead($0.nativeMTPStatus)
                 }
-                .map { Self.mtpIdentity($0.name) })
+                .map { Self.mtpIdentity($0.name) }
+            )
             // Early, by-WEIGHT capability for models still LOADING, so the
             // depth row appears during warmup instead of minutes later.
             // Weight-based (configs lie: JANG_1L has no `mtp` field; a 27B
@@ -2669,7 +2677,8 @@ extension FloatingInputCard {
                 // so without this the whole warmup would show depth segments
                 // the engine will refuse.
                 nativeMTPManuallyBlockedModels.formUnion(
-                    early.filter(\.isBlocked).map { Self.mtpIdentity($0.name) })
+                    early.filter(\.isBlocked).map { Self.mtpIdentity($0.name) }
+                )
             }
             let residentIdentities = Set(summaries.map { Self.mtpIdentity($0.name) })
             nativeMTPManuallyBlockedModels.subtract(residentIdentities)
@@ -3758,102 +3767,102 @@ extension FloatingInputCard {
         // loading pulse), so hover-in/out and pulse ticks re-render only this
         // chip's subtree — not the whole card body.
         HoverScope { isSandboxHovered in
-        Button(action: handleSandboxChipTap) {
-            HStack(spacing: 5) {
+            Button(action: handleSandboxChipTap) {
+                HStack(spacing: 5) {
+                    if isSandboxFailed {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.red)
+                    } else if isSandboxLoading {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .scaleEffect(0.6)
+                            .frame(width: 8, height: 8)
+                            .tint(Color.orange)
+                    } else if isSandboxEnabled && isSandboxRunning {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 6, height: 6)
+                    }
+
+                    Image(systemName: isSandboxEnabled ? "shippingbox.fill" : "shippingbox")
+                        .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
+                        .foregroundColor(sandboxChipAccent)
+
+                    // Keep the label whenever it's carrying live status the icon
+                    // alone can't convey ("Downloading runtime…", a failure), even
+                    // in the compact row; otherwise collapse to the box icon.
+                    if !compact || isSandboxLoading || isSandboxFailed {
+                        Text(sandboxChipLabel, bundle: .module)
+                            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                            .foregroundColor(
+                                isSandboxFailed
+                                    ? .red
+                                    : (isSandboxEnabled
+                                        ? (isSandboxRunning ? theme.primaryText : theme.secondaryText)
+                                        : theme.tertiaryText)
+                            )
+                            .lineLimit(1)
+                            .fixedSize()
+                            .modifier(PulsingOpacity(active: isSandboxLoading))
+                    }
+
+                    // Inline cold-path download/unpack progress.
+                    if let pct = sandboxProgressPercent {
+                        Text(verbatim: "\(pct)%")
+                            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                            .monospacedDigit()
+                    }
+
+                    // Network-off badge: only meaningful once the sandbox is
+                    // settled, so suppress it while loading or failed (those
+                    // states own the leading indicator + accent color).
+                    if isSandboxNetworkDisabled && !isSandboxLoading && !isSandboxFailed {
+                        Image(systemName: "wifi.slash")
+                            .font(.system(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
+                            .foregroundColor(.orange)
+                            .accessibilityLabel(Text("Outbound network disabled", bundle: .module))
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(sandboxChipBackground(isSandboxHovered: isSandboxHovered))
+                .clipShape(Capsule())
+                .overlay(sandboxChipBorder(isSandboxHovered: isSandboxHovered))
+                .shadow(
+                    color: isSandboxFailed
+                        ? Color.red.opacity(0.15)
+                        : (isSandboxEnabled && isSandboxRunning
+                            ? Color.green.opacity(0.12)
+                            : (isSandboxHovered ? theme.accentColor.opacity(0.1) : .clear)),
+                    radius: 4,
+                    x: 0,
+                    y: 1
+                )
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+            // Intentionally NOT `.disabled(isSandboxLoading)` — the chip
+            // stays tappable during provisioning so the user can click
+            // through to the Sandbox settings tab and watch the journey
+            // unfold. Toggling on/off is intercepted by
+            // `handleSandboxChipTap` in that state.
+            .help(sandboxHelpText)
+            .contextMenu {
                 if isSandboxFailed {
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(.red)
-                } else if isSandboxLoading {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .scaleEffect(0.6)
-                        .frame(width: 8, height: 8)
-                        .tint(Color.orange)
-                } else if isSandboxEnabled && isSandboxRunning {
-                    Circle()
-                        .fill(Color.green)
-                        .frame(width: 6, height: 6)
+                    Button {
+                        retrySandbox()
+                    } label: {
+                        Text("Retry Sandbox", bundle: .module)
+                    }
                 }
-
-                Image(systemName: isSandboxEnabled ? "shippingbox.fill" : "shippingbox")
-                    .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
-                    .foregroundColor(sandboxChipAccent)
-
-                // Keep the label whenever it's carrying live status the icon
-                // alone can't convey ("Downloading runtime…", a failure), even
-                // in the compact row; otherwise collapse to the box icon.
-                if !compact || isSandboxLoading || isSandboxFailed {
-                    Text(sandboxChipLabel, bundle: .module)
-                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                        .foregroundColor(
-                            isSandboxFailed
-                                ? .red
-                                : (isSandboxEnabled
-                                    ? (isSandboxRunning ? theme.primaryText : theme.secondaryText)
-                                    : theme.tertiaryText)
-                        )
-                        .lineLimit(1)
-                        .fixedSize()
-                        .modifier(PulsingOpacity(active: isSandboxLoading))
-                }
-
-                // Inline cold-path download/unpack progress.
-                if let pct = sandboxProgressPercent {
-                    Text(verbatim: "\(pct)%")
-                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                        .monospacedDigit()
-                }
-
-                // Network-off badge: only meaningful once the sandbox is
-                // settled, so suppress it while loading or failed (those
-                // states own the leading indicator + accent color).
-                if isSandboxNetworkDisabled && !isSandboxLoading && !isSandboxFailed {
-                    Image(systemName: "wifi.slash")
-                        .font(.system(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
-                        .foregroundColor(.orange)
-                        .accessibilityLabel(Text("Outbound network disabled", bundle: .module))
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(sandboxChipBackground(isSandboxHovered: isSandboxHovered))
-            .clipShape(Capsule())
-            .overlay(sandboxChipBorder(isSandboxHovered: isSandboxHovered))
-            .shadow(
-                color: isSandboxFailed
-                    ? Color.red.opacity(0.15)
-                    : (isSandboxEnabled && isSandboxRunning
-                        ? Color.green.opacity(0.12)
-                        : (isSandboxHovered ? theme.accentColor.opacity(0.1) : .clear)),
-                radius: 4,
-                x: 0,
-                y: 1
-            )
-        }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
-        // Intentionally NOT `.disabled(isSandboxLoading)` — the chip
-        // stays tappable during provisioning so the user can click
-        // through to the Sandbox settings tab and watch the journey
-        // unfold. Toggling on/off is intercepted by
-        // `handleSandboxChipTap` in that state.
-        .help(sandboxHelpText)
-        .contextMenu {
-            if isSandboxFailed {
                 Button {
-                    retrySandbox()
+                    AppDelegate.shared?.showManagementWindow(initialTab: .sandbox)
                 } label: {
-                    Text("Retry Sandbox", bundle: .module)
+                    Text("Open Sandbox Settings", bundle: .module)
                 }
             }
-            Button {
-                AppDelegate.shared?.showManagementWindow(initialTab: .sandbox)
-            } label: {
-                Text("Open Sandbox Settings", bundle: .module)
-            }
-        }
         }
     }
 
@@ -3969,78 +3978,78 @@ extension FloatingInputCard {
         // HoverScope owns the hover flag and ClipboardPulseSweep owns the
         // arrival-pulse animation state, so neither re-renders the card body.
         HoverScope { isClipboardHovered in
-        Button(action: attachClipboardSnippet) {
-            clipboardChipLabel(compact: compact)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    Capsule()
-                        .fill(theme.secondaryBackground.opacity(isClipboardHovered ? 0.95 : 0.8))
-                )
-                .clipShape(Capsule())
-                .overlay(
-                    // main static border
-                    Capsule()
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [
-                                    theme.glassEdgeLight.opacity(isClipboardHovered ? 0.25 : 0.15),
-                                    theme.accentColor.opacity(isClipboardHovered ? 0.6 : 0.15),
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1
-                        )
-                )
-                .modifier(
-                    ClipboardPulseSweep(
-                        hovered: isClipboardHovered,
-                        trigger: clipboardService.hasNewContent
+            Button(action: attachClipboardSnippet) {
+                clipboardChipLabel(compact: compact)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule()
+                            .fill(theme.secondaryBackground.opacity(isClipboardHovered ? 0.95 : 0.8))
                     )
-                )
-        }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
-        .help(Text(localized: "Attach snippet from \(clipboardService.lastSourceApp ?? "clipboard")"))
-        .contextMenu {
-            Button {
-                clipboardService.markAsRead()
-            } label: {
-                Text("Dismiss", bundle: .module)
+                    .clipShape(Capsule())
+                    .overlay(
+                        // main static border
+                        Capsule()
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [
+                                        theme.glassEdgeLight.opacity(isClipboardHovered ? 0.25 : 0.15),
+                                        theme.accentColor.opacity(isClipboardHovered ? 0.6 : 0.15),
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 1
+                            )
+                    )
+                    .modifier(
+                        ClipboardPulseSweep(
+                            hovered: isClipboardHovered,
+                            trigger: clipboardService.hasNewContent
+                        )
+                    )
             }
-            Divider()
-            if let content = clipboardService.currentContent {
-                switch content {
-                case .text(let text):
-                    Button {
-                        if text.utf8.count >= Self.pastedContentThreshold {
-                            withAnimation(theme.springAnimation()) {
-                                pendingAttachments.append(.pastedContent(text))
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+            .help(Text(localized: "Attach snippet from \(clipboardService.lastSourceApp ?? "clipboard")"))
+            .contextMenu {
+                Button {
+                    clipboardService.markAsRead()
+                } label: {
+                    Text("Dismiss", bundle: .module)
+                }
+                Divider()
+                if let content = clipboardService.currentContent {
+                    switch content {
+                    case .text(let text):
+                        Button {
+                            if text.utf8.count >= Self.pastedContentThreshold {
+                                withAnimation(theme.springAnimation()) {
+                                    pendingAttachments.append(.pastedContent(text))
+                                }
+                            } else {
+                                localText += text
                             }
-                        } else {
-                            localText += text
+                            clipboardService.markAsRead()
+                        } label: {
+                            Text("Paste to Input", bundle: .module)
                         }
-                        clipboardService.markAsRead()
-                    } label: {
-                        Text("Paste to Input", bundle: .module)
-                    }
-                case .file:
-                    Button {
-                        attachClipboardSnippet()
-                    } label: {
-                        Text("Attach File", bundle: .module)
-                    }
-                case .image:
-                    Button {
-                        attachClipboardSnippet()
-                    } label: {
-                        Text("Attach Image", bundle: .module)
+                    case .file:
+                        Button {
+                            attachClipboardSnippet()
+                        } label: {
+                            Text("Attach File", bundle: .module)
+                        }
+                    case .image:
+                        Button {
+                            attachClipboardSnippet()
+                        } label: {
+                            Text("Attach Image", bundle: .module)
+                        }
                     }
                 }
             }
-        }
-        .transition(.scale(scale: 0.8).combined(with: .opacity))
+            .transition(.scale(scale: 0.8).combined(with: .opacity))
         }
     }
 
@@ -4402,7 +4411,8 @@ extension FloatingInputCard {
             // bundle metadata/headers; it neither loads nor warms the model.
             let capability = ModelRuntime.inspectLoadingModelMTP(name: model)
             let defaultEligible = NativeMTPSelectionDefault.isEligible(
-                bundleDirectory: bundleDir)
+                bundleDirectory: bundleDir
+            )
             let startsOff = NativeMTPSelectionDefault.startsOff(bundleDirectory: bundleDir)
             await MainActor.run {
                 // The selection may have moved while we were on disk.
@@ -4600,7 +4610,7 @@ extension FloatingInputCard {
                     .foregroundColor(tint)
                     + Text(verbatim: "  ")
                     + Text(verbatim: advisory.warningText)
-                        .foregroundColor(theme.primaryText))
+                    .foregroundColor(theme.primaryText))
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .fixedSize(horizontal: false, vertical: true)
                 Text(verbatim: advisory.reassuranceText)
@@ -5296,16 +5306,16 @@ extension FloatingInputCard {
             if let media = selectedMediaPickerItem?.mediaModel {
                 catalogMediaComposerChips(media)
             } else {
-        HStack(spacing: 6) {
-            sizeSelector
-            stepsChip
-            cfgChip
-            seedChip
-            if imageCapabilities?.imageEdit == true {
-                strengthChip
+                HStack(spacing: 6) {
+                    sizeSelector
+                    stepsChip
+                    cfgChip
+                    seedChip
+                    if imageCapabilities?.imageEdit == true {
+                        strengthChip
+                    }
+                }
             }
-        }
-    }
         }
     }
 
@@ -7556,7 +7566,9 @@ private struct WalletPopover: View {
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundColor(theme.secondaryText)
                 }
-                .accessibilityLabel(Text("Prompt cache: \(cachedLabel) input tokens served from cache", bundle: .module))
+                .accessibilityLabel(
+                    Text("Prompt cache: \(cachedLabel) input tokens served from cache", bundle: .module)
+                )
             }
         }
         .padding(.horizontal, 14)
@@ -8631,7 +8643,12 @@ private struct FloatingWorkspacePoolChip: View {
 
     private var accessibilityText: String {
         if let full = balance.map({ OsaurusRouter.formatMicroAsCredits($0.balanceMicro) }) {
-            return String(format: L("%@ left in %@'s workspace pool. %@ spent this session."), full, workspaceName, spendDisplay)
+            return String(
+                format: L("%@ left in %@'s workspace pool. %@ spent this session."),
+                full,
+                workspaceName,
+                spendDisplay
+            )
         }
         return String(format: L("%@'s workspace pool. %@ spent this session."), workspaceName, spendDisplay)
     }
@@ -8975,7 +8992,8 @@ private struct FloatingContextChip: View {
             return DiskCacheUsage(
                 usedBytes: snapshot.diskL2PayloadBytes,
                 maxBytes: snapshot.diskL2MaxBytes,
-                evictions: snapshot.diskL2Evictions)
+                evictions: snapshot.diskL2Evictions
+            )
         }
         // Fallback: nothing resident. The coordinator-backed figures only
         // exist while a model is loaded, so gating the whole row on them made
@@ -9003,7 +9021,8 @@ private struct FloatingContextChip: View {
                 usedBytes: OsaurusPaths.directorySizeIfExists(at: dir),
                 maxBytes: 0,
                 evictions: 0,
-                isDisabled: true)
+                isDisabled: true
+            )
         }
         // Resolve the cap the same way the coordinator does.
         //
@@ -9018,7 +9037,8 @@ private struct FloatingContextChip: View {
         var resolvedGB = VMLXServerRuntimeSettings.resolveDiskCacheMaxGB(
             percent: settings.cache.blockDisk.maxSizePercent,
             legacyGB: settings.cache.blockDisk.maxSizeGB,
-            directory: dir)
+            directory: dir
+        )
         // The share is not the last word: `applyHostAwareDiskCacheCeiling`
         // additionally bounds the cap to a quarter of the free bytes. Measured
         // live, 10% of a 3.7 TB volume resolved to 372 GB while the coordinator
@@ -9028,7 +9048,9 @@ private struct FloatingContextChip: View {
         var tierDisabled = false
         if let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: dir.path), freeBytes > 0 {
             let decision = ModelRuntime.hostAwareDiskCacheDecision(
-                configuredCapGB: resolvedGB, freeBytes: freeBytes)
+                configuredCapGB: resolvedGB,
+                freeBytes: freeBytes
+            )
             tierDisabled = !decision.enabled
             resolvedGB = decision.enabled ? decision.capGB : 0
         }
@@ -9043,7 +9065,8 @@ private struct FloatingContextChip: View {
             usedBytes: OsaurusPaths.directorySizeIfExists(at: dir),
             maxBytes: Int(resolvedGB * 1_073_741_824),
             evictions: 0,
-            isDisabled: tierDisabled)
+            isDisabled: tierDisabled
+        )
     }
 
     let displayTokens: Int
@@ -9131,12 +9154,14 @@ private struct FloatingContextChip: View {
                 ? String(
                     localized:
                         "Context is full: the system prompt, tools, and input alone exceed this model's window. Shorten the input, disable tools, or pick a larger-context model.",
-                    bundle: .module)
+                    bundle: .module
+                )
                 : isNearLimit
                     ? String(
                         localized:
                             "Context is nearly full (≥85% of the model window). Older messages will be compacted; consider starting a fresh chat for best quality.",
-                        bundle: .module)
+                        bundle: .module
+                    )
                     : String(localized: "Context used: \(tokenText) tokens", bundle: .module)
         )
         .accessibilityLabel(

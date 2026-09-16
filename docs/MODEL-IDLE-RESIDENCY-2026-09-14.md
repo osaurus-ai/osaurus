@@ -1,5 +1,28 @@
 # Model idle residency and swap-warning removal
 
+## Current isolated integration — September 15
+
+Status: PARTIAL. The idle policy from PR #2771 is integrated with the SSD
+notice from #2783, core-utility owner preservation, and persistence of the
+explicit Use chat model choice. The vMLX pin remains main
+`5b0c8e6b8b29a7ead21fe785688bc0621580cc62`. Fresh Release, native UI and
+applicable eval results for this integration are pending. Historical results
+below belong to the named earlier commits and do not qualify this source.
+
+Private tests use the user-approved 24 GiB reclaimable-RAM floor, normal
+pressure, 1 GiB swap-growth limit, 28 GiB owned physical-footprint cap,
+1800-second timeout and process-identity cleanup. Existing swap is observational.
+No macOS swap or app admission policy is changed by these test guards.
+
+Required current rows: Keep Loaded off/on/save/relaunch, timed idle despite
+focus, chat close with utilities off/on and Core Model set to Use chat model,
+API-owner protection, active-request close/cancellation, repeated and sequential
+Gemma children, different-model handoff/restore, restored SSD notice controls,
+full applicable eval scores with failures retained, exact-head CI.
+The M4/16 GiB reporter outcome remains unverified.
+
+## Historical PR #2771 record
+
 Status: PARTIAL. CI's unchanged-source repeat completed successfully, but the
 new local dev app has not linked and all source-bound live UI rows remain
 required. PR stays draft and unmerged. Preserve the first CI failure below;
