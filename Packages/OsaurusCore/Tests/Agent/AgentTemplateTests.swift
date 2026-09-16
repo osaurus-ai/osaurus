@@ -266,3 +266,46 @@ struct AgentTemplateStoreTests {
         }
     }
 }
+
+struct AgentTemplateSectionTests {
+    @Test
+    func excluding_dropsSectionsAndMatchingRequirements() {
+        var entry = AgentEntry(name: "Invoice Bot")
+        entry.systemPrompt = "Secret sauce"
+        entry.description = "Files invoices"
+        entry.model = .value("sonnet-5")
+        var tools = AgentToolsEntry()
+        tools.mode = "manual"
+        tools.enabled = ["fetch"]
+        entry.tools = tools
+        var mcp = AgentToolGroupsEntry()
+        mcp.enabled = ["Linear"]
+        entry.mcpServers = mcp
+        entry.workingFolder = .value("~/Invoices")
+        var caps = AgentCapabilitiesEntry()
+        caps.knowledgeEnabled = true
+        entry.capabilities = caps
+        let template = AgentTemplate(
+            name: "Invoice Bot", agent: entry,
+            requires: [
+                TemplateRequirement(kind: .model, value: "sonnet-5", policy: .preferred),
+                TemplateRequirement(kind: .mcpServer, value: "Linear"),
+                TemplateRequirement(kind: .workingFolder, value: "~/Invoices"),
+                TemplateRequirement(kind: .knowledgeCollection, value: "Guides"),
+            ])
+
+        let shared = template.excluding([.systemPrompt, .tools, .workingFolder])
+        #expect(shared.agent.systemPrompt == nil)
+        #expect(shared.agent.description == "Files invoices")
+        #expect(shared.agent.tools == nil)
+        #expect(shared.agent.mcpServers == nil)
+        #expect(shared.agent.workingFolder == .absent)
+        #expect(shared.agent.model == .value("sonnet-5"))
+        #expect(shared.requires.map(\.kind) == [.model, .knowledgeCollection])
+
+        #expect(template.excluding([]) == template)
+        let noKnowledge = template.excluding([.knowledge])
+        #expect(noKnowledge.agent.capabilities?.knowledgeEnabled == nil)
+        #expect(!noKnowledge.requires.contains { $0.kind == .knowledgeCollection })
+    }
+}

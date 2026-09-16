@@ -206,6 +206,59 @@ public struct AgentTemplate: Codable, Equatable, Sendable, Identifiable {
         return out
     }
 
+    // MARK: - Sections
+
+    /// The optional parts of a template a user can leave out when saving
+    /// one, e.g. share the tool setup but keep the prompt private.
+    public enum Section: String, CaseIterable, Identifiable, Sendable {
+        case systemPrompt = "system_prompt"
+        case description
+        case model
+        case tools
+        case sandbox
+        case subagents
+        case workingFolder = "working_folder"
+        case knowledge
+        case pluginInstructions = "plugin_instructions"
+
+        public var id: String { rawValue }
+    }
+
+    /// A copy without the given sections; matching `requires` entries go too.
+    public func excluding(_ sections: Set<Section>) -> AgentTemplate {
+        guard !sections.isEmpty else { return self }
+        var copy = self
+        var entry = copy.agent
+        var requires = copy.requires
+        if sections.contains(.systemPrompt) { entry.systemPrompt = nil }
+        if sections.contains(.description) { entry.description = nil }
+        if sections.contains(.model) {
+            entry.model = .absent
+            requires.removeAll { $0.kind == .model }
+        }
+        if sections.contains(.tools) {
+            entry.tools = nil
+            entry.mcpServers = nil
+            entry.plugins = nil
+            requires.removeAll { $0.kind == .mcpServer || $0.kind == .plugin }
+        }
+        if sections.contains(.sandbox) { entry.sandbox = nil }
+        if sections.contains(.subagents) { entry.subagents = nil }
+        if sections.contains(.workingFolder) {
+            entry.workingFolder = .absent
+            requires.removeAll { $0.kind == .workingFolder }
+        }
+        if sections.contains(.knowledge) {
+            entry.capabilities?.knowledgeEnabled = nil
+            entry.capabilities?.knowledgeCollectionIds = nil
+            requires.removeAll { $0.kind == .knowledgeCollection }
+        }
+        if sections.contains(.pluginInstructions) { entry.pluginInstructions = nil }
+        copy.agent = entry
+        copy.requires = requires
+        return copy
+    }
+
     // MARK: - Requirements helpers
 
     public func requirements(of kind: TemplateRequirement.Kind) -> [TemplateRequirement] {
