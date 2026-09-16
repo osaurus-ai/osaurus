@@ -141,6 +141,12 @@ public final class ManagementStateManager: ObservableObject {
     /// observes this and resets it to nil after presenting.
     @Published public var pendingAgentSetupId: UUID?
 
+    /// A setup wizard that stepped aside so the user could visit another
+    /// tab (downloading a model, say). Carries the unsaved draft with it,
+    /// so nothing the user has filled in is lost. `AgentsView` reopens the
+    /// wizard from this and resets it to nil.
+    @Published var pendingAgentSetupSubject: AgentSetupSubject?
+
     /// One-shot request to open Agents → Templates with the Import sheet
     /// prefilled, from an `osaurus://templates-import?t=…` share link.
     /// `AgentsView` observes this and resets it to nil after presenting.

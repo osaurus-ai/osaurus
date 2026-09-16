@@ -272,6 +272,9 @@ struct AgentsView: View {
             }
             setupSubject = .saved(pending)
         }
+        .onReceive(managementState.$pendingAgentSetupSubject) { _ in
+            resumeParkedSetupIfNeeded()
+        }
         .onReceive(managementState.$pendingTemplateImportText) { pending in
             // `osaurus://templates-import?t=…` share link: land on the
             // Templates tab with the Import sheet prefilled.
@@ -295,6 +298,10 @@ struct AgentsView: View {
             }
             consumeDeeplinkIfPossible()
             applyPendingRemoteAgentDetail()
+            // The wizard parks itself here when it sends the user to another
+            // tab. Coming back rebuilds this view, so the publisher has
+            // already fired by now and the value has to be read directly.
+            resumeParkedSetupIfNeeded()
         }
         .onChange(of: agentManager.agents) { _, _ in
             // Agent list may load asynchronously after the view appears.
@@ -624,6 +631,18 @@ struct AgentsView: View {
     /// empty-state gear). Mirrors `PluginsView.applyPendingPluginDetailRequest`:
     /// waits until the matching `RemoteAgent` record is known (the list can load
     /// after this view appears), then navigates and clears the request.
+    /// Reopen a wizard that stepped aside for another tab, with whatever
+    /// the user had already filled in.
+    private func resumeParkedSetupIfNeeded() {
+        guard let parked = managementState.pendingAgentSetupSubject else { return }
+        managementState.pendingAgentSetupSubject = nil
+        withAnimation(Self.navTransition) {
+            selectedAgent = nil
+            section = .agents
+        }
+        setupSubject = parked
+    }
+
     private func applyPendingRemoteAgentDetail() {
         guard let pendingId = managementState.pendingRemoteAgentDetailId else { return }
         guard remoteAgentManager.remoteAgent(for: pendingId) != nil else { return }
