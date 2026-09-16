@@ -5130,6 +5130,10 @@ final class ChatSession: ObservableObject {
                         lastToolArgRebuildAt = now
                         rebuildVisibleBlocks()
                     }
+                } else if let inputTokenCount = StreamingInputTokenHint.decode(delta) {
+                    // Prepared input is metadata, not the first output token.
+                    // Keep it out of text/history and the TTFT/rolling-rate path.
+                    currentTurn.inputTokenCount = inputTokenCount
                 } else if let stats = StreamingStatsHint.decode(delta) {
                     uiStatsHintCount += 1
                     // Final stats from vmlx — captured for the post-loop stamp.
@@ -5146,8 +5150,8 @@ final class ChatSession: ObservableObject {
                     }
                     currentTurn.generationTokenCount = stats.tokenCount
                     currentTurn.terminalStopReason = stats.stopReason
-                    currentTurn.inputTokenCount = stats.inputTokenCount
-                    currentTurn.cachedInputTokenCount = stats.cachedInputTokenCount
+                    currentTurn.inputTokenCount = stats.inputTokenCount ?? currentTurn.inputTokenCount
+                    currentTurn.cachedInputTokenCount = stats.cachedInputTokenCount ?? currentTurn.cachedInputTokenCount
                     // Vmlx tells us the model never closed `</think>` before
                     // EOS / max_tokens. Persist on the turn so the bubble
                     // renderer can surface a one-line banner suggesting
@@ -5187,6 +5191,10 @@ final class ChatSession: ObservableObject {
                     )
                     currentTurn.lastOutputAt = now
                     processor.receiveReasoning(reasoning)
+                } else if StreamingToolHint.isSentinel(delta) {
+                    // Other reserved stream metadata must never become model
+                    // output merely because this client does not consume it.
+                    continue
                 } else if !delta.isEmpty {
                     let now = Date()
                     if firstDeltaTime == nil {
