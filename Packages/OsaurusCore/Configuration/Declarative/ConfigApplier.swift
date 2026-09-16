@@ -447,6 +447,25 @@ enum ConfigApplier {
         var needsUserAction = false
     }
 
+    /// An UNSAVED agent record built from a document entry, for prefilling
+    /// the Create Agent sheet from a template. Same mapping as apply, so the
+    /// sheet and `osaurus_config` cannot drift; nothing is persisted and the
+    /// spawn pool is untouched until the caller saves.
+    @MainActor
+    static func draftAgent(from entry: AgentEntry) -> (agent: Agent, outcome: AgentPatchOutcome) {
+        var agent = AgentManager.newCustomAgentRecord(
+            name: entry.name,
+            description: entry.description ?? "",
+            systemPrompt: entry.systemPrompt ?? "",
+            themeId: nil,
+            defaultModel: entry.model.valueOrNil,
+            temperature: entry.temperature.valueOrNil.map(Float.init),
+            maxTokens: entry.maxTokens.valueOrNil
+        )
+        let outcome = patch(&agent, from: entry)
+        return (agent, outcome)
+    }
+
     @MainActor
     @discardableResult
     private static func patch(_ agent: inout Agent, from entry: AgentEntry) -> AgentPatchOutcome {
