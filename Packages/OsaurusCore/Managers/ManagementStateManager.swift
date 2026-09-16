@@ -136,6 +136,11 @@ public final class ManagementStateManager: ObservableObject {
     /// to false after presenting.
     @Published public var pendingCreateAgent: Bool = false
 
+    /// One-shot request to open the Set Up Agent wizard for a local agent,
+    /// e.g. from the first-open checklist alert in chat. `AgentsView`
+    /// observes this and resets it to nil after presenting.
+    @Published public var pendingAgentSetupId: UUID?
+
     /// One-shot request to open the New Workspace sheet, which is the
     /// "Start free trial" flow (name, billing interval, then Stripe Checkout
     /// in the browser) — e.g. from the Workspaces intro dialog's CTA.
