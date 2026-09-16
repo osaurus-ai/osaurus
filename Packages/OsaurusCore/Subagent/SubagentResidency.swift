@@ -81,6 +81,9 @@ struct SubagentCoexistence: Sendable {
     /// constraints joined by min — no double subtraction inside either.
     /// Making these persisted settings is a product decision deliberately
     /// NOT taken in the delegation PR.
+    /// Bounded resident-child reuse under normal pressure now prices the
+    /// actual shared allocator ceiling plus each child's state instead of
+    /// reapplying this cold/coexistence allowance (see the batch planner).
     static let headroomBytes: Int64 = 3 * 1024 * 1024 * 1024
 
     /// Whether a subagent model of `requiredBytes` (on-disk weights) fits

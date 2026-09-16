@@ -1083,6 +1083,20 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
             let startTime = Date()
             var outputTokenCount = 0
+            var resolvedInputTokens = inputTokens
+            var reportedInputTokens = initialInputTokens
+            func recordInputTokens(_ count: Int) {
+                resolvedInputTokens = count
+                // The estimate was charged at admission. Only add newly known
+                // input work; never refund a budget reservation mid-request.
+                if let bgId, count > reportedInputTokens {
+                    let delta = count - reportedInputTokens
+                    reportedInputTokens = count
+                    Task { @MainActor in
+                        BackgroundTaskManager.shared.recordUsage(backgroundId: bgId, tokensInDelta: delta)
+                    }
+                }
+            }
             // Track the last cumulative output-token count we forwarded
             // to `BackgroundTaskManager.recordUsage` so we only ever
             // post the delta. Provider-emitted `StreamingStatsHint`
@@ -1116,7 +1130,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
             do {
                 for try await delta in inner {
+                    if let count = StreamingInputTokenHint.decode(delta) {
+                        recordInputTokens(count)
+                        continuation.yield(delta)
+                        continue
+                    }
                     if let stats = StreamingStatsHint.decode(delta) {
+                        if let count = stats.inputTokenCount { recordInputTokens(count) }
                         terminalStatsObserved.withLock { $0 = true }
                         statsHintCount += 1
                         outputTokenCount = stats.tokenCount
@@ -1312,7 +1332,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     turnId: turnId,
                     requestId: requestId,
                     model: model,
-                    inputTokens: inputTokens,
+                    inputTokens: resolvedInputTokens,
                     outputTokens: outputTokenCount,
                     durationMs: durationMs,
                     temperature: temperature,
@@ -1440,6 +1460,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             // response is surfaced as a thrown error (→ HTTP 500 / failed
             // chunk) instead of an empty 200.
             let mlxErrorEpoch = MLXErrorRecovery.errorSequence()
+            var resolvedInputTokens = inputTokens
             // If tools were provided and the service supports them, use the message-based API
             if Self.allowsLocalToolDispatch(request.tool_choice),
                 let tools = request.tools, !tools.isEmpty, let toolSvc = service as? ToolCapableService
@@ -1471,7 +1492,12 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     var terminalStopReason = "stop"
                     for try await delta in stream {
                         try Task.checkCancellation()
+                        if let count = StreamingInputTokenHint.decode(delta) {
+                            resolvedInputTokens = count
+                            continue
+                        }
                         if let stats = StreamingStatsHint.decode(delta) {
+                            resolvedInputTokens = stats.inputTokenCount ?? resolvedInputTokens
                             toolStepTokensPerSecond = stats.tokensPerSecond
                             toolStepTokenCount = stats.tokenCount
                             if let stopReason = stats.stopReason, !stopReason.isEmpty {
@@ -1518,9 +1544,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         finish_reason: terminalStopReason
                     )
                     let usage = Usage(
-                        prompt_tokens: inputTokens,
+                        prompt_tokens: resolvedInputTokens,
                         completion_tokens: outputTokens,
-                        total_tokens: inputTokens + outputTokens,
+                        total_tokens: resolvedInputTokens + outputTokens,
                         tokens_per_second: toolStepTokensPerSecond
                     )
 
@@ -1541,7 +1567,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                             turnId: request.turnId,
                             requestId: requestId,
                             model: loggedModel,
-                            inputTokens: inputTokens,
+                            inputTokens: resolvedInputTokens,
                             outputTokens: outputTokens,
                             durationMs: durationMs,
                             temperature: temperature,
@@ -1561,7 +1587,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         responseId: responseId,
                         created: created,
                         effectiveModel: effectiveModel,
-                        inputTokens: inputTokens,
+                        inputTokens: resolvedInputTokens,
                         startTime: startTime,
                         inferenceSource: inferenceSource,
                         temperature: temperature,
@@ -1584,7 +1610,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         responseId: responseId,
                         created: created,
                         effectiveModel: effectiveModel,
-                        inputTokens: inputTokens,
+                        inputTokens: resolvedInputTokens,
                         startTime: startTime,
                         inferenceSource: inferenceSource,
                         temperature: temperature,
@@ -1622,7 +1648,12 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             var authoritativeTokensPerSecond: Double?
             for try await delta in stream {
                 try Task.checkCancellation()
+                if let count = StreamingInputTokenHint.decode(delta) {
+                    resolvedInputTokens = count
+                    continue
+                }
                 if let stats = StreamingStatsHint.decode(delta) {
+                    resolvedInputTokens = stats.inputTokenCount ?? resolvedInputTokens
                     authoritativeOutputTokens = stats.tokenCount
                     authoritativeTokensPerSecond = stats.tokensPerSecond
                     if let stopReason = stats.stopReason, !stopReason.isEmpty {
@@ -1655,9 +1686,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 finish_reason: terminalStopReason
             )
             let usage = Usage(
-                prompt_tokens: inputTokens,
+                prompt_tokens: resolvedInputTokens,
                 completion_tokens: outputTokens,
-                total_tokens: inputTokens + outputTokens,
+                total_tokens: resolvedInputTokens + outputTokens,
                 tokens_per_second: authoritativeTokensPerSecond
             )
 
@@ -1678,7 +1709,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     turnId: request.turnId,
                     requestId: requestId,
                     model: loggedModel,
-                    inputTokens: inputTokens,
+                    inputTokens: resolvedInputTokens,
                     outputTokens: outputTokens,
                     durationMs: durationMs,
                     temperature: temperature,

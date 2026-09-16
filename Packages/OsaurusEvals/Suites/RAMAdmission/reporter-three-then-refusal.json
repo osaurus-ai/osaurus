@@ -1,9 +1,9 @@
 {
   "id": "ram_admission.reporter-three-then-refusal",
   "domain": "subagent",
-  "label": "RAM policy replay: reporter-three-then-refusal",
+  "label": "Reporter bytes with unknown pressure keep the conservative reserve",
   "query": "Replay explicit host facts through production planner, recovery and one persistent reservation actor.",
-  "notes": "Deterministic injected facts; not physical 16GB or live inference proof.",
+  "notes": "Pressure was not supplied in the report. This fixture covers unknown pressure only; reporter-resident-normal-pressure is the corrected bounded reuse branch.",
   "fixtures": {},
   "expect": {
     "subagent": {

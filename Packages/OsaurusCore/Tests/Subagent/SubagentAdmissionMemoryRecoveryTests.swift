@@ -21,7 +21,7 @@ struct SubagentAdmissionMemoryRecoveryTests {
         )
     }
 
-    @Test("0.25.2 reporter: three released children do not grant a fourth below the OS reserve")
+    @Test("reporter bytes with unknown pressure retain the conservative reserve after released children")
     func reporterRepeatedChildrenThenLowHostMemory() async {
         let admission = SubagentAdmission(pollNanoseconds: 1_000_000)
         let oneChildThreshold: UInt64 = 3_758_096_384
@@ -44,7 +44,7 @@ struct SubagentAdmissionMemoryRecoveryTests {
         #expect(plan(reporterFacts(reclaimable: oneChildThreshold)).localCapacity == 1)
     }
 
-    @Test("reporter facts stay refused after recovery unless measured host headroom actually rises")
+    @Test("unknown-pressure reporter facts retain the reserve after recovery")
     func reporterPostReclaimBoundary() async {
         for freshBytes: UInt64 in [2_442_035_200, 3_758_096_383, 3_758_096_384] {
             var samples = 0

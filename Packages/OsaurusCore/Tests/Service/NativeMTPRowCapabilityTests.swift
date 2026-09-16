@@ -7,6 +7,16 @@ import Testing
 /// filter matched the bare "mtp:" prefix every status line carries.
 @Suite("Speculative Depth row capability filter")
 struct NativeMTPRowCapabilityTests {
+    @Test("selection controls follow runtime architecture support, including MoE and nested config")
+    func selectedArchitectureUsesRuntimePolicy() {
+        for type in ["qwen4_exp", "qwen3_5", "qwen3_5_moe", "qwen3_6_text"] {
+            let config = Data("{\"model_type\":\"vlm\",\"text_config\":{\"model_type\":\"\(type)\"}}".utf8)
+            #expect(ModelRuntime.modelTypeIsMTPControlTarget(configData: config))
+        }
+        #expect(!ModelRuntime.modelTypeIsMTPControlTarget(
+            configData: Data(#"{"model_type":"glm5_next","name":"qwen4_exp"}"#.utf8)))
+    }
+
     @Test("headless statuses are NOT capable")
     func headlessRejected() {
         #expect(

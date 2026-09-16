@@ -9,6 +9,49 @@ import Testing
 struct ChatToolChoicePolicyTests {
 
     @Test
+    func completedChildSummaryDoesNotRequireAnotherTool() {
+        let choice = ChatToolChoicePolicy.resolve(
+            tools: [Self.tool("complete"), Self.tool("spawn_agent")],
+            userText: "Return only the summary from the child that just completed. Do not delegate again.",
+            attempt: 1
+        )
+        #expect(Self.isAuto(choice))
+    }
+
+    @Test
+    func toolNamesInsideLongerWordsDoNotForceCalls() {
+        for text in [
+            "Explain why the task is incomplete.",
+            "Describe the completed_task field.",
+            "Explain this file_reader result.",
+            "Describe my-complete-handler.",
+        ] {
+            #expect(
+                Self.isAuto(
+                    ChatToolChoicePolicy.resolve(
+                        tools: [Self.tool("complete"), Self.tool("file_read")],
+                        userText: text,
+                        attempt: 1
+                    )
+                ),
+                "Unexpected required tool for: \(text)"
+            )
+        }
+        for text in ["Call complete(summary=\"Blocked\").", "Use `complete`.", "Call file_read."] {
+            #expect(
+                Self.isRequired(
+                    ChatToolChoicePolicy.resolve(
+                        tools: [Self.tool("complete"), Self.tool("file_read")],
+                        userText: text,
+                        attempt: 1
+                    )
+                ),
+                "Explicit tool invocation was lost: \(text)"
+            )
+        }
+    }
+
+    @Test
     func explicitFileToolIntentRequiresToolOnFirstAttempt() {
         let choice = ChatToolChoicePolicy.resolve(
             tools: [Self.tool("file_read")],

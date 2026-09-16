@@ -16,6 +16,14 @@ Osaurus runs open-weight models locally on Apple Silicon using MLX — no intern
 
 ## Choosing a model
 
+If an installed model has missing or damaged files, open its details in
+**Local Models → On Device** and choose **Repair**. Osaurus checks file contents
+against Hugging Face, restores changed or missing files, and displays progress
+or a specific failure. Pause, Resume, and Cancel use the same controls as a
+normal download. Intact files are kept. Repair can restore files you deliberately
+edited or removed; ordinary model loading does not do this. External models stay
+managed by their original application.
+
 - Bigger models are smarter but slower and need more RAM; quantized variants (4-bit/8-bit) trade a little quality for much lower memory.
 - The Models catalog is curated for Osaurus (tool calling, reasoning, and template support are validated), and the OsaurusAI page on Hugging Face hosts optimized bundles.
 - Generation defaults (temperature, top-k, etc.) come from each model bundle's own configuration unless you explicitly override them in Server → Settings → Generation defaults.

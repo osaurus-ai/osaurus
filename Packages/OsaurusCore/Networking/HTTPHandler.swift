@@ -7,6 +7,7 @@
 
 import Foundation
 import LocalAuthentication
+import MLX
 @preconcurrency import MLXLMCommon
 import NIOCore
 import NIOHTTP1
@@ -2180,12 +2181,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     private static func memoryStatusJSONObject(_ status: MemoryStatus) -> [String: Any] {
-        [
+        let allocator = MLX.Memory.snapshot()
+        return [
             "memory_limit": status.memoryLimit,
             "cache_limit": status.cacheLimit,
             "recommended_working_set_bytes": status.recommendedWorkingSetBytes as Any? ?? NSNull(),
             "physical_memory": status.physicalMemory,
             "current_rss": status.currentRSS,
+            // Limits are not occupancy. Keep live allocator counters and
+            // kernel headroom visible for delegation/retention diagnosis.
+            "mlx_active_bytes": allocator.activeMemory,
+            "mlx_cached_bytes": allocator.cacheMemory,
+            "mlx_peak_bytes": allocator.peakMemory,
+            "host_reclaimable_bytes": ChatResidencyHandoff.sampledAvailableMemoryBytes() as Any? ?? NSNull(),
+            "host_memory_pressure": SubagentMemoryPressure.sampled().rawValue,
         ]
     }
 
@@ -6689,11 +6698,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 }
                                 continue
                             }
+                            if let count = StreamingInputTokenHint.decode(delta) {
+                                stepPromptTokens = count
+                                continue
+                            }
                             if let stats = StreamingStatsHint.decode(delta) {
                                 // Keep the final cumulative stats for this step;
                                 // intermediate updates must not be counted twice.
                                 stepCompletionTokens = stats.tokenCount
-                                stepPromptTokens = stats.inputTokenCount
+                                stepPromptTokens = stats.inputTokenCount ?? stepPromptTokens
                                 stepTokensPerSecond = stats.tokensPerSecond
                                 stepStopReason = stats.stopReason
                                 continue
@@ -7071,7 +7084,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // the actual on-wire status (200) so dashboards don't
                 // mis-attribute a delivered stream as a 500.
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -9348,7 +9361,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 defer { keepaliveTask.cancel() }
                 defer { admissionToken.release() }
                 var accumulated = ""
-                let finishReason = "stop"
+                var finishReason = "stop"
+                var actualPromptTokens: Int?
+                var actualCompletionTokens: Int?
                 do {
                     let stream = try await MLXService.shared.streamRawCompletion(
                         prompt: prompt,
@@ -9357,13 +9372,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         stopSequences: stop
                     )
                     if disconnected.value { throw CancellationError() }
-                    // `streamRawCompletion` yields only plain generated text
-                    // (reasoning / tool / stats events are dropped upstream in
-                    // `ModelRuntime.streamRawText`), so no sentinel filtering is
-                    // needed here.
                     for try await delta in stream {
                         if disconnected.value { throw CancellationError() }
-                        if delta.isEmpty { continue }
+                        if let count = StreamingInputTokenHint.decode(delta) {
+                            actualPromptTokens = count
+                            continue
+                        }
+                        if let stats = StreamingStatsHint.decode(delta) {
+                            actualPromptTokens = stats.inputTokenCount ?? actualPromptTokens
+                            actualCompletionTokens = stats.tokenCount
+                            finishReason = stats.stopReason ?? finishReason
+                            continue
+                        }
+                        if delta.isEmpty || StreamingToolHint.isSentinel(delta) { continue }
                         accumulated += delta
                         let chunk = CompletionResponseDTO(
                             id: responseId,
@@ -9378,15 +9399,31 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                     }
                 } catch {
-                    hop { writerBound.value.writeError(error.localizedDescription, context: ctx.value) }
+                    hop {
+                        writerBound.value.writeErrorFromThrown(error, context: ctx.value)
+                        writerBound.value.writeEnd(ctx.value)
+                    }
+                    logSelf.logRequest(
+                        method: "POST", path: "/completions", userAgent: logUserAgent,
+                        requestBody: logRequestBody, responseStatus: 200, startTime: startTime,
+                        model: model, finishReason: .error, errorMessage: error.localizedDescription
+                    )
+                    return
                 }
+                let resolvedPromptTokens = actualPromptTokens ?? promptTokens
+                let resolvedCompletionTokens = actualCompletionTokens ?? TokenEstimator.estimate(accumulated)
                 let final = CompletionResponseDTO(
                     id: responseId,
                     object: "text_completion",
                     created: created,
                     model: model,
                     choices: [CompletionChoiceDTO(text: "", index: 0, finish_reason: finishReason)],
-                    usage: nil
+                    usage: req.streamOptions?.include_usage == true
+                        ? CompletionUsageDTO(
+                            prompt_tokens: resolvedPromptTokens,
+                            completion_tokens: resolvedCompletionTokens,
+                            total_tokens: resolvedPromptTokens + resolvedCompletionTokens
+                        ) : nil
                 )
                 hop {
                     if let json = Self.encodeCompletionJSON(final) {
@@ -9402,8 +9439,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseStatus: 200,
                     startTime: startTime,
                     model: model,
-                    tokensInput: promptTokens,
-                    tokensOutput: TokenEstimator.estimate(accumulated),
+                    tokensInput: resolvedPromptTokens,
+                    tokensOutput: resolvedCompletionTokens,
                     temperature: req.temperature,
                     maxTokens: req.resolvedMaxTokens
                 )
@@ -9422,20 +9459,34 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     stopSequences: stop
                 )
                 var text = ""
+                var actualPromptTokens: Int?
+                var actualCompletionTokens: Int?
+                var finishReason = "stop"
                 for try await delta in stream {
-                    text += delta
+                    if let count = StreamingInputTokenHint.decode(delta) {
+                        actualPromptTokens = count
+                        continue
+                    }
+                    if let stats = StreamingStatsHint.decode(delta) {
+                        actualPromptTokens = stats.inputTokenCount ?? actualPromptTokens
+                        actualCompletionTokens = stats.tokenCount
+                        finishReason = stats.stopReason ?? finishReason
+                        continue
+                    }
+                    if !StreamingToolHint.isSentinel(delta) { text += delta }
                 }
-                let completionTokens = TokenEstimator.estimate(text)
+                let resolvedPromptTokens = actualPromptTokens ?? promptTokens
+                let completionTokens = actualCompletionTokens ?? TokenEstimator.estimate(text)
                 let response = CompletionResponseDTO(
                     id: responseId,
                     object: "text_completion",
                     created: created,
                     model: model,
-                    choices: [CompletionChoiceDTO(text: text, index: 0, finish_reason: "stop")],
+                    choices: [CompletionChoiceDTO(text: text, index: 0, finish_reason: finishReason)],
                     usage: CompletionUsageDTO(
-                        prompt_tokens: promptTokens,
+                        prompt_tokens: resolvedPromptTokens,
                         completion_tokens: completionTokens,
-                        total_tokens: promptTokens + completionTokens
+                        total_tokens: resolvedPromptTokens + completionTokens
                     )
                 )
                 let body = Self.encodeCompletionJSON(response) ?? "{}"
@@ -9460,11 +9511,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseStatus: 200,
                     startTime: startTime,
                     model: model,
-                    tokensInput: promptTokens,
+                    tokensInput: resolvedPromptTokens,
                     tokensOutput: completionTokens,
                     temperature: req.temperature,
                     maxTokens: req.resolvedMaxTokens,
-                    finishReason: .stop
+                    finishReason: RequestLog.FinishReason(rawValue: finishReason) ?? .stop
                 )
             } catch {
                 let message = error.localizedDescription
@@ -9816,6 +9867,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // Tool completions finish by throwing after the runtime's
                 // terminal stats. Keep accounting outside do so both tool
                 // catch branches can emit the same authoritative usage.
+                var authoritativeInputTokens: Int?
                 var authoritativeCompletionTokens: Int?
                 var authoritativeTokensPerSecond: Double?
                 var accumulatedContent = ""
@@ -9897,7 +9949,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             }
                             continue
                         }
+                        if let count = StreamingInputTokenHint.decode(delta) {
+                            authoritativeInputTokens = count
+                            continue
+                        }
                         if let stats = StreamingStatsHint.decode(delta) {
+                            authoritativeInputTokens = stats.inputTokenCount ?? authoritativeInputTokens
                             authoritativeCompletionTokens = stats.tokenCount
                             authoritativeTokensPerSecond = stats.tokensPerSecond
                             if let stopReason = stats.stopReason {
@@ -9968,10 +10025,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         return
                     }
                     let includeUsage = req.stream_options?.include_usage == true
-                    let promptTokens = Self.estimatePromptTokens(enrichedReq.messages)
+                    let promptTokens = authoritativeInputTokens ?? Self.estimatePromptTokens(enrichedReq.messages)
                     let completionTokens =
                         authoritativeCompletionTokens ?? TokenEstimator.estimate(accumulatedContent)
-                    httpTrace.set("http_prompt_tokens_estimate", promptTokens)
+                    httpTrace.set("http_prompt_tokens", promptTokens)
+                    httpTrace.set("http_prompt_tokens_estimated", authoritativeInputTokens == nil ? 1 : 0)
                     httpTrace.set("http_completion_tokens", completionTokens)
                     let finalStreamFinishReason = streamFinishReason
                     let finalTokensPerSecond = authoritativeTokensPerSecond
@@ -10053,7 +10111,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // because the enriched value is scoped to the `do` block
                     // and unavailable in this catch — at worst we under-
                     // count by the agent system-prompt fragment.
-                    let promptTokens = Self.estimatePromptTokens(req.messages)
+                    let promptTokens = authoritativeInputTokens ?? Self.estimatePromptTokens(req.messages)
                     let requestTools = req.tools
                     let completionTokens = authoritativeCompletionTokens ?? TokenEstimator.estimate(
                         accumulatedContent + accumulatedReasoning
@@ -10132,7 +10190,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     markSemanticDeltaIfConnected()
                     httpTrace.set("http_tool_call_count", 1)
                     let includeUsage = req.stream_options?.include_usage == true
-                    let promptTokens = Self.estimatePromptTokens(req.messages)
+                    let promptTokens = authoritativeInputTokens ?? Self.estimatePromptTokens(req.messages)
                     let requestTools = req.tools
                     let completionTokens = authoritativeCompletionTokens ?? TokenEstimator.estimate(
                         accumulatedContent + accumulatedReasoning + inv.toolName + inv.jsonArguments
@@ -10191,7 +10249,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // the actual on-wire status (200) so dashboards don't
                     // mis-attribute a delivered stream as a 500.
                     hop {
-                        writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                        writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                         writerBound.value.writeEnd(ctx.value)
                     }
                     httpTrace.mark("http_sse_error_written")
@@ -10510,7 +10568,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // NDJSON response shape (and decode reasoning here
                     // first) when an upstream client requests it.
                     if StreamingReasoningHint.decode(delta) != nil { continue }
-                    if StreamingStatsHint.decode(delta) != nil { continue }
+                    if let count = StreamingInputTokenHint.decode(delta) {
+                        hop { writerBound.value.setInputTokens(count) }
+                        continue
+                    }
+                    if let stats = StreamingStatsHint.decode(delta) {
+                        hop {
+                            if let count = stats.inputTokenCount { writerBound.value.setInputTokens(count) }
+                            writerBound.value.setOutputTokens(stats.tokenCount)
+                        }
+                        continue
+                    }
                     if StreamingToolHint.isSentinel(delta) { continue }
                     if let chunk = contentCoalescer.append(delta) {
                         markSemanticDeltaIfChannelActive()
@@ -10631,7 +10699,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // NDJSON response head was already 200 — surface as in-band
                 // NDJSON error chunk and log actual on-wire status.
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -10675,7 +10743,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: request.model,
                     content: message?.content ?? "",
                     toolCalls: message?.tool_calls,
-                    done: true
+                    done: true,
+                    usage: response.usage
                 )
                 let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
                 hop {
@@ -10935,7 +11004,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 for try await delta in stream {
                     if disconnected.value { throw CancellationError() }
                     if StreamingReasoningHint.decode(delta) != nil { continue }
-                    if StreamingStatsHint.decode(delta) != nil { continue }
+                    if let count = StreamingInputTokenHint.decode(delta) {
+                        hop { writerBound.value.setInputTokens(count) }
+                        continue
+                    }
+                    if let stats = StreamingStatsHint.decode(delta) {
+                        hop {
+                            if let count = stats.inputTokenCount { writerBound.value.setInputTokens(count) }
+                            writerBound.value.setOutputTokens(stats.tokenCount)
+                        }
+                        continue
+                    }
                     if StreamingToolHint.isSentinel(delta) { continue }
                     if let chunk = contentCoalescer.append(delta) {
                         hop {
@@ -10980,7 +11059,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } catch {
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -11023,7 +11102,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let body = Self.ollamaGenerateJSON(
                     model: request.model,
                     response: content,
-                    done: true
+                    done: true,
+                    usage: response.usage
                 )
                 let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
                 hop {
@@ -11080,13 +11160,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
-    private static func ollamaGenerateJSON(model: String, response: String, done: Bool) -> String {
-        let object: [String: Any] = [
+    private static func ollamaGenerateJSON(model: String, response: String, done: Bool, usage: Usage? = nil) -> String {
+        var object: [String: Any] = [
             "model": model,
             "created_at": Date().ISO8601Format(),
             "response": response,
             "done": done,
         ]
+        if done, let usage {
+            object["prompt_eval_count"] = usage.prompt_tokens
+            object["eval_count"] = usage.completion_tokens
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: .osaurusCanonical) else {
             return #"{"done":true}"#
         }
@@ -11097,7 +11181,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         model: String,
         content: String,
         toolCalls: [ToolCall]? = nil,
-        done: Bool
+        done: Bool,
+        usage: Usage? = nil
     ) -> String {
         var message: [String: Any] = [
             "role": "assistant",
@@ -11113,12 +11198,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 ]
             }
         }
-        let object: [String: Any] = [
+        var object: [String: Any] = [
             "model": model,
             "created_at": Date().ISO8601Format(),
             "message": message,
             "done": done,
         ]
+        if done, let usage {
+            object["prompt_eval_count"] = usage.prompt_tokens
+            object["eval_count"] = usage.completion_tokens
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: object) else {
             return #"{"message":{"role":"assistant","content":""},"done":true}"#
         }
@@ -12574,7 +12663,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 messageId: messageId,
                 model: model,
                 inputTokens: inputTokens,
-                context: ctx.value
+                context: ctx.value,
+                deferUntilInput: true
             )
         }
 
@@ -12630,8 +12720,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                         continue
                     }
+                    if let count = StreamingInputTokenHint.decode(delta) {
+                        hop { writerBound.value.setInputTokens(count, context: ctx.value) }
+                        continue
+                    }
                     if let stats = StreamingStatsHint.decode(delta) {
                         hop {
+                            if let count = stats.inputTokenCount { writerBound.value.setInputTokens(count, context: ctx.value) }
                             writerBound.value.setOutputTokens(stats.tokenCount)
                         }
                         continue
@@ -12731,7 +12826,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // SSE response head was already 200 — surface as in-band
                 // SSE error chunk and log actual on-wire status.
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -13466,8 +13561,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                         continue
                     }
+                    if let count = StreamingInputTokenHint.decode(delta) {
+                        hop { writerBound.value.setInputTokens(count) }
+                        continue
+                    }
                     if let stats = StreamingStatsHint.decode(delta) {
                         hop {
+                            if let count = stats.inputTokenCount { writerBound.value.setInputTokens(count) }
                             writerBound.value.setOutputTokens(stats.tokenCount)
                         }
                         continue
@@ -13643,7 +13743,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // SSE response head was already 200 — surface as in-band
                 // SSE error chunk and log actual on-wire status.
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(

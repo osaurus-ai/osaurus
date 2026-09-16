@@ -27,6 +27,11 @@ final class CacheSectionWiringTests: XCTestCase {
         XCTAssertTrue(src.contains("if canPresentSSDQuotaNotice, let snapshot = ssdWarningSnapshot"))
     }
 
+    func testMTPBannerPreservesIndividualButtonAccessibility() throws {
+        let src = try source("Views/Chat/FloatingInputCard.swift")
+        XCTAssertTrue(src.contains(".accessibilityElement(children: .contain)"))
+        XCTAssertTrue(src.contains(".accessibilityLabel(Text(verbatim: advisory.shortLabel))"))
+    }
 
     private func source(_ relativePath: String) throws -> String {
         // Tests/Chat/... -> package root

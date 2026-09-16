@@ -500,6 +500,17 @@ struct AgentLoopStepProgressTracker: Sendable {
         "[evals][agent-loop] step=\(step) phase=model_start"
     }
 
+    /// Accounting and prefill progress precede generation. Only text,
+    /// reasoning, or generated tool-envelope bytes establish first output.
+    static func isGeneratedOutput(_ delta: String) -> Bool {
+        guard StreamingToolHint.isSentinel(delta) else { return !delta.isEmpty }
+        let payload = StreamingReasoningHint.decode(delta)
+            ?? StreamingToolHint.decode(delta)
+            ?? StreamingToolHint.decodeArgs(delta)
+            ?? StreamingToolCallProgressHint.decode(delta)
+        return payload.map { !$0.isEmpty } ?? false
+    }
+
     mutating func observe(
         channel: Channel,
         characterCount: Int,
@@ -1136,10 +1147,11 @@ public enum AgentLoopEvaluator {
                             request: makeRequest(effective, stream: true)
                         )
                         for try await delta in stream {
-                            // TTFT: first streamed delta of the FIRST step,
-                            // regardless of channel (reasoning / content /
-                            // tool hint all count as "model produced output").
-                            if isFirstStep, firstStepTtftMs == nil {
+                            // Prepared usage and other control metadata are
+                            // not generated tokens and must not shorten TTFT.
+                            if isFirstStep, firstStepTtftMs == nil,
+                                AgentLoopStepProgressTracker.isGeneratedOutput(delta)
+                            {
                                 firstStepTtftMs = Date().timeIntervalSince(stepStarted) * 1000
                             }
                             if let toolName = StreamingToolHint.decode(delta) {

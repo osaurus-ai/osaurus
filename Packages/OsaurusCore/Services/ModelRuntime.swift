@@ -270,11 +270,8 @@ public actor ModelRuntime {
     /// `MTPBundleInspector.inspect` reads the safetensors index UNIONED with
     /// shard headers, so the signal is the actual weights.
     ///
-    /// `isTargetMTPFamily` scopes the controls to the two model families these
-    /// controls are for — Qwen 3.8 Flash Next (`qwen4_exp`) and Qwen3.8-27B
-    /// (`qwen3_5`). This IS read from config (`model_type`), which is reliable
-    /// for architecture (unlike the `mtp` presence field). Other MTP-carrying
-    /// families (Ornith `qwen3_5_moe`, GLM `glm5_next`) are excluded.
+    /// `isTargetMTPFamily` uses the engine's launch-policy architecture registry.
+    /// Tensor evidence alone cannot enable a head the runtime cannot execute.
     struct LoadingModelMTPStatus: Sendable, Equatable {
         let name: String
         let bundleHasMTP: Bool
@@ -288,11 +285,6 @@ public actor ModelRuntime {
         let measuredFamilyAutoDepth: Int?
         let statusLine: String
     }
-
-    /// Model families whose native-MTP depth controls we surface: Qwen 3.8
-    /// Flash Next and Qwen3.8-27B. Kept here so the settings + chat surfaces
-    /// gate identically.
-    nonisolated static let mtpControlModelTypes: Set<String> = ["qwen4_exp", "qwen3_5"]
 
     /// Names of models with an in-flight load (weights not yet resident). Cheap
     /// and actor-isolated; the weight inspection runs off-actor via
@@ -318,13 +310,12 @@ public actor ModelRuntime {
             isBlocked: status.isExplicitlyBlocked
                 || status.nativeMTPTuning?.manualBlocked == true,
             measuredFamilyAutoDepth: status.measuredFamilyAutoDepth,
-            statusLine: status.statusLine)
+            statusLine: status.statusLine
+        )
     }
 
-    /// Reads `config.json`'s `model_type` (top-level or nested `text_config`)
-    /// and returns whether it is one of the Flash-Next / 27B families the MTP
-    /// controls target. Architecture in config is reliable; only the `mtp`
-    /// presence flag is not.
+    /// Share the engine's architecture policy instead of maintaining a narrower
+    /// UI list. Actual head weights are checked separately by the inspector.
     nonisolated static func modelTypeIsMTPControlTarget(directory: URL) -> Bool {
         let configURL = directory.appendingPathComponent("config.json")
         guard let data = try? Data(contentsOf: configURL) else { return false }
@@ -332,14 +323,7 @@ public actor ModelRuntime {
     }
 
     nonisolated static func modelTypeIsMTPControlTarget(configData: Data) -> Bool {
-        guard let object = (try? JSONSerialization.jsonObject(with: configData)) as? [String: Any]
-        else { return false }
-        var types: Set<String> = []
-        if let top = object["model_type"] as? String { types.insert(top) }
-        if let text = (object["text_config"] as? [String: Any])?["model_type"] as? String {
-            types.insert(text)
-        }
-        return !types.isDisjoint(with: mtpControlModelTypes)
+        NativeMTPAutoDecodePolicy.supportsModel(configData: configData)
     }
 
     struct LiveVoiceAudioPreencodeResult: Sendable, Equatable {
@@ -371,6 +355,7 @@ public actor ModelRuntime {
         let dflash2BlockSize: Int?
         let nativeMTPStatus: String?
         let nativeMTPReason: String?
+        let nativeMTPAdmission: NativeMTPAdmission
         /// Numeric allocator-cache cap resolved from the user-visible
         /// memory-safety plan used for this exact load. `nil` means no numeric
         /// cap; the decode-path-specific admitted-ceiling requirement is
@@ -396,6 +381,7 @@ public actor ModelRuntime {
             dflash2BlockSize: Int? = nil,
             nativeMTPStatus: String? = nil,
             nativeMTPReason: String? = nil,
+            nativeMTPAdmission: NativeMTPAdmission = .init(),
             allocatorCacheLimitBytes: Int? = nil,
             requiresAdmittedMLXAllocatorCeiling: Bool = false
         ) {
@@ -408,6 +394,7 @@ public actor ModelRuntime {
             self.dflash2BlockSize = dflash2BlockSize
             self.nativeMTPStatus = nativeMTPStatus
             self.nativeMTPReason = nativeMTPReason
+            self.nativeMTPAdmission = nativeMTPAdmission
             self.allocatorCacheLimitBytes = allocatorCacheLimitBytes
             self.requiresAdmittedMLXAllocatorCeiling = requiresAdmittedMLXAllocatorCeiling
         }
@@ -428,6 +415,7 @@ public actor ModelRuntime {
         let statusLine: String?
         let reason: String
         let memorySafetySummary: String
+        var admission: NativeMTPAdmission = .init()
     }
 
     /// Sendable wrapper around an immutable snapshot of chat messages.
@@ -476,8 +464,7 @@ public actor ModelRuntime {
     /// Callers that arrive while the same exact teardown is already active
     /// join it. Returning immediately would let destructive consumers unlink
     /// weights while the first caller was still draining the resident model.
-    private var residencyUnloadWaiters:
-        [String: [CheckedContinuation<Void, Never>]] = [:]
+    private var residencyUnloadWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
 
     /// Canonical model deletion quarantine. Each lease is indexed by both the
     /// stable model id and picker/runtime name (plus their final path
@@ -511,14 +498,10 @@ public actor ModelRuntime {
         case resolved
     }
 
-    private var modelDeletionAccessWaiters:
-        [UUID: [ModelDeletionWaiter]] = [:]
-    private var modelDeletionLeaseWaiters:
-        [UUID: [ModelDeletionWaiter]] = [:]
-    private var modelDeletionDrainWaiters:
-        [UUID: [ModelDeletionWaiter]] = [:]
-    private var modelDeletionWaiterStates:
-        [UUID: ModelDeletionWaiterState] = [:]
+    private var modelDeletionAccessWaiters: [UUID: [ModelDeletionWaiter]] = [:]
+    private var modelDeletionLeaseWaiters: [UUID: [ModelDeletionWaiter]] = [:]
+    private var modelDeletionDrainWaiters: [UUID: [ModelDeletionWaiter]] = [:]
+    private var modelDeletionWaiterStates: [UUID: ModelDeletionWaiterState] = [:]
 
     /// On-disk weight bytes reserved by loads that are past the pre-load gate
     /// but not yet resident in `modelCache`, keyed by model name. The
@@ -1381,9 +1364,17 @@ public actor ModelRuntime {
                 bytes: holder.weightsSizeBytes,
                 isCurrent: holder.name == currentModelName,
                 draftStrategyDescription: Self.describeDraftStrategy(
-                    Self.requestDraftStrategy(holder.draftStrategy)),
+                    (try? holder.nativeMTPAdmission.requestStrategy(
+                        loaded: holder.draftStrategy,
+                        mtp: ServerRuntimeSettingsStore.snapshot().mtp
+                    ))
+                ),
                 nativeMTPDepth: Self.nativeMTPDepth(
-                    Self.requestDraftStrategy(holder.draftStrategy)),
+                    (try? holder.nativeMTPAdmission.requestStrategy(
+                        loaded: holder.draftStrategy,
+                        mtp: ServerRuntimeSettingsStore.snapshot().mtp
+                    ))
+                ),
                 dflash2BlockSize: holder.dflash2BlockSize,
                 nativeMTPStatus: holder.nativeMTPStatus,
                 nativeMTPReason: holder.nativeMTPReason,
@@ -1930,7 +1921,10 @@ public actor ModelRuntime {
         // warmup materializes the actual D3 working set, then retain only its
         // most-recently-used portion under the persistent ceiling.
         let warmupRuntime = await getConfig()
-        let warmupStrategy = Self.requestDraftStrategy(holder.draftStrategy, mtp: warmupRuntime.mtp)
+        let warmupStrategy = try? holder.nativeMTPAdmission.requestStrategy(
+            loaded: holder.draftStrategy,
+            mtp: warmupRuntime.mtp
+        )
         let usesWarmupAllocatorWindow = beginGenerationAllocatorWindowIfNeeded(
             holder: holder,
             requestStrategy: warmupStrategy
@@ -2658,24 +2652,28 @@ public actor ModelRuntime {
     ///   proportionally less, while large Macs do not turn spare RAM into an
     ///   unbounded allocator pool).
     ///
-    /// The already-admitted memory limit remains the final hard ceiling, and
-    /// the user-visible persistent cap remains the floor so this helper never
-    /// lowers an explicit larger setting.
+    /// The admitted memory limit and any user-entered allocator maximum are
+    /// hard ceilings. A profile's default load allowance is not an explicit
+    /// user maximum and must not disable the dynamic reuse policy.
     nonisolated static func effectiveGenerationMLXCacheLimit(
         persistentLimit: Int,
         admittedMemoryLimit: Int,
         modelWeightsBytes: Int64,
         physicalMemoryBytes: UInt64,
-        requiresAdmittedCeiling: Bool
+        requiresAdmittedCeiling: Bool,
+        configuredLimits: [Int?] = []
     ) -> Int {
-        guard requiresAdmittedCeiling else { return max(0, persistentLimit) }
+        guard requiresAdmittedCeiling else {
+            return effectiveMLXCacheLimit(dynamicLimit: persistentLimit, configuredLimits: configuredLimits)
+        }
         let gib = Int64(1024 * 1024 * 1024)
         let weightScaled = max(gib, max(0, modelWeightsBytes) / 3)
         let systemScaled = min(Int64(16) * gib, Int64(physicalMemoryBytes / 8))
         let boundedReuse = max(0, min(weightScaled, systemScaled))
         let admitted = max(0, Int64(admittedMemoryLimit))
         let persistent = max(0, Int64(persistentLimit))
-        return Int(min(Int64(Int.max), min(admitted, max(persistent, boundedReuse))))
+        let dynamicLimit = Int(min(Int64(Int.max), min(admitted, max(persistent, boundedReuse))))
+        return effectiveMLXCacheLimit(dynamicLimit: dynamicLimit, configuredLimits: configuredLimits)
     }
 
     private func beginGenerationAllocatorWindowIfNeeded(
@@ -2688,14 +2686,30 @@ public actor ModelRuntime {
         )
         guard usesAdmittedCeiling else { return false }
         admittedAllocatorGenerationCount += 1
-        Memory.cacheLimit = Self.effectiveGenerationMLXCacheLimit(
+        Memory.cacheLimit = generationAllocatorCacheLimit(holder: holder, requestStrategy: requestStrategy)
+        return true
+    }
+
+    /// Shared by generation and resident-child admission. The allocator is
+    /// process-wide, so price its full prospective ceiling once per wave.
+    private func generationAllocatorCacheLimit(
+        holder: SessionHolder,
+        requestStrategy: MLXLMCommon.DraftStrategy?
+    ) -> Int {
+        Self.effectiveGenerationMLXCacheLimit(
             persistentLimit: mlxCacheLimit(),
             admittedMemoryLimit: Memory.memoryLimit,
             modelWeightsBytes: holder.weightsSizeBytes,
             physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory,
-            requiresAdmittedCeiling: true
+            requiresAdmittedCeiling: Self.requiresAdmittedMLXAllocatorCeiling(
+                isPlainDeepseekV4AffineJANG: holder.requiresAdmittedMLXAllocatorCeiling,
+                usesNativeMTP: requestStrategy?.usesNativeMTP == true
+            ),
+            // MLX has one process-wide pool. Include every resident's explicit
+            // maximum, plus the holder while it is being published/warmed.
+            configuredLimits: modelCache.values.map(\.allocatorCacheLimitBytes)
+                + [holder.allocatorCacheLimitBytes]
         )
-        return true
     }
 
     private func finishGenerationAllocatorWindowIfNeeded(_ active: Bool) {
@@ -2946,7 +2960,8 @@ public actor ModelRuntime {
         // loaded coordinator receives. The old raw-field lookup used 8K when
         // the saved override was blank even though Safe Auto actually loaded
         // a 64K cap, materially under-reporting projected KV headroom.
-        let maxPositions = requestPositionLimit
+        let maxPositions =
+            requestPositionLimit
             ?? kvRetentionCap.map { min(declaredPositions, max($0, 4096)) }
             ?? declaredPositions
         guard let kvHeads, let headDim, kvHeads > 0, headDim > 0, maxPositions > 0 else {
@@ -2998,7 +3013,8 @@ public actor ModelRuntime {
         let ssmState = intValue(config["ssm_state_size"]) ?? intValue(config["mamba_d_state"]) ?? 0
         let convKernel = intValue(config["conv_kernel"]) ?? intValue(config["mamba_d_conv"]) ?? 0
         let mambaHeadDim = intValue(config["mamba_head_dim"]) ?? 0
-        let mambaStatePerLayer = Int64(max(0, mambaHeads))
+        let mambaStatePerLayer =
+            Int64(max(0, mambaHeads))
             * Int64(max(0, ssmState + convKernel * max(1, mambaHeadDim)))
         // GDN/GLA linear-attention layers (qwen3_5, Bailing KDA) keep a
         // per-head (keyDim x valueDim) matmul state instead of mamba-style
@@ -3006,7 +3022,8 @@ public actor ModelRuntime {
         let linearVHeads = intValue(config["linear_num_value_heads"]) ?? 0
         let linearKeyDim = intValue(config["linear_key_head_dim"]) ?? 0
         let linearValueDim = intValue(config["linear_value_head_dim"]) ?? 0
-        let linearStatePerLayer = Int64(max(0, linearVHeads))
+        let linearStatePerLayer =
+            Int64(max(0, linearVHeads))
             * Int64(max(0, linearKeyDim))
             * Int64(max(0, linearValueDim))
         let ssmBytes =
@@ -3058,7 +3075,8 @@ public actor ModelRuntime {
             // The shared suffix reads earlier layers' KV; Gemma creates no
             // independent cache for those layers. Count only actual owners.
             let shared = max(0, intValue(config["num_kv_shared_layers"]) ?? 0)
-            let owners = shared > 0 && shared < types.count
+            let owners =
+                shared > 0 && shared < types.count
                 ? Array(types.prefix(types.count - shared)) : types
             for raw in owners {
                 switch stringValue(raw)?.lowercased() ?? "" {
@@ -3514,15 +3532,13 @@ public actor ModelRuntime {
         )
         let targetLoadFootprintBytes: Int64? =
             rawWeightsBytes > 0
-            ? (
-                preliminaryPlan.loadConfiguration.useMmapSafetensors
+            ? (preliminaryPlan.loadConfiguration.useMmapSafetensors
                 ? Self.effectiveLoadFootprintBytes(
                     rawWeightsBytes: rawWeightsBytes,
                     modelDirectory: localURL,
                     modelName: canonicalName
                 )
-                : rawWeightsBytes
-            )
+                : rawWeightsBytes)
             : nil
         let perActiveChildHeadroomBytes = targetLoadFootprintBytes.map {
             Self.estimatedKVHeadroomBytes(
@@ -3611,13 +3627,28 @@ public actor ModelRuntime {
     ) async -> SubagentBatchMemoryFacts? {
         guard
             let profile = await subagentMemoryProfile(
-                for: modelName, requestEstimate: requestEstimate)
+                for: modelName,
+                requestEstimate: requestEstimate
+            )
         else {
             return nil
         }
         // Handoff planning runs after the exact parent is released. Its freed
         // bytes are already reflected in the host sample; disk sizes and
         // unrelated residents must never become hypothetical credit.
+
+        let allocatorAllowance: UInt64? = modelCache[profile.canonicalName].flatMap { holder in
+            Self.nonnegativeUInt64(Int64(max(
+                Memory.cacheLimit,
+                generationAllocatorCacheLimit(
+                            holder: holder,
+                            requestStrategy: (try? holder.nativeMTPAdmission.requestStrategy(
+                                loaded: holder.draftStrategy,
+                                mtp: ServerRuntimeSettingsStore.snapshot().mtp
+                            ))
+                        )
+            )))
+        }
 
         return SubagentBatchMemoryFacts(
             canonicalModelKey: profile.canonicalName,
@@ -3638,7 +3669,9 @@ public actor ModelRuntime {
                 .flatMap(Self.nonnegativeUInt64),
             releasableParentBytes: 0,
             resolvedLoadBudgetBytes: profile.resolvedLoadBudgetBytes,
-            osHeadroomBytes: Self.nonnegativeUInt64(SubagentCoexistence.headroomBytes) ?? 0
+            osHeadroomBytes: Self.nonnegativeUInt64(SubagentCoexistence.headroomBytes) ?? 0,
+            memoryPressure: SubagentMemoryPressure.sampled(),
+            allocatorCacheAllowanceBytes: allocatorAllowance
         )
     }
 
@@ -4376,7 +4409,10 @@ public actor ModelRuntime {
         let task = Task<SessionHolder, Error> {
             if let activity = alignmentRepairActivity {
                 await AlignmentPreparationState.shared.begin(
-                    id: activity, modelID: id, sessionID: alignmentRepairSession)
+                    id: activity,
+                    modelID: id,
+                    sessionID: alignmentRepairSession
+                )
             }
             defer {
                 if let activity = alignmentRepairActivity {
@@ -4391,7 +4427,7 @@ public actor ModelRuntime {
             let tokenizerLoader = SwiftTransformersTokenizerLoader()
             let serverSettings = ServerRuntimeSettingsStore.snapshot()
             Self.applyPerformancePolicy(serverSettings)
-            let mtpPlan = Self.resolveNativeMTPLaunchPlan(
+            let mtpPlan = try Self.resolveNativeMTPLaunchPlan(
                 modelName: name,
                 modelDirectory: localURL,
                 settings: serverSettings
@@ -4409,7 +4445,8 @@ public actor ModelRuntime {
             let container: ModelContainer
             do {
                 var loadConfiguration = mtpPlan.loadConfiguration
-                loadConfiguration.alignmentRepairAuthorization = alignmentRepairActivity == nil
+                loadConfiguration.alignmentRepairAuthorization =
+                    alignmentRepairActivity == nil
                     ? .disabled : .directUserSend
                 let observer: @Sendable (AlignmentRepairProgress) -> Void = { progress in
                     guard let activity = alignmentRepairActivity else { return }
@@ -4421,13 +4458,13 @@ public actor ModelRuntime {
                 }
                 container = try await AlignmentRepairProgress.$observer.withValue(observer) {
                     try await loadModelContainer(
-                    from: localURL,
-                    using: tokenizerLoader,
-                    configuration: serverSettings.resolvedModelConfiguration(
-                        base: ModelConfiguration(directory: localURL)
-                    ),
-                    loadConfiguration: loadConfiguration
-                )
+                        from: localURL,
+                        using: tokenizerLoader,
+                        configuration: serverSettings.resolvedModelConfiguration(
+                            base: ModelConfiguration(directory: localURL)
+                        ),
+                        loadConfiguration: loadConfiguration
+                    )
                 }
             } catch {
                 // Drain the load's GPU tail before releasing the exclusive gate
@@ -4459,10 +4496,14 @@ public actor ModelRuntime {
             }
             if LocalVisionEvidence.inspect(localURL).hasVision && !constructedVision {
                 container.disableCaching()
-                throw NSError(domain: "OsaurusModelMedia", code: 1, userInfo: [
-                    NSLocalizedDescriptionKey:
-                        "The installed bundle has vision configuration and weights, but its loaded runtime has no vision tower. The model was not admitted as text-only. Check the bundle's processor configuration and model-load diagnostics."
-                ])
+                throw NSError(
+                    domain: "OsaurusModelMedia",
+                    code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "The installed bundle has vision configuration and weights, but its loaded runtime has no vision tower. The model was not admitted as text-only. Check the bundle's processor configuration and model-load diagnostics."
+                    ]
+                )
             }
             if Task.isCancelled {
                 container.disableCaching()
@@ -4482,6 +4523,7 @@ public actor ModelRuntime {
                 dflash2BlockSize: mtpPlan.dflash2BlockSize,
                 nativeMTPStatus: mtpPlan.statusLine,
                 nativeMTPReason: mtpPlan.reason,
+                nativeMTPAdmission: mtpPlan.admission,
                 // Only a user-typed Memory Safety override may clamp the MLX
                 // freed-buffer pool below the weight-scaled dynamic limit.
                 // Routing the resolved plan value here folded the profile
@@ -4548,7 +4590,9 @@ public actor ModelRuntime {
             // baseline behind (unless another model remains resident, whose
             // episode continues).
             SwapPressureMonitor.shared.endEpisodeOnLoadFailure(
-                model: name, residentCount: modelCache.count)
+                model: name,
+                residentCount: modelCache.count
+            )
             throw error
         }
     }
@@ -5109,7 +5153,8 @@ public actor ModelRuntime {
                 .attributesOfItem(atPath: url.path),
                 let owner = attributes[.ownerAccountName] as? String
             {
-                let permissions = (attributes[.posixPermissions] as? NSNumber)
+                let permissions =
+                    (attributes[.posixPermissions] as? NSNumber)
                     .map { String($0.intValue, radix: 8) } ?? "?"
                 detail += " (owner=\(owner) mode=\(permissions), current user=\(NSUserName()))"
             }
@@ -5282,7 +5327,7 @@ public actor ModelRuntime {
     /// `CacheCoordinator` — osaurus does not need to plumb anything cache-
     /// related through this path.
     private func generateEventStream(
-        chatBuilder: @Sendable () -> [MLXLMCommon.Chat.Message],
+        chatBuilder: @Sendable () throws -> [MLXLMCommon.Chat.Message],
         rawPromptBuilder: (@Sendable () -> String)? = nil,
         parameters: GenerationParameters,
         stopSequences: [String],
@@ -5308,6 +5353,11 @@ public actor ModelRuntime {
         // unload now returns a `.cancelled` info instead of restarting GPU
         // work).
         if Task.isCancelled { throw CancellationError() }
+
+        // Decode and validate media before loading weights or acquiring a
+        // residency lease. A malformed attachment must fail this request,
+        // never disappear and leave the model answering text-only.
+        let chatBox = ChatMessageBox(try chatBuilder())
 
         let deletionAccess = try await beginModelDeletionProtectedAccess(
             modelID: modelId,
@@ -5366,6 +5416,7 @@ public actor ModelRuntime {
             WarmupProgressHub.shared.modelLoadWillStart(model: modelName)
         }
         let holder: SessionHolder
+        let requestStrategy: MLXLMCommon.DraftStrategy?
         do {
             holder = try await loadContainer(
                 id: modelId,
@@ -5375,6 +5426,10 @@ public actor ModelRuntime {
                     ? activityID : nil,
                 alignmentRepairSession: parameters.sessionId
             )
+            // Settings may change without reloading weights (Auto ↔ manual
+            // depth). Validate against the evidence belonging to this holder
+            // before acquiring a stream lease or submitting GPU work.
+            requestStrategy = try holder.nativeMTPAdmission.requestStrategy(loaded: holder.draftStrategy, mtp: cfg.mtp)
         } catch {
             await ModelResidencyManager.shared.cancel(modelName: modelName)
             if shouldReportModelLoad {
@@ -5384,6 +5439,7 @@ public actor ModelRuntime {
                 WarmupProgressHub.shared.finish(model: modelName)
             }
             await InferenceActivityRegistry.shared.finish(id: activityID)
+            await scheduleIdleResidency(for: modelName)
             throw error
         }
         if shouldReportModelLoad {
@@ -5409,7 +5465,6 @@ public actor ModelRuntime {
         // never escapes the producer task. Heap-box the snapshot so the
         // `@Sendable` closure passed to `MLXBatchAdapter` can capture it
         // without tripping the Sendable-capture diagnostic.
-        let chatBox = ChatMessageBox(chatBuilder())
         let buildChat: @Sendable () -> [MLXLMCommon.Chat.Message] = { chatBox.messages }
         let buildTools: @Sendable () -> [[String: any Sendable]]? = {
             ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: toolChoice)
@@ -5418,7 +5473,6 @@ public actor ModelRuntime {
         await InferenceActivityRegistry.shared.update(id: activityID, phase: .prefilling)
 
         let prepared: MLXBatchAdapter.PreparedStream
-        let requestStrategy = Self.requestDraftStrategy(holder.draftStrategy, mtp: cfg.mtp)
         let usesGenerationAllocatorWindow = beginGenerationAllocatorWindowIfNeeded(
             holder: holder,
             requestStrategy: requestStrategy
@@ -5487,6 +5541,7 @@ public actor ModelRuntime {
         return GenerationEventMapper.map(
             events: prepared.stream,
             modelName: modelName,
+            promptTokenCount: prepared.promptTokens.count,
             trace: trace,
             suppressProgressUI: parameters.suppressProgressUI,
             // Background housekeeping (follow-up suggestions, titles) must not
@@ -5559,7 +5614,7 @@ public actor ModelRuntime {
         let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
             chatBuilder: {
-                ModelRuntime.mapOpenAIChatToMLX(
+                try ModelRuntime.mapOpenAIChatToMLX(
                     augmented,
                     trace: parameters.ttftTrace,
                     preserveStructuredToolHistory: !tools.isEmpty
@@ -5578,6 +5633,8 @@ public actor ModelRuntime {
         // call, so iterating to natural EOS captures all of them).
         for try await ev in events {
             switch ev {
+            case .inputTokenCount:
+                break
             case .tokens(let s):
                 accumulated += s
             case .reasoning:
@@ -5607,7 +5664,8 @@ public actor ModelRuntime {
     /// Stream a completion from a raw, pre-formatted prompt — no chat template,
     /// no tools, no reasoning channel. Backs the OpenAI-legacy
     /// `/v1/completions` endpoint (FIM autocomplete), where the prompt must
-    /// reach the model verbatim. Yields plain text deltas only.
+    /// reach the model verbatim. Yields text and in-band usage hints; callers
+    /// must consume accounting before forwarding visible completion text.
     func streamRawText(
         prompt: String,
         parameters: GenerationParameters,
@@ -5629,15 +5687,26 @@ public actor ModelRuntime {
         let producerTask = Task {
             do {
                 for try await ev in events {
+                    // Terminal usage must survive cancellation just as it does
+                    // in streamWithTools; only generated deltas are suppressed.
+                    if case .completionInfo(let count, let rate, let unclosed, let stop, let prefill, let mtp) = ev {
+                        continuation.yield(StreamingStatsHint.encode(
+                            tokenCount: count, tokensPerSecond: rate, unclosedReasoning: unclosed,
+                            stopReason: stop, prefillTokensPerSecond: prefill, mtp: mtp
+                        ))
+                        continue
+                    }
                     if Task.isCancelled {
                         continuation.finish()
                         return
                     }
-                    // Raw completions only surface generated text. Reasoning,
-                    // tool calls, and stats events are irrelevant to the
-                    // legacy completions wire format and are dropped.
-                    if case .tokens(let s) = ev, !s.isEmpty {
-                        continuation.yield(s)
+                    switch ev {
+                    case .inputTokenCount(let count):
+                        continuation.yield(StreamingInputTokenHint.encode(count))
+                    case .tokens(let text) where !text.isEmpty:
+                        continuation.yield(text)
+                    default:
+                        break
                     }
                 }
                 continuation.finish()
@@ -5672,7 +5741,7 @@ public actor ModelRuntime {
         let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
             chatBuilder: {
-                ModelRuntime.mapOpenAIChatToMLX(
+                try ModelRuntime.mapOpenAIChatToMLX(
                     augmented,
                     trace: parameters.ttftTrace,
                     preserveStructuredToolHistory: !tools.isEmpty
@@ -5746,6 +5815,8 @@ public actor ModelRuntime {
                         return
                     }
                     switch ev {
+                    case .inputTokenCount(let count):
+                        continuation.yield(StreamingInputTokenHint.encode(count))
                     case .tokens(let s):
                         if !s.isEmpty { continuation.yield(s) }
                     case .reasoning(let s):
@@ -6024,8 +6095,9 @@ public actor ModelRuntime {
         modelName: String,
         modelDirectory: URL,
         settings: VMLXServerRuntimeSettings
-    ) -> NativeMTPLaunchPlan {
+    ) throws -> NativeMTPLaunchPlan {
         if ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelName) {
+            try NativeMTPAdmission().validateLoad(settings: settings, externalDrafterSelected: false)
             let memorySafetyPlan = Self.resolveMemorySafetyLoadPlan(
                 modelName: modelName,
                 modelDirectory: modelDirectory,
@@ -6053,6 +6125,9 @@ public actor ModelRuntime {
             genLog.error(
                 "native MTP inspection failed for \(modelDirectory.lastPathComponent, privacy: .public): \(String(describing: error), privacy: .public)"
             )
+            if settings.mtp.mode == .forceOn {
+                throw NativeMTPAdmission.Refusal(reason: "Bundle inspection failed: \(error.localizedDescription)")
+            }
             let memorySafetyPlan = Self.resolveMemorySafetyLoadPlan(
                 modelName: modelName,
                 modelDirectory: modelDirectory,
@@ -6073,6 +6148,16 @@ public actor ModelRuntime {
             configData: configData,
             jangConfig: jangConfig,
             status: status
+        )
+        let admission = NativeMTPAdmission(
+            configData: configData,
+            jangConfig: jangConfig,
+            status: status,
+            externalDrafterSelected: settings.resolvedDFlash2Selection(configData: configData) != nil
+        )
+        try admission.validateLoad(
+            settings: settings,
+            externalDrafterSelected: admission.externalDrafterSelected
         )
         let loadConfiguration = settings.resolvedLoadConfiguration(
             base: .osaurusProduction,
@@ -6138,7 +6223,8 @@ public actor ModelRuntime {
                 dflash2BlockSize: nil,
                 statusLine: status?.statusLine,
                 reason: downgrade,
-                memorySafetySummary: memorySafetyPlan.displaySummary
+                memorySafetySummary: memorySafetyPlan.displaySummary,
+                admission: admission
             )
         }
         let memorySafetyPlan = Self.resolveMemorySafetyLoadPlan(
@@ -6155,7 +6241,8 @@ public actor ModelRuntime {
             dflash2BlockSize: dflash2BlockSize,
             statusLine: status?.statusLine,
             reason: launch.reason,
-            memorySafetySummary: memorySafetyPlan.displaySummary
+            memorySafetySummary: memorySafetyPlan.displaySummary,
+            admission: admission
         )
     }
 
@@ -6215,7 +6302,7 @@ public actor ModelRuntime {
         // legacy Auto draft-token cap, regardless of the resident head's depth.
         // It sets the initial depth and the request's exploration ceiling.
         if mtp.mode == .forceOn, let manual = mtp.explicitDepth,
-            (1...3).contains(manual)
+            (1 ... 3).contains(manual)
         {
             return .nativeMTP(depth: manual, verifierMode: verifierMode)
         }
@@ -6275,7 +6362,11 @@ public actor ModelRuntime {
             holder = nil
         }
         guard let holder else { return nil }
-        let strategy = Self.requestDraftStrategy(holder.draftStrategy)
+        let strategy =
+            (try? holder.nativeMTPAdmission.requestStrategy(
+                loaded: holder.draftStrategy,
+                mtp: ServerRuntimeSettingsStore.snapshot().mtp
+            ))
         return MTPResolutionSnapshot(
             modelName: holder.name,
             loadStatus: holder.nativeMTPStatus,
@@ -6436,12 +6527,14 @@ public actor ModelRuntime {
         _ msgs: [ChatMessage],
         trace: TTFTTrace? = nil,
         preserveStructuredToolHistory: Bool = true
-    ) -> [MLXLMCommon.Chat.Message] {
+    ) throws -> [MLXLMCommon.Chat.Message] {
         var out: [MLXLMCommon.Chat.Message] = []
         out.reserveCapacity(max(6, msgs.count))
+        // Validate every image before audio/video extraction creates any
+        // temporary files. Mixed valid/corrupt requests are all-or-error.
+        let imageSources = try msgs.map { try extractImageSources(from: $0) }
         var audioMetrics = AudioMaterializationMetrics()
-        for m in msgs {
-            let images = extractImageSources(from: m)
+        for (m, images) in zip(msgs, imageSources) {
             let videos = extractVideoSources(from: m)
             let audios = extractAudioSources(from: m, metrics: &audioMetrics)
             switch m.role {
@@ -6566,25 +6659,44 @@ public actor ModelRuntime {
         }
     }
 
+    struct ImageInputError: Error, LocalizedError, Sendable {
+        let imageIndex: Int
+        let reason: String
+
+        var errorDescription: String? {
+            "Image \(imageIndex + 1) could not be read: \(reason) Reattach the original image and try again."
+        }
+    }
+
     nonisolated private static func extractImageSources(
         from message: ChatMessage
-    ) -> [MLXLMCommon.UserInput.Image] {
+    ) throws -> [MLXLMCommon.UserInput.Image] {
         let imageUrls = message.imageUrls
         guard !imageUrls.isEmpty else { return [] }
 
         var sources: [MLXLMCommon.UserInput.Image] = []
-        for urlString in imageUrls {
-            if urlString.hasPrefix("data:image/") {
-                if let commaIndex = urlString.firstIndex(of: ",") {
-                    let base64String = String(urlString[urlString.index(after: commaIndex)...])
-                    if let imageData = Data(base64Encoded: base64String),
-                        let ciImage = CIImage(data: imageData)
-                    {
-                        sources.append(.ciImage(ciImage))
-                    }
+        for (index, urlString) in imageUrls.enumerated() {
+            if urlString.prefix(5).lowercased() == "data:" {
+                guard let commaIndex = urlString.firstIndex(of: ","),
+                    urlString[..<commaIndex].lowercased().hasPrefix("data:image/"),
+                    urlString[..<commaIndex].lowercased().hasSuffix(";base64")
+                else {
+                    throw ImageInputError(imageIndex: index, reason: "invalid image data URL.")
                 }
-            } else if let url = URL(string: urlString) {
+                let base64String = String(urlString[urlString.index(after: commaIndex)...])
+                guard let imageData = Data(base64Encoded: base64String), !imageData.isEmpty else {
+                    throw ImageInputError(imageIndex: index, reason: "invalid or empty base64 image data.")
+                }
+                guard let ciImage = CIImage(data: imageData),
+                    !ciImage.extent.isEmpty, !ciImage.extent.isInfinite
+                else {
+                    throw ImageInputError(imageIndex: index, reason: "the image format is unsupported or its data is corrupt.")
+                }
+                sources.append(.ciImage(ciImage))
+            } else if let url = URL(string: urlString), url.scheme != nil {
                 sources.append(.url(url))
+            } else {
+                throw ImageInputError(imageIndex: index, reason: "invalid image URL.")
             }
         }
         return sources

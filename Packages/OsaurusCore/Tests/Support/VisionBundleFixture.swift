@@ -35,18 +35,23 @@ enum VisionBundleFixture {
         return root
     }
 
-    static func writeWeights(_ names: [String], metadata: [String: String]? = nil, to path: URL) throws {
+    static func writeWeights(
+        _ names: [String], metadata: [String: String]? = nil,
+        dtype: String = "F32", shape: [Int] = [1], payloadBytesPerTensor: Int = 4,
+        to path: URL
+    ) throws {
         var header: [String: Any] = [:]
         if let metadata { header["__metadata__"] = metadata }
         for (i, name) in names.enumerated() {
-            header[name] = ["shape": [1], "dtype": "F32", "data_offsets": [i * 4, (i + 1) * 4]]
+            header[name] = ["shape": shape, "dtype": dtype,
+                "data_offsets": [i * payloadBytesPerTensor, (i + 1) * payloadBytesPerTensor]]
         }
         var json = try JSONSerialization.data(withJSONObject: header)
         while json.count % 8 != 0 { json.append(32) }
         var length = UInt64(json.count).littleEndian
         var data = withUnsafeBytes(of: &length) { Data($0) }
         data.append(json)
-        data.append(Data(repeating: 0, count: names.count * 4))
+        data.append(Data(repeating: 0, count: names.count * payloadBytesPerTensor))
         try data.write(to: path)
     }
 

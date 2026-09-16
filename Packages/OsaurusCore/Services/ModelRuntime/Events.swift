@@ -8,6 +8,10 @@
 import Foundation
 
 enum ModelRuntimeEvent: Sendable {
+    /// Token count from the prepared runtime input, including its template and
+    /// media token positions. Available before output or immediate tool dispatch;
+    /// it does not imply generation has completed or that tokens were cached.
+    case inputTokenCount(Int)
     case tokens(String)
     /// Reasoning text (thinking / chain-of-thought). Translated by
     /// `GenerationEventMapper` from vmlx-swift's `Generation.reasoning(String)`

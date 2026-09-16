@@ -514,11 +514,13 @@ struct ChatEngineTests {
     @Test func completeChat_usesStreamingStatsForPlainNonStreamingCompletion() async throws {
         let svc = FakeModelService(
             deltas: [
+                StreamingInputTokenHint.encode(257),
                 "partial answer",
                 StreamingStatsHint.encode(
                     tokenCount: 180,
                     tokensPerSecond: 52.5,
-                    stopReason: "length"
+                    stopReason: "length",
+                    inputTokenCount: 263
                 ),
             ]
         )
@@ -543,6 +545,7 @@ struct ChatEngineTests {
 
         #expect(resp.choices.first?.message.content == "partial answer")
         #expect(resp.choices.first?.finish_reason == "length")
+        #expect(resp.usage.prompt_tokens == 263)
         #expect(resp.usage.completion_tokens == 180)
         #expect(resp.usage.total_tokens == resp.usage.prompt_tokens + 180)
         #expect(resp.usage.tokens_per_second == 52.5)

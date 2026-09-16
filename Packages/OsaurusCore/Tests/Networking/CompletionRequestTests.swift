@@ -29,7 +29,8 @@ struct CompletionRequestTests {
               "temperature": 0.2,
               "top_p": 0.9,
               "stop": "<|fim_pad|>",
-              "stream": true
+              "stream": true,
+              "stream_options": {"include_usage": true}
             }
             """#
         )
@@ -45,6 +46,7 @@ struct CompletionRequestTests {
         #expect(req.topP == 0.9)
         #expect(req.stop == ["<|fim_pad|>"])
         #expect(req.stream == true)
+        #expect(req.streamOptions?.include_usage == true)
     }
 
     @Test func decodesArrayPromptTakesFirstAndArrayStop() throws {
@@ -67,6 +69,7 @@ struct CompletionRequestTests {
         #expect(req.resolvedMaxTokens == 256)
         #expect(req.stop.isEmpty)
         #expect(req.stream == nil)
+        #expect(req.streamOptions == nil)
         #expect(req.temperature == nil)
     }
 

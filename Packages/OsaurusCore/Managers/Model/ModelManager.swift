@@ -1443,11 +1443,13 @@ extension ModelManager {
         // refresh). Rebuilding the merged model list and re-splitting every id
         // per call is wasted main-thread work — and under memory pressure it
         // shows up in hang reports. Memoize per name, invalidated when either
-        // the local scan cache or the external registry changes.
+        // the local scan cache or the external catalog changes. Registry
+        // identity alone misses completion of the asynchronous catalog build
+        // and can retain a provisional miss for the lifetime of the app.
         localModelsCacheCondition.lock()
         let localGen = localModelsCacheGen
         localModelsCacheCondition.unlock()
-        let externalGen = ExternalModelLocator.registryGeneration()
+        let externalGen = ExternalModelLocator.catalogGeneration()
 
         matchMemoLock.lock()
         if matchMemoLocalGen == localGen, matchMemoExternalGen == externalGen,
@@ -1474,7 +1476,8 @@ extension ModelManager {
     private static nonisolated let matchMemoLock = NSLock()
     private static nonisolated(unsafe) var matchMemo: [String: MLXModel?] = [:]
     private static nonisolated(unsafe) var matchMemoLocalGen: UInt64 = .max
-    private static nonisolated(unsafe) var matchMemoExternalGen: UInt64 = .max
+    private static nonisolated(unsafe) var matchMemoExternalGen =
+        ExternalModelLocator.CatalogGeneration(registry: .max, snapshot: .max)
 
     nonisolated static func matchInstalledMLXModel(
         named name: String,

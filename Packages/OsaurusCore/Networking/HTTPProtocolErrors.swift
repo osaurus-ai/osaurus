@@ -59,7 +59,8 @@ extension HTTPHandler {
         if error is ModelRuntime.LoadRefusedError {
             return .serviceUnavailable
         }
-        if error is MLXService.RuntimePolicyError {
+        if error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
+            || error is ModelRuntime.ImageInputError {
             return .badRequest
         }
         if (error as NSError).domain == "OsaurusToolChoice" {
@@ -78,7 +79,8 @@ extension HTTPHandler {
         if error is ModelRuntime.LoadRefusedError {
             return "insufficient_resources"
         }
-        if error is MLXService.RuntimePolicyError {
+        if error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
+            || error is ModelRuntime.ImageInputError {
             return "invalid_request_error"
         }
         if (error as NSError).domain == "OsaurusToolChoice" {
@@ -123,7 +125,8 @@ extension HTTPHandler {
         if error is ModelRuntime.LoadRefusedError {
             return "overloaded_error"
         }
-        if error is MLXService.RuntimePolicyError {
+        if error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
+            || error is ModelRuntime.ImageInputError {
             return "invalid_request_error"
         }
         if (error as NSError).domain == "OsaurusToolChoice" {
@@ -139,7 +142,8 @@ extension HTTPHandler {
         if error is ModelRuntime.LoadRefusedError {
             return "insufficient_resources"
         }
-        if error is MLXService.RuntimePolicyError {
+        if error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
+            || error is ModelRuntime.ImageInputError {
             return "invalid_request_error"
         }
         if (error as NSError).domain == "OsaurusToolChoice" {
@@ -155,7 +159,8 @@ extension HTTPHandler {
         if error is ModelRuntime.LoadRefusedError {
             return "insufficient_resources"
         }
-        if error is MLXService.RuntimePolicyError {
+        if error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
+            || error is ModelRuntime.ImageInputError {
             return "invalid_request_error"
         }
         if (error as NSError).domain == "OsaurusToolChoice" {

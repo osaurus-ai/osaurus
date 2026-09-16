@@ -96,7 +96,7 @@ struct ModelRuntimeRAMFeasibilityTests {
         )
 
         // The admission result remains a hard upper bound on constrained
-        // machines and an explicit larger persistent cap is never reduced.
+        // machines, including when the persistent allowance is larger.
         #expect(
             ModelRuntime.effectiveGenerationMLXCacheLimit(
                 persistentLimit: 4 * gib,
@@ -105,6 +105,48 @@ struct ModelRuntimeRAMFeasibilityTests {
                 physicalMemoryBytes: UInt64(128 * gib),
                 requiresAdmittedCeiling: true
             ) == 3 * gib
+        )
+    }
+
+    @Test("Active reuse respects explicit caps across residents without treating defaults as caps")
+    func activeAllocatorRespectsExplicitMaximum() {
+        let mib = 1024 * 1024
+        let gib = 1024 * mib
+        let cases: [[Int?]] = [[128 * mib], [nil, 256 * mib, 128 * mib], [0], [-1]]
+        for requiresCeiling in [false, true] {
+            for caps in cases {
+                let expected = max(0, caps.compactMap { $0 }.min()!)
+                #expect(
+                    ModelRuntime.effectiveGenerationMLXCacheLimit(
+                        persistentLimit: gib,
+                        admittedMemoryLimit: 16 * gib,
+                        modelWeightsBytes: Int64(21 * gib),
+                        physicalMemoryBytes: UInt64(128 * gib),
+                        requiresAdmittedCeiling: requiresCeiling,
+                        configuredLimits: caps
+                    ) == expected
+                )
+            }
+        }
+        #expect(
+            ModelRuntime.effectiveGenerationMLXCacheLimit(
+                persistentLimit: 128 * mib,
+                admittedMemoryLimit: 16 * gib,
+                modelWeightsBytes: Int64(21 * gib),
+                physicalMemoryBytes: UInt64(128 * gib),
+                requiresAdmittedCeiling: true,
+                configuredLimits: [nil]
+            ) == 7 * gib
+        )
+        #expect(
+            ModelRuntime.effectiveGenerationMLXCacheLimit(
+                persistentLimit: 4 * gib,
+                admittedMemoryLimit: 64 * mib,
+                modelWeightsBytes: .max,
+                physicalMemoryBytes: .max,
+                requiresAdmittedCeiling: true,
+                configuredLimits: [128 * mib]
+            ) == 64 * mib
         )
     }
 
