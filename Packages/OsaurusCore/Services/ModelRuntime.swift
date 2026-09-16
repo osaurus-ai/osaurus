@@ -4252,8 +4252,8 @@ public actor ModelRuntime {
         }
         try Task.checkCancellation()
 
-        // Automatic metadata top-up can introduce osaurus.json. Enforce it again
-        // before any engine load; offline legacy bundles remain loadable.
+        // Recheck after asynchronous preparation in case the bundle changed.
+        // Automatic top-up never stamps a revision onto unverified weights.
         try ModelManifest.validateLoad(at: localURL)
 
         // Manifest-verify ALL weight shards. `MLXModel.isDownloaded` only

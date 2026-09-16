@@ -456,7 +456,7 @@ final class ModelDownloadService: ObservableObject {
             let directory = model.localDirectory
             let hasObsoleteManifest =
                 isRepair && !verifiesPublisherRevision
-                && FileManager.default.fileExists(atPath: directory.appendingPathComponent(ModelManifest.filename).path)
+                && ModelManifest.read(at: directory) != .absent
             // Hashing an installed multi-GB bundle must remain cancellable
             // and must never run on MainActor.
             if isRepair { repairCheckingTokens.insert(token) }

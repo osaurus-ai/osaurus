@@ -112,6 +112,24 @@ struct ModelManifestTests {
         }
     }
 
+    @Test func danglingSidecarIsInvalidWhileValidSymlinkRemainsSupported() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let target = directory.appendingPathComponent("publisher-manifest.json")
+        let sidecar = directory.appendingPathComponent(ModelManifest.filename)
+        try FileManager.default.createSymbolicLink(at: sidecar, withDestinationURL: target)
+        #expect(ModelManifest.loadFailure(at: directory, hostVersion: "0.25.2")?.reason == .invalidManifest)
+        #expect(try ModelManifest.removeObsoleteManifest(at: directory, advertised: false, explicitRepair: true))
+        #expect(ModelManifest.read(at: directory) == .absent)
+        try FileManager.default.createSymbolicLink(at: sidecar, withDestinationURL: target)
+        try Data(#"{"required_osaurus_version":"0.25.0","model_version":"1"}"#.utf8).write(to: target)
+        try ModelManifest.validateLoad(at: directory, hostVersion: "0.25.2")
+        #expect(ModelManifest.read(at: directory).manifest?.modelVersion == "1")
+        try FileManager.default.removeItem(at: sidecar)
+        #expect(ModelManifest.read(at: directory) == .absent)
+    }
+
     @Test func remoteMalformedAndOversizedNeverBecomeAbsence() async throws {
         for body in [Data("{".utf8), Data(repeating: 32, count: ModelManifest.maximumBytes + 1)] {
             let service = HuggingFaceService(metadataRequest: { request in

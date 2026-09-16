@@ -69,6 +69,11 @@ struct ModelManifest: Equatable, Sendable {
             if nsError.domain == NSCocoaErrorDomain,
                 nsError.code == NSFileReadNoSuchFileError || nsError.code == NSFileNoSuchFileError
             {
+                // HF caches use symlinks. A dangling sidecar is present but
+                // unreadable; it must not silently become a legacy bundle.
+                if (try? FileManager.default.attributesOfItem(atPath: url.path)) != nil {
+                    return .invalid(invalid("The file could not be read."))
+                }
                 return .absent
             }
             return .invalid(invalid("The file could not be read."))
@@ -126,8 +131,16 @@ struct ModelManifest: Equatable, Sendable {
     static func removeObsoleteManifest(at directory: URL, advertised: Bool, explicitRepair: Bool) throws -> Bool {
         guard explicitRepair, !advertised else { return false }
         let url = directory.appendingPathComponent(filename)
-        guard FileManager.default.fileExists(atPath: url.path) else { return false }
-        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        let attributes: [FileAttributeKey: Any]
+        do { attributes = try FileManager.default.attributesOfItem(atPath: url.path) } catch {
+            let nsError = error as NSError
+            if nsError.domain == NSCocoaErrorDomain,
+                nsError.code == NSFileReadNoSuchFileError || nsError.code == NSFileNoSuchFileError
+            {
+                return false
+            }
+            throw error
+        }
         guard let type = attributes[.type] as? FileAttributeType, type == .typeRegular || type == .typeSymbolicLink
         else {
             throw invalid("osaurus.json is not a file.")
