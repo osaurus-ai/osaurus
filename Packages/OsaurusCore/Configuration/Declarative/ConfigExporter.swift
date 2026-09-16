@@ -89,38 +89,55 @@ enum ConfigExporter {
         return agents
             .filter { !$0.isBuiltIn }
             .map { agent in
-                var entry = AgentEntry(name: agent.name)
-                entry.description = agent.description
-                entry.systemPrompt = agent.systemPrompt
-                entry.model = agent.defaultModel.map { .value($0) } ?? .null
-                entry.temperature = agent.temperature.map { .value(Double($0)) } ?? .null
-                entry.maxTokens = agent.maxTokens.map { .value($0) } ?? .null
-                var caps = AgentCapabilitiesEntry()
-                caps.toolsEnabled = agent.toolsEnabled
-                caps.memoryEnabled = agent.memoryEnabled
-                caps.searchMemoryEnabled = agent.settings.searchMemoryEnabled
-                caps.webSearchEnabled = agent.settings.webSearchEnabled
-                caps.knowledgeEnabled = agent.settings.knowledgeEnabled
-                caps.knowledgeCollectionIds =
-                    agent.settings.knowledgeCollectionIds.isEmpty
-                    ? nil
-                    : agent.settings.knowledgeCollectionIds.map { $0.uuidString }
-                caps.dbEnabled = agent.settings.dbEnabled
-                caps.selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
-                caps.computerUseEnabled = agent.settings.computerUseEnabled
-                caps.browserUseEnabled = agent.settings.browserUseEnabled
-                caps.speakEnabled = agent.settings.speakEnabled
-                caps.renderChartEnabled = agent.settings.renderChartEnabled
-                caps.relayEnabled = relay.isEnabled(for: agent.id)
-                entry.capabilities = caps
-                exportToolSelection(of: agent, into: &entry, groups: toolGroups)
-                entry.pluginInstructions =
-                    (agent.pluginInstructions?.isEmpty ?? true) ? nil : agent.pluginInstructions
-                entry.sandbox = exportSandbox(of: agent)
-                entry.subagents = exportSubagents(of: agent, agents: agents)
-                entry.workingFolder = agent.workingFolderPath.map { .value($0) } ?? .null
-                return entry
+                exportAgent(agent, agents: agents, relay: relay, toolGroups: toolGroups)
             }
+    }
+
+    /// One custom agent as a document entry. Shared by the `agents` section
+    /// export and by agent templates (`AgentTemplate.make(from:)`).
+    static func exportAgent(_ agent: Agent) -> AgentEntry {
+        exportAgent(
+            agent,
+            agents: AgentManager.shared.agents,
+            relay: RelayConfigurationStore.load(),
+            toolGroups: ToolRegistry.shared.portableToolGroups())
+    }
+
+    private static func exportAgent(
+        _ agent: Agent, agents: [Agent], relay: RelayConfiguration,
+        toolGroups: [PortableToolGroup: [String]]
+    ) -> AgentEntry {
+        var entry = AgentEntry(name: agent.name)
+        entry.description = agent.description
+        entry.systemPrompt = agent.systemPrompt
+        entry.model = agent.defaultModel.map { .value($0) } ?? .null
+        entry.temperature = agent.temperature.map { .value(Double($0)) } ?? .null
+        entry.maxTokens = agent.maxTokens.map { .value($0) } ?? .null
+        var caps = AgentCapabilitiesEntry()
+        caps.toolsEnabled = agent.toolsEnabled
+        caps.memoryEnabled = agent.memoryEnabled
+        caps.searchMemoryEnabled = agent.settings.searchMemoryEnabled
+        caps.webSearchEnabled = agent.settings.webSearchEnabled
+        caps.knowledgeEnabled = agent.settings.knowledgeEnabled
+        caps.knowledgeCollectionIds =
+            agent.settings.knowledgeCollectionIds.isEmpty
+            ? nil
+            : agent.settings.knowledgeCollectionIds.map { $0.uuidString }
+        caps.dbEnabled = agent.settings.dbEnabled
+        caps.selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
+        caps.computerUseEnabled = agent.settings.computerUseEnabled
+        caps.browserUseEnabled = agent.settings.browserUseEnabled
+        caps.speakEnabled = agent.settings.speakEnabled
+        caps.renderChartEnabled = agent.settings.renderChartEnabled
+        caps.relayEnabled = relay.isEnabled(for: agent.id)
+        entry.capabilities = caps
+        exportToolSelection(of: agent, into: &entry, groups: toolGroups)
+        entry.pluginInstructions =
+            (agent.pluginInstructions?.isEmpty ?? true) ? nil : agent.pluginInstructions
+        entry.sandbox = exportSandbox(of: agent)
+        entry.subagents = exportSubagents(of: agent, agents: agents)
+        entry.workingFolder = agent.workingFolderPath.map { .value($0) } ?? .null
+        return entry
     }
 
     /// Manual tool selection splits into ungrouped tool names plus MCP /
