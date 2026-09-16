@@ -2617,6 +2617,30 @@ public final class ToolRegistry: ObservableObject {
         ).toJSONString()
     }
 
+    /// Which portable group owns a tool, for the declarative config
+    /// document: MCP tools by server NAME, external / sandbox plugin tools
+    /// by plugin id. Built-in, runtime-managed, channel and declared
+    /// capability-group tools return nil (they are addressed by tool name).
+    func portableToolGroup(for toolName: String) -> PortableToolGroup? {
+        guard let tool = toolsByName[toolName] else { return nil }
+        if let mcp = tool as? MCPProviderTool { return .mcpServer(mcp.providerName) }
+        if let ext = tool as? ExternalTool { return .plugin(ext.pluginId) }
+        if let sandbox = tool as? SandboxPluginTool { return .plugin(sandbox.plugin.id) }
+        return nil
+    }
+
+    /// Every registered tool name keyed by its portable group. Tools with
+    /// no group are omitted. Snapshot for the declarative exporter/applier.
+    func portableToolGroups() -> [PortableToolGroup: [String]] {
+        var groups: [PortableToolGroup: [String]] = [:]
+        for name in toolsByName.keys {
+            guard let group = portableToolGroup(for: name) else { continue }
+            groups[group, default: []].append(name)
+        }
+        for key in groups.keys { groups[key]?.sort() }
+        return groups
+    }
+
     /// Returns the plugin or provider name that a tool belongs to, if any.
     func groupName(for toolName: String) -> String? {
         guard let tool = toolsByName[toolName] else { return nil }

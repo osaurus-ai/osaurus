@@ -385,10 +385,13 @@ enum ConfigApplier {
                     }
                 }
                 if var agent = existing {
-                    patch(&agent, from: entry)
+                    let outcome = patch(&agent, from: entry)
                     AgentManager.shared.update(agent)
                     applyRelay(entry.capabilities?.relayEnabled, to: agent.id)
-                    return ConfigApplyResult(section: "agents", target: agent.name, status: .done)
+                    return ConfigApplyResult(
+                        section: "agents", target: agent.name,
+                        status: outcome.needsUserAction ? .needsUserAction : .done,
+                        message: outcome.notes.isEmpty ? nil : outcome.notes.joined(separator: " "))
                 } else {
                     var agent = AgentManager.shared.create(
                         name: entry.name,
@@ -399,19 +402,23 @@ enum ConfigApplier {
                         maxTokens: entry.maxTokens.valueOrNil
                     )
                     matchedIds.insert(agent.id)
-                    if entry.capabilities != nil {
-                        patch(&agent, from: entry)
-                        AgentManager.shared.update(agent)
-                    }
+                    let outcome = patch(&agent, from: entry)
+                    AgentManager.shared.update(agent)
                     applyRelay(entry.capabilities?.relayEnabled, to: agent.id)
                     // New agents join the Default spawn pool on create
                     // (`AgentManager.add`), so the orchestrator can run one
                     // immediately — and same-turn: the post-apply hook stages
                     // the spawn specs for this very conversation.
+                    var message =
+                        "Created. `\(agent.name)` is spawnable now — "
+                        + "call `spawn_agent` to run a task with it."
+                    if !outcome.notes.isEmpty {
+                        message += " " + outcome.notes.joined(separator: " ")
+                    }
                     return ConfigApplyResult(
-                        section: "agents", target: agent.name, status: .done,
-                        message: "Created. `\(agent.name)` is spawnable now — "
-                            + "call `spawn_agent` to run a task with it.")
+                        section: "agents", target: agent.name,
+                        status: outcome.needsUserAction ? .needsUserAction : .done,
+                        message: message)
                 }
             }
             results.append(result)
@@ -431,8 +438,19 @@ enum ConfigApplier {
         return results
     }
 
+    /// What an agent patch could not fully honour on this machine. These
+    /// are portability gaps (a template written elsewhere), never failures:
+    /// the agent is still created / updated with everything that resolved.
+    struct AgentPatchOutcome {
+        var notes: [String] = []
+        /// Set when the user must finish a step in the app (pick a folder).
+        var needsUserAction = false
+    }
+
     @MainActor
-    private static func patch(_ agent: inout Agent, from entry: AgentEntry) {
+    @discardableResult
+    private static func patch(_ agent: inout Agent, from entry: AgentEntry) -> AgentPatchOutcome {
+        var outcome = AgentPatchOutcome()
         if let v = entry.description { agent.description = v }
         if let v = entry.systemPrompt { agent.systemPrompt = v }
         if entry.model.isSpecified { agent.defaultModel = entry.model.valueOrNil }
@@ -440,7 +458,144 @@ enum ConfigApplier {
             agent.temperature = entry.temperature.valueOrNil.map(Float.init)
         }
         if entry.maxTokens.isSpecified { agent.maxTokens = entry.maxTokens.valueOrNil }
-        guard let caps = entry.capabilities else { return }
+        patchToolSelection(&agent, from: entry, outcome: &outcome)
+        if let instructions = entry.pluginInstructions {
+            agent.pluginInstructions = instructions.isEmpty ? nil : instructions
+        }
+        if let sandbox = entry.sandbox { patchSandbox(&agent, from: sandbox) }
+        if let subagents = entry.subagents {
+            patchSubagents(&agent, from: subagents, outcome: &outcome)
+        }
+        patchWorkingFolder(&agent, from: entry.workingFolder, outcome: &outcome)
+        guard let caps = entry.capabilities else { return outcome }
+        patchCapabilities(&agent, from: caps)
+        return outcome
+    }
+
+    @MainActor
+    private static func patchToolSelection(
+        _ agent: inout Agent, from entry: AgentEntry, outcome: inout AgentPatchOutcome
+    ) {
+        let hasGroups = entry.mcpServers != nil || entry.plugins != nil
+        guard entry.tools != nil || hasGroups else { return }
+        if let raw = entry.tools?.mode, let mode = ToolSelectionMode(rawValue: raw) {
+            agent.toolSelectionMode = mode
+        } else if hasGroups || entry.tools?.enabled != nil {
+            // Listing tools or groups only makes sense in manual mode.
+            agent.toolSelectionMode = .manual
+        }
+        guard agent.toolSelectionMode == .manual else { return }
+        let registry = ToolRegistry.shared
+        let groups = registry.portableToolGroups()
+        var enabled: [PortableToolGroup] = []
+        var disabled: [PortableToolGroup] = []
+        for name in entry.mcpServers?.enabled ?? [] { enabled.append(.mcpServer(name)) }
+        for name in entry.mcpServers?.disabled ?? [] { disabled.append(.mcpServer(name)) }
+        for id in entry.plugins?.enabled ?? [] { enabled.append(.plugin(id)) }
+        for id in entry.plugins?.disabled ?? [] { disabled.append(.plugin(id)) }
+        let applied = AgentToolSelectionResolver.apply(
+            current: agent.manualToolNames ?? [],
+            baseToolNames: entry.tools?.enabled,
+            enabledGroups: enabled,
+            disabledGroups: disabled,
+            registered: Set(registry.listTools().map(\.name)),
+            groups: groups
+        )
+        agent.manualToolNames = applied.manualToolNames
+        if !applied.missingTools.isEmpty {
+            outcome.notes.append(
+                "Skipped tools not installed here: \(applied.missingTools.joined(separator: ", ")).")
+        }
+        if !applied.missingGroups.isEmpty {
+            outcome.notes.append(
+                "Not set up on this Mac (add them in Settings, then re-apply): "
+                    + applied.missingGroups.joined(separator: ", ") + ".")
+            outcome.needsUserAction = true
+        }
+    }
+
+    @MainActor
+    private static func patchSandbox(_ agent: inout Agent, from section: AgentSandboxEntry) {
+        var exec =
+            agent.autonomousExec
+            ?? AgentManager.shared.effectiveAutonomousExec(for: agent.id)
+            ?? AutonomousExecConfig.default
+        if let v = section.enabled { exec.enabled = v }
+        if let v = section.networkEnabled { exec.sandboxNetworkEnabled = v }
+        if let v = section.allowedDomains { exec.sandboxAllowedDomains = v.isEmpty ? nil : v }
+        if let v = section.maxCommandsPerTurn { exec.maxCommandsPerTurn = max(1, v) }
+        if let v = section.backgroundProcessEnabled { exec.backgroundProcessEnabled = v }
+        if let v = section.pluginCreate { exec.pluginCreate = v }
+        agent.autonomousExec = exec
+    }
+
+    @MainActor
+    private static func patchSubagents(
+        _ agent: inout Agent, from section: AgentSubagentsEntry, outcome: inout AgentPatchOutcome
+    ) {
+        if let v = section.enabled { agent.settings.spawnDelegationEnabled = v }
+        if let names = section.agents {
+            var ids: [UUID] = []
+            var missing: [String] = []
+            for name in names {
+                let key = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if let target = AgentManager.shared.agents.first(where: {
+                    !$0.isBuiltIn && $0.name.lowercased() == key
+                }) {
+                    ids.append(target.id)
+                } else {
+                    missing.append(name)
+                }
+            }
+            agent.settings.spawnableAgentIDs = ids
+            if !missing.isEmpty {
+                outcome.notes.append(
+                    "subagents.agents: no agent named \(missing.map { "`\($0)`" }.joined(separator: ", ")) here.")
+            }
+        }
+        if let models = section.models { agent.settings.spawnableModelNames = models }
+    }
+
+    /// A folder path is only a hint. The bookmark is minted here when the
+    /// folder exists and the process may access it; otherwise nothing is
+    /// attached and the result tells the user to pick the folder, so an
+    /// agent never carries a path it cannot actually read (the classic
+    /// "orchestrator said it has folder access but it loops forever").
+    @MainActor
+    private static func patchWorkingFolder(
+        _ agent: inout Agent, from field: ConfigField<String>, outcome: inout AgentPatchOutcome
+    ) {
+        switch field {
+        case .absent:
+            return
+        case .null:
+            agent.workingFolderBookmark = nil
+            agent.workingFolderPath = nil
+        case .value(let raw):
+            let expanded = (raw.trimmingCharacters(in: .whitespacesAndNewlines) as NSString)
+                .expandingTildeInPath
+            guard !expanded.isEmpty else { return }
+            let currentPath = agent.workingFolderPath.map { ($0 as NSString).expandingTildeInPath }
+            if agent.workingFolderBookmark != nil, currentPath == expanded { return }
+            let url = URL(fileURLWithPath: expanded, isDirectory: true)
+            var isDirectory: ObjCBool = false
+            let exists = FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory)
+            if exists, isDirectory.boolValue,
+                let bookmark = FolderContextService.makeSecurityScopedBookmark(for: url)
+            {
+                agent.workingFolderBookmark = bookmark
+                agent.workingFolderPath = expanded
+            } else {
+                outcome.notes.append(
+                    "working_folder: `\(raw)` is not accessible here. Pick the agent's folder "
+                        + "in the Agents pane (Working folder) to grant access.")
+                outcome.needsUserAction = true
+            }
+        }
+    }
+
+    @MainActor
+    private static func patchCapabilities(_ agent: inout Agent, from caps: AgentCapabilitiesEntry) {
         if let v = caps.toolsEnabled { agent.toolsEnabled = v }
         if let v = caps.memoryEnabled { agent.memoryEnabled = v }
         if let v = caps.searchMemoryEnabled { agent.settings.searchMemoryEnabled = v }

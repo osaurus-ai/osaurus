@@ -29,7 +29,13 @@
         "browser_use_enabled": false,
         "computer_use_enabled": false,
         "relay_enabled": false
-      }
+      },
+      "tools": { "mode": "manual", "enabled": ["fetch", "time"] },
+      "mcp_servers": { "enabled": [], "disabled": [] },
+      "plugins": { "enabled": [] },
+      "sandbox": { "enabled": true, "network_enabled": true, "allowed_domains": [] },
+      "subagents": { "enabled": false, "agents": [], "models": [] },
+      "working_folder": null
     }
   ],
   "tools": {

@@ -285,6 +285,59 @@ public struct AgentCapabilitiesEntry: Codable, Equatable, Sendable {
     }
 }
 
+/// Per-agent tool selection. `mode` is `auto` (RAG-picked) or `manual`.
+/// `enabled` lists the tool names an agent may call in manual mode. Tools
+/// owned by an MCP server or plugin are declared through `mcp_servers` /
+/// `plugins` instead, so a document stays portable across machines where
+/// the server exposes a different tool set.
+public struct AgentToolsEntry: Codable, Equatable, Sendable {
+    public var mode: String?
+    public var enabled: [String]?
+
+    public init() {}
+}
+
+/// Named group enablement (MCP servers by name, plugins by registry id).
+/// `enabled` adds every tool the group owns to the agent's manual list,
+/// `disabled` removes them. Groups not listed are untouched.
+public struct AgentToolGroupsEntry: Codable, Equatable, Sendable {
+    public var enabled: [String]?
+    public var disabled: [String]?
+
+    public init() {}
+}
+
+/// Sandbox (autonomous code execution) knobs for one agent.
+public struct AgentSandboxEntry: Codable, Equatable, Sendable {
+    public var enabled: Bool?
+    public var networkEnabled: Bool?
+    public var allowedDomains: [String]?
+    public var maxCommandsPerTurn: Int?
+    public var backgroundProcessEnabled: Bool?
+    public var pluginCreate: Bool?
+
+    public init() {}
+
+    enum CodingKeys: String, CodingKey {
+        case enabled
+        case networkEnabled = "network_enabled"
+        case allowedDomains = "allowed_domains"
+        case maxCommandsPerTurn = "max_commands_per_turn"
+        case backgroundProcessEnabled = "background_process_enabled"
+        case pluginCreate = "plugin_create"
+    }
+}
+
+/// Subagent delegation for one agent. `agents` are agent names (resolved
+/// to local ids on apply); `models` are raw model ids for `spawn_model`.
+public struct AgentSubagentsEntry: Codable, Equatable, Sendable {
+    public var enabled: Bool?
+    public var agents: [String]?
+    public var models: [String]?
+
+    public init() {}
+}
+
 /// A custom agent. Matched to existing agents by `name` (case-insensitive);
 /// an unmatched entry is created, a matched one is patched.
 public struct AgentEntry: Equatable, Sendable {
@@ -295,6 +348,18 @@ public struct AgentEntry: Equatable, Sendable {
     public var temperature: ConfigField<Double> = .absent
     public var maxTokens: ConfigField<Int> = .absent
     public var capabilities: AgentCapabilitiesEntry?
+    public var tools: AgentToolsEntry?
+    public var mcpServers: AgentToolGroupsEntry?
+    public var plugins: AgentToolGroupsEntry?
+    /// Plugin id → extra instructions injected when that plugin's tools load.
+    public var pluginInstructions: [String: String]?
+    public var sandbox: AgentSandboxEntry?
+    public var subagents: AgentSubagentsEntry?
+    /// Working folder PATH. Exported as a hint only (never the bookmark).
+    /// On apply the folder is attached when it exists locally and a
+    /// security-scoped bookmark can be minted; otherwise the result asks
+    /// the user to pick it. Explicit `null` detaches the folder.
+    public var workingFolder: ConfigField<String> = .absent
 
     public init(name: String) {
         self.name = name
@@ -308,6 +373,13 @@ extension AgentEntry: Codable {
         case model, temperature
         case maxTokens = "max_tokens"
         case capabilities
+        case tools
+        case mcpServers = "mcp_servers"
+        case plugins
+        case pluginInstructions = "plugin_instructions"
+        case sandbox
+        case subagents
+        case workingFolder = "working_folder"
     }
 
     public init(from decoder: Decoder) throws {
@@ -319,6 +391,13 @@ extension AgentEntry: Codable {
         temperature = try c.configField(Double.self, forKey: .temperature)
         maxTokens = try c.configField(Int.self, forKey: .maxTokens)
         capabilities = try c.decodeIfPresent(AgentCapabilitiesEntry.self, forKey: .capabilities)
+        tools = try c.decodeIfPresent(AgentToolsEntry.self, forKey: .tools)
+        mcpServers = try c.decodeIfPresent(AgentToolGroupsEntry.self, forKey: .mcpServers)
+        plugins = try c.decodeIfPresent(AgentToolGroupsEntry.self, forKey: .plugins)
+        pluginInstructions = try c.decodeIfPresent([String: String].self, forKey: .pluginInstructions)
+        sandbox = try c.decodeIfPresent(AgentSandboxEntry.self, forKey: .sandbox)
+        subagents = try c.decodeIfPresent(AgentSubagentsEntry.self, forKey: .subagents)
+        workingFolder = try c.configField(String.self, forKey: .workingFolder)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -330,6 +409,13 @@ extension AgentEntry: Codable {
         try c.encode(configField: temperature, forKey: .temperature)
         try c.encode(configField: maxTokens, forKey: .maxTokens)
         try c.encodeIfPresent(capabilities, forKey: .capabilities)
+        try c.encodeIfPresent(tools, forKey: .tools)
+        try c.encodeIfPresent(mcpServers, forKey: .mcpServers)
+        try c.encodeIfPresent(plugins, forKey: .plugins)
+        try c.encodeIfPresent(pluginInstructions, forKey: .pluginInstructions)
+        try c.encodeIfPresent(sandbox, forKey: .sandbox)
+        try c.encodeIfPresent(subagents, forKey: .subagents)
+        try c.encode(configField: workingFolder, forKey: .workingFolder)
     }
 }
 

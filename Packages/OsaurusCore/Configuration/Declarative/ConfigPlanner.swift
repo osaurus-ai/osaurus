@@ -379,6 +379,14 @@ enum ConfigPlanner {
                                 + "`\(raw)` is not a UUID.")
                     }
                 }
+                if let mode = entry.tools?.mode, ToolSelectionMode(rawValue: mode) == nil {
+                    issues.append(
+                        "agents[\(entry.name)].tools.mode: must be `auto` or `manual` (got `\(mode)`).")
+                }
+                if let v = entry.sandbox?.maxCommandsPerTurn, !(1...500).contains(v) {
+                    issues.append(
+                        "agents[\(entry.name)].sandbox.max_commands_per_turn: must be in 1...500.")
+                }
                 // A doc name colliding with a built-in (non-default) agent
                 // would silently patch it; refuse instead.
                 if let existing = AgentManager.shared.agents.first(where: {
@@ -1096,6 +1104,142 @@ enum ConfigPlanner {
 
     // MARK: - Agents
 
+    /// Plan lines for the portable per-agent keys (tools, groups, sandbox,
+    /// subagents, working folder) on an existing agent. Group membership is
+    /// compared by NAME against the local registry, so a document written
+    /// on another machine reads as a change only when it would actually
+    /// alter this agent.
+    @MainActor
+    private static func diffPortableSettings(
+        _ entry: AgentEntry, agent: Agent, into changes: inout [String]
+    ) {
+        if let tools = entry.tools {
+            let currentMode = (agent.toolSelectionMode ?? .auto).rawValue
+            diff("tools.mode", desired: tools.mode, current: currentMode, into: &changes)
+            if let enabled = tools.enabled {
+                let groups = ToolRegistry.shared.portableToolGroups()
+                let current = AgentToolSelectionResolver.export(
+                    manualToolNames: agent.manualToolNames ?? [], groups: groups)
+                if Set(enabled) != Set(current.toolNames) {
+                    changes.append("tools.enabled: \(enabled.count) tool(s)")
+                }
+            }
+        }
+        if let mcp = entry.mcpServers {
+            let groups = ToolRegistry.shared.portableToolGroups()
+            let current = AgentToolSelectionResolver.export(
+                manualToolNames: agent.manualToolNames ?? [], groups: groups)
+            diffGroupList(
+                "mcp_servers", desired: mcp,
+                currentEnabled: current.enabledMCPServers, into: &changes)
+        }
+        if let plugins = entry.plugins {
+            let groups = ToolRegistry.shared.portableToolGroups()
+            let current = AgentToolSelectionResolver.export(
+                manualToolNames: agent.manualToolNames ?? [], groups: groups)
+            diffGroupList(
+                "plugins", desired: plugins,
+                currentEnabled: current.enabledPlugins, into: &changes)
+        }
+        if let instructions = entry.pluginInstructions {
+            diffMap(
+                "plugin_instructions", desired: instructions,
+                current: agent.pluginInstructions, defaultValue: "", into: &changes)
+        }
+        if let sandbox = entry.sandbox {
+            let exec =
+                agent.autonomousExec
+                ?? AgentManager.shared.effectiveAutonomousExec(for: agent.id)
+                ?? AutonomousExecConfig.default
+            let effectiveOn = AgentManager.shared.effectiveAutonomousExec(for: agent.id)?.enabled ?? false
+            diff("sandbox.enabled", desired: sandbox.enabled, current: effectiveOn, into: &changes)
+            diff(
+                "sandbox.network_enabled", desired: sandbox.networkEnabled,
+                current: exec.sandboxNetworkEnabled, into: &changes)
+            if let domains = sandbox.allowedDomains,
+                Set(domains) != Set(exec.sandboxAllowedDomains ?? [])
+            {
+                changes.append("sandbox.allowed_domains: \(domains.count) domain(s)")
+            }
+            diff(
+                "sandbox.max_commands_per_turn", desired: sandbox.maxCommandsPerTurn,
+                current: exec.maxCommandsPerTurn, into: &changes)
+            diff(
+                "sandbox.background_process_enabled", desired: sandbox.backgroundProcessEnabled,
+                current: exec.backgroundProcessEnabled, into: &changes)
+            diff("sandbox.plugin_create", desired: sandbox.pluginCreate, current: exec.pluginCreate, into: &changes)
+        }
+        if let subagents = entry.subagents {
+            diff(
+                "subagents.enabled", desired: subagents.enabled,
+                current: agent.settings.spawnDelegationEnabled, into: &changes)
+            if let names = subagents.agents {
+                let currentNames = agent.settings.spawnableAgentIDs.compactMap { id in
+                    AgentManager.shared.agents.first { $0.id == id }?.name.lowercased()
+                }
+                if Set(names.map { $0.lowercased() }) != Set(currentNames) {
+                    changes.append("subagents.agents: \(names.count) agent(s)")
+                }
+            }
+            if let models = subagents.models, Set(models) != Set(agent.settings.spawnableModelNames) {
+                changes.append("subagents.models: \(models.count) model(s)")
+            }
+        }
+        switch entry.workingFolder {
+        case .absent:
+            break
+        case .null:
+            if agent.workingFolderPath != nil || agent.workingFolderBookmark != nil {
+                changes.append("working_folder: \(display(agent.workingFolderPath)) -> null")
+            }
+        case .value(let raw):
+            let expanded = (raw as NSString).expandingTildeInPath
+            let current = agent.workingFolderPath.map { ($0 as NSString).expandingTildeInPath }
+            if current != expanded || agent.workingFolderBookmark == nil {
+                changes.append("working_folder: \(display(agent.workingFolderPath)) -> \(raw)")
+            }
+        }
+    }
+
+    private static func diffGroupList(
+        _ key: String, desired: AgentToolGroupsEntry, currentEnabled: [String],
+        into changes: inout [String]
+    ) {
+        let current = Set(currentEnabled.map { $0.lowercased() })
+        let turnOn = (desired.enabled ?? []).filter { !current.contains($0.lowercased()) }
+        let turnOff = (desired.disabled ?? []).filter { current.contains($0.lowercased()) }
+        if !turnOn.isEmpty { changes.append("\(key).enabled: +\(turnOn.joined(separator: ", "))") }
+        if !turnOff.isEmpty { changes.append("\(key).disabled: -\(turnOff.joined(separator: ", "))") }
+    }
+
+    /// Create-time summary of the portable keys, so the approval card shows
+    /// what the new agent will be able to reach.
+    private static func summarizePortableSettings(_ entry: AgentEntry, into changes: inout [String]) {
+        if let tools = entry.tools {
+            if let mode = tools.mode { changes.append("tools.mode: \(mode)") }
+            if let enabled = tools.enabled, !enabled.isEmpty {
+                changes.append("tools: \(enabled.joined(separator: ", "))")
+            }
+        }
+        if let on = entry.mcpServers?.enabled, !on.isEmpty {
+            changes.append("mcp_servers: \(on.joined(separator: ", "))")
+        }
+        if let on = entry.plugins?.enabled, !on.isEmpty {
+            changes.append("plugins: \(on.joined(separator: ", "))")
+        }
+        if let sandbox = entry.sandbox, let on = sandbox.enabled {
+            changes.append("sandbox: \(on ? "on" : "off")")
+        }
+        if let subagents = entry.subagents, subagents.enabled == true {
+            let targets = (subagents.agents ?? []) + (subagents.models ?? [])
+            changes.append(
+                "subagents: on" + (targets.isEmpty ? "" : " (\(targets.joined(separator: ", ")))"))
+        }
+        if let folder = entry.workingFolder.valueOrNil {
+            changes.append("working_folder: \(folder)")
+        }
+    }
+
     private static func planAgents(
         _ entries: [AgentEntry], prune: Bool,
         into actions: inout [ConfigPlanAction], notes: inout [String]
@@ -1127,6 +1271,7 @@ enum ConfigPlanner {
                 if let caps = entry.capabilities {
                     diffCapabilities(caps, agent: agent, into: &changes, risks: &risks)
                 }
+                diffPortableSettings(entry, agent: agent, into: &changes)
                 if changes.isEmpty {
                     unchanged += 1
                 } else {
@@ -1144,6 +1289,7 @@ enum ConfigPlanner {
                     if caps.browserUseEnabled == true { risks.append(ConfigRisk.browserUse(entry.name)) }
                     if caps.relayEnabled == true { risks.append(ConfigRisk.relayEnabled(entry.name)) }
                 }
+                summarizePortableSettings(entry, into: &changes)
                 actions.append(
                     ConfigPlanAction(
                         section: "agents", target: entry.name, kind: .create,

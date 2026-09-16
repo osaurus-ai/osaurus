@@ -51,6 +51,23 @@ agents: # custom agents (never the Default agent)
       browser_use_enabled: false # HIGH RISK when enabled
       computer_use_enabled: false # HIGH RISK when enabled
       relay_enabled: false # HIGH RISK: reachable from outside
+    tools: # per-agent tool selection
+      mode: manual # auto = RAG-picked, manual = only `enabled`
+      enabled: [fetch, time] # MCP/plugin tools go under mcp_servers / plugins
+    mcp_servers: # MCP server NAMES
+      enabled: []
+      disabled: []
+    plugins: # plugin registry ids
+      enabled: []
+    sandbox: # autonomous code execution sandbox
+      enabled: true
+      network_enabled: true
+      allowed_domains: [] # empty = unrestricted
+    subagents: # per-agent delegation
+      enabled: false
+      agents: [] # agent NAMES this agent may spawn
+      models: [] # raw model ids for spawn_model
+    working_folder: null # folder PATH hint; the apply asks the user when it is missing
 
 tools: # global tool enablement / permission policies
   enabled:

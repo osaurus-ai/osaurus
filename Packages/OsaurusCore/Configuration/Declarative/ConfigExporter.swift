@@ -84,7 +84,9 @@ enum ConfigExporter {
 
     private static func exportAgents() -> [AgentEntry] {
         let relay = RelayConfigurationStore.load()
-        return AgentManager.shared.agents
+        let agents = AgentManager.shared.agents
+        let toolGroups = ToolRegistry.shared.portableToolGroups()
+        return agents
             .filter { !$0.isBuiltIn }
             .map { agent in
                 var entry = AgentEntry(name: agent.name)
@@ -111,8 +113,76 @@ enum ConfigExporter {
                 caps.renderChartEnabled = agent.settings.renderChartEnabled
                 caps.relayEnabled = relay.isEnabled(for: agent.id)
                 entry.capabilities = caps
+                exportToolSelection(of: agent, into: &entry, groups: toolGroups)
+                entry.pluginInstructions =
+                    (agent.pluginInstructions?.isEmpty ?? true) ? nil : agent.pluginInstructions
+                entry.sandbox = exportSandbox(of: agent)
+                entry.subagents = exportSubagents(of: agent, agents: agents)
+                entry.workingFolder = agent.workingFolderPath.map { .value($0) } ?? .null
                 return entry
             }
+    }
+
+    /// Manual tool selection splits into ungrouped tool names plus MCP /
+    /// plugin group enablement so the document survives a move to a machine
+    /// where the same server exposes different tool names. Auto mode only
+    /// records the mode.
+    private static func exportToolSelection(
+        of agent: Agent, into entry: inout AgentEntry,
+        groups: [PortableToolGroup: [String]]
+    ) {
+        var tools = AgentToolsEntry()
+        let mode = agent.toolSelectionMode ?? .auto
+        tools.mode = mode.rawValue
+        guard mode == .manual else {
+            entry.tools = tools
+            return
+        }
+        let split = AgentToolSelectionResolver.export(
+            manualToolNames: agent.manualToolNames ?? [], groups: groups)
+        tools.enabled = split.toolNames
+        entry.tools = tools
+        if !split.enabledMCPServers.isEmpty || !split.disabledMCPServers.isEmpty {
+            var mcp = AgentToolGroupsEntry()
+            mcp.enabled = split.enabledMCPServers
+            mcp.disabled = split.disabledMCPServers.isEmpty ? nil : split.disabledMCPServers
+            entry.mcpServers = mcp
+        }
+        if !split.enabledPlugins.isEmpty || !split.disabledPlugins.isEmpty {
+            var plugins = AgentToolGroupsEntry()
+            plugins.enabled = split.enabledPlugins
+            plugins.disabled = split.disabledPlugins.isEmpty ? nil : split.disabledPlugins
+            entry.plugins = plugins
+        }
+    }
+
+    private static func exportSandbox(of agent: Agent) -> AgentSandboxEntry? {
+        // Unconfigured agents resolve to the host default; export what the
+        // agent EFFECTIVELY runs with so a template pins the behaviour.
+        guard let exec = AgentManager.shared.effectiveAutonomousExec(for: agent.id) else {
+            var off = AgentSandboxEntry()
+            off.enabled = false
+            return off
+        }
+        var section = AgentSandboxEntry()
+        section.enabled = exec.enabled
+        section.networkEnabled = exec.sandboxNetworkEnabled
+        section.allowedDomains = exec.sandboxAllowedDomains ?? []
+        section.maxCommandsPerTurn = exec.maxCommandsPerTurn
+        section.backgroundProcessEnabled = exec.backgroundProcessEnabled
+        section.pluginCreate = exec.pluginCreate
+        return section
+    }
+
+    private static func exportSubagents(of agent: Agent, agents: [Agent]) -> AgentSubagentsEntry {
+        var section = AgentSubagentsEntry()
+        section.enabled = agent.settings.spawnDelegationEnabled
+        // Ids without a live agent are dropped, matching the delegation section.
+        section.agents = agent.settings.spawnableAgentIDs.compactMap { id in
+            agents.first { $0.id == id }?.name
+        }
+        section.models = agent.settings.spawnableModelNames
+        return section
     }
 
     // MARK: - App behavior (Wave 3b)
