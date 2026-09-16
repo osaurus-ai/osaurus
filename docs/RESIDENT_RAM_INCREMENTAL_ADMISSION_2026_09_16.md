@@ -1,7 +1,10 @@
 # Bounded resident-child admission
 
-Status: final policy/allocator regressions passed locally; fresh Release UI
-and exact-head CI are pending. No physical M4/16 GiB qualification is claimed.
+Proof snapshot: native Release replay and deterministic regressions on source
+`327ecba03ea85b370e9fc70255c4071d001356e6`. The final full-model scores, failed-case
+attribution, CI receipts and merge decision are recorded in
+[PR #2784](https://github.com/osaurus-ai/osaurus/pull/2784).
+No physical M4/16 GiB qualification is claimed.
 
 ## Causal result
 
@@ -27,8 +30,8 @@ percentage is not a kernel pressure-level sample. Do not infer that level.
 ## Policy correction and boundaries
 
 Use incremental child pricing only when the target is resident, the request
-has an execution-enforced bound, the model budget is known, a known allocator ceiling, and the kernel
-reports normal pressure. The cold-load OS allowance is zero on that path;
+has an execution-enforced bound, the model budget and allocator ceiling are
+known, and the kernel reports normal pressure. The cold-load OS allowance is zero on that path;
 weight reuse remains zero incremental bytes and each child still costs its
 full bounded state estimate. At the reporter's byte count, a ceiling of one
 admits one child after also charging the full 1,474,808,049-byte allocator
@@ -89,13 +92,14 @@ Private root:
   28 GiB owned-footprint cap, 1 GiB swap-growth guard and owned cleanup.
   All owned processes exited. No system memory purge or swap mutation.
 
-## Remaining proof
+## Qualification boundary
 
-Fresh isolated Release app, actual Chat/Settings and live allocator telemetry;
-targeted repeated-child and batching evals; full applicable agent evals;
-exact-head CI. Retain all failures and distinguish model task fidelity from
-admission. The local host has 128 GiB: injected 16 GiB-scale facts establish
-policy behavior, not physical M4 paging performance.
+The final PR receipt must include targeted repeated-child/batching/cache evals,
+full AgentLoop and AgentLoopFrontier scores, failed-case attribution and
+exact-head CI. Those results are separate from the native and deterministic
+receipts below. The local host has 128 GiB: injected 16 GiB-scale facts establish
+policy behavior, not physical M4 paging performance. Full-model task quality
+is not inferred from successful RAM admission.
 
 Build `SWIFTTEST_ResidentRAMBuild0916__230705.log` was deliberately stopped
 (exit130, owned cleanup zero) before acceptance to include the allocator pool
@@ -133,7 +137,7 @@ The correction versions the name memo by both registry and materialized
 catalog generation. ExternalCatalogResidencyTests holds catalog construction
 after registration, caches the provisional miss, completes construction
 without a registry change, and checks both local identity recovery and later
-removal. Native repeated-run proof must be repeated on this combined source.
+removal. The combined-source native replay below exercises this correction.
 
 The private host-statistics interposer only lowers reported available bytes
 for two named test profiles. It preserves real pressure and physical RAM;
@@ -149,5 +153,89 @@ methods with the committed concurrency test. Old memo key: one test, two
 identity assertions fail after catalog publication. New memo key: one test,
 zero failures. Receipt and input hashes: catalog-tests-20260916-000021/receipt.json.
 The harness scaffolds an empty managed catalog, isolated paths and display-only
-model metadata; native app proof is still required. The preceding 235952 run
+model metadata; the separate native replay below covers the app path. The preceding 235952 run
 also exposed a test URL trailing-slash comparison, corrected to compare paths.
+
+
+## Combined-source native replay
+
+SOURCE EVIDENCE: app `327ecba03ea85b370e9fc70255c4071d001356e6`,
+engine `ea899b85036c12571798ba1987db6b3185e38d40`.
+The source trace is `SubagentBatchAdmissionPlanner` (eligibility and arithmetic),
+`ModelRuntime.generationAllocatorCacheLimit` / `sampleSubagentBatchMemoryFacts`
+(shared actual allocator pricing), `ExternalModelLocator.catalogGeneration`
+and `ModelManager.findInstalledMLXModelFromCache` (catalog publication), then
+`ChatWindowManager.activeLocalModelNames` / `ModelRuntime.scheduleIdleResidency`
+(open-window ownership). The native build is recorded in
+`SWIFTTEST_ResidentRAMBuild0916__000117.log` and `release-receipt.json`.
+Binary SHA256: `33f20e113ad2e5dfc796fdcfd1995fd0d7c35d5b0d11e9fe24bd86a8c1d2ab6f`.
+
+LIVE EVIDENCE: `candidate327-history.sqlite`, `candidate327-history.json`,
+`candidate327-native-summary.json`, `resident-ui-run2-measurements.jsonl`,
+`resident-ui-run3-measurements.jsonl`, matching OSLogs, stream timing files and
+`candidate327-*.jpg` / `*.ax.txt` under the private root. Actual native Chat and
+Settings controls were used; tool arguments/results and terminal replies were
+inspected. The isolated app was closed normally and both supervisors reported
+zero owned processes remaining.
+
+| Native scenario | Observed result |
+| --- | --- |
+| RAM Safety On; utilities Off; Core Model=Use chat model | Three fresh single-child chats, then sequential SysAdmin/Writer: 5/5 completed without restart |
+| RAM Safety On; both title and follow-up utilities On | The same three-plus-two sequence: 5/5 completed without restart |
+| Same-model batch, configured local/server concurrency 2 | 2/2 completed; actual tool result: engine slots 2, RAM slots 1, memoryCapacity limiting, local subwaves [1,1] |
+| RAM Safety Off control | 1/1 child completed; effective planner bypass visible in logs |
+| Active Writer cancellation | Parent Stop cancelled the observed running child; terminal error names parent cancellation, input unlocked |
+| Next child after cancellation | 1/1 completed with RAM Safety On; parent follow-up repeated the actual returned code without tools |
+| Relaunch persistence | RAM Safety On, handoff On, coexistence Off, local limit 2, utility toggles On and Core Model=Use chat model persisted; next child completed |
+
+The histories contain 17 child sessions: 16 normal stop completions and one
+intentional cancellation. The 16 include a long Writer response from the first
+cancellation attempt, which completed before Stop was clicked. That attempt is
+retained as a missed cancellation window, not cancellation proof. All 15
+minimal-code children returned their requested code. The parent utility-On
+sequential reply added `: ok` after each code; do not score that parent wording
+as exact-string compliance. No completed child hit its length cap.
+
+Native bundle: `OsaurusAI/gemma-4-E2B-it-8bit`, HF snapshot
+`433003a1e3fbfd10819ad15179d5e3c4d02d7ea7`, weight bytes 5,899,232,198.
+Runtime generation defaults: temperature 1, top_p 0.949999988079071, top_k 64,
+min_p 0, no repetition override, sampler_was_changed=false. Child cap 2,048;
+parent cap 16,384. Completed child speeds were 13.7–88.0 tok/s; parent terminal
+speeds and per-stream delivery timings are retained separately. Cancellation
+proves cleanup, not completion quality or a throughput pass.
+
+The available-memory ceiling stayed 2,442,035,200 bytes and sampled pressure
+was normal. Real host physical RAM remained 128 GiB; its available memory was
+measured independently by the guard. Run2 lifetime maximum physical footprint
+was 3,733,375,880 bytes (3.477 GiB), below the full weight size. Swap stayed
+3,055.69 MiB across all 471 extended samples. Run3 peak was 3.431 GiB with the
+same unchanged swap. These measurements do not identify the reporter's
+historical swap producer.
+
+Residency survived the repeated-child intervals. Idle unloads occurred at the
+recorded deadlines (07:14:23Z, 07:15:15Z, 07:21:36Z), after the 30-second policy
+window. This differs from the retained intermediate run's immediate unloads.
+Paged RAM was off; disk L2 was on. Actual topology: 3 KV and 12 rotating KV
+layers, disk-backed restore, required paged-boundary companion, zero TurboQuant
+KV layers. Run2 process-lifetime disk-L2 counters ended at 44 hits / 456 misses /
+131 stores; the native two-child batch contributed two hits. Final engine
+active/pending counts were both zero. The process-lifetime high watermark of
+two includes utility work and must not be misreported as the batch's wave width.
+
+CI on the runtime source completed 358 eval-harness tests in 44 suites plus two
+XCTest cases with zero failures, and RAMAdmission 18/18 deterministic fixtures
+(run 35066442947, job 104697789100). The final PR receipt records the complete
+Core/full-model outcomes and exact final-head checks. Documentation-only
+follow-up commits must retain the built runtime SHA and verify that production
+source, dependencies, tests and eval fixtures are byte-identical before reusing
+these binaries; never relabel a binary with a later source SHA.
+
+
+Retained initial Core CI failure: run 35066442947 reported 9,949 passed,
+one failed and 54 skipped tests (10,004 unique tests; parameterized execution
+counts differ). The failure was the unchanged
+`ChatSessionQueuedSendTests.privacyCancelLeavesQueuedSendPending`: its one-second
+wait for `isStreaming` threw code 2 after 1.141 seconds. The new catalog and
+resident RAM suites passed. Final-head CI must complete before merge; no test,
+timeout or assertion is weakened to suppress this failure. Receipt:
+`ci-327-core-summary.json`, with downloaded xcresult and raw job log retained.
