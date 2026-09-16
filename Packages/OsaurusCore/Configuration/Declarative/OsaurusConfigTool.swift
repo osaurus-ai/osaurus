@@ -628,10 +628,21 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         case failure(String)
     }
 
+    /// Parses the `overrides` argument into a Sendable entry BEFORE the
+    /// main-actor hop (the raw `[String: Any]` cannot cross it).
+    private static func parseOverrides(_ raw: Any?) -> AgentEntry? {
+        guard let dict = raw as? [String: Any] else { return nil }
+        var entry = AgentEntry(name: (dict["name"] as? String) ?? "")
+        entry.description = dict["description"] as? String
+        entry.systemPrompt = dict["system_prompt"] as? String
+        if let model = dict["model"] as? String, !model.isEmpty { entry.model = .value(model) }
+        return entry
+    }
+
     /// Builds the one-agent document for an agent template plus `overrides`.
     @MainActor
     private func agentTemplateDocument(
-        named templateName: String, overrides raw: Any?
+        named templateName: String, overrides: AgentEntry?
     ) -> DocumentLoad? {
         AgentTemplateStore.shared.reload()
         guard let template = AgentTemplateStore.shared.template(named: templateName) else { return nil }
@@ -642,14 +653,6 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
                     message: "Template `\(template.name)` is not available to the orchestrator. "
                         + "The user can enable it from the Templates tab (Show to Orchestrator).",
                     field: "template", tool: name))
-        }
-        var overrides: AgentEntry? = nil
-        if let dict = raw as? [String: Any] {
-            var entry = AgentEntry(name: (dict["name"] as? String) ?? "")
-            entry.description = dict["description"] as? String
-            entry.systemPrompt = dict["system_prompt"] as? String
-            if let model = dict["model"] as? String, !model.isEmpty { entry.model = .value(model) }
-            overrides = entry
         }
         var document = OsaurusConfigDocument()
         document.version = 1
@@ -676,7 +679,8 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         } else if let templateName, !templateName.isEmpty {
             // Agent templates (Templates tab) take precedence over whole-config
             // YAML templates of the same name.
-            if let load = await agentTemplateDocument(named: templateName, overrides: args["overrides"]) {
+            let overrides = Self.parseOverrides(args["overrides"])
+            if let load = await agentTemplateDocument(named: templateName, overrides: overrides) {
                 return load
             }
             switch ConfigTemplateStore.load(name: templateName) {
