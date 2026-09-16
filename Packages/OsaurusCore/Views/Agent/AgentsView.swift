@@ -1579,6 +1579,8 @@ struct AgentDetailView: View {
 
     /// Drives the share-agent sheet (cross-device deeplink invite flow).
     @State private var showingShareSheet: Bool = false
+    /// Drives the Save as Template sheet from the share menu.
+    @State private var showingSaveTemplateSheet: Bool = false
 
     /// Local UI state: which tabs the user has dropped into the "Advanced" disclosure
     /// of the Configure tab. Persists only for the lifetime of this view (intentional —
@@ -2193,6 +2195,17 @@ struct AgentDetailView: View {
         .sheet(isPresented: $showingShareSheet) {
             ShareAgentSheet(agent: currentAgent)
                 .environment(\.theme, themeManager.currentTheme)
+        }
+        .sheet(isPresented: $showingSaveTemplateSheet) {
+            SaveAgentTemplateSheet(
+                agent: currentAgent,
+                onSaved: { template in
+                    showingSaveTemplateSheet = false
+                    showSuccess("Saved template \"\(template.name)\"")
+                },
+                onCancel: { showingSaveTemplateSheet = false }
+            )
+            .environment(\.theme, themeManager.currentTheme)
         }
     }
 
@@ -2820,6 +2833,16 @@ struct AgentDetailView: View {
             workspaceItem.submenu = submenu
         }
         menu.addItem(workspaceItem)
+
+        // Portable copy of the configuration (no data, no secrets): the
+        // same action as the grid card's Save as Template.
+        menu.addItem(.separator())
+        let templateItem = NSMenuItem(
+            title: L("Save as Template"), action: #selector(HeaderMenuTarget.fire(_:)), keyEquivalent: "")
+        let templateTarget = HeaderMenuTarget { showingSaveTemplateSheet = true }
+        templateItem.target = templateTarget
+        templateItem.representedObject = templateTarget
+        menu.addItem(templateItem)
 
         let origin = NSEvent.mouseLocation
         menu.popUp(positioning: nil, at: NSPoint(x: origin.x - 8, y: origin.y - 16), in: nil)
