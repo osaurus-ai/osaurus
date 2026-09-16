@@ -63,8 +63,11 @@ public final class AgentSetupPromptCoordinator {
                 ? L("This agent was created with settings this Mac cannot honour yet. It will not work as intended until these are fixed.")
                 : L("A few things are worth confirming before you rely on this agent."),
             buttons: [
-                .primary(L("Open Agent Settings")) {
-                    (NSApp.delegate as? AppDelegate)?.showAgentDetail(agentId: agent.id)
+                .primary(L("Set Up Now")) {
+                    // Land on the Agents tab and hand the wizard request to
+                    // `AgentsView`, which presents the sheet once mounted.
+                    AppDelegate.shared?.showManagementWindow(initialTab: .agents)
+                    ManagementStateManager.shared.pendingAgentSetupId = agent.id
                 },
                 .cancel(L("Later")) {
                     // Keep the marker: the agent still needs setup. The

@@ -69,6 +69,11 @@ struct AgentsView: View {
     @State private var templateSourceAgent: Agent?
     @State private var templateToRename: AgentTemplate?
     @ObservedObject private var templateStore = AgentTemplateStore.shared
+    /// Agent shown in the Set Up Agent wizard sheet (`UUID` is not
+    /// `Identifiable`, hence the wrapper).
+    struct SetupTarget: Identifiable { let id: UUID }
+    @State private var setupAgentId: SetupTarget?
+    @ObservedObject private var setupState = AgentSetupStateStore.shared
     /// One-shot inner-tab target paired with an agent id, set by the
     /// `.agentDetailDeeplink` handler so the detail view opens on a specific
     /// tab (e.g. Subagents). Kept as the RAW deep-link string (not a resolved
@@ -192,10 +197,22 @@ struct AgentsView: View {
             AgentEditorSheet(
                 seed: creationSeed,
                 onSave: { agent in
+                    let fromTemplate = creationSeed != nil
                     agentManager.add(agent)
                     isCreating = false
                     showSuccess("Created \"\(agent.name)\"")
                     withAnimation(Self.navTransition) { section = .agents }
+                    // An agent made from a template may carry requirements
+                    // this Mac cannot meet yet; walk the user through them
+                    // right away instead of letting the first run fail.
+                    if fromTemplate,
+                        let report = AgentSetupPromptCoordinator.shared.recheck(agent.id),
+                        !report.isClean
+                    {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                            setupAgentId = SetupTarget(id: agent.id)
+                        }
+                    }
                 },
                 onCancel: {
                     isCreating = false
@@ -233,6 +250,19 @@ struct AgentsView: View {
         .sheet(item: $templateToRename) { template in
             RenameAgentTemplateSheet(template: template, onDone: { templateToRename = nil })
                 .environment(\.theme, themeManager.currentTheme)
+        }
+        .sheet(item: $setupAgentId) { target in
+            AgentSetupWizardView(agentId: target.id, onClose: { setupAgentId = nil })
+                .environment(\.theme, themeManager.currentTheme)
+        }
+        .onReceive(managementState.$pendingAgentSetupId) { pending in
+            guard let pending else { return }
+            managementState.pendingAgentSetupId = nil
+            withAnimation(Self.navTransition) {
+                selectedAgent = nil
+                section = .agents
+            }
+            setupAgentId = SetupTarget(id: pending)
         }
         .sheet(isPresented: $isReordering) {
             AgentReorderSheet()
@@ -372,6 +402,8 @@ struct AgentsView: View {
                                 },
                                 onDuplicate: { duplicateAgent(agent) },
                                 onSaveTemplate: { templateSourceAgent = agent },
+                                needsSetup: setupState.needsSetup(agent.id),
+                                onRunSetup: { setupAgentId = SetupTarget(id: agent.id) },
                                 onDelete: { deleteAgent(agent) },
                                 onOpenDatabase: { openDatabase(for: agent) }
                             )
@@ -676,6 +708,10 @@ private struct AgentCard: View {
     let onDuplicate: () -> Void
     /// Snapshots the agent into the template library (Templates tab).
     let onSaveTemplate: () -> Void
+    /// First-run setup still pending (`AgentSetupStateStore`).
+    var needsSetup: Bool = false
+    /// Opens the Set Up Agent wizard for this agent.
+    var onRunSetup: () -> Void = {}
     let onDelete: () -> Void
     /// Opens the agent's detail view directly on the Database workspace
     /// (Knowledge › Database) — surfaced in the card menu so users can jump
@@ -690,9 +726,13 @@ private struct AgentCard: View {
         onSelect: @escaping () -> Void,
         onDuplicate: @escaping () -> Void,
         onSaveTemplate: @escaping () -> Void,
+        needsSetup: Bool = false,
+        onRunSetup: @escaping () -> Void = {},
         onDelete: @escaping () -> Void,
         onOpenDatabase: @escaping () -> Void
     ) {
+        self.needsSetup = needsSetup
+        self.onRunSetup = onRunSetup
         self.agent = agent
         self.isActive = isActive
         self.animationDelay = animationDelay
@@ -757,6 +797,20 @@ private struct AgentCard: View {
                                             .fill(theme.successColor.opacity(0.12))
                                     )
                             }
+                            if needsSetup {
+                                Text("Needs setup", bundle: .module)
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(theme.warningColor)
+                                    .lineLimit(1)
+                                    .fixedSize()
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule()
+                                            .fill(theme.warningColor.opacity(0.12))
+                                    )
+                                    .help(L("Run Setup from the card menu to finish configuring this agent"))
+                            }
                         }
 
                         // Always render the description line so card heights line
@@ -796,6 +850,13 @@ private struct AgentCard: View {
                                 Text("Save as Template", bundle: .module)
                             } icon: {
                                 Image(systemName: "square.on.square.dashed")
+                            }
+                        }
+                        Button(action: onRunSetup) {
+                            Label {
+                                Text("Run Setup", bundle: .module)
+                            } icon: {
+                                Image(systemName: "checklist")
                             }
                         }
                         Button(action: onOpenDatabase) {
