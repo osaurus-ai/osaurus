@@ -4961,7 +4961,7 @@ extension FloatingInputCard {
                 if let ssdClearResult {
                     Text(verbatim: ssdClearResult).font(.caption)
                 }
-                bannerPrimaryButton(
+                swapPrimaryButton(
                     String(localized: "Clear SSD Cache", bundle: .module),
                     tint: .orange
                 ) {
@@ -4980,7 +4980,7 @@ extension FloatingInputCard {
                 }
                 .disabled(ssdClearInProgress || isStreaming)
                 if ssdClearInProgress { ProgressView().controlSize(.small) }
-                bannerTextButton(String(localized: "Dismiss", bundle: .module)) {
+                swapTextButton(String(localized: "Dismiss", bundle: .module)) {
                     ssdWarningSnapshot = nil
                     ssdClearResult = nil
                 }
