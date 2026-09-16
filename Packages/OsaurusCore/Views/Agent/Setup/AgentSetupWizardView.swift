@@ -118,6 +118,10 @@ struct AgentSetupWizardView: View {
     /// Rail step glowing after a refused primary action.
     @State private var glowingStep: Step?
     @State private var glowClearTask: Task<Void, Never>?
+    /// Add-provider form, presented over the wizard so configuring a
+    /// provider never tears the wizard (and, in draft mode, the unsaved
+    /// agent) down.
+    @State private var showAddProvider = false
 
     private var template: AgentTemplate? {
         if case .draft(_, let template) = subject { return template }
@@ -178,6 +182,35 @@ struct AgentSetupWizardView: View {
         .onChange(of: agentManager.agents) { _, _ in
             if !subject.isDraft { refresh(rebuildSteps: false) }
         }
+        .sheet(isPresented: $showAddProvider) {
+            RemoteProviderEditSheet(provider: nil) { provider, apiKey, oauthTokens in
+                RemoteProviderManager.shared.addProvider(provider, apiKey: apiKey, oauthTokens: oauthTokens)
+                Task { @MainActor in
+                    // A new provider only becomes a pickable model once its
+                    // catalog is fetched and the picker cache rebuilt.
+                    await RemoteProviderManager.shared.refreshConnectedProviders()
+                    await ModelPickerItemCache.shared.buildModelPickerItems()
+                    refresh(rebuildSteps: false)
+                }
+            }
+            .environment(\.theme, theme)
+        }
+    }
+
+    /// Hand the wizard off to another tab without losing it. The subject,
+    /// including edits made to an unsaved draft, is parked on the shared
+    /// management state; `AgentsView` reopens the wizard from there when the
+    /// user comes back.
+    private func leaveForModels() {
+        let resume: AgentSetupSubject
+        if case .draft(let original, let template) = subject {
+            resume = .draft(draft ?? original, template: template)
+        } else {
+            resume = subject
+        }
+        ManagementStateManager.shared.pendingAgentSetupSubject = resume
+        onClose()
+        AppDelegate.shared?.showManagementWindow(initialTab: .models)
     }
 
     @ViewBuilder
@@ -397,7 +430,12 @@ struct AgentSetupWizardView: View {
                     .foregroundColor(theme.primaryText)
             }
             switch current {
-            case .model: ModelStep(agent: agent, items: items, mutate: mutate)
+            case .model:
+                ModelStep(
+                    agent: agent, items: items, mutate: mutate,
+                    onAddProvider: { showAddProvider = true },
+                    onBrowseModels: { leaveForModels() }
+                )
             case .folder: FolderStep(agent: agent, items: items, mutate: mutate)
             case .knowledge: KnowledgeStep(agent: agent, items: items, mutate: mutate)
             case .tools: ToolsStep(agent: agent, items: items, mutate: mutate)
@@ -506,19 +544,13 @@ private struct ModelStep: View {
     let agent: Agent
     let items: [AgentSetupItem]
     let mutate: ((inout Agent) -> Void) -> Void
+    /// Opens the add-provider form over the wizard.
+    let onAddProvider: () -> Void
+    /// Leaves for the Models tab to download a bundle, parking the wizard
+    /// so it can be resumed.
+    let onBrowseModels: () -> Void
 
     @State private var showPicker = false
-
-    /// The model the template asked for, when it is the thing missing.
-    private var requested: String? { items.first(where: { $0.kind == .model })?.value }
-
-    /// Hosted models read like hosted models; everything else is a local
-    /// bundle to download.
-    private var requestedIsLocal: Bool {
-        guard let id = requested?.lowercased() else { return true }
-        let cloudHints = ["claude", "gpt", "sonnet", "opus", "haiku", "gemini", "grok", "mistral-large", "o1", "o3"]
-        return !cloudHints.contains(where: { id.contains($0) })
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -527,26 +559,11 @@ private struct ModelStep: View {
             } else {
                 StepIssueList(items: items)
             }
-            VStack(alignment: .leading, spacing: 12) {
-                modelField
-                if let requested, !items.isEmpty {
-                    OrSeparator()
-                    if requestedIsLocal {
-                        StepActionButton(title: "Download \(requested)", icon: "arrow.down.circle") {
-                            // Only a real Hugging Face repo id ("org/name") can be
-                            // resolved into a model card; a bare alias would
-                            // produce an empty phantom entry in the Models tab.
-                            let repoId = requested.contains("/") ? requested : nil
-                            AppDelegate.shared?.showManagementWindow(initialTab: .models, deeplinkModelId: repoId)
-                        }
-                    } else {
-                        StepActionButton(title: "Configure Provider", icon: "cloud") {
-                            AppDelegate.shared?.showManagementWindow(initialTab: .providers)
-                        }
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity)
+            // One control. Models the user already has are in the dropdown,
+            // and getting a new one is a footer row inside that same
+            // dropdown, so there is never a second button to explain.
+            modelField
+                .frame(maxWidth: .infinity)
         }
         .onAppear {
             // The cache is prewarmed at launch; guard the cold case anyway.
@@ -599,6 +616,14 @@ private struct ModelStep: View {
                             showPicker = false
                         }),
                     agentId: nil,
+                    footerActions: [
+                        ModelPickerFooterAction(
+                            id: "add-provider", title: L("Add a provider"), icon: "cloud"
+                        ) { onAddProvider() },
+                        ModelPickerFooterAction(
+                            id: "download-model", title: L("Download a model"), icon: "arrow.down.circle"
+                        ) { onBrowseModels() },
+                    ],
                     onDismiss: { showPicker = false }
                 )
             }
