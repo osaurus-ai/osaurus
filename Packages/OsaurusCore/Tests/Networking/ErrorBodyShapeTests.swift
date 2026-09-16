@@ -17,6 +17,15 @@ import Testing
 
 @Suite
 struct ErrorBodyShapeTests {
+    @Test func invalidImageMapsToClientErrorAcrossProtocols() {
+        let error = ModelRuntime.ImageInputError(imageIndex: 1, reason: "image data is corrupt.")
+        #expect(HTTPHandler.localRuntimeHTTPStatus(for: error).code == 400)
+        #expect(HTTPHandler.openAIErrorType(for: error) == "invalid_request_error")
+        #expect(HTTPHandler.openResponsesErrorCode(for: error) == "invalid_request_error")
+        #expect(HTTPHandler.anthropicErrorType(for: error) == "invalid_request_error")
+        #expect(HTTPHandler.ollamaErrorType(for: error) == "invalid_request_error")
+        #expect(error.localizedDescription.contains("Image 2"))
+    }
 
     private func decode(_ json: String) -> [String: Any]? {
         guard let data = json.data(using: .utf8) else { return nil }

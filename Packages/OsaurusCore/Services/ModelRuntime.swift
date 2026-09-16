@@ -5327,7 +5327,7 @@ public actor ModelRuntime {
     /// `CacheCoordinator` — osaurus does not need to plumb anything cache-
     /// related through this path.
     private func generateEventStream(
-        chatBuilder: @Sendable () -> [MLXLMCommon.Chat.Message],
+        chatBuilder: @Sendable () throws -> [MLXLMCommon.Chat.Message],
         rawPromptBuilder: (@Sendable () -> String)? = nil,
         parameters: GenerationParameters,
         stopSequences: [String],
@@ -5353,6 +5353,11 @@ public actor ModelRuntime {
         // unload now returns a `.cancelled` info instead of restarting GPU
         // work).
         if Task.isCancelled { throw CancellationError() }
+
+        // Decode and validate media before loading weights or acquiring a
+        // residency lease. A malformed attachment must fail this request,
+        // never disappear and leave the model answering text-only.
+        let chatBox = ChatMessageBox(try chatBuilder())
 
         let deletionAccess = try await beginModelDeletionProtectedAccess(
             modelID: modelId,
@@ -5460,7 +5465,6 @@ public actor ModelRuntime {
         // never escapes the producer task. Heap-box the snapshot so the
         // `@Sendable` closure passed to `MLXBatchAdapter` can capture it
         // without tripping the Sendable-capture diagnostic.
-        let chatBox = ChatMessageBox(chatBuilder())
         let buildChat: @Sendable () -> [MLXLMCommon.Chat.Message] = { chatBox.messages }
         let buildTools: @Sendable () -> [[String: any Sendable]]? = {
             ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: toolChoice)
@@ -5610,7 +5614,7 @@ public actor ModelRuntime {
         let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
             chatBuilder: {
-                ModelRuntime.mapOpenAIChatToMLX(
+                try ModelRuntime.mapOpenAIChatToMLX(
                     augmented,
                     trace: parameters.ttftTrace,
                     preserveStructuredToolHistory: !tools.isEmpty
@@ -5733,7 +5737,7 @@ public actor ModelRuntime {
         let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
             chatBuilder: {
-                ModelRuntime.mapOpenAIChatToMLX(
+                try ModelRuntime.mapOpenAIChatToMLX(
                     augmented,
                     trace: parameters.ttftTrace,
                     preserveStructuredToolHistory: !tools.isEmpty
@@ -6519,12 +6523,14 @@ public actor ModelRuntime {
         _ msgs: [ChatMessage],
         trace: TTFTTrace? = nil,
         preserveStructuredToolHistory: Bool = true
-    ) -> [MLXLMCommon.Chat.Message] {
+    ) throws -> [MLXLMCommon.Chat.Message] {
         var out: [MLXLMCommon.Chat.Message] = []
         out.reserveCapacity(max(6, msgs.count))
+        // Validate every image before audio/video extraction creates any
+        // temporary files. Mixed valid/corrupt requests are all-or-error.
+        let imageSources = try msgs.map { try extractImageSources(from: $0) }
         var audioMetrics = AudioMaterializationMetrics()
-        for m in msgs {
-            let images = extractImageSources(from: m)
+        for (m, images) in zip(msgs, imageSources) {
             let videos = extractVideoSources(from: m)
             let audios = extractAudioSources(from: m, metrics: &audioMetrics)
             switch m.role {
@@ -6649,25 +6655,44 @@ public actor ModelRuntime {
         }
     }
 
+    struct ImageInputError: Error, LocalizedError, Sendable {
+        let imageIndex: Int
+        let reason: String
+
+        var errorDescription: String? {
+            "Image \(imageIndex + 1) could not be read: \(reason) Reattach the original image and try again."
+        }
+    }
+
     nonisolated private static func extractImageSources(
         from message: ChatMessage
-    ) -> [MLXLMCommon.UserInput.Image] {
+    ) throws -> [MLXLMCommon.UserInput.Image] {
         let imageUrls = message.imageUrls
         guard !imageUrls.isEmpty else { return [] }
 
         var sources: [MLXLMCommon.UserInput.Image] = []
-        for urlString in imageUrls {
-            if urlString.hasPrefix("data:image/") {
-                if let commaIndex = urlString.firstIndex(of: ",") {
-                    let base64String = String(urlString[urlString.index(after: commaIndex)...])
-                    if let imageData = Data(base64Encoded: base64String),
-                        let ciImage = CIImage(data: imageData)
-                    {
-                        sources.append(.ciImage(ciImage))
-                    }
+        for (index, urlString) in imageUrls.enumerated() {
+            if urlString.prefix(5).lowercased() == "data:" {
+                guard let commaIndex = urlString.firstIndex(of: ","),
+                    urlString[..<commaIndex].lowercased().hasPrefix("data:image/"),
+                    urlString[..<commaIndex].lowercased().hasSuffix(";base64")
+                else {
+                    throw ImageInputError(imageIndex: index, reason: "invalid image data URL.")
                 }
-            } else if let url = URL(string: urlString) {
+                let base64String = String(urlString[urlString.index(after: commaIndex)...])
+                guard let imageData = Data(base64Encoded: base64String), !imageData.isEmpty else {
+                    throw ImageInputError(imageIndex: index, reason: "invalid or empty base64 image data.")
+                }
+                guard let ciImage = CIImage(data: imageData),
+                    !ciImage.extent.isEmpty, !ciImage.extent.isInfinite
+                else {
+                    throw ImageInputError(imageIndex: index, reason: "the image format is unsupported or its data is corrupt.")
+                }
+                sources.append(.ciImage(ciImage))
+            } else if let url = URL(string: urlString), url.scheme != nil {
                 sources.append(.url(url))
+            } else {
+                throw ImageInputError(imageIndex: index, reason: "invalid image URL.")
             }
         }
         return sources
