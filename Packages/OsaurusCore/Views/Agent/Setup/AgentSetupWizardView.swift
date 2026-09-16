@@ -459,26 +459,27 @@ private struct StepActionButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                 Text(title, bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
             }
             .foregroundColor(primary ? theme.accentColor : theme.secondaryText)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
             .background(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 10)
                     .fill(primary ? theme.accentColor.opacity(0.08) : theme.tertiaryBackground)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 6)
+                        RoundedRectangle(cornerRadius: 10)
                             .stroke(primary ? theme.accentColor.opacity(0.2) : theme.inputBorder, lineWidth: 1)
                     )
             )
         }
         .buttonStyle(.plain)
-        .fixedSize()
     }
 }
 
@@ -622,8 +623,9 @@ private struct FolderStep: View {
                         .truncationMode(.middle)
                 }
             }
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 12) {
                 StepActionButton(title: "Choose Folder…", icon: "folder.badge.plus") { chooseFolder() }
+                OrSeparator()
                 StepActionButton(title: "Remove Working Folder", icon: "folder.badge.minus", primary: false) {
                     mutate {
                         $0.workingFolderBookmark = nil
@@ -631,6 +633,7 @@ private struct FolderStep: View {
                     }
                 }
             }
+            .frame(width: 380)
         }
     }
 
@@ -691,6 +694,7 @@ private struct KnowledgeStep: View {
             } else {
                 VStack(alignment: .leading, spacing: 6) {
                     AgentSheetSectionLabel("Grant Collections")
+                        .frame(width: 380, alignment: .leading)
                     ForEach(collections) { collection in
                         let granted = agent.settings.knowledgeCollectionIds.contains(collection.id)
                         HStack(spacing: 12) {
@@ -705,16 +709,20 @@ private struct KnowledgeStep: View {
                         }
                         .padding(10)
                         .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground.opacity(0.6)))
+                        .frame(width: 380)
                     }
                 }
             }
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 12) {
+                if !collections.isEmpty { OrSeparator() }
                 StepActionButton(title: "Create From Folder…", icon: "folder.badge.plus") { createFromFolder() }
                     .disabled(isCreating)
+                OrSeparator()
                 StepActionButton(title: "Turn Knowledge Off", icon: "book.closed", primary: false) {
                     mutate { $0.settings.knowledgeEnabled = false }
                 }
             }
+            .frame(width: 380)
         }
         .onAppear { collections = KnowledgeCollectionStore.loadAll() }
     }
@@ -777,19 +785,21 @@ private struct ToolsStep: View {
                     }
                 }
             }
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 12) {
                 StepActionButton(title: "Open MCP Servers", icon: "server.rack") {
                     AppDelegate.shared?.showManagementWindow(initialTab: .tools)
                 }
-                StepActionButton(title: "Open Plugins", icon: "puzzlepiece.extension", primary: false) {
+                StepActionButton(title: "Open Plugins", icon: "puzzlepiece.extension") {
                     AppDelegate.shared?.showManagementWindow(initialTab: .skills)
                 }
+                OrSeparator()
                 StepActionButton(title: "Remove Missing Tools", icon: "minus.circle", primary: false) {
                     let missing = Set(missingNames)
                     mutate { $0.manualToolNames = ($0.manualToolNames ?? []).filter { !missing.contains($0) } }
                 }
                 .disabled(items.isEmpty)
             }
+            .frame(width: 380)
         }
     }
 }
