@@ -2,7 +2,8 @@
 
 ## Current isolated integration — September 15
 
-Status: PARTIAL pending matched handoff/failure attribution and final-head CI.
+Status: local lifecycle evidence recorded; final-head CI pending. Model task
+fidelity and physical M4/16 GiB qualification remain PARTIAL.
 The current production source is `3f2294c96abaf0320d9f934e327e4f6d4e51716b`;
 ancestry-only `60fd8c769578b5e8e767d5170a066221e77fba89` has the identical tracked
 tree. The SSD notice is already merged as #2783. This PR changes idle ownership,
@@ -41,7 +42,9 @@ Core XCTest400 total/8 skipped/0 failures, Swift Testing passed, Evals harness35
   fidelity failed: bare-code child inputs produced unrelated answers7.5/5.7tok/s
   and the parent fabricated HANDOFF-OK. Three cache-control prompts in the same
   history also unnecessarily delegated bare codes. None counts as child fidelity
-  proof. Matched pre-change native attribution is pending.
+  proof. Pre-idle a6ad602 native reproduction returned an unrelated child answer
+  at 9.3 tok/s and fabricated HANDOFF-OK at 86.0 tok/s (follow-up85.1 tok/s).
+  That observed fidelity failure predates this patch.
 - SSD integration: saved .005% (191MB), real quota popup, one-click clear of
  165,982,920 indexed bytes while preserving an unindexed sentinel, then a cold
   response80.1tok/s. Cache OFF was reflected in active runtime telemetry;
@@ -49,13 +52,40 @@ Core XCTest400 total/8 skipped/0 failures, Swift Testing passed, Evals harness35
 - Full current AgentLoop36/7/4 (pass/fail/skip), Frontier20/19/0; total56/26/4.
   Pre-idle baseline a6ad602 AgentLoop33/10/4, Frontier23/16/0; also56/26/4.
   Five cases failed only in each build. Equal totals do not establish no
-  regression; targeted matched repeats are running with original assertions.
+  regression. Targeted repeat of the five current-only failures: current2/5,
+  baseline1/5. Three failures reproduced in both; format-contract passed current
+  and failed baseline; grouped capability scored pass but only2/3 trials in
+  both. Original failures remain in the full reports.
   The same Gemma judges prose; file/tool assertions are retained, not replaced
   with judge opinions. Missing throughput in tool-only steps remains unqualified.
 - Current CacheProof14/14 scored cases. Seven length-stopped turns and six
   non-hybrid conditional assertions skipped: not complete answer-coherency or
   hybrid-companion proof. Effective Gemma topology3 KV+12 rotating layers,
   disk-backed restore, TurboQuant layer count0, paged RAM OFF.
+
+
+Additional native controls and race evidence:
+
+- Explicit Core Model Gemma, titles/suggestions ON: sequential children returned
+  SYSADMIN-OK and WRITER-OK, with recorded child usage1.4/1.2tok/s (not a speed
+  qualification). Parent81.7tok/s and exact contextual follow-up84.7tok/s.
+  Explicit selection survived relaunch in General Settings. Window close
+ 03:23:31.743Z emptied residency at03:23:32.831Z. A later background utility
+  loaded at03:23:38.870Z, kept its lease until03:23:41.898Z, and unloaded under
+  its standalone30-second policy at03:24:12.112Z. It did not retain indefinitely.
+- Actual close-during-load: close03:26:34.489Z preceded completed model loading
+ 03:26:35.198Z; the saved answer was exactly CLOSE-LOAD-RETRY-OK and subsequent
+  health had no resident model/lease. The first attempt closed after loading
+  and is excluded from this race claim. Closed-window decode-info throughput
+  was not retained; raw8-token iterator timing is available, not relabeled as
+  GPU/UI decode TPS. The reopened follow-up FAILED task fidelity at86.9tok/s,
+  asking for relative-date context. Rendered prompt includes both preceding
+  code turns: no history omission observed. This is not a multi-turn coherency
+  pass or a causal attribution to this patch; earlier full follow-ups remain
+  separately reported. No model/prompt correction is hidden in this PR.
+- Receipts: `idle-utility-matched-attribution-receipt.json`,
+  `idle-utility-explicit-core-and-load-close-receipt.json`; UI runs4/5 exited0,
+  peaks2.97/2.47GiB, zero owned processes after cleanup, no swap growth.
 
 Models: OsaurusAI/gemma-4-E2B-it-8bit revision
 `433003a1e3fbfd10819ad15179d5e3c4d02d7ea7`, T1/top-p.95/top-k64/min-p0,
