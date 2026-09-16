@@ -451,6 +451,7 @@ final class ModelDownloadService: ObservableObject {
                 if let failure = manifest.compatibilityFailure(hostVersion: ModelManifest.hostVersion) { throw failure }
             }
 
+            let verifiesPublisherRevision = files.contains { $0.path == ModelManifest.filename }
             let totalBytes = files.reduce(Int64(0)) { $0 + $1.size }
             let directory = model.localDirectory
             // Hashing an installed multi-GB bundle must remain cancellable
@@ -458,7 +459,11 @@ final class ModelDownloadService: ObservableObject {
             if isRepair { repairCheckingTokens.insert(token) }
             let service = self
             let scan = Task.detached(priority: .utility) {
-                try Self.filesNeedingDownload(files, under: directory, verifyContents: isRepair) { path, index in
+                try Self.filesNeedingDownload(
+                    files,
+                    under: directory,
+                    verifyContents: isRepair || verifiesPublisherRevision
+                ) { path, index in
                     guard isRepair else { return }
                     Task { @MainActor in
                         guard service.downloadTokens[model.id] == token,
@@ -1581,6 +1586,9 @@ final class ModelDownloadService: ObservableObject {
             let exists = fm.fileExists(atPath: local.path)
 
             if intent == .automatic {
+                // Never attach the latest publisher revision to unverified old
+                // weights. Only a complete explicit download/repair may stamp it.
+                if file.path == ModelManifest.filename { return false }
                 // Two things an automatic pass must never do, because both
                 // undo deliberate work:
                 //

@@ -18,6 +18,10 @@ or machine-integer conversion. App build metadata is ignored for precedence;
 prereleases precede final releases. Short Apple host versions have zero-filled
 missing components. An unknown host version cannot bypass a declared minimum.
 
+Automatic metadata top-up never stamps the latest manifest onto unverified older
+weights. Explicit versioned downloads hash existing files before accepting the
+publisher revision, including same-size weight replacements.
+
 Runtime checks before cold loading and resident reuse, then again after automatic
 metadata top-up. This host gate does not change generation or runtime settings.
 Protocol errors use the existing invalid-request envelopes. Remote checks pin one

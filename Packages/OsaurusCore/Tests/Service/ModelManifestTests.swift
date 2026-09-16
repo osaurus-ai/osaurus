@@ -30,9 +30,12 @@ struct ModelManifestTests {
 
     @Test(arguments: [
         "[]", "null", "{", "{}", #"{"required_osaurus_version":"0.25.0"}"#, #"{"model_version":"1"}"#,
-        #"{"model_version":1}"#, #"{"model_version":"v1"}"#,
-        #"{"model_version":"-1"}"#, #"{"required_osaurus_version":""}"#,
-        #"{"required_osaurus_version":"0.25.0-01"}"#, #"{"required_osaurus_version":25}"#,
+        #"{"model_version":1,"required_osaurus_version":"0.25.0"}"#,
+        #"{"model_version":"v1","required_osaurus_version":"0.25.0"}"#,
+        #"{"model_version":"-1","required_osaurus_version":"0.25.0"}"#,
+        #"{"required_osaurus_version":"","model_version":"1"}"#,
+        #"{"required_osaurus_version":"0.25.0-01","model_version":"1"}"#,
+        #"{"required_osaurus_version":25,"model_version":"1"}"#,
     ])
     func malformedPresentManifestsAreErrors(json: String) {
         #expect(throws: ModelManifest.Failure.self) { try ModelManifest.decode(Data(json.utf8)) }
@@ -132,6 +135,21 @@ struct ModelManifestTests {
         let files = try await service.fetchDownloadFiles(repoId: "org/repo", patterns: ["*.json"], revision: revision)
         #expect(files.count == 1)
         #expect(files.first?.revision == revision)
+    }
+
+    @Test func automaticTopUpNeverStampsRemoteRevisionOnUnverifiedWeights() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let files = [
+            HuggingFaceService.MatchedFile(path: "osaurus.json", size: 80),
+            HuggingFaceService.MatchedFile(path: "generation_config.json", size: 100),
+        ]
+        #expect(
+            ModelDownloadService.filesToFetch(remote: files, under: directory, intent: .automatic).map(\.path)
+                == ["generation_config.json"]
+        )
+        #expect(ModelDownloadService.filesToFetch(remote: files, under: directory, intent: .explicitRepair).count == 2)
     }
 
     @Test func versionRefusalsUseClientErrorEnvelopes() {
