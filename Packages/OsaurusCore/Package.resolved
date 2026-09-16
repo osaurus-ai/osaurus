@@ -1,5 +1,5 @@
 {
-  "originHash" : "95a5f3a2dd04f79fd7f88b2f169483b9fee9f9509298c6c81be46da23b5a60c1",
+  "originHash" : "beb97974f70a8e7cc471c41e6e7d3bf222ffe4eb0e8b411790fd7771c83e5524",
   "pins" : [
     {
       "identity" : "aachartkit-swift",
@@ -312,8 +312,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/21-DOT-DEV/swift-secp256k1",
       "state" : {
-        "revision" : "e70a10e036a55fffea31568f0af92d69b6d449cd",
-        "version" : "0.23.2"
+        "revision" : "8c62aba8a3011c9bcea232e5ee007fb0b34a15e2",
+        "version" : "0.21.1"
       }
     },
     {
