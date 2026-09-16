@@ -541,7 +541,7 @@ private struct ModelStep: View {
                     }
                 }
             }
-            .frame(width: 380)
+            .frame(maxWidth: .infinity)
         }
         .onAppear {
             // The cache is prewarmed at launch; guard the cold case anyway.
@@ -633,7 +633,7 @@ private struct FolderStep: View {
                     }
                 }
             }
-            .frame(width: 380)
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -694,7 +694,7 @@ private struct KnowledgeStep: View {
             } else {
                 VStack(alignment: .leading, spacing: 6) {
                     AgentSheetSectionLabel("Grant Collections")
-                        .frame(width: 380, alignment: .leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     ForEach(collections) { collection in
                         let granted = agent.settings.knowledgeCollectionIds.contains(collection.id)
                         HStack(spacing: 12) {
@@ -709,7 +709,7 @@ private struct KnowledgeStep: View {
                         }
                         .padding(10)
                         .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground.opacity(0.6)))
-                        .frame(width: 380)
+                        .frame(maxWidth: .infinity)
                     }
                 }
             }
@@ -722,7 +722,7 @@ private struct KnowledgeStep: View {
                     mutate { $0.settings.knowledgeEnabled = false }
                 }
             }
-            .frame(width: 380)
+            .frame(maxWidth: .infinity)
         }
         .onAppear { collections = KnowledgeCollectionStore.loadAll() }
     }
@@ -799,7 +799,7 @@ private struct ToolsStep: View {
                 }
                 .disabled(items.isEmpty)
             }
-            .frame(width: 380)
+            .frame(maxWidth: .infinity)
         }
     }
 }
