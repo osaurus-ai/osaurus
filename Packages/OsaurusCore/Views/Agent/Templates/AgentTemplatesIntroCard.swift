@@ -73,10 +73,10 @@ struct AgentTemplatesIntroCard: View {
     /// The diagram is drawn in fixed coordinates at this size and scaled as
     /// a whole to fill the space beside the copy, up or down, so it stays
     /// legible on a wide window and never reflows on a narrow one.
-    static let canvasDesignSize = CGSize(width: 420, height: 160)
+    static let canvasDesignSize = CGSize(width: 480, height: 250)
     /// Largest enlargement before the pills start to look oversized.
     static let maxCanvasScale: CGFloat = 1.7
-    private static let copyWidth: CGFloat = 230
+    private static let copyWidth: CGFloat = 220
 
     var body: some View {
         HStack(alignment: .top, spacing: 24) {
@@ -133,18 +133,30 @@ struct AgentTemplatesIntroCard: View {
                 }
             }
             .padding(.top, 2)
+
+            // Caption in its own slot, so the rows above keep their height
+            // and consecutive captions never draw over each other.
+            Text(stage.caption)
+                .font(.system(size: 11.5))
+                .foregroundStyle(theme.secondaryText)
+                .lineSpacing(1)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, minHeight: 50, alignment: .topLeading)
+                .padding(.horizontal, 8)
+                .id(stage)
+                .transition(.opacity)
         }
     }
 
-    /// One step. The active row grows to show its caption and carries a
-    /// thin progress line that sweeps over the hold interval, so the card
-    /// reads as a small guided tour rather than a static list.
+    /// One step. The active row is tinted and carries a thin progress line
+    /// that sweeps over the hold interval, so the card reads as a small
+    /// guided tour rather than a static list.
     private func stepRow(_ candidate: AgentTemplatesIntroStage) -> some View {
         let selected = candidate == stage
         return Button {
             advance(to: candidate)
         } label: {
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
                 ZStack {
                     Circle()
                         .fill(selected ? theme.accentColor : theme.secondaryText.opacity(0.18))
@@ -153,34 +165,25 @@ struct AgentTemplatesIntroCard: View {
                         .font(.system(size: 9, weight: .bold, design: .rounded))
                         .foregroundStyle(selected ? Color.white : theme.secondaryText)
                 }
-                .padding(.top, 1)
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(candidate.title)
                         .font(.system(size: 12, weight: selected ? .semibold : .medium))
                         .foregroundStyle(selected ? theme.primaryText : theme.secondaryText)
-                    if selected {
-                        Text(candidate.caption)
-                            .font(.system(size: 11))
-                            .foregroundStyle(theme.secondaryText)
-                            .lineSpacing(1)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .transition(.opacity)
-                        // Progress line under the caption, remounted per
-                        // stage so it restarts on every jump.
-                        IntroStepProgress(
-                            running: !reduceMotion,
-                            duration: candidate.holdDuration,
-                            color: theme.accentColor.opacity(0.45),
-                            track: theme.secondaryText.opacity(0.14)
-                        )
-                        .frame(height: 2)
-                        .padding(.top, 2)
-                        .id(stage)
-                    }
+                    // Progress line under the active title, remounted per
+                    // stage so it restarts on every jump. Present but
+                    // clear on the others, so every row is the same height.
+                    IntroStepProgress(
+                        running: selected && !reduceMotion,
+                        duration: candidate.holdDuration,
+                        color: selected ? theme.accentColor.opacity(0.45) : Color.clear,
+                        track: selected ? theme.secondaryText.opacity(0.14) : Color.clear
+                    )
+                    .frame(height: 2)
+                    .id(selected ? stage.rawValue : -1)
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.vertical, 6)
+            .padding(.vertical, 5)
             .padding(.horizontal, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
@@ -199,7 +202,13 @@ struct AgentTemplatesIntroCard: View {
 
     private var diagram: some View {
         GeometryReader { proxy in
-            let scale = min(Self.maxCanvasScale, proxy.size.width / Self.canvasDesignSize.width)
+            // Fit the whole drawing inside the box in both directions and
+            // centre it, so it fills the row the copy sets the height of.
+            let scale = min(
+                Self.maxCanvasScale,
+                proxy.size.width / Self.canvasDesignSize.width,
+                proxy.size.height / Self.canvasDesignSize.height
+            )
             AgentTemplatesIntroCanvas(stage: stage, reduceMotion: reduceMotion)
                 .scaleEffect(scale, anchor: .topLeading)
                 .frame(
@@ -207,9 +216,8 @@ struct AgentTemplatesIntroCard: View {
                     height: Self.canvasDesignSize.height * scale,
                     alignment: .topLeading
                 )
-                .frame(maxWidth: .infinity, alignment: .center)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
-        .aspectRatio(Self.canvasDesignSize.width / Self.canvasDesignSize.height, contentMode: .fit)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.55 : 0.7))
@@ -331,38 +339,38 @@ private struct AgentTemplatesIntroCanvas: View {
         Channel(id: 2, label: L("Orchestrator"), glyph: "sparkles"),
     ]
 
-    // Fixed geometry on a 420 x 160 canvas. The agent card stands on the
+    // Fixed geometry on a 480 x 250 canvas. The agent card stands on the
     // left, the template document in the middle, and the destination
     // (share channels, then the other Mac) on the right.
     private enum Layout {
-        static let midY: CGFloat = 80
-        static let settingWidth: CGFloat = 110
-        static let settingHeight: CGFloat = 24
-        static let settingGap: CGFloat = 6
+        static let midY: CGFloat = 125
+        static let settingWidth: CGFloat = 120
+        static let settingHeight: CGFloat = 28
+        static let settingGap: CGFloat = 8
         /// Left agent card: four rows stacked inside a frame.
-        static let agentX: CGFloat = 70
-        static func agentRowY(_ index: Int) -> CGFloat { 40 + CGFloat(index) * (settingHeight + settingGap) }
+        static let agentX: CGFloat = 80
+        static func agentRowY(_ index: Int) -> CGFloat { 72 + CGFloat(index) * (settingHeight + settingGap) }
         /// Template document in the middle, rows stack tighter inside it.
-        static let docX: CGFloat = 210
-        static let docWidth: CGFloat = 130
-        static let docHeight: CGFloat = 136
-        static func docRowY(_ index: Int) -> CGFloat { 48 + CGFloat(index) * 27 }
+        static let docX: CGFloat = 240
+        static let docWidth: CGFloat = 150
+        static let docHeight: CGFloat = 186
+        static func docRowY(_ index: Int) -> CGFloat { 74 + CGFloat(index) * 34 }
         /// "Stays on your Mac" cluster under the collapsed agent frame.
-        static func keptX(_ index: Int) -> CGFloat { agentX + (CGFloat(index) - 1) * 44 }
-        static let keptY: CGFloat = 104
-        static let keptTagY: CGFloat = 146
+        static func keptX(_ index: Int) -> CGFloat { agentX + (CGFloat(index) - 1) * 48 }
+        static let keptY: CGFloat = 148
+        static let keptTagY: CGFloat = 200
         /// Share channels on the right.
-        static let channelX: CGFloat = 350
-        static let channelWidth: CGFloat = 110
-        static func channelY(_ index: Int) -> CGFloat { 50 + CGFloat(index) * 30 }
+        static let channelX: CGFloat = 400
+        static let channelWidth: CGFloat = 120
+        static func channelY(_ index: Int) -> CGFloat { 85 + CGFloat(index) * 40 }
         /// The other Mac in the last beat.
-        static let macX: CGFloat = 350
-        static func macRowY(_ index: Int) -> CGFloat { 40 + CGFloat(index) * (settingHeight + settingGap) }
+        static let macX: CGFloat = 400
+        static func macRowY(_ index: Int) -> CGFloat { 72 + CGFloat(index) * (settingHeight + settingGap) }
         /// Arrow centres between the three columns; the last one sits past
         /// the shrunk, shifted document.
-        static let saveArrowX: CGFloat = 140
-        static let shareArrowX: CGFloat = 280
-        static let reuseArrowX: CGFloat = 272
+        static let saveArrowX: CGFloat = 157
+        static let shareArrowX: CGFloat = 322
+        static let reuseArrowX: CGFloat = 311
     }
 
     private var animation: Animation? {
@@ -380,7 +388,7 @@ private struct AgentTemplatesIntroCanvas: View {
             otherMac
             flowArrows
         }
-        .frame(width: 420, height: 160)
+        .frame(width: 480, height: 250)
         .clipped()
         .animation(animation, value: stage)
         .onAppear { appeared = true }
@@ -416,7 +424,7 @@ private struct AgentTemplatesIntroCanvas: View {
         )
         .scaleEffect(visible ? 1 : 0.7)
         .opacity(visible ? 1 : 0)
-        .position(x: Layout.agentX, y: collapsed ? 26 : Layout.midY)
+        .position(x: Layout.agentX, y: collapsed ? 40 : Layout.midY)
     }
 
     /// A setting row. Lives inside the agent card in beat 1, travels into
@@ -511,9 +519,6 @@ private struct AgentTemplatesIntroCanvas: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(theme.primaryText)
                 Spacer(minLength: 0)
-                Text(verbatim: ".json")
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundStyle(theme.tertiaryText)
             }
             .padding(.horizontal, 12)
             .frame(height: 26)
