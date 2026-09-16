@@ -47,7 +47,11 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         + "apply (validate + plan + execute; same inputs as plan, plus optional `prune` to delete "
         + "entries not listed in the document's declared sections — destructive, use only when the "
         + "user wants an exact mirror), "
-        + "templates (list saved templates in ~/.osaurus/templates). "
+        + "templates (list saved templates in ~/.osaurus/templates — both whole-config YAML templates "
+        + "and AGENT templates from the Templates tab). "
+        + "To create an agent from an agent template, pass its name as `template` with optional "
+        + "`overrides` {name, description, system_prompt, model}; prefer this over hand-picking tools "
+        + "whenever the user names a template or one fits the request. "
         + "Documents are merge-by-default: absent keys stay untouched, explicit null clears an "
         + "override. Entities match by name. plan/apply accept YAML or JSON; export/schema take "
         + "format: \"json\" for machine-readable output. "
@@ -74,7 +78,27 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
             "template": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Saved template name (in ~/.osaurus/templates) for plan / apply."),
+                    "Saved template name (in ~/.osaurus/templates) for plan / apply. Accepts a "
+                        + "whole-config YAML template or an agent template's name (see `templates`)."),
+            ]),
+            "overrides": .object([
+                "type": .string("object"),
+                "additionalProperties": .bool(false),
+                "properties": .object([
+                    "name": .object([
+                        "type": .string("string"),
+                        "description": .string("Name for the new agent (defaults to the template's)."),
+                    ]),
+                    "description": .object(["type": .string("string")]),
+                    "system_prompt": .object(["type": .string("string")]),
+                    "model": .object([
+                        "type": .string("string"),
+                        "description": .string("Model id; omit to keep the template's model."),
+                    ]),
+                ]),
+                "description": .string(
+                    "For plan / apply with an AGENT `template`: fields merged on top of the template's "
+                        + "agent, e.g. a task-specific name and system prompt."),
             ]),
             "sections": .object([
                 "type": .string("array"),
@@ -136,7 +160,7 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         case "export": return await handleExport(args)
         case "plan": return await handlePlan(args)
         case "apply": return await handleApply(args)
-        case "templates": return handleTemplates()
+        case "templates": return await handleTemplates()
         default: return actionReq.failureEnvelope ?? ""
         }
     }
@@ -309,14 +333,19 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
     private func handlePlan(_ args: [String: Any]) async -> String {
         let prune = coerceBool(args["prune"]) ?? false
         let document: OsaurusConfigDocument
-        switch loadDocument(args) {
+        let basedOn: AgentTemplate?
+        switch await loadDocument(args) {
         case .failure(let envelope): return envelope
-        case .success(let doc): document = doc
+        case .success(let doc, let template):
+            document = doc
+            basedOn = template
         }
 
         do {
             let plan = try await MainActor.run {
-                try ConfigPlanner.plan(document: document, prune: prune)
+                var plan = try ConfigPlanner.plan(document: document, prune: prune)
+                Self.annotate(&plan, basedOn: basedOn)
+                return plan
             }
             var result = plan.payload()
             // The dry-run marker rides on the summary itself: models read
@@ -356,15 +385,20 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
     private func handleApply(_ args: [String: Any]) async -> String {
         let prune = coerceBool(args["prune"]) ?? false
         let document: OsaurusConfigDocument
-        switch loadDocument(args) {
+        let basedOn: AgentTemplate?
+        switch await loadDocument(args) {
         case .failure(let envelope): return envelope
-        case .success(let doc): document = doc
+        case .success(let doc, let template):
+            document = doc
+            basedOn = template
         }
 
         let plan: ConfigPlan
         do {
             plan = try await MainActor.run {
-                try ConfigPlanner.plan(document: document, prune: prune)
+                var plan = try ConfigPlanner.plan(document: document, prune: prune)
+                Self.annotate(&plan, basedOn: basedOn)
+                return plan
             }
         } catch let issues as ConfigPlanIssues {
             return invalidDocumentEnvelope(issues)
@@ -533,25 +567,95 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
 
     // MARK: - templates
 
-    private func handleTemplates() -> String {
+    private func handleTemplates() async -> String {
         let templates = ConfigTemplateStore.list()
-        return ToolEnvelope.success(
-            tool: name,
-            result: [
-                "templates": templates,
-                "directory": OsaurusPaths.configTemplates().path,
-            ]
-        )
+        // Agent templates the user flagged for the orchestrator. Hidden ones
+        // are not listed at all, so the model cannot discover them by name.
+        let agentTemplates: [[String: Any]] = await MainActor.run {
+            AgentTemplateStore.shared.reload()
+            return AgentTemplateStore.shared.orchestratorVisible.map { template in
+                var row: [String: Any] = [
+                    "name": template.name,
+                    "kind": "agent",
+                ]
+                if let summary = template.summary, !summary.isEmpty { row["summary"] = summary }
+                if let model = template.agent.model.valueOrNil { row["model"] = model }
+                if let tools = template.agent.tools?.enabled, !tools.isEmpty { row["tools"] = tools }
+                if let mcp = template.agent.mcpServers?.enabled, !mcp.isEmpty { row["mcp_servers"] = mcp }
+                if let plugins = template.agent.plugins?.enabled, !plugins.isEmpty { row["plugins"] = plugins }
+                if let sandbox = template.agent.sandbox?.enabled { row["sandbox"] = sandbox }
+                if let subagents = template.agent.subagents?.enabled { row["subagents"] = subagents }
+                if !template.requires.isEmpty {
+                    row["requires"] = template.requires.map { "\($0.kind.rawValue): \($0.value)" }
+                }
+                return row
+            }
+        }
+        var result: [String: Any] = [
+            "templates": templates,
+            "agent_templates": agentTemplates,
+            "directory": OsaurusPaths.configTemplates().path,
+        ]
+        if !agentTemplates.isEmpty {
+            result["usage"] =
+                "To create an agent from an agent template: {action: \"plan\", template: \"<name>\", "
+                + "overrides: {name: \"...\", system_prompt: \"...\"}} then apply. The template fixes "
+                + "model, tools, MCP servers, sandbox and subagent settings; only override what the "
+                + "user asked to change."
+        }
+        return ToolEnvelope.success(tool: name, result: result)
+    }
+
+    /// Plan note so the approval card and the model both see the lineage.
+    private static func annotate(_ plan: inout ConfigPlan, basedOn template: AgentTemplate?) {
+        guard let template else { return }
+        plan.notes.insert("Based on template: \(template.name)", at: 0)
+        let unresolved = template.requires.filter { $0.kind != .model }
+        if !unresolved.isEmpty {
+            plan.notes.append(
+                "Template setup to confirm after apply: "
+                    + unresolved.map { "\($0.kind.rawValue) \($0.value)" }.joined(separator: ", ") + ".")
+        }
     }
 
     // MARK: - Document loading
 
     private enum DocumentLoad {
-        case success(OsaurusConfigDocument)
+        case success(OsaurusConfigDocument, basedOn: AgentTemplate?)
         case failure(String)
     }
 
-    private func loadDocument(_ args: [String: Any]) -> DocumentLoad {
+    /// Builds the one-agent document for an agent template plus `overrides`.
+    @MainActor
+    private func agentTemplateDocument(
+        named templateName: String, overrides raw: Any?
+    ) -> DocumentLoad? {
+        AgentTemplateStore.shared.reload()
+        guard let template = AgentTemplateStore.shared.template(named: templateName) else { return nil }
+        guard template.availableToOrchestrator else {
+            return .failure(
+                ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "Template `\(template.name)` is not available to the orchestrator. "
+                        + "The user can enable it from the Templates tab (Show to Orchestrator).",
+                    field: "template", tool: name))
+        }
+        var overrides: AgentEntry? = nil
+        if let dict = raw as? [String: Any] {
+            var entry = AgentEntry(name: (dict["name"] as? String) ?? "")
+            entry.description = dict["description"] as? String
+            entry.systemPrompt = dict["system_prompt"] as? String
+            if let model = dict["model"] as? String, !model.isEmpty { entry.model = .value(model) }
+            overrides = entry
+        }
+        var document = OsaurusConfigDocument()
+        document.version = 1
+        // Knowledge collection names resolve to this Mac's ids here.
+        document.agents = [template.resolvedEntry(overrides: overrides)]
+        return .success(document, basedOn: template)
+    }
+
+    private func loadDocument(_ args: [String: Any]) async -> DocumentLoad {
         let inlineYAML = (args["yaml"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let templateName = (args["template"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -567,12 +671,23 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
             }
             yaml = inlineYAML
         } else if let templateName, !templateName.isEmpty {
+            // Agent templates (Templates tab) take precedence over whole-config
+            // YAML templates of the same name.
+            if let load = await agentTemplateDocument(named: templateName, overrides: args["overrides"]) {
+                return load
+            }
             switch ConfigTemplateStore.load(name: templateName) {
             case .success(let contents): yaml = contents
             case .failure(let message):
+                let agentNames = await MainActor.run {
+                    AgentTemplateStore.shared.orchestratorVisible.map(\.name)
+                }
+                let hint = agentNames.isEmpty
+                    ? ""
+                    : " Agent templates: \(agentNames.joined(separator: ", "))."
                 return .failure(
                     ToolEnvelope.failure(
-                        kind: .invalidArgs, message: message, field: "template", tool: name))
+                        kind: .invalidArgs, message: message + hint, field: "template", tool: name))
             }
         } else {
             return .failure(
@@ -593,7 +708,7 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         }
 
         do {
-            return .success(try ConfigYAML.decode(yaml))
+            return .success(try ConfigYAML.decode(yaml), basedOn: nil)
         } catch let error as ConfigYAMLError {
             return .failure(
                 ToolEnvelope.failure(
