@@ -142,3 +142,12 @@ records uncapped, capped and wrong-profile controls plus source/dylib hashes.
 The initial interposer helper crashed from recursive dlsym resolution; that
 failed probe is retained and the corrected direct call-through probe passed.
 This tests admission/lifecycle wiring, not physical M4 paging performance.
+
+Local catalog reproduction: SWIFTTEST_ResidentCatalogTests0916__000021.log
+runs the actual external locator and extracted production name-cache/matching
+methods with the committed concurrency test. Old memo key: one test, two
+identity assertions fail after catalog publication. New memo key: one test,
+zero failures. Receipt and input hashes: catalog-tests-20260916-000021/receipt.json.
+The harness scaffolds an empty managed catalog, isolated paths and display-only
+model metadata; native app proof is still required. The preceding 235952 run
+also exposed a test URL trailing-slash comparison, corrected to compare paths.

@@ -43,7 +43,7 @@ struct ExternalCatalogResidencyTests {
             let rebuild = Task.detached { ExternalModelLocator.rescan() }
             for _ in 0 ..< 200 {
                 if gate.entered { break }
-                try await Task.sleep(nanoseconds: 5_000_000)
+                try? await Task.sleep(nanoseconds: 5_000_000)
             }
             #expect(gate.entered)
             let registryBefore = ExternalModelLocator.registryGeneration()
@@ -52,7 +52,10 @@ struct ExternalCatalogResidencyTests {
             // The registry knows this bundle, but the nonblocking catalog is
             // still empty. Cache the same provisional miss that made an open
             // HF-backed chat invisible to activeLocalModelNames().
-            #expect(ExternalModelLocator.path(forId: "publisher/resident-fixture") == bundle)
+            #expect(
+                ExternalModelLocator.path(forId: "publisher/resident-fixture")?.standardizedFileURL.path
+                    == bundle.standardizedFileURL.path
+            )
             #expect(ModelManager.findInstalledModelFromCache(named: "publisher/resident-fixture") == nil)
             gate.release()
             _ = await rebuild.value
