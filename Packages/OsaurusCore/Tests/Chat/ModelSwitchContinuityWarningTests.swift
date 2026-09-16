@@ -7,8 +7,8 @@ import Testing
 @MainActor
 struct ModelSwitchContinuityWarningTests {
 
-    @Test("model-switch advisory never suppresses RAM or swap safety rows")
-    func safetyRowsRemainVisible() throws {
+    @Test("model-switch advisory remains without the removed RAM or swap warnings")
+    func continuityAdvisoryRemainsVisible() throws {
         let packageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -22,8 +22,8 @@ struct ModelSwitchContinuityWarningTests {
         let end = try #require(tail.range(of: "// Read-only screen-context indicator"))
         let rows = String(tail[..<end.lowerBound])
 
-        #expect(rows.contains("ramPressureRow"))
-        #expect(rows.contains("swapPressureRow"))
+        #expect(!rows.contains("ramPressureRow"))
+        #expect(!rows.contains("swapPressureRow"))
         #expect(rows.contains("modelSwitchContinuityRow"))
         #expect(!rows.contains("if modelSwitchContinuityWarning != nil"))
     }

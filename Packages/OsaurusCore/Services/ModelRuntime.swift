@@ -301,20 +301,6 @@ public actor ModelRuntime {
         Array(loadingTasks.keys)
     }
 
-    /// Cache-only state for a canonical installed name resolved by the picker.
-    /// No directory scan, model load, warmup, or policy mutation.
-    func memoryWarningPhase(forCanonicalName name: String) -> MemoryWarningState.Phase {
-        if modelCache.keys.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
-            return .resident
-        }
-        if loadingTasks.keys.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame })
-            || inflightLoadWeights.keys.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame })
-        {
-            return .loading
-        }
-        return .unloaded
-    }
-
     /// By-weight MTP inspection for one model id. `nonisolated` + file-only I/O
     /// (config + safetensors headers, no weight load), so a caller can run it on
     /// a background task while a load holds the actor. Returns `nil` if the
@@ -397,6 +383,9 @@ public actor ModelRuntime {
         /// a generation is active; neither may retain it between requests.
         let requiresAdmittedMLXAllocatorCeiling: Bool
         var cacheTopology: ModelCacheTopologySnapshot?
+        /// Saved cache contract used to create this holder's coordinator.
+        /// Notices must not replay its old quota after a settings change.
+        var cacheSettings: VMLXServerCacheSettings?
         init(
             name: String,
             container: ModelContainer,
@@ -566,9 +555,10 @@ public actor ModelRuntime {
 
     /// Runtime-owned idle-policy identities. `pending` means the residency
     /// manager may still fire; `inFlight` means the decision already won the
-    /// actor race and entered teardown. A focus activation invalidates the
-    /// former and captures the latter atomically.
+    /// actor race and entered teardown. A real request invalidates the former;
+    /// focus only observes residency and leaves its deadline intact.
     private var nextIdleResidencyDecisionID: UInt64 = 0
+    private var idleResidencyPolicyRevision: UInt64 = 0
     private var pendingIdleResidencyDecisions: [String: UInt64] = [:]
     private var inFlightIdleResidencyDecisions: [String: UInt64] = [:]
     /// Once an idle teardown passes its final pre-destructive decision check,
@@ -651,10 +641,8 @@ public actor ModelRuntime {
         currentResidencySnapshot()
     }
 
-    /// Atomically reconcile a visible-chat activation against an idle-policy
-    /// decision. A pending decision is invalidated before the actor yields;
-    /// an already-running decision is returned by identity for one-shot UI
-    /// recovery. Conditional manager cancellation cannot erase a newer timer.
+    /// Focus only refreshes the residency dot. It must not cancel an idle
+    /// deadline: focus has no matching lease release to re-arm that deadline.
     func chatActivationResidencySnapshot(
         selectedModel: String?
     ) async -> ModelRuntimeChatActivationResidencySnapshot {
@@ -666,18 +654,8 @@ public actor ModelRuntime {
         }
 
         let matchingName = matchingRuntimeModelName(selectedModel)
-        let cancelledDecision = matchingName.flatMap {
-            pendingIdleResidencyDecisions.removeValue(forKey: $0)
-        }
         let recoverableDecision = matchingName.flatMap {
             inFlightIdleResidencyDecisions[$0]
-        }
-
-        if let matchingName, let cancelledDecision {
-            await ModelResidencyManager.shared.cancel(
-                modelName: matchingName,
-                ownerDecisionID: cancelledDecision
-            )
         }
 
         return ModelRuntimeChatActivationResidencySnapshot(
@@ -1339,8 +1317,8 @@ public actor ModelRuntime {
     ///   to permanent residency that a task completion must not override.
     /// - Only the resident this task's source class owns (`lastUseSource`).
     ///   A model that a chat window or another surface generated on since
-    ///   keeps its full residency — in particular, chat-owned release stays
-    ///   exclusively on the window-close path.
+    ///   keeps its full residency. A detached chat run can release once its
+    ///   window has closed and its work has finished.
     /// - `keeping` / `isModelStillWanted` protect models an open window or a
     ///   still-active registry task references, re-checked at fire time, and
     ///   the fire path re-checks the lease count — a follow-up turn or an API
@@ -1352,7 +1330,6 @@ public actor ModelRuntime {
         grace: TimeInterval = ModelRuntime.chatCloseUnloadGraceSeconds,
         isModelStillWanted: @Sendable @escaping (String) async -> Bool
     ) async {
-        guard taskSource != .chatUI else { return }
         let policy =
             await ServerConfigurationStore.load()?.modelIdleResidencyPolicy
             ?? ServerConfiguration.default.modelIdleResidencyPolicy
@@ -1428,62 +1405,64 @@ public actor ModelRuntime {
         let clearedModelCount: Int
         /// True when nothing was resident, so only the on-disk sweep ran.
         let clearedWithoutResidentModel: Bool
+        let error: String?
     }
 
-    /// Purge the on-SSD prompt cache.
-    ///
-    /// Routes through `CacheCoordinator.clear()` for every resident model,
-    /// which takes `MLXDiskCacheIOLock` before deleting — so a purge cannot
-    /// unlink a payload that an in-flight restore is mid-read. It also removes
-    /// every `.safetensors` in the cache directory, not just indexed rows,
-    /// which is the one path that reclaims orphans left by a crash between the
-    /// file write and the index insert.
-    ///
-    /// With no model resident there is no coordinator to route through, so the
-    /// directory sweep runs directly. That case is reported back to the caller
-    /// rather than silently doing less than the user asked for.
+    /// Live quotas may differ from saved settings until the next model load.
+    func diskCacheQuotaSnapshots(matching settings: VMLXServerCacheSettings? = nil) -> [DiskCacheQuotaSnapshot] {
+        modelCache.values.compactMap { holder in
+            if let settings, holder.cacheSettings != settings { return nil }
+            guard let coordinator = holder.container.cacheCoordinator,
+                coordinator.config.enableDiskCache,
+                let stats = coordinator.snapshotStats().diskStats,
+                let directory = coordinator.config.diskCacheDir
+            else { return nil }
+            return DiskCacheQuotaSnapshot(
+                directory: directory,
+                usage: DiskCacheUsage(
+                    usedBytes: stats.currentPayloadBytes,
+                    maxBytes: stats.maxSizeBytes,
+                    evictions: stats.evictions
+                )
+            )
+        }
+    }
+
+    /// Serializes with runtime cache IO and removes indexed payloads and linked
+    /// companions. Preserves unknown files, weights and volatile caches.
     @discardableResult
-    func clearDiskCaches() async -> DiskCacheClearResult {
-        var reclaimed = 0
-        var cleared = 0
-        for holder in modelCache.values {
-            guard let coordinator = holder.container.cacheCoordinator else { continue }
-            reclaimed = max(
-                reclaimed,
-                coordinator.snapshotStats().diskStats?.currentPayloadBytes ?? 0)
-            coordinator.clear()
-            cleared += 1
-        }
-        if cleared > 0 {
-            return DiskCacheClearResult(
-                reclaimedBytes: reclaimed,
-                clearedModelCount: cleared,
-                clearedWithoutResidentModel: false)
-        }
-        // No resident model: sweep the configured directory ourselves.
-        let dir =
+    func clearDiskCaches(directory: URL? = nil) async -> DiskCacheClearResult {
+        let configuredDirectory =
             ServerRuntimeSettingsStore.load()
             .flatMap { Self.cacheDiskDirectoryOverride(for: $0.cache) }
             ?? OsaurusPaths.diskKVCache()
-        var swept = 0
-        if
-            let items = try? FileManager.default.contentsOfDirectory(
-                at: dir, includingPropertiesForKeys: [.fileSizeKey])
-        {
-            for url in items where url.pathExtension == "safetensors" {
-                let size =
-                    (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-                if (try? FileManager.default.removeItem(at: url)) != nil { swept += size }
+        // A notice clears the root it measured. The Settings action clears
+        // both active roots and the saved root, including after a path change.
+        let directories =
+            directory.map { [$0] }
+            ?? (diskCacheQuotaSnapshots().map(\.directory) + [configuredDirectory])
+        let roots = Set(directories.map(\.standardizedFileURL))
+        let hadResidentModel = !modelCache.isEmpty
+        let result = await Task.detached(priority: .utility) {
+            MLXCacheIOLock.withSerializedMLXCacheIO {
+                var combined = SafeDiskCachePurge.Result()
+                var errors: [String] = []
+                for root in roots.sorted(by: { $0.path < $1.path }) {
+                    let result = SafeDiskCachePurge.clear(directory: root)
+                    combined.reclaimedBytes += result.reclaimedBytes
+                    combined.removedFiles += result.removedFiles
+                    if let error = result.error { errors.append(error) }
+                }
+                combined.error = errors.isEmpty ? nil : errors.joined(separator: "\n")
+                return combined
             }
-            // Drop the index rows too, otherwise the next quota pass accounts
-            // for files that are already gone.
-            let index = dir.appendingPathComponent("cache_index.db")
-            try? FileManager.default.removeItem(at: index)
-        }
+        }.value
         return DiskCacheClearResult(
-            reclaimedBytes: swept,
+            reclaimedBytes: result.reclaimedBytes,
             clearedModelCount: 0,
-            clearedWithoutResidentModel: true)
+            clearedWithoutResidentModel: !hadResidentModel,
+            error: result.error
+        )
     }
 
     /// Final monotonic cache counters for one resident holder. The caller
@@ -2464,6 +2443,17 @@ public actor ModelRuntime {
 
     // MARK: - Internals
 
+    /// Apply a saved setting to idle residents too, without requiring another
+    /// request. Never load a model here, and never release an active lease.
+    func refreshIdleResidencyPolicy() async {
+        idleResidencyPolicyRevision &+= 1
+        for name in Array(modelCache.keys) {
+            guard await ModelLease.shared.count(for: name) == 0 else { continue }
+            guard await markModelActiveForResidency(name) else { continue }
+            await scheduleIdleResidency(for: name)
+        }
+    }
+
     private func getConfig() async -> RuntimeConfig {
         if let cached = cachedConfig { return cached }
         let cfg = await RuntimeConfig.snapshot()
@@ -2472,10 +2462,30 @@ public actor ModelRuntime {
     }
 
     private func scheduleIdleResidency(for modelName: String) async {
-        guard !isClearingAllResidency else { return }
-        let policy =
+        let policyRevision = idleResidencyPolicyRevision
+        guard !isClearingAllResidency,
+            modelCache[modelName] != nil,
+            await ModelLease.shared.count(for: modelName) == 0
+        else { return }
+        var policy =
             await ServerConfigurationStore.load()?.modelIdleResidencyPolicy
             ?? ServerConfiguration.default.modelIdleResidencyPolicy
+        if case .afterSeconds = policy, lastUseSource[modelName] == .chatUI {
+            let stillReferenced = await MainActor.run {
+                ChatWindowManager.shared.activeLocalModelNames().contains(modelName)
+            }
+            // Cover close-during-load/generation too: the close callback may
+            // precede this final lease release, so no timer existed to shorten.
+            if !stillReferenced, lastUseSource[modelName] == .chatUI {
+                policy = .immediately
+            }
+        }
+        guard modelCache[modelName] != nil,
+            await ModelLease.shared.count(for: modelName) == 0
+        else { return }
+        // A setting may change while either the policy or window snapshot
+        // is awaited. Never replace its new timer with a stale policy.
+        guard policyRevision == idleResidencyPolicyRevision else { return }
         if case .never = policy {
             pendingIdleResidencyDecisions.removeValue(forKey: modelName)
             await ModelResidencyManager.shared.scheduleIdleUnload(
@@ -2738,10 +2748,9 @@ public actor ModelRuntime {
         public let gpuBudgetBytes: Int64
         public let timestamp: Date
 
-        /// The load doesn't fit the GPU working set, so macOS pages the
-        /// weights on every decode step. Distinct from ordinary RAM pressure:
-        /// the budget is a fixed fraction of installed memory, so closing
-        /// other apps cannot make room — only a smaller model can.
+        /// Whether the estimated load footprint exceeds the recommended GPU
+        /// working set. This diagnostic is not evidence of actual paging or
+        /// decode cost, and it does not drive a composer warning.
         ///
         /// Judged on the **weights**, not weights + KV headroom. The weights
         /// are what must stay resident for every decode step; the KV cache
@@ -2753,20 +2762,19 @@ public actor ModelRuntime {
             gpuBudgetBytes > 0 && incomingLoadFootprintBytes > gpuBudgetBytes
         }
 
-        /// UI severity for the chat input's tight-fit disclaimer.
+        /// Legacy diagnostic classification; no composer warning consumes it.
         public enum LoadPressureSeverity: String, Sendable, Equatable {
-            /// Comfortably within budget — no banner.
+            /// Estimate within the diagnostic thresholds.
             case none
-            /// Elevated load estimate: show an advisory acknowledgement.
+            /// Elevated estimate, not a user acknowledgement gate.
             case warn
-            /// High-risk estimate (legacy case name). The composer offers
-            /// Use Anyway; independent runtime admission still applies.
+            /// High-risk estimate (legacy case name). Independent runtime
+            /// admission still applies.
             case block
         }
 
-        /// Maps the assessment to advisory severity, not a runtime refusal.
-        /// The composer also surfaces the existing low-available tight verdict;
-        /// neither presentation changes the runtime's independent load policy.
+        /// Maps the assessment to diagnostic severity, not a runtime refusal
+        /// or UI confirmation. Runtime admission owns the actual load policy.
         public var loadPressureSeverity: LoadPressureSeverity {
             // Judge the hard ceiling on the resident working set (weights of
             // everything resident plus the incoming footprint), NOT on the
@@ -4603,9 +4611,9 @@ public actor ModelRuntime {
     private nonisolated static func buildCacheCoordinatorConfig(
         modelName: String,
         weightsFingerprint: String,
-        cacheTopology: ModelCacheTopologySnapshot? = nil
+        cacheTopology: ModelCacheTopologySnapshot? = nil,
+        settings: VMLXServerRuntimeSettings
     ) -> CacheCoordinatorConfig {
-        let settings = ServerRuntimeSettingsStore.snapshot()
         // Build the live cache coordinator from the RESOLVED memory-safety
         // plan's cache, not the raw snapshot, so the RAM-safety slider actually
         // governs the live KV/context cap and prefix-memory limits. With a nil
@@ -5107,11 +5115,14 @@ public actor ModelRuntime {
     private nonisolated static func installCacheCoordinator(on holder: SessionHolder) async {
         let cacheTopology = await holder.container.cacheTopologySnapshot()
         holder.cacheTopology = cacheTopology
+        let settings = ServerRuntimeSettingsStore.snapshot()
         let cacheConfig = buildCacheCoordinatorConfig(
             modelName: holder.name,
             weightsFingerprint: holder.weightsFingerprint,
-            cacheTopology: cacheTopology
+            cacheTopology: cacheTopology,
+            settings: settings
         )
+        holder.cacheSettings = settings.cache
         await holder.container.enableCachingAsync(config: cacheConfig)
         let topologyTags = cacheTopology.topologyTags.joined(separator: ",")
 

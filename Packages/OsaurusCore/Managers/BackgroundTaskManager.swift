@@ -1736,7 +1736,10 @@ public final class BackgroundTaskManager: ObservableObject {
             // no-op the release and the model simply follows the full idle
             // policy (the freed-slot rewarm covers the chat either way).
             try? await Task.sleep(for: .milliseconds(300))
-            if let modelName, !modelName.isEmpty, taskSource != .chatUI {
+            // Detached chat runs also release after completion, once their
+            // window has closed. The runtime still checks source ownership,
+            // open windows, other active tasks and generation leases.
+            if let modelName, !modelName.isEmpty {
                 await ModelRuntime.shared.accelerateIdleUnloadAfterBackgroundTaskCompleted(
                     modelName: modelName,
                     taskSource: taskSource,

@@ -78,6 +78,30 @@ stays behind the same opt-out consent gate as every other event.
 
 ## Event catalog
 
+### `model_memory_sample` (silent diagnostics)
+
+Observed on the existing off-main two-second resource tick, independently of
+chat windows. One initial observation per sampled local-model residency episode,
+then phase/severity changes only, capped at eight events per episode. Very short
+episodes between ticks can be missed. Synthetic QA states never transmit.
+This uses the same consent gate and source-build no-key behavior described above.
+
+| Property | Values |
+|---|---|
+| `phase` | `loading`, `resident` |
+| `severity` | `none`, `elevated`, `critical` (existing swap-growth classifier) |
+| `host_swap_gib`, `peak_swap_growth_gib`, `process_footprint_gib` | `0`, `<1`, `1-4`, `4-16`, `16-64`, `64+` GiB buckets |
+| `host_swapins_pages_s`, `host_decompressions_pages_s` | `0`, `<100`, `100-1000`, `1000-10000`, `10000-100000`, `100000+`, `unknown` |
+
+No model name/path, episode identifier, exact timestamp, content or token counts
+are attached. The in-memory episode identifier only deduplicates ticks. Swap and
+page rates are host-wide observations, not proof that Osaurus caused swapping or
+that swapping caused slow generation. Peak growth follows the existing
+cold-load-through-first-output observation window. These events never influence
+admission, model selection, unload timing, samplers, caches, or macOS swap policy.
+
+### Other events
+
 Every property listed below is the complete event-specific set. In addition,
 the common `total_memory_gb` property above is attached to every event.
 No other data is attached.
