@@ -271099,7 +271099,19 @@
           }
         }
       }
-    }
+    },
+    "Choose the folder the Orchestrator and its subagents work inside.": {},
+    "Context: %@": {},
+    "Creates Coder, Researcher, and Writer agents on your current model and adds them here.": {},
+    "Let the Orchestrator delegate to shared agents": {},
+    "Pick a model in Chat settings or the model picker so the Orchestrator can run.": {},
+    "Removed agent": {},
+    "This delegation's chat is no longer available.": {},
+    "Tools: OK": {},
+    "Tools: limited": {},
+    "Tools: off": {},
+    "Waiting for input": {},
+    "from %@": {}
   },
   "version": "1.1"
 }
