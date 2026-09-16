@@ -448,7 +448,9 @@ public final class AgentManager: ObservableObject {
             avatar: agent.avatar,
             autoSpeak: agent.autoSpeak,
             ttsVoice: agent.ttsVoice,
-            settings: agent.settings
+            settings: agent.settings,
+            // A copy of a template-made agent is still that template's kin.
+            sourceTemplateName: agent.sourceTemplateName
         )
     }
 

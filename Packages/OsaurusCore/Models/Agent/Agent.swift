@@ -299,6 +299,11 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     /// fallback when the bookmark no longer resolves (the app is not
     /// App-Sandboxed, so a readable path works without a scope).
     public var workingFolderPath: String?
+    /// Name of the agent template this agent was created from (Use
+    /// Template, or an orchestrator apply based on a template). Display
+    /// provenance only; the template may have been renamed or deleted since.
+    /// Carried over by Duplicate.
+    public var sourceTemplateName: String?
 
     public init(
         id: UUID = UUID(),
@@ -333,7 +338,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         settings: AgentSettings = .defaultDisabled,
         order: Int? = nil,
         workingFolderBookmark: Data? = nil,
-        workingFolderPath: String? = nil
+        workingFolderPath: String? = nil,
+        sourceTemplateName: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -368,6 +374,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.order = order
         self.workingFolderBookmark = workingFolderBookmark
         self.workingFolderPath = workingFolderPath
+        self.sourceTemplateName = sourceTemplateName
     }
 
     // MARK: - Cryptographic identity
@@ -552,6 +559,7 @@ extension Agent {
         workingFolderPath =
             try c.decodeIfPresent(String.self, forKey: .workingFolderPath)
             ?? legacy.decodeIfPresent(String.self, forKey: .hostWorkspacePath)
+        sourceTemplateName = try c.decodeIfPresent(String.self, forKey: .sourceTemplateName)
     }
 }
 
