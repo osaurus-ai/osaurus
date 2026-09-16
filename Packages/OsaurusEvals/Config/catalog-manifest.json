@@ -69,8 +69,9 @@
       "agent_loop.rejection-stops-run",
       "agent_loop.repeated-call-nudge",
       "agent_loop.search-then-multi-file-edit",
-      "agent_loop.spawn-batch-two-configured-workers",
-      "agent_loop.spawn-batch-two-different-local-workers",
+      "agent_loop.spawn-wave-continuous-batching-off",
+      "agent_loop.spawn-wave-two-configured-workers",
+      "agent_loop.spawn-wave-two-different-local-workers",
       "agent_loop.substantial-single-file-app",
       "agent_loop.targeted-read-and-report",
       "agent_loop.todo-discipline-multistep",
@@ -78,15 +79,6 @@
       "agent_loop.wrap-up-on-budget",
       "agent_loop.write-new-file",
       "agent_loop.write-then-verify-with-shell"
-    ],
-    "AgentLoopBatchDisabled": [
-      "agent_loop.spawn-batch-disabled-two"
-    ],
-    "AgentLoopBatchNative": [
-      "agent_loop.spawn-batch-native-two"
-    ],
-    "AgentLoopBatchSerialized": [
-      "agent_loop.spawn-batch-safe-serialized-two"
     ],
     "AgentLoopFrontier": [
       "frontier.agent-db-workflow",
@@ -336,6 +328,7 @@
       "default_agent.provider-remove",
       "default_agent.provider-rotate-key",
       "default_agent.provider-update-host",
+      "default_agent.quick-question-no-spawn",
       "default_agent.read-describe-agent",
       "default_agent.read-list-providers",
       "default_agent.read-list-skills",
@@ -569,18 +562,16 @@
       "subagent.residency-matrix-remote-local",
       "subagent.residency-matrix-remote-remote",
       "subagent.residency-phase-telemetry",
-      "subagent.scripted-batch-one-failure-siblings-settle",
-      "subagent.scripted-batch-user-stop-all-cancelled",
       "subagent.scripted-handoff-and-recursion",
       "subagent.scripted-handoff-passthrough",
       "subagent.scripted-handoff-wraps",
       "subagent.scripted-happy-path",
       "subagent.scripted-interrupt-mid-run",
       "subagent.scripted-invalid-args",
-      "subagent.scripted-mixed-batch-two-local-one-remote",
+      "subagent.scripted-mixed-wave-two-local-one-remote",
       "subagent.scripted-multi-phase-feed",
-      "subagent.scripted-parallel-batch-exclusive",
-      "subagent.scripted-parallel-batch-remote",
+      "subagent.scripted-parallel-wave-exclusive",
+      "subagent.scripted-parallel-wave-remote",
       "subagent.scripted-policy-denied",
       "subagent.scripted-recursion-guard",
       "subagent.scripted-resolve-unavailable",
@@ -588,15 +579,13 @@
       "subagent.scripted-timeout",
       "subagent.scripted-usage-accounting",
       "subagent.scripted-user-denied",
+      "subagent.scripted-wave-one-failure-siblings-settle",
+      "subagent.scripted-wave-user-stop-all-cancelled",
       "subagent.spawn-live-analysis",
       "subagent.spawn-live-digest",
+      "subagent.spawn-live-interrupt",
       "subagent.spawn-live-single-line",
-      "subagent.spawn-model-live-analysis",
-      "subagent.spawn-model-live-digest",
-      "subagent.spawn-model-live-interrupt",
-      "subagent.spawn-model-live-single-line",
-      "subagent.spawn-model-live-tool-lane",
-      "subagent.spawn-model-not-spawnable-refused",
+      "subagent.spawn-live-tool-lane",
       "subagent.spawn-not-spawnable-refused"
     ],
     "ToolEnvelope": [
@@ -620,15 +609,24 @@
       "tool_result_grounding.pick-right-record-from-list",
       "tool_result_grounding.quote-exact-string-from-result",
       "tool_result_grounding.result-continuation",
-      "tool_result_grounding.spawn-batch-all-cancelled-finalizes-once",
-      "tool_result_grounding.spawn-batch-partial-failure-parent-continuation",
-      "tool_result_grounding.spawn-batch-pending-todo-finalizes-once",
-      "tool_result_grounding.spawn-batch-second-tool-then-final",
+      "tool_result_grounding.spawn-continue-follow-up-same-session",
+      "tool_result_grounding.spawn-wave-all-cancelled-finalizes-once",
+      "tool_result_grounding.spawn-wave-partial-failure-parent-continuation",
+      "tool_result_grounding.spawn-wave-pending-todo-finalizes-once",
+      "tool_result_grounding.spawn-wave-second-tool-then-final",
       "tool_result_grounding.stale-result-not-cited",
       "tool_result_grounding.unit-preserved-from-result"
     ],
     "Vision": [
       "vision.image-runtime-history"
+    ],
+    "WorkspaceDelegation": [
+      "workspace_delegation.address-and-key-forms",
+      "workspace_delegation.ambiguous-name-then-qualified",
+      "workspace_delegation.artifacts-back-within-caps",
+      "workspace_delegation.mixed-wave-one-card",
+      "workspace_delegation.offline-refusal-then-replan",
+      "workspace_delegation.workspace-deny-wins"
     ]
   }
 }
