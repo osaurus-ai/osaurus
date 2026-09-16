@@ -69,10 +69,9 @@ struct AgentsView: View {
     @State private var templateSourceAgent: Agent?
     @State private var templateToRename: AgentTemplate?
     @ObservedObject private var templateStore = AgentTemplateStore.shared
-    /// Agent shown in the Set Up Agent wizard sheet (`UUID` is not
-    /// `Identifiable`, hence the wrapper).
-    struct SetupTarget: Identifiable { let id: UUID }
-    @State private var setupAgentId: SetupTarget?
+    /// What the Set Up Agent wizard is working on: a saved agent (Run
+    /// Setup, first-open prompt) or a template draft (Use Template).
+    @State private var setupSubject: AgentSetupSubject?
     @ObservedObject private var setupState = AgentSetupStateStore.shared
     /// One-shot inner-tab target paired with an agent id, set by the
     /// `.agentDetailDeeplink` handler so the detail view opens on a specific
@@ -210,7 +209,7 @@ struct AgentsView: View {
                         !report.isClean
                     {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                            setupAgentId = SetupTarget(id: agent.id)
+                            setupSubject = .saved(agent.id)
                         }
                     }
                 },
@@ -251,9 +250,30 @@ struct AgentsView: View {
             RenameAgentTemplateSheet(template: template, onDone: { templateToRename = nil })
                 .environment(\.theme, themeManager.currentTheme)
         }
-        .sheet(item: $setupAgentId) { target in
-            AgentSetupWizardView(agentId: target.id, onClose: { setupAgentId = nil })
-                .environment(\.theme, themeManager.currentTheme)
+        .sheet(item: $setupSubject) { subject in
+            AgentSetupWizardView(
+                subject: subject,
+                onClose: { setupSubject = nil },
+                onFinished: { agent in
+                    if subject.isDraft {
+                        showSuccess("Created \"\(agent.name)\"")
+                        withAnimation(Self.navTransition) { section = .agents }
+                    }
+                },
+                onEditDraft: subject.isDraft
+                    ? { draft in
+                        // Power-user path: the full editor, prefilled with the
+                        // draft as it stands. Remaining gaps are caught by the
+                        // post-save check like any other creation.
+                        setupSubject = nil
+                        creationSeed = AgentEditorSeed(
+                            subtitle: L("Based on the \(templateName(for: subject)) template"),
+                            agent: draft)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { isCreating = true }
+                    }
+                    : nil
+            )
+            .environment(\.theme, themeManager.currentTheme)
         }
         .onReceive(managementState.$pendingAgentSetupId) { pending in
             guard let pending else { return }
@@ -262,7 +282,7 @@ struct AgentsView: View {
                 selectedAgent = nil
                 section = .agents
             }
-            setupAgentId = SetupTarget(id: pending)
+            setupSubject = .saved(pending)
         }
         .onReceive(managementState.$pendingTemplateImportText) { pending in
             // `osaurus://templates-import?t=…` share link: land on the
@@ -415,7 +435,7 @@ struct AgentsView: View {
                                 onDuplicate: { duplicateAgent(agent) },
                                 onSaveTemplate: { templateSourceAgent = agent },
                                 needsSetup: setupState.needsSetup(agent.id),
-                                onRunSetup: { setupAgentId = SetupTarget(id: agent.id) },
+                                onRunSetup: { setupSubject = .saved(agent.id) },
                                 onDelete: { deleteAgent(agent) },
                                 onOpenDatabase: { openDatabase(for: agent) }
                             )
@@ -560,36 +580,29 @@ struct AgentsView: View {
         )
     }
 
+    /// Use Template: open the setup wizard on an UNSAVED draft. The agent
+    /// is created only when the wizard's Create Agent passes the readiness
+    /// check, so a template this Mac cannot honour never yields a broken
+    /// agent. The template's requested model stays on the draft even when it
+    /// is missing, so the Brain step can show it instead of silently falling
+    /// back; a `preferred` policy makes that step advisory.
     private func useTemplate(_ template: AgentTemplate) {
-        let entry = template.resolvedEntry()
-        let draft = ConfigApplier.draftAgent(from: entry)
-        var notices = draft.outcome.notes
-        var requiredModel: String?
-        switch template.modelResolution() {
-        case .available:
-            break
-        case .fallbackToDefault(let requested):
-            notices.append(
-                L("The template prefers \(requested), which is not installed here. Your default model is used instead. Install it from Local Models or Providers to match the template."))
-        case .blocked(let requested):
-            requiredModel = requested
-            notices.append(
-                L("The template requires \(requested), which is not installed here. Install it, or pick another model below before creating the agent."))
+        var entry = template.resolvedEntry()
+        if case .available = template.modelResolution() {} else if let requested = template.agent.model.valueOrNil {
+            entry.model = .value(requested)
         }
-        // Knowledge names the template needs but this Mac does not have.
-        let localNames = Set(KnowledgeCollectionStore.loadAll().map { $0.name.lowercased() })
-        let missingKnowledge = template.knowledgeCollectionNames.filter { !localNames.contains($0.lowercased()) }
-        if !missingKnowledge.isEmpty {
-            let joined = missingKnowledge.joined(separator: ", ")
-            notices.append(L("Knowledge collections to create or grant: \(joined)."))
+        var draft = ConfigApplier.draftAgent(from: entry).agent
+        // The applier attaches a folder only when it can mint a bookmark;
+        // keep the author's path as a hint so the Working Folder step shows.
+        if let hint = entry.workingFolder.valueOrNil, draft.workingFolderPath == nil {
+            draft.workingFolderPath = (hint as NSString).expandingTildeInPath
         }
-        creationSeed = AgentEditorSeed(
-            subtitle: L("Based on the \(template.name) template"),
-            agent: draft.agent,
-            notices: notices,
-            requiredModelMissing: requiredModel
-        )
-        isCreating = true
+        setupSubject = .draft(draft, template: template)
+    }
+
+    private func templateName(for subject: AgentSetupSubject) -> String {
+        if case .draft(_, let template) = subject { return template.name }
+        return ""
     }
 
     // MARK: - Success Toast
