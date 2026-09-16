@@ -7,6 +7,7 @@
 
 import Foundation
 import LocalAuthentication
+import MLX
 @preconcurrency import MLXLMCommon
 import NIOCore
 import NIOHTTP1
@@ -2180,12 +2181,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     private static func memoryStatusJSONObject(_ status: MemoryStatus) -> [String: Any] {
-        [
+        let allocator = MLX.Memory.snapshot()
+        return [
             "memory_limit": status.memoryLimit,
             "cache_limit": status.cacheLimit,
             "recommended_working_set_bytes": status.recommendedWorkingSetBytes as Any? ?? NSNull(),
             "physical_memory": status.physicalMemory,
             "current_rss": status.currentRSS,
+            // Limits are not occupancy. Keep live allocator counters and
+            // kernel headroom visible for delegation/retention diagnosis.
+            "mlx_active_bytes": allocator.activeMemory,
+            "mlx_cached_bytes": allocator.cacheMemory,
+            "mlx_peak_bytes": allocator.peakMemory,
+            "host_reclaimable_bytes": ChatResidencyHandoff.sampledAvailableMemoryBytes() as Any? ?? NSNull(),
+            "host_memory_pressure": SubagentMemoryPressure.sampled().rawValue,
         ]
     }
 

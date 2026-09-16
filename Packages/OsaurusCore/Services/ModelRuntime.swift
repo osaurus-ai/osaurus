@@ -3640,7 +3640,8 @@ public actor ModelRuntime {
                 .flatMap(Self.nonnegativeUInt64),
             releasableParentBytes: 0,
             resolvedLoadBudgetBytes: profile.resolvedLoadBudgetBytes,
-            osHeadroomBytes: Self.nonnegativeUInt64(SubagentCoexistence.headroomBytes) ?? 0
+            osHeadroomBytes: Self.nonnegativeUInt64(SubagentCoexistence.headroomBytes) ?? 0,
+            memoryPressure: SubagentMemoryPressure.sampled()
         )
     }
 

@@ -16,7 +16,7 @@ struct RAMAdmissionEvalTests {
         let files = try FileManager.default.contentsOfDirectory(
             at: suites.appendingPathComponent("RAMAdmission"), includingPropertiesForKeys: nil
         ).filter { $0.pathExtension == "json" }.sorted { $0.path < $1.path }
-        #expect(files.count == 13)
+        #expect(files.count == 18)
         for file in files {
             let fixture = try JSONDecoder().decode(EvalCase.self, from: Data(contentsOf: file))
             let report = await EvalRunner.runSubagentCase(fixture, modelId: "injected-host-facts")

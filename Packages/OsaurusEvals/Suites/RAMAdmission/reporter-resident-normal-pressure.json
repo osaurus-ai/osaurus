@@ -1,9 +1,9 @@
 {
-  "id": "ram_admission.reporter-three-then-refusal",
+  "id": "ram_admission.reporter-resident-normal-pressure",
   "domain": "subagent",
-  "label": "Reporter bytes with unknown pressure keep the conservative reserve",
+  "label": "Three singles then sequential children: resident reuse with normal pressure",
   "query": "Replay explicit host facts through production planner, recovery and one persistent reservation actor.",
-  "notes": "Pressure was not supplied in the report. This fixture covers unknown pressure only; reporter-resident-normal-pressure is the corrected bounded reuse branch.",
+  "notes": "Reporter byte counts replayed with explicitly normal pressure; reporter pressure was not supplied. Companion legacy scenario covers unknown pressure. No physical 16GB hardware claim.",
   "fixtures": {},
   "expect": {
     "subagent": {
@@ -27,7 +27,8 @@
                 "availableBytes": 3758096384,
                 "parentCreditBytes": 0,
                 "loadBudgetBytes": 12025908428,
-                "reserveBytes": 3221225472
+                "reserveBytes": 3221225472,
+                "memoryPressure": "normal"
               },
               "after": null,
               "reclaimSucceeds": false
@@ -42,7 +43,8 @@
                 "availableBytes": 3758096384,
                 "parentCreditBytes": 0,
                 "loadBudgetBytes": 12025908428,
-                "reserveBytes": 3221225472
+                "reserveBytes": 3221225472,
+                "memoryPressure": "normal"
               },
               "after": null,
               "reclaimSucceeds": false
@@ -57,7 +59,8 @@
                 "availableBytes": 3758096384,
                 "parentCreditBytes": 0,
                 "loadBudgetBytes": 12025908428,
-                "reserveBytes": 3221225472
+                "reserveBytes": 3221225472,
+                "memoryPressure": "normal"
               },
               "after": null,
               "reclaimSucceeds": false
@@ -72,7 +75,8 @@
                 "availableBytes": 2442035200,
                 "parentCreditBytes": 0,
                 "loadBudgetBytes": 12025908428,
-                "reserveBytes": 3221225472
+                "reserveBytes": 3221225472,
+                "memoryPressure": "normal"
               },
               "after": {
                 "model": "gemma-4-e2b-it-8bit",
@@ -83,7 +87,35 @@
                 "availableBytes": 2442035200,
                 "parentCreditBytes": 0,
                 "loadBudgetBytes": 12025908428,
-                "reserveBytes": 3221225472
+                "reserveBytes": 3221225472,
+                "memoryPressure": "normal"
+              },
+              "reclaimSucceeds": true
+            },
+            {
+              "before": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 2442035200,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472,
+                "memoryPressure": "normal"
+              },
+              "after": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 2442035200,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472,
+                "memoryPressure": "normal"
               },
               "reclaimSucceeds": true
             }
@@ -130,15 +162,28 @@
             "reservationError": false
           },
           {
-            "capacity": 0,
-            "width": 0,
+            "capacity": 1,
+            "width": 1,
             "weightCharge": 0,
-            "limitingFactors": [
-              "memoryCapacity"
+            "limitingFactors": [],
+            "samples": 1,
+            "reclaims": 0,
+            "subwaves": [
+              1
             ],
-            "samples": 2,
-            "reclaims": 1,
-            "subwaves": [],
+            "remainingReservations": 0,
+            "reservationError": false
+          },
+          {
+            "capacity": 1,
+            "width": 1,
+            "weightCharge": 0,
+            "limitingFactors": [],
+            "samples": 1,
+            "reclaims": 0,
+            "subwaves": [
+              1
+            ],
             "remainingReservations": 0,
             "reservationError": false
           }
