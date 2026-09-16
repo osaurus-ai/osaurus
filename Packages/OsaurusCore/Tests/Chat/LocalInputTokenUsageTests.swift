@@ -74,6 +74,41 @@ struct LocalInputTokenUsageTests {
         func cancelUpstream() { upstreamCancelled = true }
     }
 
+    @MainActor
+    @Test(arguments: [false, true])
+    func preparedInputChargesOnlyNewWorkAndEnforcesTheBackgroundBudget(limited: Bool) async throws {
+        let context = ExecutionContext(agentId: Agent.defaultId)
+        context.chatSession.chatEngineFactory = { _ in MockChatEngine() }
+        let state = BackgroundTaskState(
+            id: UUID(), taskTitle: "input accounting", agentId: Agent.defaultId,
+            chatSession: context.chatSession, executionContext: context, showToast: false)
+        state.runTokensLimit = limited ? 270 : nil
+        let manager = BackgroundTaskManager.shared
+        manager.registerTaskForTesting(state)
+        defer { manager.finalizeTask(state.id) }
+        let service = FakeModelService(deltas: [
+            StreamingInputTokenHint.encode(257),
+            StreamingInputTokenHint.encode(257),
+            "answer",
+            StreamingStatsHint.encode(tokenCount: 8, tokensPerSecond: 4, inputTokenCount: 263),
+            StreamingStatsHint.encode(tokenCount: 8, tokensPerSecond: 4, inputTokenCount: 263),
+        ])
+        let engine = ChatEngine(services: [service], installedModelsProvider: { [] })
+        let request = try JSONDecoder().decode(ChatCompletionRequest.self, from: Data(
+            #"{"model":"fake","messages":[{"role":"user","content":"hi"}],"stream":true}"#.utf8))
+        try await ChatExecutionContext.$currentBackgroundId.withValue(state.id) {
+            let stream = try await engine.streamChat(request: request)
+            for try await _ in stream {}
+        }
+        for _ in 0 ..< 100 where state.tokensIn < 263 || state.tokensOut < 8 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(state.tokensIn == 263)
+        #expect(state.tokensOut == 8)
+        #expect((state.budgetExhaustedReason != nil) == limited)
+        if limited { #expect(state.status == .cancelled) }
+    }
+
     private struct OpenStreamService: ModelService {
         let stream: AsyncThrowingStream<String, Error>
         var id: String { "input-usage-cancel" }
