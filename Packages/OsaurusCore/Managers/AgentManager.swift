@@ -509,6 +509,11 @@ public final class AgentManager: ObservableObject {
                 config.spawnableAgentIDs.append(agent.id)
             }
         }
+        // Same universal creation hook doubles as the first-run setup
+        // marker: the agent stays flagged until a readiness check passes
+        // or the user finishes the setup checklist (see
+        // `AgentSetupStateStore` / `AgentSetupChecker`).
+        AgentSetupStateStore.shared.markNeedsSetup(agent.id)
     }
 
     /// Set or replace the custom avatar image for `agentId`. Writes the bytes
@@ -817,6 +822,7 @@ public final class AgentManager: ObservableObject {
         _ = SubagentConfigurationStore.mutate { config in
             config.spawnableAgentIDs.removeAll { $0 == id }
         }
+        AgentSetupStateStore.shared.clear(id)
 
         refresh()
 
