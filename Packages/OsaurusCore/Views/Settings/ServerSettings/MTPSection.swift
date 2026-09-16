@@ -64,7 +64,7 @@ struct MTPSection: View {
             SettingsField(
                 label: "Mode",
                 hint:
-                    "Native MTP starts Off. Off disables the model's native MTP head. Auto uses it only when the model ships a verified head; Force-On requires it. A selected DFlash 2 drafter drafts regardless of Mode — remove it below to stop."
+                    "Native MTP starts Off. Off disables the model's native MTP head. Auto requires verified bundle tuning. Force On requires an eligible native head; manual depth is available in Chat. A selected DFlash 2 drafter drafts regardless of Mode — remove it below to stop."
             ) {
                 Picker("", selection: $draft.mtp.mode) {
                     ForEach(VMLXMTPServerMode.allCases, id: \.self) { mode in
