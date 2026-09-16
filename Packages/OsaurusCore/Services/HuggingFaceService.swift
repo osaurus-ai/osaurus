@@ -108,27 +108,140 @@ actor HuggingFaceService {
         }
     }
 
-    struct MatchedFile {
+    struct MatchedFile: Sendable {
         let path: String
         let size: Int64
         /// True when this file matches Osaurus's download patterns — i.e.
         /// it's part of what actually gets written to disk on download.
         /// `false` for repo extras (READMEs, alternate formats, etc.).
         var isDownloaded: Bool = true
+        var digest: ModelFileDigest? = nil
+        var revision: String? = nil
     }
 
-    private init() {}
+    private let metadataRequest: (@Sendable (URLRequest) async throws -> (Data, URLResponse))?
+
+    init(metadataRequest: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = nil) {
+        self.metadataRequest = metadataRequest
+    }
+
+    /// Downloads and repairs must use one immutable revision, including every
+    /// page of the listing. Catalog previews may still use the best-effort API.
+    func fetchDownloadFiles(
+        repoId: String,
+        patterns: [String],
+        excludedFiles: Set<String> = []
+    ) async throws -> [MatchedFile] {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "huggingface.co"
+        components.path = "/api/models/\(repoId)/revision/main"
+        components.queryItems = [URLQueryItem(name: "expand[]", value: "sha")]
+        guard let infoURL = components.url else { throw URLError(.badURL) }
+        struct Revision: Decodable { let sha: String }
+        let (info, _) = try await downloadMetadata(infoURL)
+        let revision = try JSONDecoder().decode(Revision.self, from: info).sha
+        guard revision.count == 40, revision.allSatisfy(\.isHexDigit) else {
+            throw URLError(.cannotParseResponse)
+        }
+        components.path = "/api/models/\(repoId)/tree/\(revision)"
+        components.queryItems = [URLQueryItem(name: "recursive", value: "1")]
+        guard let treeURL = components.url else { throw URLError(.badURL) }
+        var next: URL? = treeURL
+        var seen: Set<URL> = []
+        var nodes: [TreeNode] = []
+        while let url = next {
+            guard seen.insert(url).inserted else { throw URLError(.redirectToNonExistentLocation) }
+            let (data, response) = try await downloadMetadata(url)
+            nodes += try JSONDecoder().decode([TreeNode].self, from: data)
+            next = try Self.nextTreePage(response.value(forHTTPHeaderField: "Link"), under: treeURL)
+        }
+        let matchers = patterns.compactMap { Glob($0) }
+        let files = nodes.compactMap { node -> MatchedFile? in
+            guard node.type != "directory", node.bestSize > 0,
+                let path = Self.normalizedRemoteFilePath(node.path)
+            else { return nil }
+            let name = (path as NSString).lastPathComponent
+            guard !excludedFiles.contains(name), matchers.contains(where: { $0.matches(name) }) else { return nil }
+            return MatchedFile(path: path, size: node.bestSize, digest: node.digest, revision: revision)
+        }
+        guard !files.isEmpty else {
+            throw NSError(
+                domain: "HuggingFace",
+                code: 404,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "No supported model files were found on Hugging Face."
+                ]
+            )
+        }
+        return files
+    }
+
+    nonisolated static func nextTreePage(_ link: String?, under treeURL: URL) throws -> URL? {
+        guard let link else { return nil }
+        for entry in link.split(separator: ",") where entry.contains("rel=\"next\"") || entry.contains("rel=next") {
+            guard let start = entry.firstIndex(of: "<"), let end = entry.firstIndex(of: ">"), start < end,
+                let url = URL(string: String(entry[entry.index(after: start) ..< end]), relativeTo: treeURL)?
+                    .absoluteURL,
+                url.scheme == "https", url.host == "huggingface.co", url.port == nil,
+                url.user == nil, url.password == nil, url.path == treeURL.path
+            else { throw URLError(.badServerResponse) }
+            return url
+        }
+        return nil
+    }
+
+    private func downloadMetadata(_ url: URL) async throws -> (Data, HTTPURLResponse) {
+        var request = URLRequest(url: url)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        HuggingFaceAuth.authorize(&request)
+        for attempt in 1 ... 3 {
+            try Task.checkCancellation()
+            do {
+                let (data, response): (Data, URLResponse)
+                if let metadataRequest {
+                    (data, response) = try await metadataRequest(request)
+                } else {
+                    (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+                }
+                guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+                guard (200 ..< 300).contains(http.statusCode) else {
+                    throw DirectDownloader.HTTPStatusError(
+                        statusCode: http.statusCode,
+                        retryAfterSeconds: http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)
+                    )
+                }
+                return (data, http)
+            } catch {
+                guard attempt < 3, ModelDownloadService.isRetryableTransferError(error) else { throw error }
+                let delay = ModelDownloadService.transferRetryDelay(attempt: attempt, error: error)
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            }
+        }
+        throw URLError(.badServerResponse)
+    }
 
     /// A single file node from the HF repo tree.
-    private struct TreeNode: Decodable {
+    struct TreeNode: Decodable {
         let path: String
         let type: String?
         let size: Int64?
         let lfs: LFS?
-        struct LFS: Decodable { let size: Int64? }
+        let oid: String?
+        struct LFS: Decodable {
+            let size: Int64?
+            let oid: String?
+        }
 
         /// Best-known byte size (`lfs.size` for large weights).
-        var bestSize: Int64 { size ?? lfs?.size ?? 0 }
+        var bestSize: Int64 { lfs?.size ?? size ?? 0 }
+
+        var digest: ModelFileDigest? {
+            if let oid = lfs?.oid { return .sha256(oid) }
+            // The Git oid of an LFS pointer is not the digest of its payload.
+            if lfs == nil, let oid { return .gitBlobSHA1(oid) }
+            return nil
+        }
     }
 
     /// Fetch the full recursive file tree for a repo. Returns `nil` on any
@@ -198,7 +311,7 @@ actor HuggingFaceService {
             guard matched else { return nil }
             let sz = node.bestSize
             guard sz > 0 else { return nil }
-            return MatchedFile(path: safePath, size: sz)
+            return MatchedFile(path: safePath, size: sz, digest: node.digest)
         }
         return files.isEmpty ? nil : files
     }

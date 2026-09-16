@@ -419,8 +419,8 @@ final class ChunkedFileDownloader: @unchecked Sendable {
             }
         }
 
-        try? fm.removeItem(at: destination)
-        try fm.moveItem(at: partURL, to: destination)
+        try Task.checkCancellation()
+        try ModelFileIntegrity.commit(staged: partURL, to: destination)
         try? fm.removeItem(at: manifestURL)
     }
 
