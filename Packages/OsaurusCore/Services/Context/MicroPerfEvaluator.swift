@@ -23,8 +23,8 @@ import Foundation
 public struct MicroPerfSample: Sendable, Codable {
     /// Wall clock for the whole rep (dispatch → stream end), ms.
     public let wallMs: Double
-    /// Dispatch → first streamed delta (any channel), ms. nil when the
-    /// stream produced nothing.
+    /// Dispatch → first generated text, reasoning, or tool-envelope bytes,
+    /// ms. Control metadata does not count. nil when no output was produced.
     public let ttftMs: Double?
     /// Authoritative decode speed from the runtime's end-of-step stats
     /// hint. nil when the path never emitted one (Foundation, most
@@ -310,7 +310,7 @@ public enum MicroPerfEvaluator {
     /// Cancellation-lifecycle row (`lifecycle: "cold_load_cancel"` /
     /// `"midgen_cancel"`): dispatch a generation, cancel it at the declared
     /// point (during the cold model load, or `cancelAfterMs` after the
-    /// first streamed delta), and prove the runtime terminates the stream,
+    /// first generated output), and prove the runtime terminates the stream,
     /// leaves no zombie state, and serves a full recovery generation
     /// afterwards. SKIPs when the run model is not an installed local MLX
     /// model (nothing to load or cancel).
@@ -386,7 +386,7 @@ public enum MicroPerfEvaluator {
         let consumer = Task { @MainActor in
             do {
                 let stream = try await engine.streamChat(request: request)
-                for try await _ in stream {
+                for try await delta in stream where AgentLoopStepProgressTracker.isGeneratedOutput(delta) {
                     observation.deltas += 1
                     if observation.firstDeltaAt == nil {
                         observation.firstDeltaAt = Date()
@@ -411,7 +411,9 @@ public enum MicroPerfEvaluator {
         if coldLoad {
             await sleepMs(cancelAfterMs)
         } else {
-            // Wait (bounded) for the first delta, then the declared delay.
+            // Wait for real generation, not prepared-input/prefill metadata,
+            // then the declared delay. Otherwise this can cancel in prefill
+            // while incorrectly reporting a mid-generation cancellation.
             let firstDeltaBudgetMs: Double = 120_000
             let waitStart = Date()
             while observation.firstDeltaAt == nil,
