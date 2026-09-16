@@ -33,7 +33,7 @@ struct HTTPHandlerChatStreamingTests {
                 StreamingStatsHint.encode(tokenCount: 40, tokensPerSecond: 20,
                                           stopReason: stopReason, inputTokenCount: 7),
             ], completeText: "", model: "fake")
-            let server = try await startTestServer(with: engine, trustLoopback: true)
+            let server = try await startChatStreamingTestServer(with: engine, trustLoopback: true)
             defer { Task { await server.shutdown() } }
             var request = URLRequest(url: URL(string:
                 "http://\(server.host):\(server.port)/agents/\(agent.id.uuidString)/run")!)
@@ -73,7 +73,7 @@ struct HTTPHandlerChatStreamingTests {
             services: [LocalToolCompletionContractTests.Service(capture: capture, callCount: callCount)],
             installedModelsProvider: { [] }
         )
-        let server = try await startTestServer(with: engine)
+        let server = try await startChatStreamingTestServer(with: engine)
         defer { Task { await server.shutdown() } }
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/chat/completions")!)
         request.httpMethod = "POST"
@@ -202,7 +202,7 @@ struct HTTPHandlerChatStreamingTests {
             AgentManager.shared.add(agent)
 
             let capture = Capture()
-            let server = try await startTestServer(with: CaptureEngine(capture: capture))
+            let server = try await startChatStreamingTestServer(with: CaptureEngine(capture: capture))
             defer { Task { await server.shutdown() } }
 
             let clientTool = Tool(
@@ -285,7 +285,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: StatsEngine())
+        let server = try await startChatStreamingTestServer(with: StatsEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(
@@ -306,7 +306,7 @@ struct HTTPHandlerChatStreamingTests {
     }
 
     @Test func sse_path_writes_role_content_finish_done() async throws {
-        let server = try await startTestServer(
+        let server = try await startChatStreamingTestServer(
             with: MockChatEngine(deltas: ["a", "b", "c"], completeText: "", model: "fake")
         )
         defer { Task { await server.shutdown() } }
@@ -348,7 +348,7 @@ struct HTTPHandlerChatStreamingTests {
     }
 
     @Test func ndjson_path_writes_content_and_done_when_streaming() async throws {
-        let server = try await startTestServer(
+        let server = try await startChatStreamingTestServer(
             with: MockChatEngine(deltas: ["x", "y"], completeText: "", model: "fake")
         )
         defer { Task { await server.shutdown() } }
@@ -385,7 +385,7 @@ struct HTTPHandlerChatStreamingTests {
     }
 
     @Test func ollama_chat_non_streaming_returns_single_message_object() async throws {
-        let server = try await startTestServer(
+        let server = try await startChatStreamingTestServer(
             with: MockChatEngine(deltas: [], completeText: "hello", model: "fake")
         )
         defer { Task { await server.shutdown() } }
@@ -424,7 +424,7 @@ struct HTTPHandlerChatStreamingTests {
     }
 
     @Test func ollama_generate_streaming_writes_response_chunks_and_done() async throws {
-        let server = try await startTestServer(
+        let server = try await startChatStreamingTestServer(
             with: MockChatEngine(deltas: ["x", "y"], completeText: "", model: "fake")
         )
         defer { Task { await server.shutdown() } }
@@ -449,7 +449,7 @@ struct HTTPHandlerChatStreamingTests {
     }
 
     @Test func ollama_generate_non_streaming_returns_single_response_object() async throws {
-        let server = try await startTestServer(
+        let server = try await startChatStreamingTestServer(
             with: MockChatEngine(deltas: [], completeText: "hello", model: "fake")
         )
         defer { Task { await server.shutdown() } }
@@ -474,7 +474,7 @@ struct HTTPHandlerChatStreamingTests {
     }
 
     @Test func ollama_chat_drops_reasoning_sentinel_from_plaintext_ndjson() async throws {
-        let server = try await startTestServer(
+        let server = try await startChatStreamingTestServer(
             with: MockChatEngine(
                 deltas: [StreamingReasoningHint.encode("private reasoning"), "visible"],
                 completeText: "",
@@ -531,7 +531,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: ToolCallEngine())
+        let server = try await startChatStreamingTestServer(with: ToolCallEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/api/chat")!)
@@ -604,7 +604,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: MockToolCallEngine())
+        let server = try await startChatStreamingTestServer(with: MockToolCallEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(
@@ -678,7 +678,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: ReasoningEngine())
+        let server = try await startChatStreamingTestServer(with: ReasoningEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(
@@ -741,7 +741,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: StatsEngine())
+        let server = try await startChatStreamingTestServer(with: StatsEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(
@@ -792,7 +792,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: PrefillEngine())
+        let server = try await startChatStreamingTestServer(with: PrefillEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(
@@ -850,7 +850,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: MultiToolEngine())
+        let server = try await startChatStreamingTestServer(with: MultiToolEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(
@@ -962,7 +962,7 @@ struct HTTPHandlerChatStreamingTests {
             // Loopback-trusted: remote plaintext `/agents/{id}/run` is now
             // refused with 426 (Secure Channel hard-require); this test is
             // about tool-loop sentinel scrubbing, not transport security.
-            let server = try await startTestServer(with: engine, trustLoopback: true)
+            let server = try await startChatStreamingTestServer(with: engine, trustLoopback: true)
             defer { Task { await server.shutdown() } }
 
             // The built-in Default agent UUID is locked to in-app surfaces
@@ -1088,7 +1088,7 @@ struct HTTPHandlerChatStreamingTests {
             }
 
             let engine = GemmaQATToolChoiceEngine()
-            let server = try await startTestServer(with: engine, trustLoopback: true)
+            let server = try await startChatStreamingTestServer(with: engine, trustLoopback: true)
             defer { Task { await server.shutdown() } }
 
             var request = URLRequest(
@@ -1190,7 +1190,7 @@ struct HTTPHandlerChatStreamingTests {
                 try? FileManager.default.removeItem(at: root)
             }
 
-            let server = try await startTestServer(with: StatusToolEngine(), trustLoopback: true)
+            let server = try await startChatStreamingTestServer(with: StatusToolEngine(), trustLoopback: true)
             defer { Task { await server.shutdown() } }
 
             var request = URLRequest(
@@ -1266,7 +1266,7 @@ struct HTTPHandlerChatStreamingTests {
             AgentManager.shared.add(custom)
 
             let engine = CaptureEngine()
-            let server = try await startTestServer(with: engine, trustLoopback: true)
+            let server = try await startChatStreamingTestServer(with: engine, trustLoopback: true)
             defer { Task { await server.shutdown() } }
 
             func postRun(agentId: UUID, authenticate: Bool) async throws -> String {
@@ -1331,7 +1331,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: EchoEngine(), trustLoopback: true)
+        let server = try await startChatStreamingTestServer(with: EchoEngine(), trustLoopback: true)
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(
@@ -1372,7 +1372,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: EchoEngine(), trustLoopback: true)
+        let server = try await startChatStreamingTestServer(with: EchoEngine(), trustLoopback: true)
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(
@@ -1412,7 +1412,7 @@ struct HTTPHandlerChatStreamingTests {
 
         // trustLoopback: false makes `isLoopbackConnection` return false, so the
         // 127.0.0.1 test client is treated as a remote caller.
-        let server = try await startTestServer(with: UnusedEngine(), trustLoopback: false)
+        let server = try await startChatStreamingTestServer(with: UnusedEngine(), trustLoopback: false)
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(
@@ -1454,7 +1454,7 @@ struct HTTPHandlerChatStreamingTests {
                 fatalError("not used")
             }
         }
-        let server = try await startTestServer(with: ReasoningEngine())
+        let server = try await startChatStreamingTestServer(with: ReasoningEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/messages")!)
@@ -1494,7 +1494,7 @@ struct HTTPHandlerChatStreamingTests {
                 fatalError("not used")
             }
         }
-        let server = try await startTestServer(with: StatsEngine())
+        let server = try await startChatStreamingTestServer(with: StatsEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/messages")!)
@@ -1542,7 +1542,7 @@ struct HTTPHandlerChatStreamingTests {
                 fatalError("not used")
             }
         }
-        let server = try await startTestServer(with: MultiToolEngine())
+        let server = try await startChatStreamingTestServer(with: MultiToolEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/messages")!)
@@ -1606,7 +1606,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: ContextEchoEngine())
+        let server = try await startChatStreamingTestServer(with: ContextEchoEngine())
         defer { Task { await server.shutdown() } }
 
         func post(_ json: String) async throws -> OpenResponsesResponse {
@@ -1653,7 +1653,7 @@ struct HTTPHandlerChatStreamingTests {
                 fatalError("not used")
             }
         }
-        let server = try await startTestServer(with: ReasoningThenTextEngine())
+        let server = try await startChatStreamingTestServer(with: ReasoningThenTextEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/responses")!)
@@ -1695,7 +1695,7 @@ struct HTTPHandlerChatStreamingTests {
                 fatalError("not used")
             }
         }
-        let server = try await startTestServer(with: StatsEngine())
+        let server = try await startChatStreamingTestServer(with: StatsEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/responses")!)
@@ -1731,7 +1731,7 @@ struct HTTPHandlerChatStreamingTests {
                 fatalError("not used")
             }
         }
-        let server = try await startTestServer(with: OnlyReasoningEngine())
+        let server = try await startChatStreamingTestServer(with: OnlyReasoningEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/responses")!)
@@ -1782,7 +1782,7 @@ struct HTTPHandlerChatStreamingTests {
                 fatalError("not used")
             }
         }
-        let server = try await startTestServer(with: MultiToolEngine())
+        let server = try await startChatStreamingTestServer(with: MultiToolEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/responses")!)
@@ -1827,7 +1827,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: SlowStreamEngine())
+        let server = try await startChatStreamingTestServer(with: SlowStreamEngine())
 
         var request = URLRequest(
             url: URL(string: "http://\(server.host):\(server.port)/chat/completions")!
@@ -1868,7 +1868,7 @@ struct HTTPHandlerChatStreamingTests {
 
 // MARK: - Test server bootstrap
 
-struct TestServer {
+struct ChatStreamingTestServer {
     let group: MultiThreadedEventLoopGroup
     let channel: Channel
     let lease: HTTPServerTestLease
@@ -1885,10 +1885,10 @@ struct TestServer {
 }
 
 @discardableResult
-func startTestServer(
+func startChatStreamingTestServer(
     with engine: ChatEngineProtocol,
     trustLoopback: Bool = false
-) async throws -> TestServer {
+) async throws -> ChatStreamingTestServer {
     let lease = await HTTPServerTestLock.shared.acquire()
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     do {
@@ -1916,7 +1916,7 @@ func startTestServer(
         let ch = try await bootstrap.bind(host: "127.0.0.1", port: 0).get()
         let addr = ch.localAddress
         let port = addr?.port ?? 0
-        return TestServer(group: group, channel: ch, lease: lease, host: "127.0.0.1", port: port)
+        return ChatStreamingTestServer(group: group, channel: ch, lease: lease, host: "127.0.0.1", port: port)
     } catch {
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             group.shutdownGracefully { _ in cont.resume() }

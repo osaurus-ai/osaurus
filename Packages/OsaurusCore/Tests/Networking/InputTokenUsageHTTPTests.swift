@@ -12,7 +12,7 @@ struct InputTokenUsageHTTPTests {
             StreamingStatsHint.encode(tokenCount: 59, tokensPerSecond: 17.5,
                                       stopReason: "stop", inputTokenCount: 263),
         ])
-        let server = try await startTestServer(with: ChatEngine(
+        let server = try await startChatStreamingTestServer(with: ChatEngine(
             services: [service], installedModelsProvider: { [] }))
         defer { Task { await server.shutdown() } }
         var body: [String: Any] = ["model": "fake", "stream": streaming, "max_tokens": 128]
