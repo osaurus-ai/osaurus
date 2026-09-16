@@ -482,43 +482,96 @@ private struct ModelStep: View {
     @State private var pickerItems: [ModelPickerItem] = []
     @State private var showPicker = false
 
+    /// The model the template asked for, when it is the thing missing.
+    private var requested: String? { items.first(where: { $0.kind == .model })?.value }
+
+    /// Local bundles carry MLX / GGUF / Hugging Face style ids; everything
+    /// that reads like a hosted model is a provider question.
+    private var requestedIsLocal: Bool {
+        guard let id = requested?.lowercased() else { return true }
+        let cloudHints = ["claude", "gpt", "sonnet", "opus", "haiku", "gemini", "grok", "mistral-large", "o1", "o3"]
+        if cloudHints.contains(where: { id.contains($0) }) { return false }
+        return true
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if items.isEmpty {
                 StepDoneBanner(text: L("This agent has a model it can run."))
             } else {
                 StepIssueList(items: items)
-                Text("Pick a model that is installed, use your default model, or install the one the agent asks for and come back.", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.tertiaryText)
             }
-            HStack(spacing: 10) {
-                StepActionButton(title: "Choose a Model…", icon: "cube") { showPicker = true }
-                    .popover(isPresented: $showPicker, arrowEdge: .bottom) {
-                        ModelPickerView(
-                            options: pickerItems,
-                            selectedModel: Binding(
-                                get: { agent.defaultModel },
-                                set: { newModel in
-                                    mutate { $0.defaultModel = newModel }
-                                    showPicker = false
-                                }),
-                            agentId: nil,
-                            onDismiss: { showPicker = false }
-                        )
+            HStack(alignment: .center, spacing: 14) {
+                modelField
+                    .frame(width: 320)
+                if let requested, !items.isEmpty {
+                    Text("or", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                    if requestedIsLocal {
+                        StepActionButton(title: "Download \(requested)", icon: "arrow.down.circle") {
+                            AppDelegate.shared?.showManagementWindow(initialTab: .models, deeplinkModelId: requested)
+                        }
+                    } else {
+                        StepActionButton(title: "Configure Provider", icon: "cloud") {
+                            AppDelegate.shared?.showManagementWindow(initialTab: .providers)
+                        }
                     }
-                StepActionButton(title: "Use Default Model", icon: "arrow.uturn.backward", primary: false) {
-                    mutate { $0.defaultModel = nil }
-                }
-                StepActionButton(title: "Open Local Models", icon: "arrow.down.circle", primary: false) {
-                    AppDelegate.shared?.showManagementWindow(initialTab: .models)
-                }
-                StepActionButton(title: "Open Providers", icon: "cloud", primary: false) {
-                    AppDelegate.shared?.showManagementWindow(initialTab: .providers)
                 }
             }
         }
         .onReceive(ModelPickerItemCache.shared.$items) { pickerItems = $0 }
+    }
+
+    /// Same dropdown as the Create Agent sheet's Default Model field.
+    private var modelField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            AgentSheetSectionLabel("Default Model")
+            Button {
+                showPicker.toggle()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "cube.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(agent.defaultModel == nil ? theme.tertiaryText : theme.accentColor)
+                    if let model = agent.defaultModel, !model.isEmpty {
+                        Text(model.split(separator: "/").last.map(String.init) ?? model)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(items.isEmpty ? theme.primaryText : theme.warningColor)
+                            .lineLimit(1)
+                    } else {
+                        Text("Default (from global settings)", bundle: .module)
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.placeholderText)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.inputBackground)
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1))
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .popover(isPresented: $showPicker, arrowEdge: .bottom) {
+                ModelPickerView(
+                    options: pickerItems,
+                    selectedModel: Binding(
+                        get: { agent.defaultModel },
+                        set: { newModel in
+                            mutate { $0.defaultModel = newModel }
+                            showPicker = false
+                        }),
+                    agentId: nil,
+                    onDismiss: { showPicker = false }
+                )
+            }
+        }
     }
 }
 
