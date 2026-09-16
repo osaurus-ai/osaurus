@@ -60,7 +60,8 @@ extension HTTPHandler {
             return .serviceUnavailable
         }
         if error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
-            || error is ModelRuntime.ImageInputError {
+            || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
+        {
             return .badRequest
         }
         if (error as NSError).domain == "OsaurusToolChoice" {
@@ -80,7 +81,8 @@ extension HTTPHandler {
             return "insufficient_resources"
         }
         if error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
-            || error is ModelRuntime.ImageInputError {
+            || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
+        {
             return "invalid_request_error"
         }
         if (error as NSError).domain == "OsaurusToolChoice" {
@@ -126,7 +128,8 @@ extension HTTPHandler {
             return "overloaded_error"
         }
         if error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
-            || error is ModelRuntime.ImageInputError {
+            || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
+        {
             return "invalid_request_error"
         }
         if (error as NSError).domain == "OsaurusToolChoice" {
@@ -143,7 +146,8 @@ extension HTTPHandler {
             return "insufficient_resources"
         }
         if error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
-            || error is ModelRuntime.ImageInputError {
+            || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
+        {
             return "invalid_request_error"
         }
         if (error as NSError).domain == "OsaurusToolChoice" {
@@ -160,7 +164,8 @@ extension HTTPHandler {
             return "insufficient_resources"
         }
         if error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
-            || error is ModelRuntime.ImageInputError {
+            || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
+        {
             return "invalid_request_error"
         }
         if (error as NSError).domain == "OsaurusToolChoice" {

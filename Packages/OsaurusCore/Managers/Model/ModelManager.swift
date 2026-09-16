@@ -211,6 +211,8 @@ public final class ModelManager: NSObject, ObservableObject {
     @Published var availableModels: [MLXModel] = []
     @Published var isLoadingModels: Bool = false
     @Published var suggestedModels: [MLXModel] = ModelManager.curatedSuggestedModels
+    @Published var manifestChecks: [String: ModelManifestCheck] = [:]
+    @Published var manifestChecksInFlight: Set<String> = []
     @Published var deprecationNotices: [DeprecationNotice] = []
 
     /// True while a refresh of the OsaurusAI org listing is in flight. Drives
@@ -241,6 +243,7 @@ public final class ModelManager: NSObject, ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.refreshDownloadStates()
+                Task { await self?.refreshModelUpdates(force: true) }
             }
             .store(in: &cancellables)
 
@@ -1888,6 +1891,7 @@ extension ModelManager {
     func refreshSuggestedModels() async {
         isLoadingSuggested = true
         await loadOsaurusAIOrgModels()
+        await refreshModelUpdates(force: true)
         isLoadingSuggested = false
     }
 }

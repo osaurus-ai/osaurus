@@ -198,6 +198,7 @@ struct ModelDownloadView: View {
             }
 
             refreshGridLists()
+            Task { await modelManager.refreshModelUpdates() }
             DispatchQueue.main.async { applyPendingModelDetail() }
         }
         .onReceive(managementState.$pendingModelDetailId) { _ in
@@ -717,6 +718,16 @@ struct ModelDownloadView: View {
             onPause: { modelManager.pauseDownload(model.id) },
             onResume: { modelManager.resumeDownload(model.id) }
         )
+        .overlay(alignment: .topTrailing) {
+            if modelManager.manifestChecks[model.id]?.updateAvailable == true {
+                Text("Update available", bundle: .module)
+                    .font(.system(size: 10, weight: .semibold))
+                    .padding(6)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(8)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     /// Grid of ModelRowView cards. Surviving cells (same `id` before and

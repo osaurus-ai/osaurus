@@ -3947,6 +3947,10 @@ public actor ModelRuntime {
         alignmentRepairSession: String? = nil
     ) async throws -> SessionHolder {
         try Task.checkCancellation()
+        // Admission applies to warm reuse too, before eviction or MLX allocation.
+        if let directory = Self.findLocalDirectory(forModelId: id) {
+            try ModelManifest.validateLoad(at: directory)
+        }
         let policy = await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
         let loadStartedAt = CFAbsoluteTimeGetCurrent()
         genLog.info(
@@ -4249,6 +4253,10 @@ public actor ModelRuntime {
             )
         }
         try Task.checkCancellation()
+
+        // Automatic metadata top-up can introduce osaurus.json. Enforce it again
+        // before any engine load; offline legacy bundles remain loadable.
+        try ModelManifest.validateLoad(at: localURL)
 
         // Manifest-verify ALL weight shards. `MLXModel.isDownloaded` only
         // requires *one* `*.safetensors` file, so a partially-downloaded

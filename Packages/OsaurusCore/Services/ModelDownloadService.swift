@@ -273,6 +273,12 @@ final class ModelDownloadService: ObservableObject {
 
     func download(_ model: MLXModel, route: DownloadRoute = .direct) {
         guard !isActiveDownload(model.id) else { return }
+        if FileManager.default.fileExists(
+            atPath: model.localDirectory.appendingPathComponent(ModelManifest.pendingUpdateFilename).path
+        ) {
+            repair(model)
+            return
+        }
         repairingModels.remove(model.id)
         repairMessages[model.id] = nil
         downloadRoutes[model.id] = route
@@ -419,6 +425,21 @@ final class ModelDownloadService: ObservableObject {
                 excludedFiles: Self.downloadExcludedFiles
             )
 
+            // Inspect the same immutable revision as the weights, before transfer.
+            if let manifestFile = files.first(where: { $0.path == ModelManifest.filename }) {
+                guard manifestFile.size <= ModelManifest.maximumBytes else {
+                    throw ModelManifest.invalid("The file exceeds 64 KiB.")
+                }
+                let snapshot = try await HuggingFaceService.shared.fetchModelManifest(
+                    repoId: model.id,
+                    revision: manifestFile.revision
+                )
+                guard let manifest = snapshot.manifest else {
+                    throw ModelManifest.invalid("The pinned repository lists osaurus.json but it could not be fetched.")
+                }
+                if let failure = manifest.compatibilityFailure(hostVersion: ModelManifest.hostVersion) { throw failure }
+            }
+
             let totalBytes = files.reduce(Int64(0)) { $0 + $1.size }
             let directory = model.localDirectory
             // Hashing an installed multi-GB bundle must remain cancellable
@@ -492,6 +513,15 @@ final class ModelDownloadService: ObservableObject {
                 )
             }
 
+            // A partial update must never advertise the new revision or load a
+            // mixture of old and new files. Keep a persistent marker on failure,
+            // pause or cancellation; Repair verifies all files before clearing it.
+            let pendingUpdate = directory.appendingPathComponent(ModelManifest.pendingUpdateFilename)
+            if !filesToDownload.isEmpty {
+                try Data((files.first?.revision ?? "").utf8).write(to: pendingUpdate, options: .atomic)
+            }
+            let transferFiles = filesToDownload.filter { $0.path != ModelManifest.filename }
+
             // Transfer up to three files at once. Per-connection
             // throughput to the Hugging Face CDN is the bottleneck on
             // most links, and the multi-shard repos are the ones users
@@ -505,8 +535,8 @@ final class ModelDownloadService: ObservableObject {
                 var nextIndex = 0
                 var stopScheduling = false
 
-                while nextIndex < min(maxConcurrentFiles, filesToDownload.count) {
-                    let file = filesToDownload[nextIndex]
+                while nextIndex < min(maxConcurrentFiles, transferFiles.count) {
+                    let file = transferFiles[nextIndex]
                     nextIndex += 1
                     let resumeData = resuming?.resumeDataByFile[file.path]
                     group.addTask {
@@ -539,8 +569,8 @@ final class ModelDownloadService: ObservableObject {
                             }
                         }
                     }
-                    if !stopScheduling, nextIndex < filesToDownload.count {
-                        let file = filesToDownload[nextIndex]
+                    if !stopScheduling, nextIndex < transferFiles.count {
+                        let file = transferFiles[nextIndex]
                         nextIndex += 1
                         let resumeData = resuming?.resumeDataByFile[file.path]
                         group.addTask {
@@ -589,6 +619,23 @@ final class ModelDownloadService: ObservableObject {
                 return
             }
 
+            // Commit the publisher manifest only after every other file succeeds.
+            if let manifestFile = filesToDownload.first(where: { $0.path == ModelManifest.filename }) {
+                switch await transferFile(
+                    manifestFile,
+                    model: model,
+                    token: token,
+                    resumeData: resuming?.resumeDataByFile[manifestFile.path]
+                ) {
+                case .completed: break
+                case .failed(_, let error): throw error
+                case .paused(let path, let data):
+                    commitPause(modelId: model.id, token: token, resumeDataByFile: data.map { [path: $0] } ?? [:])
+                    return
+                }
+            }
+            try Task.checkCancellation()
+
             // Manifest driven completion check. `model.isDownloaded` only
             // looks for config + tokenizer + ≥1 shard on disc so a
             // multi shard download with a silently skipped file would
@@ -618,6 +665,9 @@ final class ModelDownloadService: ObservableObject {
             let isComplete = missing.isEmpty
             let finalState: DownloadState
             if isComplete {
+                if FileManager.default.fileExists(atPath: pendingUpdate.path) {
+                    try FileManager.default.removeItem(at: pendingUpdate)
+                }
                 finalState = .completed
             } else if missing.count == 1 {
                 finalState = .failed(

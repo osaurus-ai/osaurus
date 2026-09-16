@@ -128,6 +128,7 @@ struct ModelDetailView: View, Identifiable {
             ScrollView {
                 VStack(spacing: 14) {
                     compatibilityLine
+                    manifestStatus
 
                     variantPickerSection
 
@@ -175,10 +176,12 @@ struct ModelDetailView: View, Identifiable {
                 await loadReadmeIfNeeded()
             }
         }
+        .task(id: model.id) { await modelManager.checkModelManifest(model) }
         .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
             // The shared cache is invalidated on this notification; re-resolve
             // off-main so the checkmark stays in sync after a download or delete.
             Task { await loadDownloadState() }
+            Task { await modelManager.checkModelManifest(model, force: true) }
             diagnostics = nil
             Task { await loadDiagnostics() }
         }
@@ -1169,6 +1172,39 @@ struct ModelDetailView: View, Identifiable {
         .detailCardSurface()
     }
 
+    private var manifestStatus: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let check = modelManager.manifestChecks[model.id] {
+                if let version = check.local.manifest?.modelVersion {
+                    Text("Installed model revision: \(version)", bundle: .module)
+                }
+                if check.updateAvailable, let version = check.remote?.manifest?.modelVersion {
+                    Text("Model update available: revision \(version)", bundle: .module)
+                        .foregroundStyle(theme.accentColor)
+                }
+                if let required = check.remote?.manifest?.requiredOsaurusVersion {
+                    Text("Requires Osaurus \(required) or later", bundle: .module)
+                }
+                if let error = check.error {
+                    Text("Could not check for model updates: \(error)", bundle: .module)
+                        .foregroundStyle(theme.secondaryText)
+                }
+                if isExternalModel, check.updateAvailable {
+                    Text("Update this model in the application that manages its files.", bundle: .module)
+                }
+            }
+            Button {
+                Task { await modelManager.checkModelManifest(model, force: true) }
+            } label: {
+                Text("Check for Model Updates", bundle: .module)
+            }
+            .disabled(modelManager.manifestChecksInFlight.contains(model.id))
+        }
+        .font(.system(size: 12))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("model-manifest-status")
+    }
+
     // MARK: - Action Footer
 
     private var actionFooter: some View {
@@ -1344,9 +1380,12 @@ struct ModelDetailView: View, Identifiable {
                 .buttonStyle(PlainButtonStyle())
 
                 Button(action: { modelManager.downloadService.repair(model) }) {
-                    Text("Repair", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.accentColor)
+                    Text(
+                        modelManager.manifestChecks[model.id]?.updateAvailable == true ? "Update Model" : "Repair",
+                        bundle: .module
+                    )
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.accentColor)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .localizedHelp("Verify model files against Hugging Face and restore missing or changed files.")

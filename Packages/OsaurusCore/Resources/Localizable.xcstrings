@@ -271485,7 +271485,106 @@
     "Tools: limited": {},
     "Tools: off": {},
     "Waiting for input": {},
-    "from %@": {}
+    "from %@": {},
+    "Model version compatibility": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model version compatibility"
+          }
+        }
+      }
+    },
+    "Installed model revision: %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installed model revision: %@"
+          }
+        }
+      }
+    },
+    "Model update available: revision %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model update available: revision %@"
+          }
+        }
+      }
+    },
+    "Requires Osaurus %@ or later": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Requires Osaurus %@ or later"
+          }
+        }
+      }
+    },
+    "Could not check for model updates: %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not check for model updates: %@"
+          }
+        }
+      }
+    },
+    "Update this model in the application that manages its files.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update this model in the application that manages its files."
+          }
+        }
+      }
+    },
+    "Check for Model Updates": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check for Model Updates"
+          }
+        }
+      }
+    },
+    "Update Model": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update Model"
+          }
+        }
+      }
+    },
+    "Update available": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update available"
+          }
+        }
+      }
+    }
   },
   "version": "1.1"
 }
