@@ -38,13 +38,18 @@ struct NativeMTPAdmissionTests {
         }
     }
 
-    @Test func manualDepthsUseTheLoadedHeadAndPreserveSamplingPolicy() throws {
+    @Test func manualDepthsUseTheLoadedHead() throws {
         for depth in 1 ... 3 {
             let result = try evidence.requestStrategy(
                 loaded: .nativeMTP(depth: 1, verifierMode: nil),
                 mtp: .init(mode: .forceOn, explicitDepth: depth)
             )
-            #expect(result == .nativeMTP(depth: depth, verifierMode: nil))
+            guard case .nativeMTP(let actualDepth, let verifierMode)? = result else {
+                Issue.record("Expected the selected native depth")
+                continue
+            }
+            #expect(actualDepth == depth)
+            #expect(verifierMode == nil)
         }
     }
 
