@@ -8357,11 +8357,7 @@ private struct AgentEditorSheet: View {
     private var agentColor: Color { agentColorFor(name) }
 
     private var canSave: Bool {
-        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        // A template that insists on a specific model blocks Create until
-        // the user has chosen one (the seed cleared the missing pin).
-        if seed?.requiredModelMissing != nil, selectedModel == nil { return false }
-        return true
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
@@ -8959,6 +8955,17 @@ private struct AgentEditorSheet: View {
     private func saveAgent() {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
+
+        // A template that insists on a specific model needs one chosen
+        // first. Keep the button live and explain on tap: a disabled button
+        // gives no hint about what is missing.
+        if let required = seed?.requiredModelMissing, selectedModel == nil {
+            _ = ToastManager.shared.warning(
+                L("Choose a model first"),
+                message: L("This template requires \(required), which is not installed. Pick another model in Default Model, or install it and try again."))
+            showModelPicker = true
+            return
+        }
 
         // Bake the (possibly user-edited) draft sets directly into the new
         // agent so `seedEnabledCapabilitiesIfNeeded` is a no-op on first

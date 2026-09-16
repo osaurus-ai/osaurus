@@ -274478,6 +274478,76 @@
           }
         }
       }
+    },
+    "Choose a model first": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wähle zuerst ein Modell"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a model first"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "먼저 모델을 선택하세요"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сначала выберите модель"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请先选择模型"
+          }
+        }
+      }
+    },
+    "This template requires %@, which is not installed. Pick another model in Default Model, or install it and try again.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diese Vorlage erfordert %@, das nicht installiert ist. Wähle unter Standardmodell ein anderes Modell oder installiere es und versuche es erneut."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This template requires %@, which is not installed. Pick another model in Default Model, or install it and try again."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 템플릿에는 %@이(가) 필요하지만 설치되어 있지 않습니다. 기본 모델에서 다른 모델을 선택하거나 설치 후 다시 시도하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Для этого шаблона требуется %@, но модель не установлена. Выберите другую модель в поле «Модель по умолчанию» или установите её и повторите."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此模板需要 %@，但尚未安装。请在“默认模型”中选择其他模型，或安装后重试。"
+          }
+        }
+      },
+      "comment": "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
+      "extractionState": "manual"
     }
   },
   "version" : "1.1"
