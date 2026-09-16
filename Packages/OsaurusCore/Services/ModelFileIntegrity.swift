@@ -8,14 +8,18 @@ enum ModelFileDigest: Equatable, Sendable {
     case sha256(String)
     case gitBlobSHA1(String)
 
-    func matches(_ url: URL, size: Int64) throws -> Bool {
+    func matches(
+        _ url: URL,
+        size: Int64,
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> Bool {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         var sha256 = SHA256()
         var sha1 = Insecure.SHA1()
         if case .gitBlobSHA1 = self { sha1.update(data: Data("blob \(size)\0".utf8)) }
         while let data = try handle.read(upToCount: 4 * 1024 * 1024), !data.isEmpty {
-            try Task.checkCancellation()
+            try checkCancellation()
             switch self {
             case .sha256: sha256.update(data: data)
             case .gitBlobSHA1: sha1.update(data: data)
@@ -31,16 +35,27 @@ enum ModelFileDigest: Equatable, Sendable {
 }
 
 enum ModelFileIntegrity {
-    static func matches(_ url: URL, size: Int64, digest: ModelFileDigest? = nil) throws -> Bool {
+    static func matches(
+        _ url: URL,
+        size: Int64,
+        digest: ModelFileDigest? = nil,
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> Bool {
+        try checkCancellation()
         let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
         guard attrs[.type] as? FileAttributeType == .typeRegular,
             (attrs[.size] as? NSNumber)?.int64Value == size
         else { return false }
-        return try digest?.matches(url, size: size) ?? true
+        return try digest?.matches(url, size: size, checkCancellation: checkCancellation) ?? true
     }
 
-    static func validate(_ url: URL, size: Int64, digest: ModelFileDigest? = nil) throws {
-        guard try matches(url, size: size, digest: digest) else {
+    static func validate(
+        _ url: URL,
+        size: Int64,
+        digest: ModelFileDigest? = nil,
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() }
+    ) throws {
+        guard try matches(url, size: size, digest: digest, checkCancellation: checkCancellation) else {
             throw URLError(
                 .cannotDecodeContentData,
                 userInfo: [

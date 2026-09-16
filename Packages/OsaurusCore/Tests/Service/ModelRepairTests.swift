@@ -71,6 +71,22 @@ struct ModelRepairTests {
         #expect(try Data(contentsOf: destination) == Data("original".utf8))
     }
 
+    @Test func validationCanStopDuringHashing() throws {
+        let dir = try directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let staged = dir.appendingPathComponent("staged")
+        let size = 9 * 1024 * 1024
+        try Data(repeating: 1, count: size).write(to: staged)
+        var checks = 0
+        #expect(throws: CancellationError.self) {
+            try ModelFileIntegrity.validate(staged, size: Int64(size), digest: .sha256(helloSHA256)) {
+                checks += 1
+                if checks == 3 { throw CancellationError() }
+            }
+        }
+        #expect(checks == 3)
+    }
+
     @Test(arguments: ["valid", "wrong-size", "wrong-hash", "http-error"])
     func realSingleFileTransferPreservesOldFileUntilValidated(scenario: String) async throws {
         let dir = try directory()

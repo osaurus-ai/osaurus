@@ -337,9 +337,9 @@ final class ModelDownloadService: ObservableObject {
                         modelID: model.id,
                         modelName: model.name
                     ) { [self] in
-                        let unloaded = await ModelRuntime.shared.unload(name: model.name)
+                        let unloaded = await ModelRuntime.shared.unload(name: model.id)
                         guard unloaded,
-                            await ModelRuntime.shared.residencyIdentity(named: model.name) == nil
+                            await ModelRuntime.shared.residencyIdentity(named: model.id) == nil
                         else { throw ModelDeletionError.unsafeUnload }
                         await self.runOrchestration(model: model, token: token, resuming: resuming)
                     }
@@ -2016,7 +2016,14 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
             defer { try? fm.removeItem(at: staged) }
             try fm.moveItem(at: location, to: staged)
             if let expectedSize, expectedSize > 0 {
-                try ModelFileIntegrity.validate(staged, size: expectedSize, digest: expectedDigest)
+                try ModelFileIntegrity.validate(staged, size: expectedSize, digest: expectedDigest) {
+                    try self.lock.withLock {
+                        guard !self.isInvalidated else { throw CancellationError() }
+                        guard !self.pauseRequested else {
+                            throw PauseInfo(resumeData: nil, bytesDownloaded: self.lastBytesWritten)
+                        }
+                    }
+                }
             }
             try lock.withLock {
                 guard !isInvalidated else { throw CancellationError() }

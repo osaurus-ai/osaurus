@@ -262,7 +262,8 @@ final class ChunkedFileDownloader: @unchecked Sendable {
             manifestURL: manifestURL,
             destination: destination,
             expectedSize: total,
-            expectedSHA256: metadata.sha256
+            expectedSHA256: metadata.sha256,
+            checkCancellation: { try self.checkPause() }
         )
     }
 
@@ -381,7 +382,8 @@ final class ChunkedFileDownloader: @unchecked Sendable {
         manifestURL: URL,
         destination: URL,
         expectedSize: Int64,
-        expectedSHA256: String?
+        expectedSHA256: String?,
+        checkCancellation: @escaping @Sendable () throws -> Void
     ) async throws {
         let fm = FileManager.default
         let actual =
@@ -403,9 +405,14 @@ final class ChunkedFileDownloader: @unchecked Sendable {
             // Detached: hashing a multi-gigabyte file is seconds of blocking
             // file I/O, which must not tie up the caller's (possibly main)
             // executor. Same pattern as `SandboxManager.verifySHA256Async`.
-            let digest = try await Task.detached(priority: .userInitiated) {
-                try hashFile(at: partURL)
-            }.value
+            let hashing = Task.detached(priority: .userInitiated) {
+                try hashFile(at: partURL, checkCancellation: checkCancellation)
+            }
+            let digest = try await withTaskCancellationHandler {
+                try await hashing.value
+            } onCancel: {
+                hashing.cancel()
+            }
             guard digest == expectedSHA256 else {
                 try? fm.removeItem(at: partURL)
                 try? fm.removeItem(at: manifestURL)
@@ -419,16 +426,17 @@ final class ChunkedFileDownloader: @unchecked Sendable {
             }
         }
 
-        try Task.checkCancellation()
+        try checkCancellation()
         try ModelFileIntegrity.commit(staged: partURL, to: destination)
         try? fm.removeItem(at: manifestURL)
     }
 
-    private static func hashFile(at url: URL) throws -> String {
+    private static func hashFile(at url: URL, checkCancellation: () throws -> Void) throws -> String {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         var hasher = SHA256()
         while let block = try handle.read(upToCount: 4 * 1024 * 1024), !block.isEmpty {
+            try checkCancellation()
             hasher.update(data: block)
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
