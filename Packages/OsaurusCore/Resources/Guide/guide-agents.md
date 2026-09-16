@@ -14,6 +14,14 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 - Or ask the default Osaurus assistant: "create a coding agent" — it can create, update, and switch agents for you.
 - Switch agents from the agent menu in the chat window.
 
+## Agent templates (Agents → Templates tab)
+
+- A template is one agent's configuration as portable JSON: prompt, model, tool selection (MCP servers and plugins by name), sandbox, subagent settings, and a `requires` list of what the author relied on (working folder, knowledge collections, plugins, MCP servers, permissions, model). Secrets, folder access grants, and knowledge files never travel.
+- Save one from any agent card (⋯ → Save as Template). Import one with the Import Template button, by pasting JSON, or by dropping a `.json` file on the Templates tab. Copy JSON from a template card to share it.
+- Use Template opens the Create Agent sheet prefilled. Anything the template needs that this Mac does not have yet (a folder to pick, an MCP server to add) is listed above the form.
+- "Available to the Orchestrator" (toggle on the card) lets you say "make me an agent from the Cloud Agent template that does X"; the Orchestrator bases the new agent on the template instead of enabling every tool.
+- Templates live in `~/.osaurus/templates/<slug>.json`, next to whole-config YAML templates saved by `osaurus_config export`.
+
 ## Per-agent features (agent → Abilities → Overview)
 
 - Tools (on by default) and Memory (on by default).

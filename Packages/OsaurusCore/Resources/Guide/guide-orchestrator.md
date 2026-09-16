@@ -45,6 +45,7 @@ default_agent:
 - "Create a research agent with web search and switch to it."
 - "Delegate this to my coding agent and summarize the result."
 - "Export my setup as a template."
+- "Make me an agent from the Cloud Agent template that summarizes RSS feeds." — bases the new agent on a template flagged Available to the Orchestrator (Agents → Templates).
 
 ## Where its settings are stored
 

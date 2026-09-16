@@ -57,6 +57,7 @@ default_agent:
 - "Delegate this to my coding agent and summarize the result."
 - "Create a file-organizer agent with a working folder and switch to it."
 - "Export my setup as a template."
+- "Make me an agent from the Cloud Agent template that summarizes RSS feeds." — bases the new agent on a template flagged Available to the Orchestrator (Agents → Templates).
 
 ## Scope and security
 
