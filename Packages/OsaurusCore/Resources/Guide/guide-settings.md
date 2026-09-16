@@ -60,6 +60,8 @@ selection and relaunch. Old defaults are turned off only when the app recorded
 that it chose them automatically. An explicitly selected DFlash 2 drafter is a
 separate opt-in; remove its folder selection to stop using it.
 
+Force On requires verified bundle tuning unless an eligible manual depth is selected in Chat. If the bundle cannot honor that selection, Chat and API requests report a policy error; they do not silently change to ordinary decoding. A selected DFlash 2 drafter remains a separate explicit setting.
+
 ## Local model memory
 
 Server → Settings → Model Memory contains **Keep Model Loaded** (off by

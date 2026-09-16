@@ -103,4 +103,14 @@ struct ErrorBodyShapeTests {
         #expect(HTTPHandler.anthropicErrorType(for: error) == "request_cancelled")
         #expect(HTTPHandler.ollamaErrorType(for: error) == "request_cancelled")
     }
+
+    @Test func nativeMTPRefusalMapsToInvalidRequestAcrossProtocols() {
+        let error = NativeMTPAdmission.Refusal(reason: "Missing verified tuning")
+        #expect(HTTPHandler.localRuntimeHTTPStatus(for: error).code == 400)
+        #expect(HTTPHandler.openAIErrorType(for: error) == "invalid_request_error")
+        #expect(HTTPHandler.openResponsesErrorCode(for: error) == "invalid_request_error")
+        #expect(HTTPHandler.anthropicErrorType(for: error) == "invalid_request_error")
+        #expect(HTTPHandler.ollamaErrorType(for: error) == "invalid_request_error")
+        #expect(error.localizedDescription.contains("Missing verified tuning"))
+    }
 }

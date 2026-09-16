@@ -808,7 +808,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "ea899b85036c12571798ba1987db6b3185e38d40"
+        let expectedRuntimeHardenedRevision = "91dffa4b4eaa5ebbc3b11c370ebc9d18e0471b18"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -2753,7 +2753,11 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("var loadConfiguration = mtpPlan.loadConfiguration"))
         #expect(runtime.contains("loadConfiguration: loadConfiguration"))
         #expect(runtime.contains("draftStrategy: mtpPlan.draftStrategy"))
-        #expect(runtime.contains("let requestStrategy = Self.requestDraftStrategy(holder.draftStrategy, mtp: cfg.mtp)"))
+        #expect(
+            runtime.contains(
+                "requestStrategy = try holder.nativeMTPAdmission.requestStrategy(loaded: holder.draftStrategy, mtp: cfg.mtp)"
+            )
+        )
         #expect(runtime.contains("draftStrategy: requestStrategy"))
         #expect(runtime.contains("params.draftStrategy = draftStrategy"))
         #expect(adapter.contains("draftStrategy: MLXLMCommon.DraftStrategy?"))
