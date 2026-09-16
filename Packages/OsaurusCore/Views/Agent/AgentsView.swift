@@ -819,21 +819,6 @@ private struct AgentCard: View {
                                     )
                                     .help(L("Run Setup from the card menu to finish configuring this agent"))
                             }
-                            if let source = agent.sourceTemplateName, !source.isEmpty {
-                                HStack(spacing: 3) {
-                                    Image(systemName: "square.on.square.dashed")
-                                        .font(.system(size: 8, weight: .semibold))
-                                    Text(source)
-                                        .font(.system(size: 9, weight: .bold))
-                                        .lineLimit(1)
-                                }
-                                .foregroundColor(theme.infoColor)
-                                .fixedSize()
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Capsule().fill(theme.infoColor.opacity(0.12)))
-                                .help(L("Created from the \(source) template"))
-                            }
                         }
 
                         // Always render the description line so card heights line
@@ -1057,6 +1042,12 @@ private struct AgentCard: View {
         // Model: always shown, "Default" when the agent inherits the global one.
         let modelText = agent.defaultModel.map(formatModelName) ?? L("Default")
         chips.append(.init(icon: "cube", text: modelText))
+
+        // Provenance: the template this agent was created from. Lives in the
+        // stats row so a long template name can never crowd the agent name.
+        if let source = agent.sourceTemplateName, !source.isEmpty {
+            chips.append(.init(icon: "square.on.square.dashed", text: source))
+        }
 
         // Capabilities: hide when 0 in `.auto` mode (means "all available"
         // until the user explicitly picks a subset). The "· Auto" / "· Custom"
