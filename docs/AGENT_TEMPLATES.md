@@ -72,6 +72,10 @@ Cases 2 and 3 are wrapped into a template named after the agent.
 - `plan` / `apply` with `template: "<name>"` resolve an agent template first, then fall back to a YAML template of that name. `overrides: {name, description, system_prompt, model}` merge on top of the template's agent. The plan carries a "Based on template: X" note and a reminder of the template's non-model requirements.
 - Applying a hidden template fails with a message pointing at the Templates tab.
 
+## Share links
+
+`osaurus://templates-import?t=<base64url(zlib(json))>` carries a whole template. Copy Share Link on a template card builds it (`AgentTemplateShareLink`); links over 8000 characters are refused with a hint to use Copy JSON instead. Opening one lands on Agents → Templates with the Import sheet prefilled, so the usual preview and name-collision handling apply and nothing is saved until the user confirms. The `osaurus` scheme was already registered for pairing, themes and workspaces; this adds one more host to the router in `AppDelegate.handleOsaurusDeepLink`.
+
 ## First-run setup
 
 Every agent creation path (create, duplicate, config apply, bundle import, backup restore, template use) marks the agent in `AgentSetupStateStore` (`~/.osaurus/agents/setup-pending.json`). The marker survives relaunch and is cleared only when `AgentSetupChecker` finds nothing to fix or the user finishes the wizard.
@@ -98,3 +102,4 @@ Where it runs:
 - `Services/AgentSetupStateStore.swift`, `Services/AgentSetupChecker.swift`, `Services/AgentSetupPromptCoordinator.swift`: first-run marker, readiness report, chat prompt.
 - `Views/Agent/Setup/AgentSetupWizardView.swift`: the wizard.
 - `Tools/SpawnAgentTool.setupRefusal`: the orchestrator-side gate.
+- `Services/AgentTemplateShareLink.swift`: `osaurus://templates-import` encode and decode.
