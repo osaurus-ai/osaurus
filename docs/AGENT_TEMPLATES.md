@@ -72,6 +72,21 @@ Cases 2 and 3 are wrapped into a template named after the agent.
 - `plan` / `apply` with `template: "<name>"` resolve an agent template first, then fall back to a YAML template of that name. `overrides: {name, description, system_prompt, model}` merge on top of the template's agent. The plan carries a "Based on template: X" note and a reminder of the template's non-model requirements.
 - Applying a hidden template fails with a message pointing at the Templates tab.
 
+## First-run setup
+
+Every agent creation path (create, duplicate, config apply, bundle import, backup restore, template use) marks the agent in `AgentSetupStateStore` (`~/.osaurus/agents/setup-pending.json`). The marker survives relaunch and is cleared only when `AgentSetupChecker` finds nothing to fix or the user finishes the wizard.
+
+`AgentSetupChecker` reports the machine-local gaps a creator cannot grant on someone else's Mac: a working folder path with no usable bookmark (blocking), a pinned model that does not resolve (blocking), Computer Use without Accessibility (blocking), knowledge on with no collection (advisory), AppleScript without Automation (advisory), manual tools no server or plugin here provides (advisory).
+
+Where it runs:
+
+- `spawn_agent` refuses a flagged agent with blocking items (`kind: unavailable`, `needs_user_action` metadata, not retryable) and posts a toast that opens the Agents tab. Advisory-only items let the run proceed. A clean check clears the marker so later spawns cost nothing.
+- The first time a chat window shows a flagged agent, `AgentSetupPromptCoordinator` runs the check and shows a checklist alert with Set Up Now / Later. Clean agents clear silently and never see a prompt.
+- Creating an agent from a template opens the wizard right away when the new agent has gaps.
+- Agent cards show a Needs setup badge and a Run Setup menu item while the marker is set.
+
+`AgentSetupWizardView` builds its steps from the report (Brain, Working Folder, Knowledge, Tools, Permissions, Review), so an agent with one gap gets one step plus Review. Each step fixes in place: pick or reset the model or open Local Models / Providers, choose the folder (mints the bookmark), grant or create a knowledge collection, open MCP Servers / Plugins or drop the missing tool names, open System Settings for the permission and re-check when the app becomes active. Finish clears the marker only when no blocking item remains; Later keeps the agent and the marker (plan test case 34).
+
 ## Code map
 
 - `Models/Agent/AgentTemplate.swift`: envelope, parsing, `make(from:)`, `resolvedEntry`.
@@ -80,3 +95,6 @@ Cases 2 and 3 are wrapped into a template named after the agent.
 - `Configuration/Declarative/ConfigApplier.draftAgent`: unsaved agent from an entry (sheet prefill).
 - `Views/Agent/Templates/`: tab, cards, import/save/rename sheets.
 - `Views/Agent/AgentsView.swift`: Agents | Templates switch, Save as Template, Use Template → prefilled Create Agent sheet.
+- `Services/AgentSetupStateStore.swift`, `Services/AgentSetupChecker.swift`, `Services/AgentSetupPromptCoordinator.swift`: first-run marker, readiness report, chat prompt.
+- `Views/Agent/Setup/AgentSetupWizardView.swift`: the wizard.
+- `Tools/SpawnAgentTool.setupRefusal`: the orchestrator-side gate.
