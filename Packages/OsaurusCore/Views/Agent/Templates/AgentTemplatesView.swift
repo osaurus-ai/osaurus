@@ -49,6 +49,8 @@ struct AgentTemplatesView: View {
     let showError: (String) -> Void
 
     @State private var isDropTargeted = false
+    /// The explainer card above the grid stays until the user closes it.
+    @AppStorage("agentTemplatesIntroDismissed") private var introDismissed = false
     /// Snapshot of the model catalog, refreshed on appear and when the
     /// library changes, so each card can mark a missing model without
     /// rebuilding the catalog per render.
@@ -113,29 +115,37 @@ struct AgentTemplatesView: View {
 
     private var grid: some View {
         ScrollView {
-            LazyVGrid(columns: columns, spacing: 20) {
-                ForEach(Array(store.allTemplates.enumerated()), id: \.element.id) { index, template in
-                    let builtIn = store.isBuiltIn(template)
-                    AgentTemplateCard(
-                        template: template,
-                        isBuiltIn: builtIn,
-                        modelAvailable: modelAvailable(template),
-                        animationDelay: Double(index) * 0.05,
-                        hasAppeared: hasAppeared,
-                        onUse: { onUse(template) },
-                        onCopyJSON: { copyJSON(template) },
-                        onCopyShareLink: { copyShareLink(template) },
-                        onExportFile: { exportFile(template) },
-                        onToggleOrchestrator: { toggleOrchestrator(template) },
-                        onRename: { onRename(template) },
-                        onDelete: { delete(template) },
-                        onSaveToLibrary: builtIn ? { saveToLibrary(template) } : nil
-                    )
-                    .gridDiffCell()
+            VStack(alignment: .leading, spacing: 20) {
+                if !introDismissed {
+                    AgentTemplatesIntroCard(onDismiss: {
+                        withAnimation(.easeInOut(duration: 0.2)) { introDismissed = true }
+                    })
+                    .transition(.opacity)
                 }
+                LazyVGrid(columns: columns, spacing: 20) {
+                    ForEach(Array(store.allTemplates.enumerated()), id: \.element.id) { index, template in
+                        let builtIn = store.isBuiltIn(template)
+                        AgentTemplateCard(
+                            template: template,
+                            isBuiltIn: builtIn,
+                            modelAvailable: modelAvailable(template),
+                            animationDelay: Double(index) * 0.05,
+                            hasAppeared: hasAppeared,
+                            onUse: { onUse(template) },
+                            onCopyJSON: { copyJSON(template) },
+                            onCopyShareLink: { copyShareLink(template) },
+                            onExportFile: { exportFile(template) },
+                            onToggleOrchestrator: { toggleOrchestrator(template) },
+                            onRename: { onRename(template) },
+                            onDelete: { delete(template) },
+                            onSaveToLibrary: builtIn ? { saveToLibrary(template) } : nil
+                        )
+                        .gridDiffCell()
+                    }
+                }
+                .gridDiffAnimation(token: store.allTemplates.map(\.id).joined(separator: ","))
             }
             .padding(24)
-            .gridDiffAnimation(token: store.allTemplates.map(\.id).joined(separator: ","))
         }
         .opacity(hasAppeared ? 1 : 0)
     }
