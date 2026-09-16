@@ -275430,40 +275430,6 @@
         }
       }
     },
-    "Sandbox off": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sandbox aus"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sandbox off"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "샌드박스 꺼짐"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Песочница выключена"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "沙盒已关闭"
-          }
-        }
-      }
-    },
     "%lld plugins": {
       "localizations": {
         "de": {
