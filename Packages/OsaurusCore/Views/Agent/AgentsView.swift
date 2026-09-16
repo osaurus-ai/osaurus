@@ -8952,8 +8952,9 @@ private struct AgentEditorSheet: View {
     }
 
     /// Point the user at the Default Model field: inline warning in the
-    /// footer, a temporary glow on the field (same treatment as landing on
-    /// a settings-search result), and the picker opened for them.
+    /// footer and a temporary glow on the field (same treatment as landing
+    /// on a settings-search result). The picker is left closed; the two
+    /// cues are enough and opening it uninvited felt pushy.
     private func requestModelChoice(reason: String) {
         footerWarning = reason
         highlightClearTask?.cancel()
@@ -8964,7 +8965,6 @@ private struct AgentEditorSheet: View {
             guard !Task.isCancelled else { return }
             highlightModelField = false
         }
-        showModelPicker = true
     }
 
     // MARK: Actions
