@@ -271000,42 +271000,6 @@
         }
       }
     },
-    "Based on %@": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Basierend auf %@"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Based on %@"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ 기반"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "На основе %@"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "基于 %@"
-          }
-        }
-      },
-      "comment": "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
-      "extractionState": "manual"
-    },
     "Knowledge collections to create or grant: %@.": {
       "localizations": {
         "de": {
@@ -271071,40 +271035,6 @@
       },
       "comment": "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
       "extractionState": "manual"
-    },
-    "Working folder": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Arbeitsordner"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Working folder"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "작업 폴더"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Рабочая папка"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "工作文件夹"
-          }
-        }
-      }
     },
     "%lld to set up": {
       "localizations": {
@@ -271172,40 +271102,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "自动工具"
-          }
-        }
-      }
-    },
-    "Built in": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Integriert"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Built in"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "기본 제공"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Встроенный"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "内置"
           }
         }
       }
@@ -271280,42 +271176,6 @@
         }
       }
     },
-    "Could not read %@.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ konnte nicht gelesen werden."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Could not read %@."
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@을(를) 읽을 수 없습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Не удалось прочитать %@."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无法读取 %@。"
-          }
-        }
-      },
-      "comment": "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
-      "extractionState": "manual"
-    },
     "Create an agent from this template": {
       "localizations": {
         "de": {
@@ -271346,74 +271206,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "从此模板创建代理"
-          }
-        }
-      }
-    },
-    "Custom tools": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Eigene Tools"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Custom tools"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "사용자 지정 도구"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Настраиваемые инструменты"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自定义工具"
-          }
-        }
-      }
-    },
-    "Default model": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Standardmodell"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Default model"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "기본 모델"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Модель по умолчанию"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "默认模型"
           }
         }
       }
@@ -271824,40 +271616,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "告诉协调器"
-          }
-        }
-      }
-    },
-    "Template name": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Vorlagenname"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Template name"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "템플릿 이름"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Название шаблона"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "模板名称"
           }
         }
       }
@@ -272848,6 +272606,42 @@
           "stringUnit": {
             "state": "translated",
             "value": "刷新模板"
+          }
+        }
+      }
+    },
+    "Based on the %@ template": {
+      "comment": "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Basierend auf der Vorlage %@"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Based on the %@ template"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 템플릿 기반"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "На основе шаблона %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "基于 %@ 模板"
           }
         }
       }

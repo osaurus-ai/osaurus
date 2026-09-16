@@ -412,7 +412,7 @@ extension AgentTemplate {
             requires.append(
                 TemplateRequirement(
                     kind: .workingFolder, value: abbreviateHome(path),
-                    label: L("Working folder")))
+                    label: L("Working Folder")))
             entry.workingFolder = .value(abbreviateHome(path))
         }
         for server in entry.mcpServers?.enabled ?? [] {

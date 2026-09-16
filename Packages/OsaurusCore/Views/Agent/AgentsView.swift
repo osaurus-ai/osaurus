@@ -538,7 +538,7 @@ struct AgentsView: View {
             notices.append(L("Knowledge collections to create or grant: \(joined)."))
         }
         creationSeed = AgentEditorSeed(
-            subtitle: L("Based on \(template.name)"),
+            subtitle: L("Based on the \(template.name) template"),
             agent: draft.agent,
             notices: notices
         )

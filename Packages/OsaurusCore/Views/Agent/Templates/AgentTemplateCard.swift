@@ -42,7 +42,7 @@ struct AgentTemplateCard: View {
                                 .foregroundColor(theme.primaryText)
                                 .lineLimit(1)
                             if isBuiltIn {
-                                badge(L("Built in"), color: theme.infoColor)
+                                badge(L("Built-in"), color: theme.infoColor)
                             }
                             if template.availableToOrchestrator {
                                 badge(L("Orchestrator"), color: theme.accentColor)

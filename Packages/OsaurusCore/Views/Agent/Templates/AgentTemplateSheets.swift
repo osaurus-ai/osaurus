@@ -148,9 +148,9 @@ struct AgentTemplateImportSheet: View {
                         Text(summary).font(.system(size: 11)).foregroundColor(theme.secondaryText).lineLimit(2)
                     }
                     HStack(spacing: 10) {
-                        detail("cube", template.agent.model.valueOrNil ?? L("Default model"))
+                        detail("cube", template.agent.model.valueOrNil ?? L("Default Model"))
                         if let mode = template.agent.tools?.mode {
-                            detail("wrench.and.screwdriver", mode == "manual" ? L("Custom tools") : L("Auto tools"))
+                            detail("wrench.and.screwdriver", mode == "manual" ? L("Custom Tools") : L("Auto tools"))
                         }
                         if template.availableToOrchestrator { detail("sparkles", L("Orchestrator")) }
                     }
@@ -272,7 +272,7 @@ struct AgentTemplateImportSheet: View {
             if let contents = try? String(contentsOf: url, encoding: .utf8) {
                 text = contents
             } else {
-                parseError = L("Could not read \(url.lastPathComponent).")
+                parseError = L("Could not read \(url.lastPathComponent)")
             }
         }
     }
@@ -462,7 +462,7 @@ struct RenameAgentTemplateSheet: View {
             AgentSheetHeader(icon: "pencil", title: "Rename Template", subtitleText: template.name, onClose: onDone)
             VStack(alignment: .leading, spacing: 8) {
                 AgentSheetSectionLabel("New Name")
-                StyledTextField(placeholder: L("Template name"), text: $name, icon: "textformat")
+                StyledTextField(placeholder: L("Template Name"), text: $name, icon: "textformat")
                 if collides {
                     Text("Another template already uses this name.", bundle: .module)
                         .font(.system(size: 11)).foregroundColor(theme.warningColor)
