@@ -140,6 +140,7 @@ struct AgentSetupWizardView: View {
             HStack(spacing: 0) {
                 stepRail
                     .frame(width: 200)
+                    .layoutPriority(1)
                 Divider()
                 ScrollView {
                     Group {
@@ -152,6 +153,7 @@ struct AgentSetupWizardView: View {
                     .padding(24)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .frame(minWidth: 0, maxWidth: .infinity)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(theme.primaryBackground)
@@ -445,53 +447,75 @@ private struct StepIssueList: View {
     }
 }
 
+/// The inline accent button the agent detail view uses for actions like
+/// "Choose…" next to the working folder, so wizard steps read as part of the
+/// same product rather than a second button vocabulary.
 private struct StepActionButton: View {
+    @Environment(\.theme) private var theme
     let title: LocalizedStringKey
     let icon: String
     var primary: Bool = true
     let action: () -> Void
+
     var body: some View {
         Button(action: action) {
-            Label { Text(title, bundle: .module) } icon: { Image(systemName: icon) }
-                .font(.system(size: 12, weight: .semibold))
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .semibold))
+                Text(title, bundle: .module)
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(primary ? theme.accentColor : theme.secondaryText)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(primary ? theme.accentColor.opacity(0.08) : theme.tertiaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(primary ? theme.accentColor.opacity(0.2) : theme.inputBorder, lineWidth: 1)
+                    )
+            )
         }
-        .buttonStyle(primary ? AnyButtonStyle(PrimaryButtonStyle()) : AnyButtonStyle(SecondaryButtonStyle()))
-        // Size to the label; the shared styles otherwise stretch to share the
-        // row and each label wraps differently.
+        .buttonStyle(.plain)
         .fixedSize()
     }
 }
 
-/// Type-erased button style so a step can pick primary/secondary at runtime.
-private struct AnyButtonStyle: ButtonStyle {
-    private let make: (Configuration) -> AnyView
-    init<S: ButtonStyle>(_ style: S) {
-        make = { AnyView(style.makeBody(configuration: $0)) }
+/// Thin rule with a word in the middle, for "one thing or the other" rows.
+private struct OrSeparator: View {
+    @Environment(\.theme) private var theme
+    var body: some View {
+        HStack(spacing: 10) {
+            Rectangle().fill(theme.inputBorder).frame(height: 1)
+            Text("or", bundle: .module)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+            Rectangle().fill(theme.inputBorder).frame(height: 1)
+        }
     }
-    func makeBody(configuration: Configuration) -> some View { make(configuration) }
 }
 
 // MARK: - Model
 
 private struct ModelStep: View {
     @Environment(\.theme) private var theme
+    @ObservedObject private var pickerCache = ModelPickerItemCache.shared
     let agent: Agent
     let items: [AgentSetupItem]
     let mutate: ((inout Agent) -> Void) -> Void
 
-    @State private var pickerItems: [ModelPickerItem] = []
     @State private var showPicker = false
 
     /// The model the template asked for, when it is the thing missing.
     private var requested: String? { items.first(where: { $0.kind == .model })?.value }
 
-    /// Local bundles carry MLX / GGUF / Hugging Face style ids; everything
-    /// that reads like a hosted model is a provider question.
+    /// Hosted models read like hosted models; everything else is a local
+    /// bundle to download.
     private var requestedIsLocal: Bool {
         guard let id = requested?.lowercased() else { return true }
         let cloudHints = ["claude", "gpt", "sonnet", "opus", "haiku", "gemini", "grok", "mistral-large", "o1", "o3"]
-        if cloudHints.contains(where: { id.contains($0) }) { return false }
-        return true
+        return !cloudHints.contains(where: { id.contains($0) })
     }
 
     var body: some View {
@@ -501,13 +525,10 @@ private struct ModelStep: View {
             } else {
                 StepIssueList(items: items)
             }
-            HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 12) {
                 modelField
-                    .frame(width: 320)
                 if let requested, !items.isEmpty {
-                    Text("or", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
+                    OrSeparator()
                     if requestedIsLocal {
                         StepActionButton(title: "Download \(requested)", icon: "arrow.down.circle") {
                             AppDelegate.shared?.showManagementWindow(initialTab: .models, deeplinkModelId: requested)
@@ -519,8 +540,12 @@ private struct ModelStep: View {
                     }
                 }
             }
+            .frame(width: 380)
         }
-        .onReceive(ModelPickerItemCache.shared.$items) { pickerItems = $0 }
+        .onAppear {
+            // The cache is prewarmed at launch; guard the cold case anyway.
+            if !pickerCache.isLoaded { pickerCache.prewarm() }
+        }
     }
 
     /// Same dropdown as the Create Agent sheet's Default Model field.
@@ -560,7 +585,7 @@ private struct ModelStep: View {
             .buttonStyle(PlainButtonStyle())
             .popover(isPresented: $showPicker, arrowEdge: .bottom) {
                 ModelPickerView(
-                    options: pickerItems,
+                    options: pickerCache.items,
                     selectedModel: Binding(
                         get: { agent.defaultModel },
                         set: { newModel in
@@ -597,7 +622,7 @@ private struct FolderStep: View {
                         .truncationMode(.middle)
                 }
             }
-            HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 StepActionButton(title: "Choose Folder…", icon: "folder.badge.plus") { chooseFolder() }
                 StepActionButton(title: "Remove Working Folder", icon: "folder.badge.minus", primary: false) {
                     mutate {
@@ -668,17 +693,22 @@ private struct KnowledgeStep: View {
                     AgentSheetSectionLabel("Grant Collections")
                     ForEach(collections) { collection in
                         let granted = agent.settings.knowledgeCollectionIds.contains(collection.id)
-                        Toggle(isOn: Binding(get: { granted }, set: { on in setGrant(collection.id, on) })) {
+                        HStack(spacing: 12) {
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(collection.name).font(.system(size: 12, weight: .medium)).foregroundColor(theme.primaryText)
                                 Text(collection.folderPath).font(.system(size: 10)).foregroundColor(theme.tertiaryText).lineLimit(1).truncationMode(.middle)
                             }
+                            Spacer(minLength: 12)
+                            Toggle("", isOn: Binding(get: { granted }, set: { on in setGrant(collection.id, on) }))
+                                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                                .labelsHidden()
                         }
-                        .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground.opacity(0.6)))
                     }
                 }
             }
-            HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 StepActionButton(title: "Create From Folder…", icon: "folder.badge.plus") { createFromFolder() }
                     .disabled(isCreating)
                 StepActionButton(title: "Turn Knowledge Off", icon: "book.closed", primary: false) {
@@ -747,7 +777,7 @@ private struct ToolsStep: View {
                     }
                 }
             }
-            HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 StepActionButton(title: "Open MCP Servers", icon: "server.rack") {
                     AppDelegate.shared?.showManagementWindow(initialTab: .tools)
                 }
