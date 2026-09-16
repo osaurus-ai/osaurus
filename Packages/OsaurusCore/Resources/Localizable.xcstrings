@@ -44187,6 +44187,40 @@
         }
       }
     },
+    "Can use subagents" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kann Subagenten nutzen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Can use subagents"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "하위 에이전트 사용 가능"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Может использовать субагентов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可使用子代理"
+          }
+        }
+      }
+    },
     "Can't access %@" : {
       "localizations" : {
         "de" : {
@@ -63596,6 +63630,42 @@
         }
       }
     },
+    "Copied a share link for \"%@\"" : {
+      "comment" : "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Freigabelink für „%@“ kopiert"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copied a share link for \"%@\""
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"%@\" 공유 링크를 복사했습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ссылка для «%@» скопирована"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已复制“%@”的分享链接"
+          }
+        }
+      }
+    },
     "copied to your clipboard — you can copy it again or revoke it from Members." : {
       "localizations" : {
         "de" : {
@@ -64666,6 +64736,40 @@
         }
       }
     },
+    "Copy Share Link" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Freigabelink kopieren"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy Share Link"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "공유 링크 복사"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скопировать ссылку"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制分享链接"
+          }
+        }
+      }
+    },
     "Copy support JSON report" : {
       "localizations" : {
         "de" : {
@@ -65717,6 +65821,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "無法加載xAI OAuth配置：%@"
+          }
+        }
+      }
+    },
+    "Could not open template link" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vorlagenlink konnte nicht geöffnet werden"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not open template link"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "템플릿 링크를 열 수 없습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось открыть ссылку на шаблон"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法打开模板链接"
           }
         }
       }
@@ -83283,6 +83421,40 @@
         }
       }
     },
+    "e.g., Invoice Bot" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "z. B. Rechnungs-Bot"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g., Invoice Bot"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "예: 인보이스 봇"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "например, Бот для счетов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "例如：发票助手"
+          }
+        }
+      }
+    },
     "e.g., My name is Terence" : {
       "localizations" : {
         "de" : {
@@ -83835,6 +84007,9 @@
           }
         }
       }
+    },
+    "Edit Agent Details…" : {
+
     },
     "Edit agent settings" : {
       "localizations" : {
@@ -91508,6 +91683,40 @@
         }
       }
     },
+    "Everything this template needs is in place. Create the agent when you are ready." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alles, was diese Vorlage braucht, ist vorhanden. Erstelle den Agenten, wenn du bereit bist."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Everything this template needs is in place. Create the agent when you are ready."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 템플릿에 필요한 모든 것이 준비되었습니다. 준비되면 에이전트를 만드세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Всё, что нужно этому шаблону, на месте. Создайте агента, когда будете готовы."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此模板所需的一切都已就绪。准备好后即可创建代理。"
+          }
+        }
+      }
+    },
     "Eviction Policy" : {
       "localizations" : {
         "de" : {
@@ -98060,9 +98269,6 @@
         }
       }
     },
-    "Fix the remaining items to finish" : {
-
-    },
     "Fixed model maximum" : {
       "localizations" : {
         "de" : {
@@ -102713,6 +102919,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "為它命名。它會加入你的訂閱並立即可用。"
+          }
+        }
+      }
+    },
+    "Give the agent a name before creating it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gib dem Agenten einen Namen, bevor du ihn erstellst."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Give the agent a name before creating it."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트를 만들기 전에 이름을 지정하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дайте агенту имя, прежде чем создавать его."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "创建前请先为代理命名。"
           }
         }
       }
@@ -133258,6 +133498,40 @@
     "Memory may be tight" : {
 
     },
+    "Memory on" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gedächtnis an"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Memory on"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "메모리 켜짐"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Память включена"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "记忆已开启"
+          }
+        }
+      }
+    },
     "Memory Recall" : {
       "comment" : "A feature toggle that lets the agent search its memory mid-conversation.",
       "isCommentAutoGenerated" : true,
@@ -158118,6 +158392,40 @@
         }
       }
     },
+    "Open the full editor to change the prompt, avatar, or tools before creating" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Öffne den vollständigen Editor, um Prompt, Avatar oder Tools vor dem Erstellen zu ändern"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open the full editor to change the prompt, avatar, or tools before creating"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "생성 전에 프롬프트, 아바타, 도구를 바꾸려면 전체 편집기를 여세요"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Откройте полный редактор, чтобы изменить промпт, аватар или инструменты перед созданием"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开完整编辑器，在创建前修改提示词、头像或工具"
+          }
+        }
+      }
+    },
     "Open the Images pane in Settings" : {
       "comment" : "Description text in the EmptyStateView for the \"Images\" tab.",
       "extractionState" : "stale",
@@ -168590,7 +168898,7 @@
         }
       }
     },
-    "Pick a model that is installed, or install the one the agent asks for and come back." : {
+    "Pick a model that is installed, use your default model, or install the one the agent asks for and come back." : {
 
     },
     "Pick a Palette" : {
@@ -204078,6 +204386,40 @@
         }
       }
     },
+    "Sandbox on" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sandbox an"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sandbox on"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "샌드박스 켜짐"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Песочница включена"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沙盒已开启"
+          }
+        }
+      }
+    },
     "Sandbox permissions & secrets" : {
       "comment" : "Label for the button that takes the user to the \"Sandbox permissions & secrets\" tab in the agent's ability configuration.",
       "isCommentAutoGenerated" : true,
@@ -224308,6 +224650,9 @@
         }
       }
     },
+    "Some items still block this agent. Go back to fix them before creating it." : {
+
+    },
     "Some items still block this agent. Go back to fix them, or choose Later to keep the agent as is." : {
 
     },
@@ -240671,6 +241016,42 @@
         }
       }
     },
+    "The template prefers %@, which is not installed here. Create will use your default model unless you pick one." : {
+      "comment" : "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Vorlage bevorzugt %@, das hier nicht installiert ist. Beim Erstellen wird dein Standardmodell verwendet, sofern du keins wählst."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The template prefers %@, which is not installed here. Create will use your default model unless you pick one."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 템플릿은 %@을(를) 선호하지만 이 Mac에는 설치되어 있지 않습니다. 모델을 선택하지 않으면 기본 모델로 생성됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шаблон предпочитает %@, но эта модель здесь не установлена. При создании будет использована модель по умолчанию, если вы не выберете другую."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此模板首选 %@，但本机未安装。除非你选择一个模型，否则创建时将使用默认模型。"
+          }
+        }
+      }
+    },
     "The template prefers %@, which is not installed here. Your default model is used instead. Install it from Local Models or Providers to match the template." : {
       "comment" : "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
       "extractionState" : "manual",
@@ -246041,6 +246422,42 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "此工作使用裝置端模型偵測個人資訊（姓名、地址）。安裝建議的模型（37 MB）只需幾秒鐘，並且完全離線執行。若不安裝，則僅能使用以模式為基礎的偵測（電子郵件、電話號碼）。"
+          }
+        }
+      }
+    },
+    "This template requires %@, which is not installed. Pick another model in Default Model, or install it and try again." : {
+      "comment" : "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Vorlage erfordert %@, das nicht installiert ist. Wähle unter Standardmodell ein anderes Modell oder installiere es und versuche es erneut."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This template requires %@, which is not installed. Pick another model in Default Model, or install it and try again."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 템플릿에는 %@이(가) 필요하지만 설치되어 있지 않습니다. 기본 모델에서 다른 모델을 선택하거나 설치 후 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для этого шаблона требуется %@, но модель не установлена. Выберите другую модель в поле «Модель по умолчанию» или установите её и повторите."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此模板需要 %@，但尚未安装。请在“默认模型”中选择其他模型，或安装后重试。"
           }
         }
       }
@@ -265152,6 +265569,9 @@
         }
       }
     },
+    "What Will Be Created" : {
+
+    },
     "What's configured?" : {
       "localizations" : {
         "de" : {
@@ -274371,420 +274791,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Zip 捆綁包"
-          }
-        }
-      }
-    },
-    "Copied a share link for \"%@\"": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Freigabelink für „%@“ kopiert"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Copied a share link for \"%@\""
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\"%@\" 공유 링크를 복사했습니다"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ссылка для «%@» скопирована"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已复制“%@”的分享链接"
-          }
-        }
-      },
-      "comment": "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
-      "extractionState": "manual"
-    },
-    "Could not open template link": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Vorlagenlink konnte nicht geöffnet werden"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Could not open template link"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "템플릿 링크를 열 수 없습니다"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Не удалось открыть ссылку на шаблон"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无法打开模板链接"
-          }
-        }
-      }
-    },
-    "Copy Share Link": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Freigabelink kopieren"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Copy Share Link"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "공유 링크 복사"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Скопировать ссылку"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "复制分享链接"
-          }
-        }
-      }
-    },
-    "This template requires %@, which is not installed. Pick another model in Default Model, or install it and try again.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Diese Vorlage erfordert %@, das nicht installiert ist. Wähle unter Standardmodell ein anderes Modell oder installiere es und versuche es erneut."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This template requires %@, which is not installed. Pick another model in Default Model, or install it and try again."
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이 템플릿에는 %@이(가) 필요하지만 설치되어 있지 않습니다. 기본 모델에서 다른 모델을 선택하거나 설치 후 다시 시도하세요."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Для этого шаблона требуется %@, но модель не установлена. Выберите другую модель в поле «Модель по умолчанию» или установите её и повторите."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此模板需要 %@，但尚未安装。请在“默认模型”中选择其他模型，或安装后重试。"
-          }
-        }
-      },
-      "comment": "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
-      "extractionState": "manual"
-    },
-    "Give the agent a name before creating it.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Gib dem Agenten einen Namen, bevor du ihn erstellst."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Give the agent a name before creating it."
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "에이전트를 만들기 전에 이름을 지정하세요."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Дайте агенту имя, прежде чем создавать его."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "创建前请先为代理命名。"
-          }
-        }
-      }
-    },
-    "The template prefers %@, which is not installed here. Create will use your default model unless you pick one.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Die Vorlage bevorzugt %@, das hier nicht installiert ist. Beim Erstellen wird dein Standardmodell verwendet, sofern du keins wählst."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The template prefers %@, which is not installed here. Create will use your default model unless you pick one."
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이 템플릿은 %@을(를) 선호하지만 이 Mac에는 설치되어 있지 않습니다. 모델을 선택하지 않으면 기본 모델로 생성됩니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Шаблон предпочитает %@, но эта модель здесь не установлена. При создании будет использована модель по умолчанию, если вы не выберете другую."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此模板首选 %@，但本机未安装。除非你选择一个模型，否则创建时将使用默认模型。"
-          }
-        }
-      },
-      "comment": "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
-      "extractionState": "manual"
-    },
-    "Everything this template needs is in place. Create the agent when you are ready.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Alles, was diese Vorlage braucht, ist vorhanden. Erstelle den Agenten, wenn du bereit bist."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Everything this template needs is in place. Create the agent when you are ready."
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이 템플릿에 필요한 모든 것이 준비되었습니다. 준비되면 에이전트를 만드세요."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Всё, что нужно этому шаблону, на месте. Создайте агента, когда будете готовы."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此模板所需的一切都已就绪。准备好后即可创建代理。"
-          }
-        }
-      }
-    },
-    "Open the full editor to change the prompt, avatar, or tools before creating": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Öffne den vollständigen Editor, um Prompt, Avatar oder Tools vor dem Erstellen zu ändern"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Open the full editor to change the prompt, avatar, or tools before creating"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "생성 전에 프롬프트, 아바타, 도구를 바꾸려면 전체 편집기를 여세요"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Откройте полный редактор, чтобы изменить промпт, аватар или инструменты перед созданием"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "打开完整编辑器，在创建前修改提示词、头像或工具"
-          }
-        }
-      }
-    },
-    "e.g., Invoice Bot": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "z. B. Rechnungs-Bot"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "e.g., Invoice Bot"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "예: 인보이스 봇"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "например, Бот для счетов"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "例如：发票助手"
-          }
-        }
-      }
-    },
-    "Sandbox on": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sandbox an"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sandbox on"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "샌드박스 켜짐"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Песочница включена"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "沙盒已开启"
-          }
-        }
-      }
-    },
-    "Can use subagents": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Kann Subagenten nutzen"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Can use subagents"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "하위 에이전트 사용 가능"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Может использовать субагентов"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "可使用子代理"
-          }
-        }
-      }
-    },
-    "Memory on": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Gedächtnis an"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Memory on"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "메모리 켜짐"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Память включена"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "记忆已开启"
           }
         }
       }

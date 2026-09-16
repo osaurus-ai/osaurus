@@ -51,8 +51,6 @@ struct AgentSetupWizardView: View {
     let onClose: () -> Void
     /// Draft mode: the agent was created. Saved mode: setup finished.
     var onFinished: (Agent) -> Void = { _ in }
-    /// Draft mode: hand the current draft to the full Create Agent sheet.
-    var onEditDraft: ((Agent) -> Void)? = nil
 
     enum Step: Hashable {
         case model
@@ -64,7 +62,7 @@ struct AgentSetupWizardView: View {
 
         var title: String {
             switch self {
-            case .model: return L("Brain")
+            case .model: return L("Model")
             case .folder: return L("Working Folder")
             case .knowledge: return L("Knowledge")
             case .tools: return L("Tools")
@@ -404,8 +402,7 @@ struct AgentSetupWizardView: View {
             case .review:
                 ReviewStep(
                     agent: agent, report: report, isDraft: subject.isDraft,
-                    onRename: { newName in mutate { $0.name = newName } },
-                    onEditDraft: onEditDraft.map { edit in { edit(agent) } }
+                    onRename: { newName in mutate { $0.name = newName } }
                 )
             }
         }
@@ -459,6 +456,9 @@ private struct StepActionButton: View {
                 .font(.system(size: 12, weight: .semibold))
         }
         .buttonStyle(primary ? AnyButtonStyle(PrimaryButtonStyle()) : AnyButtonStyle(SecondaryButtonStyle()))
+        // Size to the label; the shared styles otherwise stretch to share the
+        // row and each label wraps differently.
+        .fixedSize()
     }
 }
 
@@ -766,7 +766,6 @@ private struct ReviewStep: View {
     let report: AgentSetupReport
     let isDraft: Bool
     let onRename: (String) -> Void
-    let onEditDraft: (() -> Void)?
 
     @State private var name: String = ""
 
@@ -802,14 +801,6 @@ private struct ReviewStep: View {
                     .foregroundColor(theme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
                 AgentSetupChecklistView(report: report)
-            }
-            if isDraft, let onEditDraft {
-                Button(action: onEditDraft) {
-                    Label { Text("Edit Agent Details…", bundle: .module) } icon: { Image(systemName: "slider.horizontal.3") }
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .buttonStyle(SecondaryButtonStyle())
-                .help(L("Open the full editor to change the prompt, avatar, or tools before creating"))
             }
         }
         .onAppear { if name.isEmpty { name = agent.name } }

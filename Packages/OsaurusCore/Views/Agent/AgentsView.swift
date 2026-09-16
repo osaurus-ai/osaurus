@@ -259,19 +259,7 @@ struct AgentsView: View {
                         showSuccess("Created \"\(agent.name)\"")
                         withAnimation(Self.navTransition) { section = .agents }
                     }
-                },
-                onEditDraft: subject.isDraft
-                    ? { draft in
-                        // Power-user path: the full editor, prefilled with the
-                        // draft as it stands. Remaining gaps are caught by the
-                        // post-save check like any other creation.
-                        setupSubject = nil
-                        creationSeed = AgentEditorSeed(
-                            subtitle: L("Based on the \(templateName(for: subject)) template"),
-                            agent: draft)
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { isCreating = true }
-                    }
-                    : nil
+                }
             )
             .environment(\.theme, themeManager.currentTheme)
         }
@@ -598,11 +586,6 @@ struct AgentsView: View {
             draft.workingFolderPath = (hint as NSString).expandingTildeInPath
         }
         setupSubject = .draft(draft, template: template)
-    }
-
-    private func templateName(for subject: AgentSetupSubject) -> String {
-        if case .draft(_, let template) = subject { return template.name }
-        return ""
     }
 
     // MARK: - Success Toast
