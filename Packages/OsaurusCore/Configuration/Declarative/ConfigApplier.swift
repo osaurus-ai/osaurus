@@ -387,6 +387,14 @@ enum ConfigApplier {
                 if var agent = existing {
                     let outcome = patch(&agent, from: entry)
                     AgentManager.shared.update(agent)
+                    // A patch can open a blocking gap (a folder this Mac
+                    // cannot reach, a tool that is not installed) on an agent
+                    // that was fine a moment ago. Creation arms the setup
+                    // marker through `AgentManager.add`; an edit has to arm it
+                    // here, or the next spawn runs straight into the gap.
+                    if outcome.needsUserAction {
+                        AgentSetupStateStore.shared.markNeedsSetup(agent.id)
+                    }
                     applyRelay(entry.capabilities?.relayEnabled, to: agent.id)
                     return ConfigApplyResult(
                         section: "agents", target: agent.name,
@@ -608,6 +616,16 @@ enum ConfigApplier {
                 agent.workingFolderBookmark = bookmark
                 agent.workingFolderPath = expanded
             } else {
+                // Record the path WITHOUT a bookmark rather than dropping it.
+                // The gap has to survive on the agent record, because that is
+                // the only thing `AgentSetupChecker` can see: a path with no
+                // usable bookmark is its blocking case. Dropping the path
+                // left the agent looking perfectly configured, so the Needs
+                // Setup badge never appeared, the wizard offered no folder
+                // step, and `SpawnAgentTool.setupRefusal` cleared the marker
+                // and let the run proceed into a sandbox with no such folder.
+                agent.workingFolderPath = expanded
+                agent.workingFolderBookmark = nil
                 outcome.notes.append(
                     "working_folder: `\(raw)` is not accessible here. Pick the agent's folder "
                         + "in the Agents pane (Working folder) to grant access.")
