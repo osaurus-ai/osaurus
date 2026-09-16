@@ -8336,6 +8336,14 @@ private struct AgentEditorSheet: View {
     @State private var pickerItems: [ModelPickerItem] = []
     @State private var showModelPicker: Bool = false
     @State private var hasAppeared: Bool = false
+    /// Inline guidance in the footer when Create cannot proceed yet. Shown
+    /// next to the button, never as a toast, so the cause and the fix stay
+    /// in the same view.
+    @State private var footerWarning: String?
+    /// Drives the settings-search style glow on the Default Model field
+    /// while `footerWarning` points at it.
+    @State private var highlightModelField: Bool = false
+    @State private var highlightClearTask: Task<Void, Never>?
 
     /// When true, the form column is replaced in place by an embedded
     /// `AgentCapabilityManagerView` operating in draft mode. Toggling this
@@ -8666,6 +8674,11 @@ private struct AgentEditorSheet: View {
                 )
             }
         }
+        .settingsSearchHighlight(highlightModelField)
+        // Picking a model resolves the warning that pointed here.
+        .onChange(of: selectedModel) { _, newValue in
+            if newValue != nil { footerWarning = nil }
+        }
     }
 
     /// Tools row in the create sheet. Mirrors the Auto-discover affordance
@@ -8932,8 +8945,26 @@ private struct AgentEditorSheet: View {
                 label: "Cancel",
                 handler: onCancel
             ),
-            hint: "+ Enter to create"
+            hint: "+ Enter to create",
+            warning: footerWarning
         )
+        .animation(.easeInOut(duration: 0.2), value: footerWarning)
+    }
+
+    /// Point the user at the Default Model field: inline warning in the
+    /// footer, a temporary glow on the field (same treatment as landing on
+    /// a settings-search result), and the picker opened for them.
+    private func requestModelChoice(reason: String) {
+        footerWarning = reason
+        highlightClearTask?.cancel()
+        highlightModelField = false
+        highlightModelField = true
+        highlightClearTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_200_000_000)
+            guard !Task.isCancelled else { return }
+            highlightModelField = false
+        }
+        showModelPicker = true
     }
 
     // MARK: Actions
@@ -8957,13 +8988,11 @@ private struct AgentEditorSheet: View {
         guard !trimmedName.isEmpty else { return }
 
         // A template that insists on a specific model needs one chosen
-        // first. Keep the button live and explain on tap: a disabled button
+        // first. Keep the button live and guide on tap: a disabled button
         // gives no hint about what is missing.
         if let required = seed?.requiredModelMissing, selectedModel == nil {
-            _ = ToastManager.shared.warning(
-                L("Choose a model first"),
-                message: L("This template requires \(required), which is not installed. Pick another model in Default Model, or install it and try again."))
-            showModelPicker = true
+            requestModelChoice(
+                reason: L("This template requires \(required), which is not installed. Pick another model in Default Model, or install it and try again."))
             return
         }
 

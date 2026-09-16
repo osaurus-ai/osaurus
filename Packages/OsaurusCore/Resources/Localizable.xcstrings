@@ -274479,40 +274479,6 @@
         }
       }
     },
-    "Choose a model first": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Wähle zuerst ein Modell"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Choose a model first"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "먼저 모델을 선택하세요"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Сначала выберите модель"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "请先选择模型"
-          }
-        }
-      }
-    },
     "This template requires %@, which is not installed. Pick another model in Default Model, or install it and try again.": {
       "localizations": {
         "de": {

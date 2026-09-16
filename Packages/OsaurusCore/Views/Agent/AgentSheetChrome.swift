@@ -147,15 +147,21 @@ struct AgentSheetFooter: View {
     let primary: Action?
     let secondary: Action?
     let hint: LocalizedStringKey?
+    /// Verbatim (already localized) warning shown in the hint slot instead
+    /// of the shortcut hint, for "you still need to…" guidance that must
+    /// stay next to the button that triggered it.
+    var warning: String? = nil
 
     init(
         primary: Action? = nil,
         secondary: Action? = nil,
-        hint: LocalizedStringKey? = nil
+        hint: LocalizedStringKey? = nil,
+        warning: String? = nil
     ) {
         self.primary = primary
         self.secondary = secondary
         self.hint = hint
+        self.warning = warning
     }
 
     var body: some View {
@@ -163,7 +169,19 @@ struct AgentSheetFooter: View {
             Divider().opacity(0.5)
 
             HStack(spacing: 10) {
-                if let hint {
+                if let warning {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                            .padding(.top, 1)
+                        Text(warning)
+                            .font(.system(size: 11, weight: .medium))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .foregroundColor(theme.warningColor)
+                    .frame(maxWidth: 420, alignment: .leading)
+                    .transition(.opacity.combined(with: .move(edge: .leading)))
+                } else if let hint {
                     HStack(spacing: 4) {
                         Text("\u{2318}", bundle: .module)
                             .font(.system(size: 10, weight: .medium, design: .rounded))
