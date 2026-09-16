@@ -13,7 +13,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// Which list the Agents section shows.
-enum AgentsSection: String, CaseIterable, Identifiable {
+/// Conforms to `AnimatedTabItem` so it rides in the shared `HeaderTabsRow`.
+enum AgentsSection: String, CaseIterable, Identifiable, AnimatedTabItem {
     case agents
     case templates
 
@@ -30,54 +31,6 @@ enum AgentsSection: String, CaseIterable, Identifiable {
         switch self {
         case .agents: return "person.2"
         case .templates: return "square.on.square.dashed"
-        }
-    }
-}
-
-/// Pill segmented control under the section header.
-struct AgentsSectionPicker: View {
-    @Environment(\.theme) private var theme
-    @Binding var selection: AgentsSection
-    var counts: [AgentsSection: Int] = [:]
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(AgentsSection.allCases) { section in
-                let isSelected = selection == section
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) { selection = section }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: section.icon)
-                            .font(.system(size: 10, weight: .semibold))
-                        Text(section.title)
-                            .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-                        if let count = counts[section], count > 0 {
-                            Text("\(count)")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(
-                                    Capsule().fill(
-                                        isSelected ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground))
-                        }
-                    }
-                    .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        Capsule().fill(isSelected ? theme.accentColor.opacity(0.12) : Color.clear)
-                    )
-                    .overlay(
-                        Capsule().strokeBorder(
-                            isSelected ? theme.accentColor.opacity(0.35) : theme.inputBorder, lineWidth: 1)
-                    )
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(isSelected ? .isSelected : [])
-            }
         }
     }
 }

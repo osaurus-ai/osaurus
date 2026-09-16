@@ -41,11 +41,17 @@ struct AgentTemplateCard: View {
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundColor(theme.primaryText)
                                 .lineLimit(1)
+                                .layoutPriority(1)
                             if isBuiltIn {
                                 badge(L("Built-in"), color: theme.infoColor)
                             }
                             if template.availableToOrchestrator {
-                                badge(L("Orchestrator"), color: theme.accentColor)
+                                // Icon-only so the name keeps its room; the
+                                // menu spells out the state.
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(theme.accentColor)
+                                    .help(L("Visible to the Orchestrator"))
                             }
                         }
                         Text(
@@ -141,6 +147,8 @@ struct AgentTemplateCard: View {
         Text(text)
             .font(.system(size: 9, weight: .semibold))
             .foregroundColor(color)
+            .lineLimit(1)
+            .fixedSize()
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Capsule().fill(color.opacity(0.12)))
@@ -199,6 +207,10 @@ struct AgentTemplateCard: View {
 
     // MARK: - Stats
 
+    /// Same rhythm as `AgentCard`: model, tool count, then icon-only
+    /// markers for sandbox / subagents so the row never truncates at the
+    /// default window width. The setup count keeps its text because it is
+    /// the one thing a user must act on.
     private var stats: some View {
         HStack(spacing: 0) {
             let chips = statChips
@@ -208,35 +220,59 @@ struct AgentTemplateCard: View {
                         .padding(.horizontal, 8)
                 }
                 HStack(spacing: 4) {
-                    Image(systemName: chip.0)
+                    Image(systemName: chip.icon)
                         .font(.system(size: 9, weight: .medium))
-                    Text(chip.1)
-                        .font(.system(size: 10, weight: .medium))
-                        .lineLimit(1)
+                    if let text = chip.text {
+                        Text(text)
+                            .font(.system(size: 10, weight: .medium))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                 }
+                .layoutPriority(chip.priority)
                 .foregroundColor(theme.tertiaryText)
+                .help(chip.help)
             }
             Spacer(minLength: 0)
         }
     }
 
-    private var statChips: [(String, String)] {
-        var chips: [(String, String)] = []
-        chips.append(("cube", template.agent.model.valueOrNil ?? L("Default")))
+    private struct StatChip {
+        let icon: String
+        let text: String?
+        let help: String
+        /// Higher wins when the row is tight; the model name gives way first.
+        var priority: Double = 1
+    }
+
+    private var statChips: [StatChip] {
+        var chips: [StatChip] = []
+        let model = template.agent.model.valueOrNil ?? L("Default")
+        chips.append(StatChip(icon: "cube", text: formatTemplateModelName(model), help: model, priority: 0))
         let toolCount = template.agent.tools?.enabled?.count ?? 0
         let groupCount = (template.agent.mcpServers?.enabled?.count ?? 0) + (template.agent.plugins?.enabled?.count ?? 0)
         if template.agent.tools?.mode == "manual" || toolCount + groupCount > 0 {
-            chips.append(("wrench.and.screwdriver", "\(toolCount + groupCount)"))
+            chips.append(
+                StatChip(
+                    icon: "wrench.and.screwdriver", text: "\(toolCount + groupCount)",
+                    help: L("Custom Tools")))
         }
         if template.agent.sandbox?.enabled == true {
-            chips.append(("shippingbox", L("Sandbox")))
+            chips.append(StatChip(icon: "shippingbox", text: nil, help: L("Sandbox")))
         }
         if template.agent.subagents?.enabled == true {
-            chips.append(("person.2", L("Subagents")))
+            chips.append(StatChip(icon: "person.2", text: nil, help: L("Subagents")))
         }
         if !template.requires.isEmpty {
-            chips.append(("checklist", L("\(template.requires.count) to set up")))
+            let text = L("\(template.requires.count) to set up")
+            chips.append(StatChip(icon: "checklist", text: text, help: text, priority: 2))
         }
         return chips
+    }
+
+    /// Last path component of a model id, matching the agent card's
+    /// `formatModelName` so "mlx-community/Qwen…" reads as "Qwen…".
+    private func formatTemplateModelName(_ model: String) -> String {
+        model.split(separator: "/").last.map(String.init) ?? model
     }
 }

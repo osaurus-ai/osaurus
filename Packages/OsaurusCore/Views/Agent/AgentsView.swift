@@ -314,9 +314,6 @@ struct AgentsView: View {
                 .managerHeaderEntrance(hasAppeared: hasAppeared)
                 .settingsLandingAnchor("agents.overview")
 
-            sectionPicker
-                .opacity(hasAppeared ? 1 : 0)
-
             if section == .templates {
                 templatesContent
                     .transition(.opacity)
@@ -464,7 +461,7 @@ struct AgentsView: View {
 
     private var headerView: some View {
         let totalCount = customAgents.count + remoteAgents.count
-        return ManagerHeaderWithActions(
+        return ManagerHeaderWithTabs(
             title: L("Agents"),
             subtitle: L("Create custom assistant personalities with unique behaviors"),
             count: totalCount == 0 ? nil : totalCount
@@ -490,24 +487,17 @@ struct AgentsView: View {
                     templateImportText = ""
                 }
             }
-        }
-    }
-
-    /// Agents | Templates switch. Lives under the header on both tabs so the
-    /// user always sees where they are.
-    private var sectionPicker: some View {
-        HStack {
-            AgentsSectionPicker(
+        } tabsRow: {
+            // Same `HeaderTabsRow` chrome as Memory / Tools / Voice.
+            HeaderTabsRow(
                 selection: $section,
+                tabs: AgentsSection.allCases,
                 counts: [
                     .agents: customAgents.count,
-                    .templates: templateStore.templates.count,
+                    .templates: templateStore.allTemplates.count,
                 ]
             )
-            Spacer()
         }
-        .padding(.horizontal, 24)
-        .padding(.bottom, 12)
     }
 
     /// Templates tab body. Using a template builds an unsaved draft through
