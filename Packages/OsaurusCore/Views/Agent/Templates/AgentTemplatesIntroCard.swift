@@ -3,11 +3,11 @@
 //  osaurus
 //
 //  Explainer card shown above the template grid in the Templates tab. Copy
-//  and a step list on the left, a compact four-beat diagram on the right,
-//  walking through what a template is: an agent's setup, saved without its
-//  private data, shared as a link or file, and unpacked into a new agent on
-//  any Mac. Advances on a timer that restarts whenever a beat is picked,
-//  and collapses to cuts under Reduce Motion. Dismissable, remembered.
+//  and a step list on the left, an animated scene on the right. One agent
+//  card is the protagonist of all four beats: its setup switches on, a
+//  copy peels off while private data stays behind, the copy fans out into
+//  the ways to share it, and it lands on another Mac where the wizard fills
+//  in the gaps. Auto-advances, restarts on a click, cuts under Reduce Motion.
 //
 
 import SwiftUI
@@ -73,7 +73,7 @@ struct AgentTemplatesIntroCard: View {
     /// The diagram is drawn in fixed coordinates at this size and scaled as
     /// a whole to fill the space beside the copy, up or down, so it stays
     /// legible on a wide window and never reflows on a narrow one.
-    static let canvasDesignSize = CGSize(width: 480, height: 250)
+    static let canvasDesignSize = CGSize(width: 360, height: 250)
     /// Largest enlargement before the pills start to look oversized.
     static let maxCanvasScale: CGFloat = 1.7
     private static let copyWidth: CGFloat = 220
@@ -288,44 +288,34 @@ private struct IntroStepProgress: View {
 
 // MARK: - Canvas
 
-/// Every element derives its position, opacity and glyph from `stage`
-/// alone, so the scene is a pure function of state and animates between
-/// beats with one implicit animation.
+/// Four scenes with shared props. Everything derives from `stage` and an
+/// intra-beat `phase` counter that the choreography advances on a timer,
+/// so each scene is a pure function of state and animates implicitly.
 private struct AgentTemplatesIntroCanvas: View {
     let stage: AgentTemplatesIntroStage
     let reduceMotion: Bool
 
     @Environment(\.theme) private var theme
 
-    /// Flipped on first appearance to drive the stage 1 build-up.
-    @State private var appeared = false
+    /// Sub-step inside the current beat. Reset to zero on every stage
+    /// change and stepped by `schedule(for:)`.
+    @State private var phase = 0
 
-    /// One row of the agent's setup. These are what a template carries.
-    private struct Setting: Identifiable {
+    private struct Row: Identifiable {
         let id: Int
         let label: String
         let glyph: String
     }
 
-    private static let settings: [Setting] = [
-        Setting(id: 0, label: L("System Prompt"), glyph: "text.alignleft"),
-        Setting(id: 1, label: L("Model"), glyph: "cube"),
-        Setting(id: 2, label: L("Tools"), glyph: "wrench.and.screwdriver"),
-        Setting(id: 3, label: L("Working Folder"), glyph: "folder"),
+    private static let rows: [Row] = [
+        Row(id: 0, label: L("System Prompt"), glyph: "text.alignleft"),
+        Row(id: 1, label: L("Model"), glyph: "cube"),
+        Row(id: 2, label: L("Tools"), glyph: "wrench.and.screwdriver"),
+        Row(id: 3, label: L("Working Folder"), glyph: "folder"),
     ]
 
-    /// What deliberately stays behind when a template is saved.
-    private struct Kept: Identifiable {
-        let id: Int
-        let label: String
-        let glyph: String
-    }
-
-    private static let kept: [Kept] = [
-        Kept(id: 0, label: L("Files"), glyph: "doc.fill"),
-        Kept(id: 1, label: L("Keys"), glyph: "key.fill"),
-        Kept(id: 2, label: L("Chats"), glyph: "bubble.left.and.bubble.right.fill"),
-    ]
+    /// Rows the wizard has to ask about on another Mac.
+    private static let localChoiceRows: Set<Int> = [1, 3]
 
     private struct Channel: Identifiable {
         let id: Int
@@ -339,178 +329,171 @@ private struct AgentTemplatesIntroCanvas: View {
         Channel(id: 2, label: L("Orchestrator"), glyph: "sparkles"),
     ]
 
-    // Fixed geometry on a 480 x 250 canvas. The agent card stands on the
-    // left, the template document in the middle, and the destination
-    // (share channels, then the other Mac) on the right.
     private enum Layout {
-        static let midY: CGFloat = 125
-        static let settingWidth: CGFloat = 120
-        static let settingHeight: CGFloat = 28
-        static let settingGap: CGFloat = 8
-        /// Left agent card: four rows stacked inside a frame.
-        static let agentX: CGFloat = 80
-        static func agentRowY(_ index: Int) -> CGFloat { 72 + CGFloat(index) * (settingHeight + settingGap) }
-        /// Template document in the middle, rows stack tighter inside it.
-        static let docX: CGFloat = 240
-        static let docWidth: CGFloat = 150
-        static let docHeight: CGFloat = 186
-        static func docRowY(_ index: Int) -> CGFloat { 74 + CGFloat(index) * 34 }
-        /// "Stays on your Mac" cluster under the collapsed agent frame.
-        static func keptX(_ index: Int) -> CGFloat { agentX + (CGFloat(index) - 1) * 48 }
-        static let keptY: CGFloat = 148
-        static let keptTagY: CGFloat = 200
-        /// Share channels on the right.
-        static let channelX: CGFloat = 400
-        static let channelWidth: CGFloat = 120
-        static func channelY(_ index: Int) -> CGFloat { 85 + CGFloat(index) * 40 }
-        /// The other Mac in the last beat.
-        static let macX: CGFloat = 400
-        static func macRowY(_ index: Int) -> CGFloat { 72 + CGFloat(index) * (settingHeight + settingGap) }
-        /// Arrow centres between the three columns; the last one sits past
-        /// the shrunk, shifted document.
-        static let saveArrowX: CGFloat = 157
-        static let shareArrowX: CGFloat = 322
-        static let reuseArrowX: CGFloat = 311
+        static let size = CGSize(width: 360, height: 250)
+        static let center = CGPoint(x: 180, y: 125)
+        static let cardWidth: CGFloat = 200
+        static let rowHeight: CGFloat = 26
+        static let rowGap: CGFloat = 6
+        static let headerHeight: CGFloat = 30
+        static let cardHeight: CGFloat = headerHeight + 4 * (rowHeight + rowGap) + 8
+        /// Beat 2: the original steps back and the copy peels forward.
+        static let peel = CGSize(width: 18, height: 12)
+        static let copyWidth: CGFloat = 170
+        static let copyHeight: CGFloat = 150
+        /// Beat 3: fan spacing and tilt per card away from the middle one.
+        static let fanSpread: CGFloat = 78
+        static let fanAngle: Double = 13
+        static let fanBadgeY: CGFloat = center.y + copyHeight / 2 + 24
+        /// Beat 2 pill under the cards.
+        static let stayPillY: CGFloat = 232
+        /// Beat 4 laptop.
+        static let screenSize = CGSize(width: 250, height: 176)
+        static let screenCenter = CGPoint(x: 180, y: 108)
+        static let baseY: CGFloat = 206
+        static let laptopLabelY: CGFloat = 228
+        static let screenCardScale: CGFloat = 0.82
+    }
+
+    /// Seconds after a beat begins at which `phase` steps up by one.
+    private static func schedule(for stage: AgentTemplatesIntroStage) -> [Double] {
+        switch stage {
+        case .agent: return [0.4, 0.9, 1.4, 1.9]
+        case .save: return [0.5, 1.5]
+        case .share: return [0.9]
+        case .reuse: return [0.7, 2.6]
+        }
     }
 
     private var animation: Animation? {
-        reduceMotion ? nil : .spring(response: 0.6, dampingFraction: 0.82)
+        reduceMotion ? nil : .spring(response: 0.55, dampingFraction: 0.82)
     }
 
     var body: some View {
         ZStack {
-            agentFrame
-            ForEach(Self.settings) { setting in settingPill(setting) }
-            ForEach(Self.kept) { item in keptChip(item) }
-            keptTag
-            templateDocument
-            ForEach(Self.channels) { channel in channelPill(channel) }
-            otherMac
-            flowArrows
+            laptop
+            originalCard
+            stayPill
+            ForEach(0..<3, id: \.self) { index in
+                fanCopy(index)
+                fanBadge(index)
+            }
+            newCard
         }
-        .frame(width: 480, height: 250)
+        .frame(width: Layout.size.width, height: Layout.size.height)
         .clipped()
         .animation(animation, value: stage)
-        .onAppear { appeared = true }
+        .animation(animation, value: phase)
+        .task(id: stage) { await runChoreography() }
     }
 
-    // MARK: Agent card (stages 1 to 3)
+    // MARK: Choreography
 
-    private var agentFrame: some View {
-        let visible = appeared && stage != .reuse
-        let collapsed = stage == .save || stage == .share
-        return VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "person.crop.circle.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(theme.accentColor)
-                Text(L("Invoice Bot"))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(theme.primaryText)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 24)
-            Spacer(minLength: 0)
+    private func runChoreography() async {
+        let steps = Self.schedule(for: stage)
+        if reduceMotion {
+            phase = steps.count
+            return
         }
-        .frame(width: Layout.settingWidth + 20, height: collapsed ? 28 : 4 * (Layout.settingHeight + Layout.settingGap) + 30)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(theme.cardBackground)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(theme.accentColor.opacity(0.45), lineWidth: 1)
-        )
-        .scaleEffect(visible ? 1 : 0.7)
-        .opacity(visible ? 1 : 0)
-        .position(x: Layout.agentX, y: collapsed ? 40 : Layout.midY)
+        phase = 0
+        var elapsed: Double = 0
+        for at in steps {
+            try? await Task.sleep(for: .seconds(at - elapsed))
+            guard !Task.isCancelled else { return }
+            elapsed = at
+            phase += 1
+        }
     }
 
-    /// A setting row. Lives inside the agent card in beat 1, travels into
-    /// the template document in beat 2 and stays there, and is copied back
-    /// out onto the other Mac in beat 4.
-    private func settingPill(_ setting: Setting) -> some View {
-        let visible = appeared
-        let inDoc = stage == .save || stage == .share || stage == .reuse
-        // On the other Mac, model and folder are the two that need a local
-        // choice; the wizard asks for those, the rest is already right.
-        let needsChoice = stage == .reuse && (setting.id == 1 || setting.id == 3)
-        return pill(
-            label: setting.label,
-            glyph: needsChoice ? "questionmark.circle" : setting.glyph,
-            width: inDoc ? Layout.docWidth - 20 : Layout.settingWidth,
-            tint: needsChoice ? theme.warningColor : theme.accentColor,
-            subtle: inDoc && stage != .reuse
+    // MARK: Scene 1 and 2: the agent card
+
+    /// Rows switch on one by one in beat 1; in beat 2 the card steps back
+    /// and dims while its copy peels off. Gone from beat 3 on.
+    private var originalCard: some View {
+        let visible = stage == .agent || stage == .save
+        let peeled = stage == .save && phase >= 1
+        return card(
+            title: L("Invoice Bot"),
+            glyph: "person.crop.circle.fill",
+            tint: theme.accentColor,
+            rowState: { row in
+                if stage == .agent { return phase > row.id ? .checked : .hidden }
+                return .checked
+            }
         )
-        .scaleEffect(visible ? 1 : 0.6)
-        .opacity(visible ? 1 : 0)
-        .position(settingPosition(setting))
-        .animation(staggered(setting.id), value: stage)
-        .animation(staggered(setting.id), value: appeared)
+        .scaleEffect(visible ? (peeled ? 0.96 : 1) : 0.9)
+        .opacity(visible ? (peeled ? 0.55 : 1) : 0)
+        .position(
+            x: Layout.center.x - (peeled ? Layout.peel.width : 0),
+            y: Layout.center.y - (peeled ? Layout.peel.height : 0)
+        )
     }
 
-    private func settingPosition(_ setting: Setting) -> CGPoint {
+    /// What deliberately stays behind. Slides out from under the cards
+    /// once the copy has peeled.
+    private var stayPill: some View {
+        let visible = stage == .save && phase >= 2
+        return HStack(spacing: 7) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(theme.successColor)
+            Text(L("Files, keys, and chats stay on your Mac"))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(theme.primaryText)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 26)
+        .background(Capsule().fill(theme.successColor.opacity(0.14)))
+        .overlay(Capsule().stroke(theme.successColor.opacity(0.45), lineWidth: 1))
+        .opacity(visible ? 1 : 0)
+        .position(x: Layout.center.x, y: visible ? Layout.stayPillY : Layout.stayPillY - 30)
+    }
+
+    // MARK: Scene 2 and 3: the template copies
+
+    /// Three copies. In beat 2 only the middle one shows, peeling forward
+    /// off the card. In beat 3 they start stacked and fan out like a dealt
+    /// hand. In beat 4 the middle one lands on the laptop and dissolves
+    /// into the new card.
+    private func fanCopy(_ index: Int) -> some View {
+        let offset = CGFloat(index - 1)
+        let isMiddle = index == 1
+        let fanned = stage == .share && phase >= 1
+
+        let visible: Bool
+        var position = Layout.center
+        var rotation: Double = 0
+        var scale: CGFloat = 1
         switch stage {
         case .agent:
-            return CGPoint(x: Layout.agentX, y: Layout.agentRowY(setting.id) + 8)
-        case .save, .share:
-            return CGPoint(x: Layout.docX, y: Layout.docRowY(setting.id) + 6)
-        case .reuse:
-            return CGPoint(x: Layout.macX, y: Layout.macRowY(setting.id) + 8)
-        }
-    }
-
-    private static let staggerInterval: Double = 0.12
-    private func staggered(_ index: Int) -> Animation? {
-        animation?.delay(Double(index) * Self.staggerInterval)
-    }
-
-    // MARK: Stays on your Mac (stage 2)
-
-    private func keptChip(_ item: Kept) -> some View {
-        let visible = stage == .save
-        return VStack(spacing: 3) {
-            ZStack {
-                Circle()
-                    .fill(theme.successColor.opacity(0.14))
-                    .frame(width: 26, height: 26)
-                Image(systemName: item.glyph)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(theme.successColor)
+            visible = false
+            scale = 0.9
+        case .save:
+            visible = isMiddle && phase >= 1
+            position = CGPoint(x: Layout.center.x + Layout.peel.width, y: Layout.center.y + Layout.peel.height)
+        case .share:
+            visible = true
+            if fanned {
+                position = CGPoint(x: Layout.center.x + offset * Layout.fanSpread, y: Layout.center.y + abs(offset) * 8)
+                rotation = Double(offset) * Layout.fanAngle
             }
-            Text(item.label)
-                .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(theme.secondaryText)
+        case .reuse:
+            visible = isMiddle && phase == 0
+            position = Layout.screenCenter
+            scale = phase == 0 ? Layout.screenCardScale : 1.05
         }
-        .overlay(alignment: .topTrailing) {
-            Image(systemName: "lock.fill")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(theme.successColor)
-                .offset(x: 4, y: -2)
-        }
-        .scaleEffect(visible ? 1 : 0.6)
-        .opacity(visible ? 1 : 0)
-        .position(x: Layout.keptX(item.id), y: visible ? Layout.keptY : Layout.keptY + 16)
-        .animation(staggered(item.id + 2), value: stage)
-    }
 
-    private var keptTag: some View {
-        let visible = stage == .save
-        return Text(L("Stays on your Mac"))
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(theme.successColor)
+        return templateCopy
+            .rotationEffect(.degrees(rotation), anchor: .bottom)
+            .scaleEffect(visible ? scale : scale * 0.92)
             .opacity(visible ? 1 : 0)
-            .position(x: Layout.agentX, y: Layout.keptTagY)
+            .position(position)
+            .zIndex(isMiddle ? 1 : 0)
     }
 
-    // MARK: Template document (stages 2 to 4)
-
-    private var templateDocument: some View {
-        let visible = stage != .agent
-        // Steps aside in the last beat, making room for the flow onto the
-        // other Mac, but stays as the source the new agent is built from.
-        return VStack(spacing: 0) {
+    private var templateCopy: some View {
+        VStack(spacing: 0) {
             HStack(spacing: 6) {
                 Image(systemName: "square.on.square.dashed")
                     .font(.system(size: 11, weight: .semibold))
@@ -521,111 +504,184 @@ private struct AgentTemplatesIntroCanvas: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 12)
-            .frame(height: 26)
-            Spacer(minLength: 0)
+            .frame(height: 28)
+            VStack(spacing: 5) {
+                ForEach(Self.rows) { row in
+                    HStack(spacing: 7) {
+                        Image(systemName: row.glyph)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(theme.secondaryText)
+                            .frame(width: 14)
+                        Text(row.label)
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(theme.secondaryText)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 9)
+                    .frame(height: 22)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(theme.secondaryBackground.opacity(0.8))
+                    )
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 10)
         }
-        .frame(width: Layout.docWidth, height: Layout.docHeight)
+        .frame(width: Layout.copyWidth, height: Layout.copyHeight)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(theme.cardBackground)
+            RoundedRectangle(cornerRadius: 10, style: .continuous).fill(theme.cardBackground)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(theme.accentColor.opacity(0.6), style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
         )
-        .scaleEffect(visible ? (stage == .reuse ? 0.85 : 1) : 0.7)
-        .opacity(visible ? (stage == .reuse ? 0.6 : 1) : 0)
-        .position(x: stage == .reuse ? Layout.docX - 12 : Layout.docX, y: Layout.midY)
+        .shadow(color: Color.black.opacity(theme.isDark ? 0.35 : 0.12), radius: 8, y: 4)
     }
 
-    // MARK: Share channels (stage 3)
-
-    private func channelPill(_ channel: Channel) -> some View {
-        let visible = stage == .share
-        return pill(label: channel.label, glyph: channel.glyph, width: Layout.channelWidth, tint: theme.infoColor)
-            .scaleEffect(visible ? 1 : 0.7)
-            .opacity(visible ? 1 : 0)
-            .position(x: visible ? Layout.channelX : Layout.channelX + 30, y: Layout.channelY(channel.id))
-            .animation(staggered(channel.id), value: stage)
+    /// Channel tag under each fanned copy.
+    private func fanBadge(_ index: Int) -> some View {
+        let channel = Self.channels[index]
+        let visible = stage == .share && phase >= 1
+        let offset = CGFloat(index - 1)
+        return HStack(spacing: 5) {
+            Image(systemName: channel.glyph)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(theme.infoColor)
+            Text(channel.label)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(theme.primaryText)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 9)
+        .frame(height: 22)
+        .background(Capsule().fill(theme.cardBackground))
+        .overlay(Capsule().stroke(theme.infoColor.opacity(0.45), lineWidth: 1))
+        .scaleEffect(visible ? 1 : 0.7)
+        .opacity(visible ? 1 : 0)
+        .position(x: Layout.center.x + offset * Layout.fanSpread, y: visible ? Layout.fanBadgeY : Layout.fanBadgeY - 12)
     }
 
-    // MARK: The other Mac (stage 4)
+    // MARK: Scene 4: another Mac
 
-    private var otherMac: some View {
+    private var laptop: some View {
         let visible = stage == .reuse
-        return VStack(spacing: 0) {
-            HStack(spacing: 6) {
+        return ZStack {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(theme.successColor.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(theme.successColor.opacity(0.5), lineWidth: 1.5)
+                )
+                .frame(width: Layout.screenSize.width, height: Layout.screenSize.height)
+                .position(Layout.screenCenter)
+            Capsule()
+                .fill(theme.successColor.opacity(0.5))
+                .frame(width: 120, height: 6)
+                .position(x: Layout.center.x, y: Layout.baseY)
+            HStack(spacing: 5) {
                 Image(systemName: "laptopcomputer")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(theme.successColor)
+                    .font(.system(size: 11, weight: .semibold))
                 Text(L("Another Mac"))
                     .font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundStyle(theme.secondaryText)
+            .position(x: Layout.center.x, y: Layout.laptopLabelY)
+        }
+        .scaleEffect(visible ? 1 : 0.94)
+        .opacity(visible ? 1 : 0)
+    }
+
+    /// The agent rebuilt on the other Mac. Rows that need a local choice
+    /// ask first, then resolve, which is exactly what the setup wizard does.
+    private var newCard: some View {
+        let visible = stage == .reuse && phase >= 1
+        return card(
+            title: L("Invoice Bot"),
+            glyph: "person.crop.circle.fill",
+            tint: theme.successColor,
+            rowState: { row in
+                guard Self.localChoiceRows.contains(row.id) else { return .checked }
+                return phase >= 2 ? .checked : .asking
+            }
+        )
+        .scaleEffect(visible ? Layout.screenCardScale : Layout.screenCardScale * 0.9)
+        .opacity(visible ? 1 : 0)
+        .position(Layout.screenCenter)
+    }
+
+    // MARK: Card chrome
+
+    private enum RowState { case hidden, checked, asking }
+
+    private func card(
+        title: String,
+        glyph: String,
+        tint: Color,
+        rowState: @escaping (Row) -> RowState
+    ) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 7) {
+                Image(systemName: glyph)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(tint)
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(theme.primaryText)
                 Spacer(minLength: 0)
             }
+            .padding(.horizontal, 12)
+            .frame(height: Layout.headerHeight)
+            VStack(spacing: Layout.rowGap) {
+                ForEach(Self.rows) { row in
+                    settingRow(row, state: rowState(row))
+                }
+            }
             .padding(.horizontal, 10)
-            .frame(height: 24)
-            Spacer(minLength: 0)
+            .padding(.bottom, 8)
         }
-        .frame(width: Layout.settingWidth + 20, height: 4 * (Layout.settingHeight + Layout.settingGap) + 30)
+        .frame(width: Layout.cardWidth, height: Layout.cardHeight)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(theme.successColor.opacity(0.08))
+            RoundedRectangle(cornerRadius: 10, style: .continuous).fill(theme.cardBackground)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(theme.successColor.opacity(0.5), lineWidth: 1)
+                .stroke(tint.opacity(0.5), lineWidth: 1)
         )
-        .scaleEffect(visible ? 1 : 0.7)
-        .opacity(visible ? 1 : 0)
-        .position(x: visible ? Layout.macX : Layout.macX + 40, y: Layout.midY)
+        .shadow(color: Color.black.opacity(theme.isDark ? 0.35 : 0.12), radius: 8, y: 4)
     }
 
-    // MARK: Arrows
-
-    private var flowArrows: some View {
-        ZStack {
-            // Agent → template (beat 2), template → channels (beat 3),
-            // template → other Mac (beat 4).
-            arrow(visible: stage == .save, x: Layout.saveArrowX)
-            arrow(visible: stage == .share || stage == .reuse, x: stage == .reuse ? Layout.reuseArrowX : Layout.shareArrowX)
-        }
-    }
-
-    private func arrow(visible: Bool, x: CGFloat) -> some View {
-        Image(systemName: "arrow.right")
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(theme.secondaryText)
-            .opacity(visible ? 1 : 0)
-            .scaleEffect(visible ? 1 : 0.6)
-            .position(x: x, y: Layout.midY)
-    }
-
-    // MARK: Pill
-
-    private func pill(label: String, glyph: String, width: CGFloat, tint: Color, subtle: Bool = false) -> some View {
-        HStack(spacing: 7) {
-            Image(systemName: glyph)
+    private func settingRow(_ row: Row, state: RowState) -> some View {
+        let shown = state != .hidden
+        let asking = state == .asking
+        return HStack(spacing: 8) {
+            Image(systemName: row.glyph)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(tint)
+                .foregroundStyle(asking ? theme.warningColor : theme.accentColor)
                 .frame(width: 14)
-                .contentTransition(.symbolEffect(.replace))
-            Text(label)
+            Text(row.label)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(subtle ? theme.secondaryText : theme.primaryText)
+                .foregroundStyle(theme.primaryText)
                 .lineLimit(1)
-                .minimumScaleFactor(0.85)
             Spacer(minLength: 0)
+            Image(systemName: asking ? "questionmark.circle.fill" : "checkmark.circle.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(asking ? theme.warningColor : theme.successColor)
+                .contentTransition(.symbolEffect(.replace))
+                .scaleEffect(shown ? 1 : 0.4)
         }
         .padding(.horizontal, 10)
-        .frame(width: width, height: Layout.settingHeight)
+        .frame(height: Layout.rowHeight)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(subtle ? theme.secondaryBackground : theme.cardBackground)
+                .fill(asking ? theme.warningColor.opacity(0.10) : theme.secondaryBackground.opacity(0.9))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(subtle ? theme.primaryBorder.opacity(0.35) : tint.opacity(0.45), lineWidth: 1)
+                .stroke(asking ? theme.warningColor.opacity(0.5) : Color.clear, lineWidth: 1)
         )
+        .opacity(shown ? 1 : 0)
+        .offset(x: shown ? 0 : -10)
     }
 }
