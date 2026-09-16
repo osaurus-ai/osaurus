@@ -43,6 +43,42 @@ private actor ResidencyUnloadRecorder {
 
 @Suite("Model idle residency manager")
 struct ModelResidencyManagerTests {
+    @Test("changing Keep Model Loaded cancels the old deadline and off restores 30 seconds")
+    func keepLoadedChangeReplacesExistingTimer() async {
+        let sleeper = ResidencySleepRecorder()
+        let unloads = ResidencyUnloadRecorder()
+        let manager = ModelResidencyManager(sleep: { await sleeper.sleep($0) })
+        let now = Date(timeIntervalSinceReferenceDate: 100)
+        for policy in [ModelIdleResidencyPolicy.defaultWarm, .never] {
+            await manager.scheduleIdleUnload(
+                modelName: "local",
+                policy: policy,
+                now: now,
+                unload: { await unloads.unload($0) },
+                leaseCount: { _ in 0 },
+                isResident: { _ in true }
+            )
+            await Self.allowTasksToRun()
+        }
+        await sleeper.finishAll()
+        await Self.allowTasksToRun()
+        #expect(await unloads.names().isEmpty)
+        #expect(await manager.snapshots().first?.unloadAt == nil)
+        await manager.scheduleIdleUnload(
+            modelName: "local",
+            policy: .defaultWarm,
+            now: now,
+            unload: { await unloads.unload($0) },
+            leaseCount: { _ in 0 },
+            isResident: { _ in true }
+        )
+        await Self.allowTasksToRun()
+        #expect(await manager.snapshots().first?.unloadAt == now.addingTimeInterval(30))
+        await sleeper.finishAll()
+        await Self.allowTasksToRun()
+        #expect(await unloads.names() == ["local"])
+    }
+
     private static func allowTasksToRun() async {
         try? await Task.sleep(nanoseconds: 20_000_000)
     }

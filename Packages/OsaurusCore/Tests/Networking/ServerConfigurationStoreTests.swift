@@ -128,10 +128,48 @@ struct ServerConfigurationStoreTests {
         #expect(decoded.modelIdleResidencyPolicy == .afterSeconds(900))
     }
 
-    @Test func modelIdleResidencyPolicy_defaultsWarmForMultiTurnChat() async throws {
-        #expect(ServerConfiguration.default.modelIdleResidencyPolicy == .afterSeconds(900))
-        #expect(ModelIdleResidencyPolicy.presets.first == .afterSeconds(300))
+    @Test func modelIdleResidencyPolicy_defaultsToThirtySecondsWithKeepLoadedOff() async throws {
+        #expect(ServerConfiguration.default.modelIdleResidencyPolicy == .afterSeconds(30))
+        #expect(!ServerConfiguration.default.modelIdleResidencyPolicy.keepsModelLoaded)
+        #expect(ModelIdleResidencyPolicy.presets.first == .afterSeconds(30))
         #expect(ModelIdleResidencyPolicy.presets.contains(.immediately))
+    }
+
+    @Test func keepLoadedToggleUsesExistingStablePolicy() throws {
+        var policy = ModelIdleResidencyPolicy.defaultWarm
+        policy.keepsModelLoaded = true
+        #expect(policy == .never)
+        let saved = try JSONEncoder().encode(policy)
+        var restored = try JSONDecoder().decode(ModelIdleResidencyPolicy.self, from: saved)
+        #expect(restored.keepsModelLoaded)
+        restored.keepsModelLoaded = false
+        #expect(restored == .afterSeconds(30))
+    }
+
+    @Test @MainActor func oldFifteenMinuteDefaultMigratesOnceButExplicitPoliciesSurvive() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("idle-migration-\(UUID())")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer {
+            ServerConfigurationStore.overrideDirectory = nil
+            try? FileManager.default.removeItem(at: dir)
+        }
+        for policy in [ModelIdleResidencyPolicy.afterSeconds(900), .never, .immediately, .afterSeconds(77)] {
+            var config = ServerConfiguration.default
+            config.modelIdleResidencyPolicy = policy
+            var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(config)) as? [String: Any])
+            json["_modelIdleResidencyPolicyVersion"] = 1
+            try JSONSerialization.data(withJSONObject: json).write(to: dir.appendingPathComponent("server.json"))
+            ServerConfigurationStore.overrideDirectory = dir
+            #expect(
+                ServerConfigurationStore.load()?.modelIdleResidencyPolicy
+                    == (policy == .afterSeconds(900) ? .defaultWarm : policy)
+            )
+        }
+        var explicit = ServerConfiguration.default
+        explicit.modelIdleResidencyPolicy = .afterSeconds(900)
+        ServerConfigurationStore.save(explicit)
+        ServerConfigurationStore.overrideDirectory = dir
+        #expect(ServerConfigurationStore.load()?.modelIdleResidencyPolicy == .afterSeconds(900))
     }
 
     @Test @MainActor func modelIdleResidencyPolicy_migratesLegacyImmediateOnce() async throws {

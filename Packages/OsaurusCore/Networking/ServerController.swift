@@ -461,7 +461,11 @@ final class ServerController: ObservableObject {
 
     /// Saves the current configuration to disk
     func saveConfiguration() {
+        let previousIdlePolicy = ServerConfigurationStore.load()?.modelIdleResidencyPolicy
         ServerConfigurationStore.save(configuration)
+        if previousIdlePolicy != configuration.modelIdleResidencyPolicy {
+            Task { await ModelRuntime.shared.refreshIdleResidencyPolicy() }
+        }
     }
 
     /// Persists the supplied vmlx runtime settings, projects the
