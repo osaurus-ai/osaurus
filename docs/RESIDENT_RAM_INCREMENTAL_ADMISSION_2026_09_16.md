@@ -1,6 +1,6 @@
 # Bounded resident-child admission
 
-Status: local policy reproduction and regressions complete; fresh Release UI
+Status: final policy/allocator regressions passed locally; fresh Release UI
 and exact-head CI are pending. No physical M4/16 GiB qualification is claimed.
 
 ## Causal result
@@ -27,11 +27,16 @@ percentage is not a kernel pressure-level sample. Do not infer that level.
 ## Policy correction and boundaries
 
 Use incremental child pricing only when the target is resident, the request
-has an execution-enforced bound, the model budget is known, and the kernel
+has an execution-enforced bound, the model budget is known, a known allocator ceiling, and the kernel
 reports normal pressure. The cold-load OS allowance is zero on that path;
 weight reuse remains zero incremental bytes and each child still costs its
 full bounded state estimate. At the reporter's byte count, a ceiling of one
-admits one child and retains 1,905,164,288 measured bytes beyond its price.
+admits one child after also charging the full 1,474,808,049-byte allocator
+ceiling, leaving 430,356,239 bytes beyond both allowances. The allocator is
+shared: charge its full prospective generation ceiling once per wave, not once
+per child. Current cached bytes are not credited because they may be compressed
+or nonresident. The same helper resolves native-MTP/architecture-specific
+generation windows and admission; the profile display default is insufficient.
 
 Cold loads, unbounded requests, unknown pressure and warning pressure retain
 the existing allowance. Critical pressure refuses RAM-safe local admission.
@@ -91,3 +96,11 @@ targeted repeated-child and batching evals; full applicable agent evals;
 exact-head CI. Retain all failures and distinguish model task fidelity from
 admission. The local host has 128 GiB: injected 16 GiB-scale facts establish
 policy behavior, not physical M4 paging performance.
+
+Build `SWIFTTEST_ResidentRAMBuild0916__230705.log` was deliberately stopped
+(exit130, owned cleanup zero) before acceptance to include the allocator pool
+allowance found during review. It is not a build/test failure or runtime proof.
+
+Final focused rerun after shared allocator pricing: `SWIFTTEST_ResidentRAMTests0916__231402.log`,
+40 tests / five suites / zero failures, including all 18 committed fixtures.
+`tests-20260915-231403/source-receipt.json` records exact inputs and argv.

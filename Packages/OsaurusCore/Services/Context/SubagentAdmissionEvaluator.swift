@@ -15,6 +15,7 @@ public enum SubagentAdmissionEvaluator {
         public let loadBudgetBytes: UInt64?
         public let reserveBytes: UInt64
         public let memoryPressure: SubagentMemoryPressure?
+        public let allocatorCacheAllowanceBytes: UInt64?
 
         fileprivate var memory: SubagentBatchMemoryFacts {
             .init(canonicalModelKey: model, targetAlreadyResident: resident,
@@ -25,7 +26,8 @@ public enum SubagentAdmissionEvaluator {
                   releasableParentBytes: parentCreditBytes,
                   resolvedLoadBudgetBytes: loadBudgetBytes,
                   osHeadroomBytes: reserveBytes,
-                  memoryPressure: memoryPressure ?? .unknown)
+                  memoryPressure: memoryPressure ?? .unknown,
+                  allocatorCacheAllowanceBytes: allocatorCacheAllowanceBytes)
         }
     }
 

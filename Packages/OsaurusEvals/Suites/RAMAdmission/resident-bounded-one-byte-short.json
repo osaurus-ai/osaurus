@@ -24,11 +24,12 @@
                 "loadBytes": 5899232198,
                 "childCapBytes": 6055526640,
                 "childBytes": 536870912,
-                "availableBytes": 536870911,
+                "availableBytes": 2011678960,
                 "parentCreditBytes": 0,
                 "loadBudgetBytes": 12025908428,
                 "reserveBytes": 3221225472,
-                "memoryPressure": "normal"
+                "memoryPressure": "normal",
+                "allocatorCacheAllowanceBytes": 1474808049
               },
               "after": {
                 "model": "gemma-4-e2b-it-8bit",
@@ -36,11 +37,12 @@
                 "loadBytes": 5899232198,
                 "childCapBytes": 6055526640,
                 "childBytes": 536870912,
-                "availableBytes": 536870911,
+                "availableBytes": 2011678960,
                 "parentCreditBytes": 0,
                 "loadBudgetBytes": 12025908428,
                 "reserveBytes": 3221225472,
-                "memoryPressure": "normal"
+                "memoryPressure": "normal",
+                "allocatorCacheAllowanceBytes": 1474808049
               },
               "reclaimSucceeds": true
             }

@@ -2686,14 +2686,26 @@ public actor ModelRuntime {
         )
         guard usesAdmittedCeiling else { return false }
         admittedAllocatorGenerationCount += 1
-        Memory.cacheLimit = Self.effectiveGenerationMLXCacheLimit(
+        Memory.cacheLimit = generationAllocatorCacheLimit(holder: holder, requestStrategy: requestStrategy)
+        return true
+    }
+
+    /// Shared by generation and resident-child admission. The allocator is
+    /// process-wide, so price its full prospective ceiling once per wave.
+    private func generationAllocatorCacheLimit(
+        holder: SessionHolder,
+        requestStrategy: MLXLMCommon.DraftStrategy?
+    ) -> Int {
+        Self.effectiveGenerationMLXCacheLimit(
             persistentLimit: mlxCacheLimit(),
             admittedMemoryLimit: Memory.memoryLimit,
             modelWeightsBytes: holder.weightsSizeBytes,
             physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory,
-            requiresAdmittedCeiling: true
+            requiresAdmittedCeiling: Self.requiresAdmittedMLXAllocatorCeiling(
+                isPlainDeepseekV4AffineJANG: holder.requiresAdmittedMLXAllocatorCeiling,
+                usesNativeMTP: requestStrategy?.usesNativeMTP == true
+            )
         )
-        return true
     }
 
     private func finishGenerationAllocatorWindowIfNeeded(_ active: Bool) {
@@ -3621,6 +3633,15 @@ public actor ModelRuntime {
         // bytes are already reflected in the host sample; disk sizes and
         // unrelated residents must never become hypothetical credit.
 
+        let allocatorAllowance: UInt64? = modelCache[profile.canonicalName].flatMap { holder in
+            Self.nonnegativeUInt64(Int64(max(
+                Memory.cacheLimit,
+                generationAllocatorCacheLimit(
+                    holder: holder, requestStrategy: Self.requestDraftStrategy(holder.draftStrategy)
+                )
+            )))
+        }
+
         return SubagentBatchMemoryFacts(
             canonicalModelKey: profile.canonicalName,
             targetAlreadyResident: profile.targetAlreadyResident,
@@ -3641,7 +3662,8 @@ public actor ModelRuntime {
             releasableParentBytes: 0,
             resolvedLoadBudgetBytes: profile.resolvedLoadBudgetBytes,
             osHeadroomBytes: Self.nonnegativeUInt64(SubagentCoexistence.headroomBytes) ?? 0,
-            memoryPressure: SubagentMemoryPressure.sampled()
+            memoryPressure: SubagentMemoryPressure.sampled(),
+            allocatorCacheAllowanceBytes: allocatorAllowance
         )
     }
 

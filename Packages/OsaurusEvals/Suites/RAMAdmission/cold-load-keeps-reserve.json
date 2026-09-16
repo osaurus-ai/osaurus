@@ -28,7 +28,8 @@
                 "parentCreditBytes": 0,
                 "loadBudgetBytes": 12025908428,
                 "reserveBytes": 3221225472,
-                "memoryPressure": "normal"
+                "memoryPressure": "normal",
+                "allocatorCacheAllowanceBytes": 1474808049
               },
               "after": {
                 "model": "gemma-4-e2b-it-8bit",
@@ -40,7 +41,8 @@
                 "parentCreditBytes": 0,
                 "loadBudgetBytes": 12025908428,
                 "reserveBytes": 3221225472,
-                "memoryPressure": "normal"
+                "memoryPressure": "normal",
+                "allocatorCacheAllowanceBytes": 1474808049
               },
               "reclaimSucceeds": true
             }

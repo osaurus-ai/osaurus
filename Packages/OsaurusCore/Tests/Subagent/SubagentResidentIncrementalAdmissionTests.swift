@@ -7,13 +7,15 @@ import Testing
 struct SubagentResidentIncrementalAdmissionTests {
     private let child: UInt64 = 536_870_912
     private let reporterAvailable: UInt64 = 2_442_035_200
+    private let allocatorAllowance: UInt64 = 1_474_808_049
 
     private func facts(
         available: UInt64? = 2_442_035_200,
         resident: Bool = true,
         pressure: SubagentMemoryPressure = .normal,
         bounded: Bool = true,
-        budget: UInt64? = 12_025_908_428
+        budget: UInt64? = 12_025_908_428,
+        allocator: UInt64? = 1_474_808_049
     ) -> SubagentBatchMemoryFacts {
         .init(
             canonicalModelKey: "gemma-4-e2b-it-8bit",
@@ -25,7 +27,8 @@ struct SubagentResidentIncrementalAdmissionTests {
             releasableParentBytes: 0,
             resolvedLoadBudgetBytes: budget,
             osHeadroomBytes: 3_221_225_472,
-            memoryPressure: pressure
+            memoryPressure: pressure,
+            allocatorCacheAllowanceBytes: allocator
         )
     }
 
@@ -50,6 +53,7 @@ struct SubagentResidentIncrementalAdmissionTests {
             #expect(decision.incrementalWeightChargeBytes == 0)
             #expect(decision.perActiveChildHeadroomBytes == child)
             #expect(decision.memoryDiagnostics["os_reserve_bytes"] as? UInt64 == 0)
+            #expect(decision.memoryDiagnostics["allocator_allowance_bytes"] as? UInt64 == allocatorAllowance)
             if decision.localCapacity > 0 {
                 #expect(await admission.reserveLocalInPlace(
                     modelKey: "gemma-4-e2b-it-8bit", requestedSlots: 1,
@@ -63,23 +67,26 @@ struct SubagentResidentIncrementalAdmissionTests {
 
     @Test("resident reuse still pays every child's state and respects engine width")
     func everyChildIsPriced() {
-        let decision = plan(facts(available: 2 * child - 1), jobs: 3, ceiling: 3)
+        let decision = plan(facts(available: allocatorAllowance + 2 * child - 1), jobs: 3, ceiling: 3)
         #expect(decision.ramSlots == 1)
         #expect(decision.localSubwaveSizes == [1, 1, 1])
-        let two = plan(facts(available: 2 * child), jobs: 3, ceiling: 3)
+        let two = plan(facts(available: allocatorAllowance + 2 * child), jobs: 3, ceiling: 3)
         #expect(two.ramSlots == 2)
         #expect(two.localSubwaveSizes == [2, 1])
+        #expect(two.projectedIncrementalPeakBytes == allocatorAllowance + 2 * child)
+        #expect(two.projectedModelWorkingSetBytes == 5_899_232_198 + allocatorAllowance + 2 * child)
         #expect(plan(facts(), jobs: 1, ceiling: 1).localCapacity == 1)
     }
 
     @Test("insufficient bytes, unknown samples, model budgets and cold loads still refuse")
     func unsafeRequestsStillRefuse() {
-        for sample in [facts(available: child - 1), facts(available: nil),
-                       facts(budget: 5_899_232_198 + child - 1), facts(resident: false),
-                       facts(bounded: false), facts(budget: nil)] {
+        for sample in [facts(available: allocatorAllowance + child - 1), facts(available: nil),
+                       facts(budget: 5_899_232_198 + allocatorAllowance + child - 1), facts(resident: false),
+                       facts(bounded: false), facts(budget: nil), facts(allocator: nil),
+                       facts(allocator: UInt64.max)] {
             #expect(plan(sample).localCapacity == 0)
         }
-        #expect(plan(facts(available: child)).localCapacity == 1)
+        #expect(plan(facts(available: allocatorAllowance + child)).localCapacity == 1)
     }
 
     @Test("kernel pressure decoding never defaults a failed or unknown reading to normal")
@@ -90,6 +97,19 @@ struct SubagentResidentIncrementalAdmissionTests {
         for value: Int32 in [0, -1, 3, 5, Int32.max] {
             #expect(SubagentMemoryPressure.fromKernelLevel(value) == .unknown)
         }
+    }
+
+    @Test("allocator allowance above the model budget cannot be repaired by trimming")
+    func allocatorBudgetShortfallDoesNotTrim() async {
+        var trims = 0
+        let before = facts(budget: 5_899_232_198 + allocatorAllowance + child - 1)
+        let result = await SubagentBatchAdmissionPlanner.memoryFactsAfterReclaimingIfNeeded(
+            ramSafetyEnabled: true, sample: { before },
+            reclaim: { trims += 1; return true }, waitForPostReclaimSample: {}
+        )
+        #expect(result == before)
+        #expect(trims == 0)
+        #expect(plan(before).localCapacity == 0)
     }
 
     @Test("unknown or warning pressure preserves the conservative reserve; critical refuses")
