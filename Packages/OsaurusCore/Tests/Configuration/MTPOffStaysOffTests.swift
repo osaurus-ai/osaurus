@@ -4,21 +4,9 @@
 //
 //  Turning native MTP off did not stay off.
 //
-//  `ServerRuntimeSettingsStore` carries a repair for installs that persisted
-//  the pre-e095d0f engine default ("MTP off") before the default became
-//  "auto". It fires whenever `mode == .off` and the other three MTP fields are
-//  at their defaults — which is ALSO exactly the shape of a user who just
-//  toggled MTP off and touched nothing else. The repair cannot tell those two
-//  apart, it ran on every `load()`, and `load()` persists what it changed. So
-//  the user's choice was silently rewritten to `.auto`, permanently.
-//
-//  Five sibling repairs in the same file are one-shot, gated by a marker file
-//  (`diffusion-defaults-migrated.marker`, `tied-head-...`, `cache-...`,
-//  `paged-cache-...`, `memory-safety-...`). This one had no marker at all.
-//
-//  These go through the store's real load path, because a test that calls the
-//  normalizer directly would prove it is correct, not that the user's setting
-//  survives.
+//  Native MTP defaults Off. Both current settings and legacy settings must
+//  preserve Off through the real store load path, including repeated reloads.
+//  These regressions cover the retired Off-to-Auto migration.
 //
 
 import Foundation
@@ -93,21 +81,14 @@ final class MTPOffStaysOffTests: XCTestCase {
         }
     }
 
-    /// The counter-case the repair exists for must still work: a genuine
-    /// pre-migration install (no schemaVersion) carrying the old default does
-    /// get moved to auto. Without this the test above could be "passed" by
-    /// deleting the repair outright.
-    func testLegacyInstallStillGetsRepairedToAuto() throws {
+    /// Legacy settings also remain opt-in; schema migration must not activate MTP.
+    func testLegacyInstallKeepsMTPOff() throws {
         var settings = VMLXServerRuntimeSettings()
-        settings.schemaVersion = nil  // never migrated
+        settings.schemaVersion = nil
         settings.mtp.mode = .off
-        let data = try JSONEncoder().encode(settings)
-        try data.write(to: settingsFileURL())
-
-        let loaded = try XCTUnwrap(ServerRuntimeSettingsStore.load())
-
-        XCTAssertEqual(
-            loaded.mtp.mode, .auto,
-            "the legacy-default repair no longer reaches a pre-migration install")
+        try JSONEncoder().encode(settings).write(to: settingsFileURL())
+        for _ in 0..<3 {
+            XCTAssertEqual(try XCTUnwrap(ServerRuntimeSettingsStore.load()).mtp.mode, .off)
+        }
     }
 }

@@ -270,11 +270,8 @@ public actor ModelRuntime {
     /// `MTPBundleInspector.inspect` reads the safetensors index UNIONED with
     /// shard headers, so the signal is the actual weights.
     ///
-    /// `isTargetMTPFamily` scopes the controls to the two model families these
-    /// controls are for — Qwen 3.8 Flash Next (`qwen4_exp`) and Qwen3.8-27B
-    /// (`qwen3_5`). This IS read from config (`model_type`), which is reliable
-    /// for architecture (unlike the `mtp` presence field). Other MTP-carrying
-    /// families (Ornith `qwen3_5_moe`, GLM `glm5_next`) are excluded.
+    /// `isTargetMTPFamily` uses the engine's launch-policy architecture registry.
+    /// Tensor evidence alone cannot enable a head the runtime cannot execute.
     struct LoadingModelMTPStatus: Sendable, Equatable {
         let name: String
         let bundleHasMTP: Bool
@@ -288,11 +285,6 @@ public actor ModelRuntime {
         let measuredFamilyAutoDepth: Int?
         let statusLine: String
     }
-
-    /// Model families whose native-MTP depth controls we surface: Qwen 3.8
-    /// Flash Next and Qwen3.8-27B. Kept here so the settings + chat surfaces
-    /// gate identically.
-    nonisolated static let mtpControlModelTypes: Set<String> = ["qwen4_exp", "qwen3_5"]
 
     /// Names of models with an in-flight load (weights not yet resident). Cheap
     /// and actor-isolated; the weight inspection runs off-actor via
@@ -322,10 +314,8 @@ public actor ModelRuntime {
         )
     }
 
-    /// Reads `config.json`'s `model_type` (top-level or nested `text_config`)
-    /// and returns whether it is one of the Flash-Next / 27B families the MTP
-    /// controls target. Architecture in config is reliable; only the `mtp`
-    /// presence flag is not.
+    /// Share the engine's architecture policy instead of maintaining a narrower
+    /// UI list. Actual head weights are checked separately by the inspector.
     nonisolated static func modelTypeIsMTPControlTarget(directory: URL) -> Bool {
         let configURL = directory.appendingPathComponent("config.json")
         guard let data = try? Data(contentsOf: configURL) else { return false }
@@ -333,14 +323,7 @@ public actor ModelRuntime {
     }
 
     nonisolated static func modelTypeIsMTPControlTarget(configData: Data) -> Bool {
-        guard let object = (try? JSONSerialization.jsonObject(with: configData)) as? [String: Any]
-        else { return false }
-        var types: Set<String> = []
-        if let top = object["model_type"] as? String { types.insert(top) }
-        if let text = (object["text_config"] as? [String: Any])?["model_type"] as? String {
-            types.insert(text)
-        }
-        return !types.isDisjoint(with: mtpControlModelTypes)
+        NativeMTPAutoDecodePolicy.supportsModel(configData: configData)
     }
 
     struct LiveVoiceAudioPreencodeResult: Sendable, Equatable {

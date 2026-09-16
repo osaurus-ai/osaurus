@@ -465,15 +465,13 @@ struct FloatingInputCard: View {
     /// showing the control there would advertise speculation it cannot do.
     /// Sourced from the engine's own per-model status, never from the name.
     @State private var nativeMTPCapableModels: Set<String> = []
-    /// Metadata-scoped default, independent of whether a real MTP head exists.
-    @State private var nativeMTPDefaultOffModels: Set<String> = []
     /// Resident models whose bundle metadata explicitly blocks manual MTP.
     /// Kept separate from capability: the head still exists, but presenting
     /// selectable depths would lie because the runtime must stay AR-only.
     @State private var nativeMTPManuallyBlockedModels: Set<String> = []
     /// Mirrors `mtp.mode` / `mtp.draftTokenLimit` so the row renders the value
     /// that is actually saved rather than a local guess.
-    @State private var nativeMTPSelection: String = "auto"
+    @State private var nativeMTPSelection: String = "off"
 
     // MARK: - SSD Cache Quota Notice
 
@@ -2528,13 +2526,9 @@ extension FloatingInputCard {
                 ? L(
                     "Speculative decoding is disabled for this bundle because its MTP head is not safe for production use."
                 )
-                : nativeMTPDefaultOffModels.contains(identity)
-                    ? L(
-                        "Flash Next starts with speculative decoding Off. You can select Auto or a maximum depth of 1–3 explicitly. Your configured sampling stays in effect."
-                    )
-                    : L(
-                        "Auto activates from tuning or a supported family default and adapts up to depth 5. Depths 1–3 set a maximum; the runtime may lower the depth or use plain decoding when speculation stops paying. Your configured sampling stays in effect."
-                    )
+                : L(
+                    "Speculative decoding starts Off. Select Auto or a maximum depth of 1–3 explicitly. The runtime may lower the depth or use plain decoding when speculation stops paying. Your configured sampling stays in effect."
+                )
         )
     }
 
@@ -2558,33 +2552,11 @@ extension FloatingInputCard {
     ///
     /// Depth-only changes apply to the next request; changes that require a
     /// different loaded model graph follow the guarded reload lifecycle.
-    /// UserDefaults key: the user pressed an MTP segment themselves at least
-    /// once. From that point the family default logic never touches the
-    /// setting again — their choice outranks the Qwen family d3 default.
-    private static let mtpSegmentUserChoseKey = NativeMTPSelectionDefault.userChoseKey
-    /// UserDefaults key: the CURRENT saved segment was written by the
-    /// Qwen family default, not by a person. Only a state we wrote is
-    /// ours to revert when the selection leaves the family.
-    private static let mtpSegmentFamilyDefaultKey = NativeMTPSelectionDefault.familyDefaultKey
-
-    private func applyNativeMTPSegment(_ segment: String, userInitiated: Bool = true) {
-        if userInitiated {
-            UserDefaults.standard.set(true, forKey: Self.mtpSegmentUserChoseKey)
-            UserDefaults.standard.set(false, forKey: Self.mtpSegmentFamilyDefaultKey)
-        }
-        let modelAtSelection = selectedModel
-        let mtpAtSelection = ServerController.runtimeSettingsForConfigureTool().settings.mtp
-        nativeMTPSelection = segment
+    private func applyNativeMTPSegment(_ segment: String) {
         Task { @MainActor in
-            // Read the latest document when the task actually runs: a delayed
-            // default must not replay unrelated stale settings or beat a click.
+            // Read the latest settings when the task executes; only an
+            // explicit control action writes MTP. Selection is read-only.
             var settings = ServerController.runtimeSettingsForConfigureTool().settings
-            if !userInitiated {
-                guard selectedModel == modelAtSelection,
-                    !UserDefaults.standard.bool(forKey: Self.mtpSegmentUserChoseKey),
-                    settings.mtp == mtpAtSelection
-                else { return }
-            }
             switch segment {
             case "off":
                 settings.mtp.mode = .off
@@ -2595,45 +2567,15 @@ extension FloatingInputCard {
                 settings.mtp.draftTokenLimit = nil
                 settings.mtp.explicitDepth = nil
             default:
-                // Explicit depth is a manual ACTIVATION contract, not an auto
-                // hint: forceOn + explicitDepth activates a tensor-complete MTP
-                // head without measured tuning (the engine validates family and
-                // tensor evidence and fails closed otherwise, e.g. JANG_1L).
-                // Sampling stays independent of the depth selection.
-                // The old wiring (auto + draftTokenLimit) selected a depth in the
-                // UI while the engine stayed autoregressive.
+                guard let depth = Int(segment), (1...3).contains(depth) else { return }
                 settings.mtp.mode = .forceOn
-                settings.mtp.explicitDepth = Int(segment)
+                settings.mtp.explicitDepth = depth
                 settings.mtp.draftTokenLimit = nil
             }
-            _ = await ServerController.applyRuntimeSettingsFromConfigureTool(
-                settings,
-                mtpSelectionIsFamilyDefault: !userInitiated
-            )
-        }
-    }
-
-    /// Flash Next starts Off; eligible Qwen27B retains D3. Selectors remain
-    /// available for real heads, and an explicit choice always wins.
-    /// Only a value owned by this default may be reverted on leaving the family.
-    private func applyNativeMTPDefaultDepthIfNeeded(eligible: Bool, startsOff: Bool) {
-        let defaults = UserDefaults.standard
-        let mtp = ServerController.runtimeSettingsForConfigureTool().settings.mtp
-        switch NativeMTPSelectionDefault.action(
-            settings: mtp,
-            eligible: eligible,
-            startsOff: startsOff,
-            userHasChosen: defaults.bool(forKey: Self.mtpSegmentUserChoseKey),
-            ownsCurrentValue: defaults.bool(forKey: Self.mtpSegmentFamilyDefaultKey)
-        ) {
-        case .keep:
-            return
-        case .selectOff:
-            applyNativeMTPSegment("off", userInitiated: false)
-        case .selectDepthThree:
-            applyNativeMTPSegment("3", userInitiated: false)
-        case .restoreAuto:
-            applyNativeMTPSegment("auto", userInitiated: false)
+            _ = await ServerController.applyRuntimeSettingsFromConfigureTool(settings)
+            // A rejected save must not leave an optimistic segment displayed.
+            nativeMTPSelection = Self.nativeMTPSegment(
+                ServerController.runtimeSettingsForConfigureTool().settings.mtp)
         }
     }
 
@@ -2657,8 +2599,8 @@ extension FloatingInputCard {
             // Early, by-WEIGHT capability for models still LOADING, so the
             // depth row appears during warmup instead of minutes later.
             // Weight-based (configs lie: JANG_1L has no `mtp` field; a 27B
-            // index omitted its mtp.* tensors) and family-gated to the
-            // Flash-Next/27B targets — other families are untouched. File-only
+            // index omitted its mtp.* tensors) and gated by the engine
+            // launch policy, shared with pre-load selection. File-only
             // inspection, run off-main.
             let loadingNames = await ModelRuntime.shared.loadingModelNames()
             if !loadingNames.isEmpty {
@@ -3324,7 +3266,7 @@ extension FloatingInputCard {
                 nativeMTPManuallyBlockedModels.contains(identity) ? "off" : nativeMTPSelection
             )
             displayDefaults[Self.nativeMTPOptionID] = .string(
-                nativeMTPDefaultOffModels.contains(identity) ? "off" : "auto"
+                "off"
             )
         }
 
@@ -3339,7 +3281,7 @@ extension FloatingInputCard {
                 // per-model would persist a value the load path never reads.
                 if optionId == Self.nativeMTPOptionID {
                     DispatchQueue.main.async {
-                        applyNativeMTPSegment(newValue?.stringValue ?? "auto")
+                        applyNativeMTPSegment(newValue?.stringValue ?? "off")
                     }
                     return
                 }
@@ -4410,19 +4352,10 @@ extension FloatingInputCard {
             // Selection must expose the controls before Send. This reads only
             // bundle metadata/headers; it neither loads nor warms the model.
             let capability = ModelRuntime.inspectLoadingModelMTP(name: model)
-            let defaultEligible = NativeMTPSelectionDefault.isEligible(
-                bundleDirectory: bundleDir
-            )
-            let startsOff = NativeMTPSelectionDefault.startsOff(bundleDirectory: bundleDir)
             await MainActor.run {
                 // The selection may have moved while we were on disk.
                 guard selectedModel == model else { return }
                 let identity = Self.mtpIdentity(model)
-                if startsOff {
-                    nativeMTPDefaultOffModels.insert(identity)
-                } else {
-                    nativeMTPDefaultOffModels.remove(identity)
-                }
                 if let capability, capability.bundleHasMTP, capability.isTargetMTPFamily {
                     nativeMTPCapableModels.insert(identity)
                     if capability.isBlocked {
@@ -4434,7 +4367,6 @@ extension FloatingInputCard {
                     nativeMTPCapableModels.remove(identity)
                     nativeMTPManuallyBlockedModels.remove(identity)
                 }
-                applyNativeMTPDefaultDepthIfNeeded(eligible: defaultEligible, startsOff: startsOff)
                 // Shown once per bundle per improper-state fingerprint: a
                 // dismissed state stays quiet across relaunches, while a
                 // DIFFERENT improper state re-arms the notice.

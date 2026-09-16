@@ -45,6 +45,21 @@ Ask the assistant to change declarative settings in chat (`osaurus_config`); eac
 
 Unknown-Model Metadata Fallback on the same Cache panel does **not** constrain local models. Use Context Window Cap to lower the window.
 
+## Speculative decoding
+
+Native MTP starts **Off**. Selecting a compatible local model shows **Speculative
+Depth** in the model picker's options after its configuration and weight headers
+are inspected; sending a request or loading weights is not required. Choose
+**Auto** or a maximum depth of **1–3** to opt in. The runtime can lower that depth
+or use ordinary decoding when speculation does not help. Sampling settings remain
+independent. Models without an executable MTP head do not advertise these controls.
+
+The same global setting lives under Server → Settings → **Speculative Decoding**
+and applies to Chat and API requests. Saved explicit choices survive model
+selection and relaunch. Old defaults are turned off only when the app recorded
+that it chose them automatically. An explicitly selected DFlash 2 drafter is a
+separate opt-in; remove its folder selection to stop using it.
+
 ## Local model memory
 
 Server → Settings → Model Memory contains **Keep Model Loaded** (off by

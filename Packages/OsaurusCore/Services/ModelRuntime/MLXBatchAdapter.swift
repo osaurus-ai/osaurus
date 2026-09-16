@@ -277,12 +277,8 @@ struct MLXBatchAdapter {
         if disableNativeMTP {
             return nil
         }
-        // Sampling is NOT a reason to abandon MTP any more. The submit path
-        // coerces the running parameters to greedy whenever MTP is active, so
-        // the equivalence precondition holds by construction. Dropping MTP
-        // here meant an ordinary chat turn — which reports
-        // `samplingParametersAreImplicit` — never engaged it at all, while the
-        // UI still said "MTP depth 2".
+        // Preserve the resolved sampler. The engine selects greedy or exact
+        // sampled verification; capability fallback must not alter sampling.
         if let promptTokenCount,
             promptTokenCount < nativeMTPTinyPromptMinimumTokens
         {
