@@ -610,9 +610,15 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
     }
 
     /// Plan note so the approval card and the model both see the lineage.
+    @MainActor
     private static func annotate(_ plan: inout ConfigPlan, basedOn template: AgentTemplate?) {
         guard let template else { return }
         plan.notes.insert("Based on template: \(template.name)", at: 0)
+        if case .fallbackToDefault(let requested) = template.modelResolution() {
+            plan.notes.append(
+                "Template prefers model `\(requested)`, which is not installed here; "
+                    + "the agent uses the default model instead.")
+        }
         let unresolved = template.requires.filter { $0.kind != .model }
         if !unresolved.isEmpty {
             plan.notes.append(
@@ -654,9 +660,24 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
                         + "The user can enable it from the Templates tab (Show to Orchestrator).",
                     field: "template", tool: name))
         }
+        // A template that insists on its model cannot be applied without it.
+        // The orchestrator can still pass `overrides.model` to substitute.
+        if overrides?.model.isSpecified != true,
+            case .blocked(let requested) = template.modelResolution()
+        {
+            return .failure(
+                ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "Template `\(template.name)` requires model `\(requested)`, which is not "
+                        + "installed on this Mac. Ask the user to install it (list it under `models:` "
+                        + "for a local model, or connect the provider), or pass `overrides.model` "
+                        + "to substitute a model the user chose.",
+                    field: "template", tool: name))
+        }
         var document = OsaurusConfigDocument()
         document.version = 1
-        // Knowledge collection names resolve to this Mac's ids here.
+        // Knowledge collection names resolve to this Mac's ids here, and a
+        // missing `preferred` model becomes null (default model).
         document.agents = [template.resolvedEntry(overrides: overrides)]
         return .success(document, basedOn: template)
     }

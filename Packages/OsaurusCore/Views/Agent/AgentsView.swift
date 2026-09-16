@@ -520,6 +520,18 @@ struct AgentsView: View {
         let entry = template.resolvedEntry()
         let draft = ConfigApplier.draftAgent(from: entry)
         var notices = draft.outcome.notes
+        var requiredModel: String?
+        switch template.modelResolution() {
+        case .available:
+            break
+        case .fallbackToDefault(let requested):
+            notices.append(
+                L("The template prefers \(requested), which is not installed here. Your default model is used instead. Install it from Local Models or Providers to match the template."))
+        case .blocked(let requested):
+            requiredModel = requested
+            notices.append(
+                L("The template requires \(requested), which is not installed here. Install it, or pick another model below before creating the agent."))
+        }
         // Knowledge names the template needs but this Mac does not have.
         let localNames = Set(KnowledgeCollectionStore.loadAll().map { $0.name.lowercased() })
         let missingKnowledge = template.knowledgeCollectionNames.filter { !localNames.contains($0.lowercased()) }
@@ -530,7 +542,8 @@ struct AgentsView: View {
         creationSeed = AgentEditorSeed(
             subtitle: L("Based on the \(template.name) template"),
             agent: draft.agent,
-            notices: notices
+            notices: notices,
+            requiredModelMissing: requiredModel
         )
         isCreating = true
     }
@@ -8199,6 +8212,9 @@ struct AgentEditorSeed {
     var subtitle: String
     var agent: Agent
     var notices: [String] = []
+    /// Set when the template's model policy is `always` and that model is
+    /// not installed: Create stays disabled until the user picks a model.
+    var requiredModelMissing: String? = nil
 }
 
 private struct AgentEditorSheet: View {
@@ -8245,7 +8261,11 @@ private struct AgentEditorSheet: View {
     private var agentColor: Color { agentColorFor(name) }
 
     private var canSave: Bool {
-        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        // A template that insists on a specific model blocks Create until
+        // the user has chosen one (the seed cleared the missing pin).
+        if seed?.requiredModelMissing != nil, selectedModel == nil { return false }
+        return true
     }
 
     var body: some View {

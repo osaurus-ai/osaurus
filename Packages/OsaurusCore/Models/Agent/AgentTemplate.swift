@@ -459,12 +459,64 @@ extension AgentTemplate {
 
     // MARK: - Resolving on this machine
 
+    /// How the template's model maps onto this Mac.
+    public enum ModelResolution: Equatable, Sendable {
+        /// No model pinned, or the exact model (canonical id) is available.
+        case available(String?)
+        /// `preferred` policy and the model is missing: use the user's
+        /// default model and say so.
+        case fallbackToDefault(requested: String)
+        /// `always` policy and the model is missing: setup must wait for the
+        /// model to be installed or a substitute to be chosen.
+        case blocked(requested: String)
+
+        public var requestedModel: String? {
+            switch self {
+            case .available: return nil
+            case .fallbackToDefault(let m), .blocked(let m): return m
+            }
+        }
+    }
+
+    /// Resolves the template's pinned model against the live catalog using
+    /// the same rules as `osaurus_config` (local bundles, provider prefixes,
+    /// bare cloud ids offered by exactly one provider).
+    @MainActor
+    public func modelResolution() -> ModelResolution {
+        modelResolution(catalog: ConfigModelReference.liveCatalog())
+    }
+
+    func modelResolution(catalog: ConfigModelReference.Catalog) -> ModelResolution {
+        guard let requested = agent.model.valueOrNil?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !requested.isEmpty
+        else { return .available(nil) }
+        switch ConfigModelReference.resolve(requested, catalog: catalog) {
+        case .resolved(let canonical):
+            return .available(canonical)
+        case .invalid:
+            return modelPolicy == .always
+                ? .blocked(requested: requested)
+                : .fallbackToDefault(requested: requested)
+        }
+    }
+
     /// The agent entry with template requirements mapped to what exists
     /// here: knowledge collection names become local ids (unmatched names
-    /// are left for the setup checklist).
+    /// are left for the setup checklist), and a missing model becomes
+    /// `null` (the user's default) so the created agent is never pinned to
+    /// something it cannot run. An explicit `overrides.model` is left for
+    /// the planner to validate.
     @MainActor
     public func resolvedEntry(overrides: AgentEntry? = nil) -> AgentEntry {
         var entry = document(overrides: overrides).agents?.first ?? agent
+        if overrides?.model.isSpecified != true {
+            switch modelResolution() {
+            case .available(let canonical):
+                entry.model = canonical.map { .value($0) } ?? .null
+            case .fallbackToDefault, .blocked:
+                entry.model = .null
+            }
+        }
         let wanted = knowledgeCollectionNames
         if !wanted.isEmpty {
             let collections = KnowledgeCollectionStore.loadAll()

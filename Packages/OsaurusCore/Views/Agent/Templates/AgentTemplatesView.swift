@@ -49,6 +49,16 @@ struct AgentTemplatesView: View {
     let showError: (String) -> Void
 
     @State private var isDropTargeted = false
+    /// Snapshot of the model catalog, refreshed on appear and when the
+    /// library changes, so each card can mark a missing model without
+    /// rebuilding the catalog per render.
+    @State private var catalog: ConfigModelReference.Catalog?
+
+    private func modelAvailable(_ template: AgentTemplate) -> Bool {
+        guard let catalog else { return true }
+        if case .available = template.modelResolution(catalog: catalog) { return true }
+        return false
+    }
 
     var body: some View {
         Group {
@@ -57,6 +67,10 @@ struct AgentTemplatesView: View {
             } else {
                 grid
             }
+        }
+        .onAppear { catalog = ConfigModelReference.liveCatalog() }
+        .onChange(of: store.templates.map(\.id)) { _, _ in
+            catalog = ConfigModelReference.liveCatalog()
         }
         .onDrop(of: [.fileURL, .json, .plainText], isTargeted: $isDropTargeted) { providers in
             handleDrop(providers)
@@ -105,6 +119,7 @@ struct AgentTemplatesView: View {
                     AgentTemplateCard(
                         template: template,
                         isBuiltIn: builtIn,
+                        modelAvailable: modelAvailable(template),
                         animationDelay: Double(index) * 0.05,
                         hasAppeared: hasAppeared,
                         onUse: { onUse(template) },

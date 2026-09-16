@@ -14,6 +14,9 @@ struct AgentTemplateCard: View {
 
     let template: AgentTemplate
     let isBuiltIn: Bool
+    /// False when the template pins a model this Mac does not have; the
+    /// model chip turns warning-coloured so the gap shows before Use.
+    var modelAvailable: Bool = true
     let animationDelay: Double
     let hasAppeared: Bool
     let onUse: () -> Void
@@ -230,7 +233,7 @@ struct AgentTemplateCard: View {
                     }
                 }
                 .layoutPriority(chip.priority)
-                .foregroundColor(theme.tertiaryText)
+                .foregroundColor(chip.isWarning ? theme.warningColor : theme.tertiaryText)
                 .help(chip.help)
             }
             Spacer(minLength: 0)
@@ -243,12 +246,26 @@ struct AgentTemplateCard: View {
         let help: String
         /// Higher wins when the row is tight; the model name gives way first.
         var priority: Double = 1
+        var isWarning: Bool = false
     }
 
     private var statChips: [StatChip] {
         var chips: [StatChip] = []
         let model = template.agent.model.valueOrNil ?? L("Default")
-        chips.append(StatChip(icon: "cube", text: formatTemplateModelName(model), help: model, priority: 0))
+        let modelMissing = template.agent.model.valueOrNil != nil && !modelAvailable
+        chips.append(
+            StatChip(
+                icon: modelMissing ? "cube.transparent" : "cube",
+                text: formatTemplateModelName(model),
+                help: modelMissing
+                    ? (template.modelPolicy == .always
+                        ? L("\(model) is not installed. This template requires it.")
+                        : L("\(model) is not installed. Your default model will be used."))
+                    : model,
+                // A missing model must stay readable; it is the one chip
+                // the user needs to act on.
+                priority: modelMissing ? 2 : 0,
+                isWarning: modelMissing))
         let toolCount = template.agent.tools?.enabled?.count ?? 0
         let groupCount = (template.agent.mcpServers?.enabled?.count ?? 0) + (template.agent.plugins?.enabled?.count ?? 0)
         if template.agent.tools?.mode == "manual" || toolCount + groupCount > 0 {
