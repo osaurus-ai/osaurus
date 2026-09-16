@@ -534,9 +534,8 @@ struct AgentsView: View {
         let localNames = Set(KnowledgeCollectionStore.loadAll().map { $0.name.lowercased() })
         let missingKnowledge = template.knowledgeCollectionNames.filter { !localNames.contains($0.lowercased()) }
         if !missingKnowledge.isEmpty {
-            notices.append(
-                L("Knowledge collections to create or grant: \(missingKnowledge.joined(separator: ", ")).")
-            )
+            let joined = missingKnowledge.joined(separator: ", ")
+            notices.append(L("Knowledge collections to create or grant: \(joined)."))
         }
         creationSeed = AgentEditorSeed(
             subtitle: L("Based on \(template.name)"),
