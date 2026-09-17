@@ -35,30 +35,43 @@ struct GroupedDispatchOwnershipTests {
 
     @Test(arguments: [SessionSource.schedule, .watcher, .http, .plugin, .delegation], [false, true])
     func lookupReusesActiveOrInactiveWindowOwner(source: SessionSource, inactive: Bool) async throws {
-        try await ChatHistoryTestStorage.run {
-            let data = stored(agentId: UUID(), source: source)
-            ChatSessionStore.save(data)
-            let window = ChatWindowState(windowId: UUID(), agentId: data.agentId!, sessionData: data)
-            defer { window.cleanup() }
-            let original = window.session
-            original.turns.append(ChatTurn(role: .user, content: "newer unsaved live turn"))
-            if inactive { window.newTab() }
-            try ChatWindowManager.shared.withRegisteredWindowStateForTesting(window) {
-                let manager = BackgroundTaskManager.makeForTesting()
-                let candidate = try #require(manager.lookupReattachableSession(for: request(data)))
-                #expect(candidate.live === original)
-                let context = ExecutionContext(reattaching: candidate.data, reusing: candidate.live)
-                #expect(context.chatSession === original)
-                #expect(original.turns.last?.content == "newer unsaved live turn")
-                context.chatSession.turns.append(ChatTurn(role: .assistant, content: "new dispatch result"))
-                context.chatSession.save()
-                window.cleanup()
-                #expect(
-                    ChatSessionStore.load(id: data.id)?.turns.map(\.content)
-                        == ["first", "answer", "newer unsaved live turn", "new dispatch result"]
-                )
+        let agent = Agent(name: "Grouped ownership window test", autonomousExec: AutonomousExecConfig(enabled: false))
+        AgentManager.shared.add(agent)
+        do {
+            try await ChatHistoryTestStorage.run {
+                let data = stored(agentId: agent.id, source: source)
+                ChatSessionStore.save(data)
+                let window = ChatWindowState(windowId: UUID(), agentId: data.agentId!, sessionData: data)
+                defer { window.cleanup() }
+                let original = window.session
+                // An unknown/deleted agent is intentionally redirected to the
+                // Orchestrator by ChatWindowState's synchronous agent observer.
+                // Exercise an actual custom-agent window, not that fallback.
+                #expect(original.sessionId == data.id)
+                #expect(window.agentId == agent.id)
+                original.turns.append(ChatTurn(role: .user, content: "newer unsaved live turn"))
+                if inactive { window.newTab() }
+                try ChatWindowManager.shared.withRegisteredWindowStateForTesting(window) {
+                    let manager = BackgroundTaskManager.makeForTesting()
+                    let candidate = try #require(manager.lookupReattachableSession(for: request(data)))
+                    #expect(candidate.live === original)
+                    let context = ExecutionContext(reattaching: candidate.data, reusing: candidate.live)
+                    #expect(context.chatSession === original)
+                    #expect(original.turns.last?.content == "newer unsaved live turn")
+                    context.chatSession.turns.append(ChatTurn(role: .assistant, content: "new dispatch result"))
+                    context.chatSession.save()
+                    window.cleanup()
+                    #expect(
+                        ChatSessionStore.load(id: data.id)?.turns.map(\.content)
+                            == ["first", "answer", "newer unsaved live turn", "new dispatch result"]
+                    )
+                }
             }
+        } catch {
+            _ = await AgentManager.shared.delete(id: agent.id)
+            throw error
         }
+        _ = await AgentManager.shared.delete(id: agent.id)
     }
 
     @Test(arguments: [false, true])
