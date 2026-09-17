@@ -22,11 +22,25 @@ struct WorkspaceShareRouteTests {
     private static var home: String { OsaurusPaths.inContainerAgentHome(agentName) }
     private static var hostHome: URL { OsaurusPaths.containerAgentDir(agentName) }
 
-    private func withHome<T>(_ body: (URL) async throws -> T) async throws -> T {
-        let host = Self.hostHome
-        try FileManager.default.createDirectory(at: host, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: host) }
-        return try await body(host)
+    /// Run `body` against a private storage root so `WorkspaceShareRoute.shareRoot`
+    /// is deterministic and cannot race other suites that move
+    /// `OsaurusPaths.overrideRoot` (ModelManagerTests et al.). The agent's
+    /// host home under that share is created for the body and removed after.
+    private func withHome<T: Sendable>(_ body: @Sendable (URL) async throws -> T) async throws -> T {
+        try await StoragePathsTestLock.shared.run {
+            let previousRoot = OsaurusPaths.overrideRoot
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("share-route-root-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            OsaurusPaths.overrideRoot = root
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                try? FileManager.default.removeItem(at: root)
+            }
+            let host = Self.hostHome
+            try FileManager.default.createDirectory(at: host, withIntermediateDirectories: true)
+            return try await body(host)
+        }
     }
 
     private func json(_ args: [String: Any]) throws -> String {
@@ -53,39 +67,66 @@ struct WorkspaceShareRouteTests {
         #expect(!WorkspaceShareRoute.servesWrite(extension: "md"))
     }
 
-    @Test func hostURLStaysInsideTheShare() throws {
-        let root = WorkspaceShareRoute.shareRoot.standardizedFileURL.path
-        let ok = try WorkspaceShareRoute.hostURL(forSandboxPath: "/workspace/agents/x/report.pdf")
-        #expect(ok.standardizedFileURL.path.hasPrefix(root))
-        #expect(ok.lastPathComponent == "report.pdf")
+    @Test func hostURLStaysInsideTheShare() async throws {
+        try await withHome { _ in
+            let root = WorkspaceShareRoute.shareRoot.standardizedFileURL.path
+            let ok = try WorkspaceShareRoute.hostURL(forSandboxPath: "/workspace/agents/x/report.pdf")
+            #expect(ok.standardizedFileURL.path.hasPrefix(root))
+            #expect(ok.lastPathComponent == "report.pdf")
 
-        #expect(throws: (any Error).self) {
-            _ = try WorkspaceShareRoute.hostURL(forSandboxPath: "/workspace/../../etc/passwd")
+            #expect(throws: (any Error).self) {
+                _ = try WorkspaceShareRoute.hostURL(forSandboxPath: "/workspace/../../etc/passwd")
+            }
+            #expect(throws: (any Error).self) {
+                _ = try WorkspaceShareRoute.hostURL(forSandboxPath: "/workspace")
+            }
+            #expect(throws: (any Error).self) {
+                _ = try WorkspaceShareRoute.hostURL(forSandboxPath: "/etc/passwd")
+            }
+            #expect(WorkspaceShareRoute.shareRelativePath(forSandboxPath: "/workspaces/x") == nil)
+            #expect(
+                WorkspaceShareRoute.shareRelativePath(forSandboxPath: "/workspace/shared/a.pdf") == "shared/a.pdf"
+            )
         }
-        #expect(throws: (any Error).self) {
-            _ = try WorkspaceShareRoute.hostURL(forSandboxPath: "/workspace")
-        }
-        #expect(throws: (any Error).self) {
-            _ = try WorkspaceShareRoute.hostURL(forSandboxPath: "/etc/passwd")
-        }
-        #expect(WorkspaceShareRoute.shareRelativePath(forSandboxPath: "/workspaces/x") == nil)
-        #expect(WorkspaceShareRoute.shareRelativePath(forSandboxPath: "/workspace/shared/a.pdf") == "shared/a.pdf")
     }
 
-    @Test func resolveForReadHonorsSanitizerAndExtension() {
-        let home = Self.home
-        // Relative to the agent home.
-        let relative = WorkspaceShareRoute.resolveForRead(path: "docs/brief.pdf", home: home)
-        #expect(relative?.sandboxPath == "\(home)/docs/brief.pdf")
-        #expect(relative?.shareRelativePath == "agents/\(Self.agentName)/docs/brief.pdf")
-        // Absolute under /workspace/shared.
-        let shared = WorkspaceShareRoute.resolveForRead(path: "/workspace/shared/deck.pptx", home: home)
-        #expect(shared?.shareRelativePath == "shared/deck.pptx")
-        // Text is the bridge's job.
-        #expect(WorkspaceShareRoute.resolveForRead(path: "notes.txt", home: home) == nil)
-        // Outside the allowed roots: nil (bridge reports the rejection).
-        #expect(WorkspaceShareRoute.resolveForRead(path: "/tmp/x.pdf", home: home) == nil)
-        #expect(WorkspaceShareRoute.resolveForRead(path: "../../other/x.pdf", home: home) == nil)
+    @Test func resolveForReadHonorsSanitizerAndExtension() async throws {
+        try await withHome { _ in
+            let home = Self.home
+            // Relative to the agent home.
+            let relative = WorkspaceShareRoute.resolveForRead(path: "docs/brief.pdf", home: home)
+            #expect(relative?.sandboxPath == "\(home)/docs/brief.pdf")
+            #expect(relative?.shareRelativePath == "agents/\(Self.agentName)/docs/brief.pdf")
+            // Absolute under /workspace/shared.
+            let shared = WorkspaceShareRoute.resolveForRead(path: "/workspace/shared/deck.pptx", home: home)
+            #expect(shared?.shareRelativePath == "shared/deck.pptx")
+            // Text is the bridge's job.
+            #expect(WorkspaceShareRoute.resolveForRead(path: "notes.txt", home: home) == nil)
+            // Outside the allowed roots: nil (bridge reports the rejection).
+            #expect(WorkspaceShareRoute.resolveForRead(path: "/tmp/x.pdf", home: home) == nil)
+            #expect(WorkspaceShareRoute.resolveForRead(path: "../../other/x.pdf", home: home) == nil)
+        }
+    }
+
+    /// A generated document whose sandbox path the host cannot serve must
+    /// be refused, never handed to the text bridge (which would write
+    /// Markdown bytes into a `.docx`).
+    @Test func unreachableDocumentWriteIsRefusedNotBridged() async throws {
+        try await withHome { host in
+            let result = try await FileWriteTool.writeDocumentToWorkspaceShare(
+                path: "../../outside/escape.docx",
+                home: Self.home,
+                content: "# Nope",
+                mode: "overwrite",
+                dryRun: false
+            )
+            let envelope = try #require(result)
+            #expect(ToolEnvelope.isError(envelope))
+            #expect(EnvelopeAssertions.failureKind(envelope) == "rejected")
+            #expect(EnvelopeAssertions.failureField(envelope) == "path")
+            #expect(ToolEnvelope.failureMessage(envelope).contains("generated host-side"))
+            #expect(!FileManager.default.fileExists(atPath: host.appendingPathComponent("escape.docx").path))
+        }
     }
 
     @Test func documentUnderTheShareIsReadHostSide() async throws {

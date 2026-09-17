@@ -48,7 +48,16 @@ struct FileReadImageAndFormatContractTests {
 
     // MARK: - Images
 
+    /// Holds `StoragePathsTestLock` because the staged image lives in
+    /// `AttachmentBlobStore` under the Osaurus storage root, which other
+    /// suites relocate (`OsaurusPaths.overrideRoot`) while they run.
     @Test func imageAttachesForVisionModels() async throws {
+        try await StoragePathsTestLock.shared.run {
+            try await imageAttachesForVisionModelsBody()
+        }
+    }
+
+    private func imageAttachesForVisionModelsBody() async throws {
         let root = tmpRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let image = root.appendingPathComponent("chart.png")
@@ -345,7 +354,13 @@ struct FileReadImageAndFormatContractTests {
         #expect(sawImage && sawText)
     }
 
-    @Test @MainActor func warmupToolTurnMatchesBridgeMessage() throws {
+    @Test @MainActor func warmupToolTurnMatchesBridgeMessage() async throws {
+        try await StoragePathsTestLock.shared.run {
+            try await warmupToolTurnMatchesBridgeMessageBody()
+        }
+    }
+
+    @MainActor private func warmupToolTurnMatchesBridgeMessageBody() throws {
         let png = Self.pngData(text: nil)
         let hash = try AttachmentBlobStore.write(png)
         defer { AttachmentBlobStore.delete(hash) }

@@ -932,11 +932,20 @@ struct FileReadTool: OsaurusTool {
         else {
             return .unsupported
         }
-        // Every document route now runs its registry adapter directly on
-        // the calling task (no synchronous `DocumentParser` shim), so PDF,
-        // Word, and PowerPoint extraction all honour cooperative
-        // cancellation. Images are refused or OCR'd synchronously on a
-        // detached task and stay unsupported for spawned ownership.
+        // PDF extraction is the only document route audited for
+        // cooperative cancellation (`PDFAdapter` checks between pages —
+        // see SpawnedPDFReadTests). Word/RTF parse through one blocking
+        // `NSAttributedString(url:)` call and XLSX/PPTX have no drain
+        // proof yet, so they stay unsupported for spawned ownership, as do
+        // images (attached or OCR'd on a detached task).
+        if ext == "pdf" {
+            return .cooperative
+        }
+        guard !WorkspaceFileFormatPolicy.prefersDocumentExtraction(ext),
+            WorkspaceFileFormatPolicy.readSupport(for: ext) != .workbook
+        else {
+            return .unsupported
+        }
         if DocumentParser.isImageFile(url: fileURL), ext != "svg" {
             return .unsupported
         }
@@ -2353,9 +2362,14 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         dryRun: Bool,
         tool: String = "file_write"
     ) async throws -> String? {
-        guard let resolved = WorkspaceShareRoute.resolveForWrite(path: path, home: home),
-            let target = FileWriteDocumentRouting.target(forExtension: resolved.fileExtension)
-        else { return nil }
+        let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
+        guard let target = FileWriteDocumentRouting.target(forExtension: ext) else { return nil }
+        guard let resolved = WorkspaceShareRoute.resolveForWrite(path: path, home: home) else {
+            // A generated document that the host cannot reach must never
+            // fall through to the text bridge — that would write CSV or
+            // Markdown bytes into a `.xlsx`/`.docx`/`.pdf`.
+            return documentShareUnavailableRejection(path: path, fileExtension: ext, tool: tool)
+        }
         var writer = FileWriteTool(rootPath: WorkspaceShareRoute.shareRoot)
         writer.envelopeToolName = tool
         return try await writer.writeDocument(
@@ -2368,6 +2382,30 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
             fileURL: resolved.hostURL,
             rootPath: WorkspaceShareRoute.shareRoot,
             area: "sandbox"
+        )
+    }
+
+    /// Rejection for a generated-document write whose sandbox path the host
+    /// cannot serve (outside `/workspace`, rejected by the sanitizer, or the
+    /// share root is missing). Names the working alternatives instead of
+    /// letting text bytes land in a document extension.
+    static func documentShareUnavailableRejection(
+        path: String,
+        fileExtension ext: String,
+        tool: String
+    ) -> String {
+        ToolEnvelope.failure(
+            kind: .rejected,
+            message:
+                "Refused to write '\(path)': .\(ext) documents are generated host-side and this path is not "
+                + "under the `\(WorkspaceShareRoute.mountPoint)` share the host can reach. Write the document "
+                + "under your sandbox home or `\(WorkspaceShareRoute.mountPoint)/shared`, or write the same "
+                + "content as Markdown/CSV text here.",
+            field: "path",
+            expected: "a `.\(ext)` path under `\(WorkspaceShareRoute.mountPoint)/...`, or a text extension",
+            tool: tool,
+            retryable: false,
+            metadata: ["extension": ext]
         )
     }
 

@@ -69,11 +69,8 @@ struct SpawnedPDFReadTests {
         #expect(message.contains("cooperative abort-and-drain") == false)
     }
 
-    @Test("other parser-backed rich documents run cooperatively under spawned ownership")
-    func otherRichDocumentsRunCooperatively() async throws {
-        // Word / PowerPoint extraction now calls the registry adapter
-        // directly on the owning task (no synchronous DocumentParser shim),
-        // so a spawned operation may own the read like it owns a PDF read.
+    @Test("other parser-backed rich documents remain rejected before execution")
+    func otherRichDocumentsRemainUnsupported() async throws {
         let root = try Self.temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         try Data().write(to: root.appendingPathComponent("document.docx"))
@@ -90,13 +87,9 @@ struct SpawnedPDFReadTests {
             ownsExecutionUntilTermination: true
         )
 
-        #expect(ToolEnvelope.failureMessage(result).contains("cooperative abort-and-drain") == false)
-        #expect(await probe.started)
-        if ToolEnvelope.isSuccess(result) {
-            let payload = EnvelopeAssertions.successPayload(result)
-            #expect(payload?["format"] as? String == "docx")
-            #expect(payload?["source"] as? String == "extracted_text")
-        }
+        #expect(ToolEnvelope.isError(result))
+        #expect(ToolEnvelope.failureMessage(result).contains("cooperative abort-and-drain"))
+        #expect(!(await probe.started))
     }
 
     @Test("cancelling an owned PDF read drains and cannot publish success")

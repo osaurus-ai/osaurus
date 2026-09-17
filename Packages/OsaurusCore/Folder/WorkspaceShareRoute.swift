@@ -98,7 +98,12 @@ enum WorkspaceShareRoute {
     }
 
     static func resolveForWrite(path: String, home: String) -> Resolved? {
-        resolve(path: path, home: home, qualifies: servesWrite(extension:))
+        // The share root is created lazily by the sandbox runtime; a
+        // document written before the VM has ever started still belongs
+        // there, and containment resolution needs the root on disk so
+        // firmlinked temp roots resolve symmetrically.
+        try? FileManager.default.createDirectory(at: shareRoot, withIntermediateDirectories: true)
+        return resolve(path: path, home: home, qualifies: servesWrite(extension:))
     }
 
     private static func resolve(
