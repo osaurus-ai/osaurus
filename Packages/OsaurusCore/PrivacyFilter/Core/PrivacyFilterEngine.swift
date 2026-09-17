@@ -273,13 +273,17 @@ public final class PrivacyFilterEngine {
         let resolved = Self.mergeMatches(pending)
 
         // First pass: drop matches whose range maps back through the
-        // code-block mask to a `nil` (entirely masked) and collect
-        // the survivors. We do this BEFORE interning so we don't pay
-        // for placeholders we're about to throw away.
+        // code-block mask to a `nil` (entirely masked) or that sit
+        // inside an app-injected context block (the `[Current Time]`
+        // prefix is not user text), and collect the survivors. We do
+        // this BEFORE interning so we don't pay for placeholders we're
+        // about to throw away.
+        let injected = InjectedContextSpans.ranges(in: scanText)
         var surviving: [(category: EntityCategory, original: String, range: Range<String.Index>, label: String?)] =
             []
         surviving.reserveCapacity(resolved.count)
         for match in resolved {
+            if InjectedContextSpans.overlaps(match.range, injected) { continue }
             guard let restored = restore(match.range) else { continue }
             surviving.append((match.category, match.original, restored, match.label))
         }

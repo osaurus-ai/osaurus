@@ -775,8 +775,12 @@ enum PrivacyFilterPipeline {
         for text in scoped.scrubbableTexts() {
             if text.isEmpty { continue }
             let scanText = skipCodeBlocks ? CodeBlockMasker.mask(text).masked : text
+            // Mirror detection's injected-block skip for the same reason
+            // as the code masking above.
+            let injected = InjectedContextSpans.ranges(in: scanText)
             let matches = RegexEntityDetector.detect(in: scanText, ruleset: ruleset)
             for match in matches {
+                if InjectedContextSpans.overlaps(match.range, injected) { continue }
                 if ignoreOriginals.contains(match.original) { continue }
                 counts[match.category, default: 0] += 1
             }
