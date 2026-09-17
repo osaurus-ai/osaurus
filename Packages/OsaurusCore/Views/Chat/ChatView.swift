@@ -221,8 +221,13 @@ final class ChatSession: ObservableObject {
             if streamProgressTimestamps.first.map({ $0 < cutoff }) == true {
                 streamProgressTimestamps.removeAll { $0 < cutoff }
             }
+            lastEventClearsLatch = false
+            // Idle is 0 and there is no latch to keep: the evaluator can
+            // only return `.active`. Skip the AgentManager / warmup walk.
+            if runProgressState == .active { return }
+        } else {
+            lastEventClearsLatch = true
         }
-        lastEventClearsLatch = (kind == .discrete)
         applyRunProgressState()
     }
 
@@ -237,7 +242,8 @@ final class ChatSession: ObservableObject {
                 now: now
             ),
             clearsLatch: lastEventClearsLatch,
-            hasVisibleLoadingPhase: hasVisibleLoadingPhase
+            hasVisibleLoadingPhase: hasVisibleLoadingPhase,
+            isOpaqueModelLoad: isOpaqueModelLoad
         )
         lastEventClearsLatch = false
         if newState != runProgressState {
@@ -274,6 +280,16 @@ final class ChatSession: ObservableObject {
         return false
     }
 
+    /// True only while MLX is inside `loadContainer` with no mid-load
+    /// publisher. Prefill and sandbox boot publish updates and must not
+    /// use the 10-minute opaque ceiling.
+    private var isOpaqueModelLoad: Bool {
+        let progress = InferenceProgressManager.shared
+        if progress.prefillProgress != nil { return false }
+        if progress.isLoadingModel { return true }
+        return WarmupProgressHub.shared.phases.values.contains(.loadingModel)
+    }
+
     private var sessionToolCallIds: Set<String> {
         var ids = Set<String>()
         for turn in turns {
@@ -298,6 +314,9 @@ final class ChatSession: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 guard let self, !Task.isCancelled else { return }
+                // Re-bind live exec in case the registry published before
+                // `willProcessCall` put the call id on `turns`.
+                self.syncLiveExecSubscriptions(LiveExecRegistry.shared.currentEntries())
                 self.applyRunProgressState()
             }
         }
@@ -332,11 +351,12 @@ final class ChatSession: ObservableObject {
         let inference = InferenceProgressManager.shared
         inference.$prefillProgress
             .dropFirst()
-            .receive(on: RunLoop.main)
+            .throttle(for: .seconds(1), scheduler: RunLoop.main, latest: true)
             .sink { [weak self] _ in
                 self?.noteRunProgress(.discrete)
             }
             .store(in: &runProgressSubscriptions)
+        // Start/end only — MLX weight load does not publish a fraction.
         inference.$loadInFlightCount
             .dropFirst()
             .receive(on: RunLoop.main)
@@ -403,6 +423,8 @@ final class ChatSession: ObservableObject {
             subagentEventSubscriptions[id] = nil
         }
         for (id, feed) in relevant where subagentEventSubscriptions[id] == nil {
+            // `SubagentFeed.eventsPublisher` is a CurrentValueSubject
+            // seeded with `[]`; drop the replay so bind is not a fake event.
             subagentEventSubscriptions[id] = feed.eventsPublisher
                 .dropFirst()
                 .receive(on: RunLoop.main)
@@ -9308,8 +9330,9 @@ struct ChatView: View {
     /// Run-liveness chip shown above the composer while a run has produced no
     /// progress events for a while. `slow` reassures ("still working");
     /// `stalled` names a silent hang and points at Stop. Visible loading
-    /// (typing-row phase) hides only `.slow`; a wedged load still reaches
-    /// `.stalled`.
+    /// (typing-row phase) hides only `.slow`. Prefill/sandbox stall at 120s;
+    /// opaque MLX weight load uses a 10-minute ceiling because nothing
+    /// publishes between start and end.
     @ViewBuilder
     private var runProgressNotice: some View {
         if observedSession.isStreaming {

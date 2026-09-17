@@ -19,14 +19,16 @@ struct RunProgressEvaluatorTests {
         previous: RunProgressState = .active,
         burst: Bool = false,
         clearsLatch: Bool = false,
-        loading: Bool = false
+        loading: Bool = false,
+        opaqueLoad: Bool = false
     ) -> RunProgressState {
         RunProgressEvaluator.state(
             idle: idle,
             previous: previous,
             isSustainedStreamBurst: burst,
             clearsLatch: clearsLatch,
-            hasVisibleLoadingPhase: loading
+            hasVisibleLoadingPhase: loading,
+            isOpaqueModelLoad: opaqueLoad
         )
     }
 
@@ -110,6 +112,25 @@ struct RunProgressEvaluatorTests {
         )
         #expect(
             evaluate(idle: 180, previous: .active, loading: true)
+                == .stalled
+        )
+    }
+
+    @Test func opaqueModelLoadUsesLongerStallCeiling() {
+        #expect(
+            evaluate(idle: 180, previous: .active, loading: true, opaqueLoad: true)
+                == .active
+        )
+        #expect(
+            evaluate(idle: 599, previous: .active, loading: true, opaqueLoad: true)
+                == .active
+        )
+        #expect(
+            evaluate(idle: 600, previous: .active, loading: true, opaqueLoad: true)
+                == .stalled
+        )
+        #expect(
+            evaluate(idle: 180, previous: .active, loading: true, opaqueLoad: false)
                 == .stalled
         )
     }

@@ -28,15 +28,22 @@ enum RunProgressState: Equatable, Sendable {
 enum RunProgressEvaluator {
     static let slowThreshold: TimeInterval = 30
     static let stalledThreshold: TimeInterval = 120
+    /// MLX container load publishes only start/end (`loadInFlightCount`). The
+    /// typing row shows a static "Loading Model…" with no bytes/fraction, so
+    /// events cannot tell a 3-minute 27 GB load from a wedged one. Use a
+    /// longer ceiling only for that opaque window; prefill and sandbox have
+    /// mid-flight updates and keep the 120s stall.
+    static let opaqueModelLoadStalledThreshold: TimeInterval = 600
     static let streamBurstWindow: TimeInterval = 10
     static let streamBurstMinimum = 3
 
     /// Decide the composer-chip state.
     ///
     /// Order:
-    /// 1. idle ≥ 120s → `.stalled` (loading phase and latch cannot hide a hang)
+    /// 1. idle ≥ stall ceiling → `.stalled` (120s, or 600s during opaque
+    ///    model load). Loading phase and latch cannot hide a hang past that.
     /// 2. `clearsLatch` resets `previous` to `.active` and continues
-    /// 3. loading phase + idle < 120s → `.active` (typing row already explains)
+    /// 3. loading phase + idle under the stall ceiling → `.active`
     /// 4. stream latch keeps `.slow` / `.stalled` until a burst
     /// 5. else 30/120 thresholds
     static func state(
@@ -44,9 +51,12 @@ enum RunProgressEvaluator {
         previous: RunProgressState,
         isSustainedStreamBurst: Bool,
         clearsLatch: Bool,
-        hasVisibleLoadingPhase: Bool
+        hasVisibleLoadingPhase: Bool,
+        isOpaqueModelLoad: Bool = false
     ) -> RunProgressState {
-        if idle >= stalledThreshold {
+        let stallAfter =
+            isOpaqueModelLoad ? opaqueModelLoadStalledThreshold : stalledThreshold
+        if idle >= stallAfter {
             return .stalled
         }
 
