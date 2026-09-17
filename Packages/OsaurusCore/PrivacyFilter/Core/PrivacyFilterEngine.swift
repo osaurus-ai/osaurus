@@ -324,9 +324,14 @@ public final class PrivacyFilterEngine {
     {
         guard !text.isEmpty else { return [] }
 
-        // Honor the configured backend so a screenshot scrub masks the
-        // same model categories the text pipeline would.
-        if PrivacyFilterStore.snapshot().aiDetectionBackend == .rampart {
+        // Resolve the backend the same way the text pipeline does (the
+        // user's default if installed, else whatever is) so a screenshot
+        // scrub masks the same model categories an outbound send would.
+        let config = PrivacyFilterStore.snapshot()
+        let backend =
+            config.resolvedAIBackend(isInstalled: PrivacyAIBackend.isBundleInstalled)
+            ?? config.aiDetectionBackend
+        if backend == .rampart {
             return await RampartModelManager.shared.modelSpans(in: text)
         }
 

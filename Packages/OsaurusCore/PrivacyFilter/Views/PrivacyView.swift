@@ -91,7 +91,13 @@ struct PrivacyView: View {
     /// dry-run tester may use the model. The tabbed surface itself
     /// always renders since the regex layer needs no bundle.
     private var isModelReady: Bool {
-        switch configuration.aiDetectionBackend {
+        configuration.resolvedAIBackend(isInstalled: isBackendInstalled) != nil
+    }
+
+    /// Install state per backend, read off the observed managers so the
+    /// view re-evaluates when a download finishes.
+    private func isBackendInstalled(_ backend: PrivacyAIBackend) -> Bool {
+        switch backend {
         case .openai:
             if case .ready = downloader.state { return true }
             return false
@@ -446,10 +452,19 @@ private struct PrivacyModelSelector: View {
 
     // MARK: Row
 
+    /// The backend detection will actually run with. Matches the
+    /// pipeline's resolution: the user's default if installed, else the
+    /// only installed one. The Default badge follows this, not the raw
+    /// preference, so a user who installed only Rampart sees Rampart
+    /// marked as the active model instead of a badge on nothing.
+    private var activeBackend: PrivacyAIBackend? {
+        configuration.resolvedAIBackend(isInstalled: isInstalled)
+    }
+
     private func row(_ backend: PrivacyAIBackend) -> ModelListRow {
         let info = meta(backend)
         let installed = isInstalled(backend)
-        let active = installed && configuration.aiDetectionBackend == backend
+        let active = activeBackend == backend
         return ModelListRow(
             title: info.name,
             subtitle: "\(info.size) · \(info.summary)",
@@ -600,13 +615,17 @@ private struct PrivacyModelSelector: View {
     }
 
     private func remove(_ backend: PrivacyAIBackend) {
-        switch backend {
-        case .openai:
+        // Detection falls back to any other installed model; only turn the
+        // AI layer off when this was the last one, so an AI-on + no-model
+        // config can't fail-close every cloud send.
+        let othersInstalled = backends.contains { $0 != backend && isInstalled($0) }
+        if !othersInstalled && configuration.aiDetectionEnabled {
             configuration.aiDetectionEnabled = false
             save()
-            PrivacyFilterModelDownloader.shared.remove()
-        case .rampart:
-            RampartModelManager.shared.remove()
+        }
+        switch backend {
+        case .openai: PrivacyFilterModelDownloader.shared.remove()
+        case .rampart: RampartModelManager.shared.remove()
         }
     }
 }

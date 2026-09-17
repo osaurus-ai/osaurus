@@ -325,9 +325,13 @@ enum PrivacyFilterPipeline {
         // layer (built-ins / presets / custom rules) runs standalone,
         // so the filter is fully usable without the ~2.8 GB download.
         let useModel = config.aiDetectionEnabled
-        let backend = config.aiDetectionBackend
+        // Run whichever backend is actually on disk: the user's default
+        // if installed, else the other one. Only fail-closed when
+        // nothing is installed at all.
+        let backend = config.resolvedAIBackend(isInstalled: PrivacyAIBackend.isBundleInstalled)
+            ?? config.aiDetectionBackend
         if useModel {
-            // Warm the configured backend, bounded to a single lazy-load
+            // Warm the resolved backend, bounded to a single lazy-load
             // attempt per call so a corrupt bundle can't trap every
             // outbound request in a load loop.
             var ready = false
@@ -347,7 +351,7 @@ enum PrivacyFilterPipeline {
                             loadError = error.localizedDescription
                         }
                     } else {
-                        loadError = "model bundle missing at \(bundleDir.path)"
+                        loadError = "no privacy model installed (looked for OpenAI Privacy Filter at \(bundleDir.path) and Rampart)"
                     }
                 }
                 ready = isLoaded
@@ -360,7 +364,7 @@ enum PrivacyFilterPipeline {
                         loadError = error.localizedDescription
                     }
                 } else {
-                    loadError = "rampart model bundle missing"
+                    loadError = "no privacy model installed (looked for Rampart and OpenAI Privacy Filter)"
                 }
             }
             // Fail-CLOSED: the user enabled AI detection expecting their
@@ -373,8 +377,11 @@ enum PrivacyFilterPipeline {
                 print("[PrivacyFilter] BLOCKING send: \(detail).")
                 throw PrivacyFilterPipelineError.engineUnavailable(detail)
             }
+            let fallbackNote =
+                backend == config.aiDetectionBackend
+                ? "" : "; default [\(config.aiDetectionBackend.rawValue)] not installed, using installed model"
             print(
-                "[PrivacyFilter] Outbound: filter ENABLED (AI [\(backend.rawValue)] + regex) for provider \(providerId.uuidString); running detection."
+                "[PrivacyFilter] Outbound: filter ENABLED (AI [\(backend.rawValue)] + regex) for provider \(providerId.uuidString)\(fallbackNote); running detection."
             )
         } else {
             print(
