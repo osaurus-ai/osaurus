@@ -8139,20 +8139,19 @@ private struct AgentEditorSheet: View {
             }
         }
         .onReceive(ModelPickerItemCache.shared.$items) { pickerItems = $0 }
-        .confirmationDialog(
-            "Leave without creating this agent?",
+        .themedAlert(
+            L("Leave without creating this agent?"),
             isPresented: $showAddModelWarning,
-            titleVisibility: .visible
-        ) {
-            Button(localized: "Discard and Add Model", role: .destructive) {
-                openModelsTab()
-            }
-            Button(localized: "Keep Editing", role: .cancel) {}
-        } message: {
-            Text(
+            message: L(
                 "Adding a model switches to the Models tab and closes this window. Create the agent first to keep what you entered."
-            )
-        }
+            ),
+            buttons: [
+                .cancel(L("Keep Editing")),
+                .destructive(L("Discard and Add Model")) { openModelsTab() },
+            ],
+            width: 380,
+            presentationStyle: .contained
+        )
     }
 
     /// True once the user has put anything into the form that closing the
