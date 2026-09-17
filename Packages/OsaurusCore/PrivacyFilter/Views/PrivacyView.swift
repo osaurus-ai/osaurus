@@ -682,19 +682,29 @@ private struct PrivacyOverviewTab: View {
                         )
 
                         if configuration.enabled {
+                            // Installing a model turns this on by itself
+                            // (see `PrivacyFilterStore.enableAIDetectionAfterInstall`),
+                            // so the toggle is a deliberate off switch, not
+                            // a prerequisite. With nothing installed it is
+                            // disabled: AI-on + no-model would fail-close
+                            // every cloud send.
                             SettingsToggle(
                                 title: L("AI detection (on-device model)"),
-                                description: L(
-                                    "Use an on-device model to catch names, addresses, and secrets that pattern rules miss. Pick and install a model below."
-                                ),
+                                description: isModelReady
+                                    ? L(
+                                        "Use the installed model to catch names, addresses, and secrets that pattern rules miss. Turns on automatically when you install a model."
+                                    )
+                                    : L("Install a model below to turn this on."),
                                 isOn: Binding(
-                                    get: { configuration.aiDetectionEnabled },
+                                    get: { configuration.aiDetectionEnabled && isModelReady },
                                     set: { newValue in
                                         configuration.aiDetectionEnabled = newValue
                                         save()
                                     }
                                 )
                             )
+                            .disabled(!isModelReady)
+                            .opacity(isModelReady ? 1 : 0.6)
 
                             PrivacyModelSelector(configuration: $configuration, save: save)
                         }

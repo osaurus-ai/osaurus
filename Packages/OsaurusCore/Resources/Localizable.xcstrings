@@ -3705,6 +3705,40 @@
         }
       }
     },
+    "Install a model below to turn this on.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installiere unten ein Modell, um dies zu aktivieren."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "아래에서 모델을 설치하면 켤 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Установите модель ниже, чтобы включить."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在下方安装模型以开启此功能。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在下方安裝模型以開啟此功能。"
+          }
+        }
+      }
+    },
     "Install PII Detection Model?": {
       "localizations": {
         "de": {
@@ -227446,6 +227480,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "使用內聯登錄或令牌提示。"
+          }
+        }
+      }
+    },
+    "Use the installed model to catch names, addresses, and secrets that pattern rules miss. Turns on automatically when you install a model.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verwendet das installierte Modell, um Namen, Adressen und Geheimnisse zu erkennen, die Musterregeln übersehen. Wird beim Installieren eines Modells automatisch aktiviert."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설치된 모델을 사용해 패턴 규칙이 놓치는 이름, 주소, 비밀 정보를 감지합니다. 모델을 설치하면 자동으로 켜집니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Использует установленную модель для поиска имён, адресов и секретов, которые пропускают правила-шаблоны. Включается автоматически при установке модели."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用已安装的模型来捕获模式规则遗漏的姓名、地址和密钥。安装模型后会自动开启。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用已安裝的模型來擷取模式規則遺漏的姓名、地址和密鑰。安裝模型後會自動開啟。"
           }
         }
       }
