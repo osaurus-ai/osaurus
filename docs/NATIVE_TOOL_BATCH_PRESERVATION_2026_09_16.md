@@ -1,9 +1,9 @@
 # Preserve native local tool batches
 
-NOW: Native batch preservation implemented and exercised in an isolated development app. Base main `fa706a5de9f824c3d22475aa3cada15a99636f2e`; tested source `4a000c59304f8f0d058d0852ca1465dfe0b69dc8`; unchanged engine pin `8ba593aff16c13cf526211b8477c0a037f0122af`.
+NOW: Native batch preservation implemented and exercised in an isolated development app at `4a000c59304f8f0d058d0852ca1465dfe0b69dc8`. Main advanced to `65ff7cc4e032fd90cbf9a5453f1359a9567d4704` with shared tool/runtime and eval-catalog changes; merged without conflicts in `1f26d7b9237be911fbbb3edd601bb1d9e50e8f09`. Integration rebuild, affected native matrix and fresh full evals are required before merge. Engine pin remains `8ba593aff16c13cf526211b8477c0a037f0122af`.
 DO NOT: Change RAM policy, model prompts, generation defaults, engine weights, or installed profiles. Do not equate source/fixture tests with model/UI proof.
 BATCH OWNER: Forward every completed local invocation once in its original batch order, preserving cancellation, argument/result identity and cache ownership. Existing parallel scheduling does not guarantee child start/completion order.
-NEXT: Review the documentation-only follow-up and final-head CI for PR #2792, then merge. Broader eval failures below remain open; no model-wide or RAM-policy certification.
+NEXT: Complete the current-main integration proof and exact-head CI for PR #2792, then review and merge. The tables below are retained prior-source results, not proof of the integrated binary. New source identity, commands, raw scores and limitations are recorded in the private `integration/` evidence subdirectory and PR proof receipt. Broader eval failures remain open; no model-wide or RAM-policy certification.
 
 ## Cause and design
 
