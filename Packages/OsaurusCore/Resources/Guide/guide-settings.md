@@ -65,9 +65,12 @@ an already-resident shared target is not evicted. Memory checks may refuse a chi
 but never fall back to evicting the parent. The redundant experimental coexistence
 switch was removed; its old configuration key is retained only for compatibility.
 If the parent was already unloaded, Off does not reload it. Same-model
-and remote children do not need a swap. Image jobs have their own load policy;
-independent scheduled/watch jobs and background helpers do not gain permission
-to evict unrelated chat models from this switch.
+and remote children do not need a swap. Local image jobs and context compaction
+use this same parent-swap setting. The image Load policy controls only image-model
+cleanup after the job; restoring a swapped parent always drains and unloads the
+image model first. Independent scheduled/watch jobs and background helpers do
+not gain permission to evict unrelated chat models from this switch. A scheduled
+or watched agent's nested delegation uses that job's own invoking model.
 
 Settings → Orchestrator → **Local Models & Memory** → **Check memory before delegating**
 is one shared setting for the Orchestrator and all custom agents, not a per-agent override.

@@ -489,6 +489,14 @@ final class ChatSession: ObservableObject {
         isStreaming || awaitingPreSendHandshake
     }
 
+    /// Grouped background dispatch must not take over a live turn, a paused
+    /// permission/clarify exchange, or a compaction mutating this transcript.
+    var isAvailableForDispatchReattachment: Bool {
+        !isSendActiveForComposer && activeRunId == nil
+            && awaitingClarify == nil && promptQueue.current == nil
+            && !compactionState.isRunning
+    }
+
     /// Session id whose activity was last pushed to `SessionActivityMonitor`,
     /// so a session switch/reset clears the stale entry. `nonisolated(unsafe)`
     /// so `deinit` can read it for the final cleanup hop.
@@ -3457,16 +3465,7 @@ final class ChatSession: ObservableObject {
         // fall back to the agent's preferred model. `isLoadingModel`
         // suppresses the auto-persist sink so a load doesn't look like
         // the user just picked a model.
-        if let savedModel = data.selectedModel,
-            pickerItems.contains(where: { $0.id == savedModel })
-        {
-            isLoadingModel = true
-            selectedModel = savedModel
-            loadActiveModelOptions(for: selectedModel)
-            isLoadingModel = false
-        } else {
-            applyEffectiveModel(for: data.agentId)
-        }
+        restorePersistedModelSelection(data.selectedModel)
 
         turns = data.turns.map { ChatTurn(from: $0) }
         // Restore the LLM compaction summary and drop it immediately when it
@@ -3505,6 +3504,19 @@ final class ChatSession: ObservableObject {
         Task { [weak self] in
             await self?.refreshContextEstimates()
             self?.notifySessionBecameActive()
+        }
+    }
+
+    /// Restore only model selection after picker discovery, without loading a
+    /// second copy of the transcript or resetting an attached window's draft.
+    func restorePersistedModelSelection(_ savedModel: String?) {
+        if let savedModel, pickerItems.contains(where: { $0.id == savedModel }) {
+            isLoadingModel = true
+            selectedModel = savedModel
+            loadActiveModelOptions(for: selectedModel)
+            isLoadingModel = false
+        } else {
+            applyEffectiveModel(for: agentId)
         }
     }
 

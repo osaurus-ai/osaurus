@@ -1,9 +1,9 @@
 # Local subagent handoff parity
 
-NOW: Focused correction on merged main ebabfb72ad1fd9b1a37b542e1c276d2961e620f8.
+NOW: PR #2796 at 662c0d460 includes main 51ee70e3e. Follow-up PR #2798 carries image/compaction and post-await corrections.
 DO NOT: Claim full runtime proof, change global eviction policy, or unload unrelated owners.
 BATCH OWNER: Parent identity, post-admission residency and AppleScript warm ownership.
-NEXT: Run deterministic regressions, a fresh isolated development app, affected evals and exact-head CI before merge.
+NEXT: Complete the separate current-source auxiliary live matrix; retain the native run4 observations and full-catalog failures below.
 
 ## Source defects and correction
 
@@ -47,9 +47,10 @@ redundant experimental coexistence control is removed, with its stored key
 retained as an inert compatibility value. New policy proof is still pending.
 
 Independent watchers/scheduled jobs have no invoking parent and remain
-background/protected. Image jobs own their producer and load policy; compaction
-is a separate helper and is not changed by this patch. Do not claim those routes
-follow this switch. No vMLX pin, sampler, prompt, permission or memory limit changed.
+background/protected; nested delegation uses the job's own parent. The separate
+PR #2798 brings image and compaction onto the shared parent policy; see
+`auxiliary-handoff-parity-2026-09-17.md` for its source and proof boundaries.
+No vMLX pin, sampler, prompt, permission or memory limit changed.
 
 ## Evidence (not yet complete)
 
@@ -87,3 +88,50 @@ Raw receipts: private implementation/run3-applescript-transcript.json,
 run3-applescript-details.ax.txt/png, run3-applescript-followup.ax.txt/png,
 run3-followup-health.json, run3.oslog and UI3 supervisor artifacts. These do not
 prove the subsequent keep-parent changes.
+
+## Retention app run4 at 662c0d460
+
+SOURCE EVIDENCE: vMLX pin `8ba593aff16c13cf526211b8477c0a037f0122af`,
+app SHA256 `54c44087f9f26b016c1687d3850b20ccc0e08b4ec33c542bb8b9c27b3f391e5c`,
+UUID `C6F476EA-3520-388D-B1FE-D149AC25BFE3`. Focused tests: 244 tests,
+15 suites, zero failures. CI 35212389755: seven successful jobs.
+
+LIVE EVIDENCE: private `implementation/RUN4-LIVE-REVIEW.md`, `run4.oslog`,
+`run4-measurements.jsonl`, persisted transcript exports and inspected AX/PNG
+captures. One isolated development app on M5 Max2, not a release/install or
+16 GB emulation. RAM preflight ON; Server Strict; native bundle defaults.
+
+- OFF mixed native batch retained the exact Gemma parent through Raptor, then
+  cleaned only its child. Both calls arrived; children returned 12 and 391.
+  Parent incorrectly answered 392: transport/residency observed, answer FAIL.
+- ON mixed batch unloaded Gemma, ran Raptor, restored Gemma and ran the same-model
+  child in place. Final/follow-up 142 were correct, at 81.0/82.3 tok/s.
+- Browser ON/OFF used the real local fixture and correct fields; OFF retained
+  Raptor through Gemma, ON unloaded/restored it. Repeated phrases remain a
+  quality limitation (parent rates 59.9–62.4 tok/s).
+- Background spawn/report-back ON and OFF returned 437 and respected the parent
+  setting. Natural worker resume FAILED because report-back omitted its session
+  ID; explicit observed-ID resume returned 874. #2798 fixes the metadata and
+  requires a fresh natural-resume row.
+- Stop during child decode drained the child and restored the parent; subsequent
+  generation completed at 78.5 tok/s. It referenced an earlier completed essay,
+  so this is not evidence of cancellation-aware answer quality.
+- Global and custom-agent settings were inspected OFF and ON; the latter refers
+  to the one global authority. ON was saved before normal Quit. Relaunch on the
+  next source remains part of that source's matrix.
+
+Normal Quit exited 0 with zero owned survivors; peak tracked physical footprint
+4.35 GiB, swap 2.56 GiB unchanged. The final parent follow-up correctly retained
+437 (20 tokens, 76.8 tok/s). CU OS permission remains ungranted; image/compaction,
+coalesced-waiter live interleaving and native schedule/watcher rows are not
+qualified by these native text/Browser receipts.
+
+Full unchanged catalogs were run through the source-bound transport driver:
+AgentLoop **42 pass / 8 fail / 2 error / 4 skip (56)** and Frontier
+**22 pass / 18 fail / 2 error / 0 skip (42)**. Every non-pass and rubric was
+manually reviewed in `implementation/EVAL-REVIEW-662c0d460.md`. Interrupted and
+contaminated attempts are retained, not substituted. No blanket quality or
+regression-free claim follows from these scores. A removable-volume permission
+request from the transport-only driver caused the earlier image-discovery stall;
+it was denied. The driver now uses an empty image/model root and does not need
+local weights or an OS permission grant.

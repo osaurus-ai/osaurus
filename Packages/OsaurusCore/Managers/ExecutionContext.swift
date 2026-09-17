@@ -138,6 +138,7 @@ public final class ExecutionContext: ObservableObject {
     /// model is re-applied in `prepare()` once picker items load.
     init(
         reattaching existing: ChatSessionData,
+        reusing liveSession: ChatSession? = nil,
         folderBookmark: Data? = nil,
         folderPath: String? = nil,
         workspace prepared: WorkspaceAgentRunClient.Prepared? = nil,
@@ -152,7 +153,11 @@ public final class ExecutionContext: ObservableObject {
         self.folderBookmark = folderBookmark
         self.folderPath = folderPath
 
-        let session = ChatSession()
+        // A tab/registry may already own this conversation. Reuse that exact
+        // object: hydrating a second writer lets tab-close save stale history
+        // over the dispatched turns. Its live edits outrank the disk snapshot.
+        precondition(liveSession == nil || liveSession?.sessionId == existing.id)
+        let session = liveSession ?? ChatSession()
         session.agentId = existing.agentId
         session.loadIntent = loadIntent
         // A resumed delegation (`spawn_agent` `continue`) re-applies the
@@ -163,7 +168,7 @@ public final class ExecutionContext: ObservableObject {
         // Apply identity + history immediately so observers (e.g. the
         // BackgroundTaskState activity feed) see the existing turns from
         // the very first publish.
-        session.load(from: existing)
+        if liveSession == nil { session.load(from: existing) }
         if let prepared {
             // Reattaching to a shared-agent conversation: re-install the
             // Mode 2 binding (a fresh provider id after a re-pair is fine —
@@ -180,7 +185,7 @@ public final class ExecutionContext: ObservableObject {
         // `load(from:)` may have failed to restore the model if picker
         // items aren't loaded yet; `prepare()` re-applies after refresh.
         self.chatSession = session
-        self.pendingReattachSession = existing
+        self.pendingReattachSession = liveSession == nil ? existing : nil
     }
 
     /// Set when this context was built via `init(reattaching:)`. Lets
@@ -212,7 +217,7 @@ public final class ExecutionContext: ObservableObject {
         // picker items are populated — the load() call in init may have
         // fallen back to the agent default because the picker was empty.
         if let pending = pendingReattachSession {
-            chatSession.load(from: pending)
+            chatSession.restorePersistedModelSelection(pending.selectedModel)
             pendingReattachSession = nil
         }
         // Headless dispatches follow the agent's current default model on

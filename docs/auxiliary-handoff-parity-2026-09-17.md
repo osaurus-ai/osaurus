@@ -1,9 +1,17 @@
 # Image and compaction handoff parity — implementation, proof pending
 
-NOW: Follow-up PR #2798 to PR #2796, based on 662c0d460. Image/compaction source changes remain separate from the retention app currently building at 662c0d460.
+NOW: Follow-up PR #2798 at 197b077fb to PR #2796, based on 662c0d460. All seven CI jobs and 275 focused tests completed successfully; current-source same-model background resume was exercised in the development app. Auxiliary cross-model proof remains incomplete.
 DO NOT: Count source inspection, parse checks or prior text/Browser receipts as image/compaction runtime proof.
 BATCH OWNER: The actual invoking model and source across auxiliary producer lifetimes.
-NEXT: Full-module tests, source-bound isolated app, ON/OFF controls and actual image/compaction execution before merge.
+NEXT: Rebuild the grouped-session ownership correction, repeat actual scheduled-tab-close proof, and rerun affected suites/catalogs before merge. Image/CU execution remains permission-blocked.
+
+## UI6 findings and grouped-session ownership correction
+
+At197b077fb, compaction ON/OFF and nested scheduled Gemma→Qwen work executed through the actual controls. OFF retained the exact parent generation; ON drained the child and restored Gemma. OFF compaction follow-up and one scheduled arithmetic follow-up failed model quality; no sampler/prompt rescue was applied. Private RUN6-LIVE-REVIEW.md and RUN6-SCHEDULE-OWNERSHIP-FAILURE.md retain the measured rates and full transcripts.
+
+Repeated Run Now with its prior conversation still open exposed a separate data-loss defect: dispatch hydrated another ChatSession for the same ID. The new run saved10turns; closing the old six-turn tab replaced that history with6turns. Correction reuses the idle window/shared/retained owner, refuses reattachment while that instance is busy, registers the new run before asynchronous preparation, resets old terminal observers/timers, and refreshes only model selection after picker discovery (never rehydrates the transcript twice). Busy grouped requests retain the existing independent-session behavior. Regression tests cover sources, inactive tabs, newer live edits, draft/history during preparation, cancellation and repeat completion. Fresh live proof is still required.
+
+Current197 full catalogs: AgentLoop41passed/7failed/4errored/4skipped of56; Frontier19passed/21failed/2errored of42. Self-judged, not independent external grading. Raw/model-quality failures remain visible in private EVAL-REVIEW-197b077fb.md; these scores do not prove the new correction. UI6 quit normally07:43:21, zero survivors,3.56GiB peak physical footprint,2.56GiB swap unchanged. No release/tag/install.
 
 ## Source-bound defects
 
@@ -31,10 +39,18 @@ Autonomous watchers/schedules do not borrow the frontmost chat parent. Their nes
 ## Verification plan and current limits
 
 - Added deterministic tests for explicit context across every SessionSource, typed success/failure cleanup, a delayed producer surviving a caller deadline, all persisted image policy values with swap ON/OFF, restore-only provenance, and queued/in-flight image cancellation.
-- Swift parser and localization/diff checks have run; these are not typechecking or runtime proof. Full-module compilation/tests and current CI still required.
+- CI 35220765698 at 197b077fb completed all seven jobs. XCTest reports 413 tests, eight skipped, zero failures; Swift Testing suites also completed successfully. The local source-bound build12 completed 275 tests across 18 suites, zero failures. CI is not image/compaction runtime proof.
 - Required live rows: actual global and per-agent reflected controls; save/navigation/relaunch; native generate/edit and Stop with a real installed compatible image model; configured compaction model ON/OFF with visible summary and parent follow-up; actual load/retention/restore traces, physical footprint and cache telemetry. Record token/s for any text generation. No implicit downloads or OS grants.
 - CI run 35213560870 at 4f2a083a failed compilation before tests: the image coordinator's actor-isolated closure crossed a nonisolated `ModelJobInvocation.withContext` boundary (lines 346 and 379). The binding now inherits caller isolation explicitly; a MainActor regression exercises suspension and mutable actor-local captures. Fresh CI is required; this correction is not a runtime pass.
 - CI run 35215438447 at 736c064e compiled and ran the suites, but failed two `RuntimePolicySourceTests` assertions that still searched for the old direct `return try await finishLoadedContainer` expression. The loader now publishes into a local, revalidates the caller's hold, then returns. The source tests retain the cancellation/drain checks and now check publication plus post-await validation on all three paths. The original failed run is retained; a new full CI result is still required.
-- The retention app build resumed after host memory recovered, with the original 24 GiB free-memory guard unchanged. Do not merge either scope on stale app evidence. Dedicated AppleScript previous outputs hit their step limits; residency evidence does not erase that quality failure.
+- The prior retention app at 662c0d460 completed the native ON/OFF matrix and both full eval catalogs; see `handoff-parity-2026-09-17.md`. Original 24 GiB free-memory guard remains unchanged. Do not merge either scope on stale auxiliary app evidence. Dedicated AppleScript previous outputs hit their step limits; residency evidence does not erase that quality failure.
 
 Private working audit: `/Users/eric/vmlx-private-evidence/handoff-parity-2026-09-16/implementation/FOLLOWUP-ROUTE-PLAN.md` and `ACTIVE.md`.
+
+## Combined-source UI5 at 197b077fb
+
+SOURCE EVIDENCE: app SHA256 `8c77400fe7048e2842616481f08e71978f11d3458f914b2e8b5a891597c45f22`, UUID `96B40967-B86E-3DB1-A3C5-7C685C020682`, unchanged vMLX pin above. Native Gemma E2B8bit snapshot433003a1, T1/P.95/K64/EOS1,106,50; real128GiB M5 host, not16GiB emulation.
+
+LIVE EVIDENCE: private `implementation/RUN5-LIVE-REVIEW.md`, `run5.oslog`, `run5-measurements.jsonl`, persisted transcripts and inspected AX/PNG captures. Global swapON survived relaunch; actual OFF save and image cleanup Manual/Unload navigation were exercised independently of RAM preflight. Natural background continuation supplied the exact returned worker UUID without an external ID: child437 then874, parent/follow-up correct. Parent final/resume/follow-up82.4/80.7/82.0tok/s; child86.4/86.8tok/s. Extra time-tool call retained as a quality limitation. This is same-model execution, not cross-model media proof.
+
+The rebuilt app's removable-volume permission was not granted. After denying the pending prompt, Raptor loads failed with unreadable osaurus.json; image catalog was empty. Two duplicate Raptor dispatches both failed and restored Gemma; do not call them admitted child successes or RAM refusals. Normal Quit exited0, zero owned survivors, peak2.67GiB physical footprint, swap2.56GiB unchanged. Current-source full catalogs, cross-model compaction/image execution, schedule/watcher and CU still require their own evidence.
