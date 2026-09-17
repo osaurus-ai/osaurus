@@ -210,7 +210,8 @@ public enum AppRecipes {
                 steps: [
                     "In the front window for the target folder, press cmd+shift+n.",
                     "Type the folder name, then press return (only here does return commit a name).",
-                    "Drag each file onto the new folder, verifying it left the listing after each move.",
+                    "Move files without dragging (drags often miss) and in the same window: select the file, press cmd+c, select the destination folder and press cmd+down to enter it, press cmd+option+v to move the file there, then press cmd+up to return.",
+                    "Verify each moved file left the source listing before the next one.",
                 ]
             ),
         ]

@@ -185,6 +185,7 @@ final class RecipeClassifierTests: XCTestCase {
         XCTAssertTrue(text.contains("Create a folder and move files into it"))
         XCTAssertTrue(text.contains("return RENAMES"))
         XCTAssertTrue(text.contains("open with the folder path"))
+        XCTAssertTrue(text.contains("cmd+option+v"), "moves should use paste-move, not drag")
         XCTAssertTrue(AppRecipes.signals(for: "Finder").consequential.contains("empty trash"))
     }
 }
