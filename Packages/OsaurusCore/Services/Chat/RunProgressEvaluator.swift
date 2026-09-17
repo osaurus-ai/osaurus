@@ -3,19 +3,16 @@
 //  osaurus
 //
 //  Pure liveness rules for the composer slow/stalled chips. Progress is
-//  events, not flags: a hung tool or wedged load must still age to
-//  `.stalled`. Stream tokens latch the chip until a sustained burst;
-//  discrete events (tool, exec, load) only reset `previous`.
+//  events, not flags. Stream tokens latch until a burst; discrete events
+//  reset `previous` and then follow the 30s / stall-ceiling thresholds.
 //
 
 import Foundation
 
 enum RunProgressKind: Equatable, Sendable {
-    /// Text / reasoning tokens. A single delta does not clear a latched
-    /// `.slow` / `.stalled` — that takes a sustained burst.
+    /// Text / reasoning tokens. One delta does not clear a latched chip.
     case stream
-    /// Tool commit/result, live exec output, subagent feed, load/prefill
-    /// update, image/video step. Unlatches, then 30/120 thresholds apply.
+    /// Tool, exec, subagent, load/prefill, or image/video step. Unlatches.
     case discrete
 }
 
@@ -25,38 +22,63 @@ enum RunProgressState: Equatable, Sendable {
     case stalled
 }
 
+/// Typing-row phase used only to hide the redundant `.slow` chip and to
+/// pick the stall ceiling. Never used as "still working ⇒ not stalled."
+enum RunProgressLoadingPhase: Equatable, Sendable {
+    case none
+    case sandbox
+    case prefill
+    case modelLoad
+
+    var hidesSlowChip: Bool { self != .none }
+
+    var stallThreshold: TimeInterval {
+        self == .modelLoad
+            ? RunProgressEvaluator.opaqueModelLoadStalledThreshold
+            : RunProgressEvaluator.stalledThreshold
+    }
+
+    /// Same priority as `NativeTypingIndicatorView`: sandbox, then prefill,
+    /// then opaque MLX / warmup load.
+    @MainActor
+    static func current(agentId: UUID?) -> RunProgressLoadingPhase {
+        let progress = InferenceProgressManager.shared
+        let sandbox = SandboxManager.State.shared
+        let id = agentId ?? Agent.defaultId
+        let usesSandbox =
+            AgentManager.shared.effectiveAutonomousExec(for: id)?.enabled == true
+        if usesSandbox && (sandbox.status == .starting || sandbox.isProvisioning) {
+            return .sandbox
+        }
+        if progress.prefillProgress != nil { return .prefill }
+        if progress.isLoadingModel { return .modelLoad }
+        let warmup = WarmupProgressHub.shared.phases.values
+        if warmup.contains(.loadingModel) { return .modelLoad }
+        if warmup.contains(where: { if case .prefilling = $0 { return true }; return false }) {
+            return .prefill
+        }
+        return .none
+    }
+}
+
 enum RunProgressEvaluator {
     static let slowThreshold: TimeInterval = 30
     static let stalledThreshold: TimeInterval = 120
-    /// MLX container load publishes only start/end (`loadInFlightCount`). The
-    /// typing row shows a static "Loading Model…" with no bytes/fraction, so
-    /// events cannot tell a 3-minute 27 GB load from a wedged one. Use a
-    /// longer ceiling only for that opaque window; prefill and sandbox have
-    /// mid-flight updates and keep the 120s stall.
+    /// MLX `loadContainer` publishes only start/end. The typing row is a
+    /// static "Loading Model…" — no bytes or fraction — so a 3-minute 27 GB
+    /// load cannot be told from a hang. Only that window uses 10 minutes.
     static let opaqueModelLoadStalledThreshold: TimeInterval = 600
     static let streamBurstWindow: TimeInterval = 10
     static let streamBurstMinimum = 3
 
-    /// Decide the composer-chip state.
-    ///
-    /// Order:
-    /// 1. idle ≥ stall ceiling → `.stalled` (120s, or 600s during opaque
-    ///    model load). Loading phase and latch cannot hide a hang past that.
-    /// 2. `clearsLatch` resets `previous` to `.active` and continues
-    /// 3. loading phase + idle under the stall ceiling → `.active`
-    /// 4. stream latch keeps `.slow` / `.stalled` until a burst
-    /// 5. else 30/120 thresholds
     static func state(
         idle: TimeInterval,
         previous: RunProgressState,
         isSustainedStreamBurst: Bool,
         clearsLatch: Bool,
-        hasVisibleLoadingPhase: Bool,
-        isOpaqueModelLoad: Bool = false
+        loadingPhase: RunProgressLoadingPhase
     ) -> RunProgressState {
-        let stallAfter =
-            isOpaqueModelLoad ? opaqueModelLoadStalledThreshold : stalledThreshold
-        if idle >= stallAfter {
+        if idle >= loadingPhase.stallThreshold {
             return .stalled
         }
 
@@ -65,7 +87,7 @@ enum RunProgressEvaluator {
             previous = .active
         }
 
-        if hasVisibleLoadingPhase {
+        if loadingPhase.hidesSlowChip {
             return .active
         }
 
@@ -73,10 +95,14 @@ enum RunProgressEvaluator {
             return previous
         }
 
-        if idle >= slowThreshold {
-            return .slow
-        }
-        return .active
+        return idle >= slowThreshold ? .slow : .active
+    }
+
+    static func recordStreamTimestamp(_ timestamps: inout [Date], at now: Date) {
+        timestamps.append(now)
+        let cutoff = now.addingTimeInterval(-streamBurstWindow)
+        guard let first = timestamps.first, first < cutoff else { return }
+        timestamps.removeAll { $0 < cutoff }
     }
 
     static func isSustainedStreamBurst(

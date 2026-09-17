@@ -192,102 +192,22 @@ final class ChatSession: ObservableObject {
 
     // MARK: - Run progress (slow / stalled surfacing)
 
-    /// Coarse liveness of the in-flight run. Derived from time since the last
-    /// progress *event* (stream delta, tool, live exec, load/prefill update)
-    /// via `RunProgressEvaluator` — never from “a tool is still open” or
-    /// “a load flag is still set”. Drives the composer notice so a wedged
-    /// provider/model/tool reads as "stalled — Stop is right there".
-    @Published private(set) var runProgressState: RunProgressState = .active
+    let runProgress = RunProgressMonitor()
 
-    private var lastRunProgressAt = Date()
-    private var streamProgressTimestamps: [Date] = []
-    /// One-shot: a discrete event unlatches on the next evaluate, then this
-    /// clears so a single tool commit cannot keep resetting `previous`.
-    private var lastEventClearsLatch = false
-    private var runProgressMonitorTask: Task<Void, Never>?
-    private var runProgressSubscriptions = Set<AnyCancellable>()
-    private var liveExecOutputSubscriptions: [String: AnyCancellable] = [:]
-    private var subagentEventSubscriptions: [String: AnyCancellable] = [:]
-
-    /// Record run liveness. Stream tokens latch `.slow`/`.stalled` until a
-    /// burst; discrete events reset `previous` then follow 30/120s.
     func noteRunProgress(_ kind: RunProgressKind = .stream) {
-        lastRunProgressAt = Date()
-        if kind == .stream {
-            streamProgressTimestamps.append(lastRunProgressAt)
-            let cutoff = lastRunProgressAt.addingTimeInterval(
-                -RunProgressEvaluator.streamBurstWindow
-            )
-            if streamProgressTimestamps.first.map({ $0 < cutoff }) == true {
-                streamProgressTimestamps.removeAll { $0 < cutoff }
-            }
-            lastEventClearsLatch = false
-            // Idle is 0 and there is no latch to keep: the evaluator can
-            // only return `.active`. Skip the AgentManager / warmup walk.
-            if runProgressState == .active { return }
-        } else {
-            lastEventClearsLatch = true
-        }
-        applyRunProgressState()
+        runProgress.note(kind)
     }
 
-    private func applyRunProgressState() {
-        let now = Date()
-        let idle = now.timeIntervalSince(lastRunProgressAt)
-        let newState = RunProgressEvaluator.state(
-            idle: idle,
-            previous: runProgressState,
-            isSustainedStreamBurst: RunProgressEvaluator.isSustainedStreamBurst(
-                timestamps: streamProgressTimestamps,
-                now: now
-            ),
-            clearsLatch: lastEventClearsLatch,
-            hasVisibleLoadingPhase: hasVisibleLoadingPhase,
-            isOpaqueModelLoad: isOpaqueModelLoad
+    private func beginRunProgressMonitor() {
+        runProgress.start(
+            toolCallIds: { [weak self] in self?.sessionToolCallIds ?? [] },
+            sessionId: { [weak self] in self?.sessionId?.uuidString },
+            agentId: { [weak self] in self?.agentId }
         )
-        lastEventClearsLatch = false
-        if newState != runProgressState {
-            runProgressState = newState
-            if newState == .stalled {
-                CrashReportingService.recordBreadcrumb(
-                    category: "chat.run",
-                    message: "run stalled: no progress for \(Int(idle))s"
-                )
-            }
-        }
     }
 
-    /// Same sources as `NativeTypingIndicatorView`'s loading phase. Used only
-    /// to hide the redundant `.slow` chip — never to block `.stalled`.
-    private var hasVisibleLoadingPhase: Bool {
-        let progress = InferenceProgressManager.shared
-        let sandbox = SandboxManager.State.shared
-        let agentId = self.agentId ?? Agent.defaultId
-        let agentUsesSandbox =
-            AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
-        let sandboxBooting = sandbox.status == .starting || sandbox.isProvisioning
-        if agentUsesSandbox && sandboxBooting { return true }
-        if progress.prefillProgress != nil { return true }
-        if progress.isLoadingModel { return true }
-        let warmupPhases = WarmupProgressHub.shared.phases.values
-        if warmupPhases.contains(.loadingModel) { return true }
-        if warmupPhases.contains(where: {
-            if case .prefilling = $0 { return true }
-            return false
-        }) {
-            return true
-        }
-        return false
-    }
-
-    /// True only while MLX is inside `loadContainer` with no mid-load
-    /// publisher. Prefill and sandbox boot publish updates and must not
-    /// use the 10-minute opaque ceiling.
-    private var isOpaqueModelLoad: Bool {
-        let progress = InferenceProgressManager.shared
-        if progress.prefillProgress != nil { return false }
-        if progress.isLoadingModel { return true }
-        return WarmupProgressHub.shared.phases.values.contains(.loadingModel)
+    private func endRunProgressMonitor() {
+        runProgress.stop()
     }
 
     private var sessionToolCallIds: Set<String> {
@@ -301,146 +221,6 @@ final class ChatSession: ObservableObject {
             }
         }
         return ids
-    }
-
-    private func beginRunProgressMonitor() {
-        lastRunProgressAt = Date()
-        streamProgressTimestamps = []
-        lastEventClearsLatch = false
-        runProgressState = .active
-        runProgressMonitorTask?.cancel()
-        bindRunProgressSources()
-        runProgressMonitorTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
-                guard let self, !Task.isCancelled else { return }
-                // Re-bind live exec in case the registry published before
-                // `willProcessCall` put the call id on `turns`.
-                self.syncLiveExecSubscriptions(LiveExecRegistry.shared.currentEntries())
-                self.applyRunProgressState()
-            }
-        }
-    }
-
-    private func endRunProgressMonitor() {
-        runProgressMonitorTask?.cancel()
-        runProgressMonitorTask = nil
-        clearRunProgressSources()
-        streamProgressTimestamps = []
-        lastEventClearsLatch = false
-        runProgressState = .active
-    }
-
-    private func bindRunProgressSources() {
-        clearRunProgressSources()
-
-        LiveExecRegistry.shared.entriesPublisher
-            .receive(on: RunLoop.main)
-            .sink { [weak self] entries in
-                self?.syncLiveExecSubscriptions(entries)
-            }
-            .store(in: &runProgressSubscriptions)
-
-        SubagentFeedRegistry.shared.feedsPublisher
-            .receive(on: RunLoop.main)
-            .sink { [weak self] feeds in
-                self?.syncSubagentFeedSubscriptions(feeds)
-            }
-            .store(in: &runProgressSubscriptions)
-
-        let inference = InferenceProgressManager.shared
-        inference.$prefillProgress
-            .dropFirst()
-            .throttle(for: .seconds(1), scheduler: RunLoop.main, latest: true)
-            .sink { [weak self] _ in
-                self?.noteRunProgress(.discrete)
-            }
-            .store(in: &runProgressSubscriptions)
-        // Start/end only — MLX weight load does not publish a fraction.
-        inference.$loadInFlightCount
-            .dropFirst()
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
-                self?.noteRunProgress(.discrete)
-            }
-            .store(in: &runProgressSubscriptions)
-
-        let sandbox = SandboxManager.State.shared
-        sandbox.$status
-            .dropFirst()
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
-                self?.noteRunProgress(.discrete)
-            }
-            .store(in: &runProgressSubscriptions)
-        sandbox.$isProvisioning
-            .dropFirst()
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
-                self?.noteRunProgress(.discrete)
-            }
-            .store(in: &runProgressSubscriptions)
-        sandbox.$provisioningProgress
-            .dropFirst()
-            .throttle(for: .seconds(1), scheduler: RunLoop.main, latest: true)
-            .sink { [weak self] _ in
-                self?.noteRunProgress(.discrete)
-            }
-            .store(in: &runProgressSubscriptions)
-
-        syncLiveExecSubscriptions(LiveExecRegistry.shared.currentEntries())
-        // `feedsPublisher` is a CurrentValueSubject — the sink above fires
-        // immediately with the current map.
-    }
-
-    private func syncLiveExecSubscriptions(_ entries: [String: LiveExecRegistry.Entry]) {
-        let owned = sessionToolCallIds
-        let relevantIds = Set(entries.keys.filter { owned.contains($0) })
-        for id in Set(liveExecOutputSubscriptions.keys).subtracting(relevantIds) {
-            liveExecOutputSubscriptions[id]?.cancel()
-            liveExecOutputSubscriptions[id] = nil
-        }
-        for (id, entry) in entries where relevantIds.contains(id) && liveExecOutputSubscriptions[id] == nil {
-            liveExecOutputSubscriptions[id] = entry.outputPublisher
-                .receive(on: RunLoop.main)
-                .throttle(for: .seconds(1), scheduler: RunLoop.main, latest: true)
-                .sink { [weak self] _ in
-                    self?.noteRunProgress(.discrete)
-                }
-        }
-    }
-
-    private func syncSubagentFeedSubscriptions(_ feeds: [String: SubagentFeed]) {
-        let sessionKey = sessionId?.uuidString
-        let ownedCalls = sessionToolCallIds
-        let relevant = feeds.filter { _, feed in
-            if let sessionKey, feed.parentSessionId == sessionKey { return true }
-            return ownedCalls.contains(feed.toolCallId)
-        }
-        let relevantIds = Set(relevant.keys)
-        for id in Set(subagentEventSubscriptions.keys).subtracting(relevantIds) {
-            subagentEventSubscriptions[id]?.cancel()
-            subagentEventSubscriptions[id] = nil
-        }
-        for (id, feed) in relevant where subagentEventSubscriptions[id] == nil {
-            // `SubagentFeed.eventsPublisher` is a CurrentValueSubject
-            // seeded with `[]`; drop the replay so bind is not a fake event.
-            subagentEventSubscriptions[id] = feed.eventsPublisher
-                .dropFirst()
-                .receive(on: RunLoop.main)
-                .sink { [weak self] _ in
-                    self?.noteRunProgress(.discrete)
-                }
-        }
-    }
-
-    private func clearRunProgressSources() {
-        runProgressSubscriptions.forEach { $0.cancel() }
-        runProgressSubscriptions.removeAll()
-        liveExecOutputSubscriptions.values.forEach { $0.cancel() }
-        liveExecOutputSubscriptions.removeAll()
-        subagentEventSubscriptions.values.forEach { $0.cancel() }
-        subagentEventSubscriptions.removeAll()
     }
 
     @Published var lastStreamError: String?
@@ -843,6 +623,7 @@ final class ChatSession: ObservableObject {
     /// forward the prompt overlay wouldn't appear/disappear when the
     /// inner queue mutates `current`.
     nonisolated(unsafe) private var promptQueueCancellable: AnyCancellable?
+    nonisolated(unsafe) private var runProgressCancellable: AnyCancellable?
 
     /// Bridges this session's live activity (streaming / awaiting input) into
     /// `SessionActivityMonitor` keyed by session id, for the History sidebar.
@@ -1072,6 +853,10 @@ final class ChatSession: ObservableObject {
         // when the queue mounts or advances. See the property comment
         // for why the explicit bridge is needed.
         promptQueueCancellable = promptQueue.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+        runProgressCancellable = runProgress.objectWillChange
             .sink { [weak self] _ in
                 self?.objectWillChange.send()
             }
@@ -1469,6 +1254,7 @@ final class ChatSession: ObservableObject {
         modelOptionsCancellable = nil
         agentAutoSpeakCancellable = nil
         promptQueueCancellable = nil
+        runProgressCancellable = nil
         activityMonitorCancellable = nil
         contextEstimateCancellable = nil
         modelCacheCancellable = nil
@@ -9327,16 +9113,12 @@ struct ChatView: View {
         }
     }
 
-    /// Run-liveness chip shown above the composer while a run has produced no
-    /// progress events for a while. `slow` reassures ("still working");
-    /// `stalled` names a silent hang and points at Stop. Visible loading
-    /// (typing-row phase) hides only `.slow`. Prefill/sandbox stall at 120s;
-    /// opaque MLX weight load uses a 10-minute ceiling because nothing
-    /// publishes between start and end.
+    /// Composer chip while a run has gone quiet. `slow` reassures; `stalled`
+    /// is a silent hang. Loading-phase UI hides only `.slow`.
     @ViewBuilder
     private var runProgressNotice: some View {
         if observedSession.isStreaming {
-            switch observedSession.runProgressState {
+            switch observedSession.runProgress.state {
             case .active:
                 EmptyView()
             case .slow:
@@ -9926,7 +9708,7 @@ struct ChatView: View {
                                 .frame(maxWidth: .infinity)
                                 .animation(
                                     theme.springAnimation(),
-                                    value: observedSession.runProgressState
+                                    value: observedSession.runProgress.state
                                 )
 
                             // Follow-up suggestions render as a thread row
