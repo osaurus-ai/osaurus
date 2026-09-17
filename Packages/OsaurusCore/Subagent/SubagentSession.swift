@@ -1091,7 +1091,11 @@ public enum SubagentSession {
                         + "current memory and batching limits after the fresh memory "
                         + "check. Do not retry this turn — tell the user the "
                         + "delegation could not run; it may succeed after memory or "
-                        + "settings change."
+                        + "settings change. The user can disable Check memory before "
+                        + "delegating in Settings → Orchestrator → Local Models & Memory "
+                        + "to bypass the delegation RAM check, accepting possible allocation "
+                        + "failure or a crash. Separate Server Memory Safety load budgets "
+                        + "and explicit concurrency limits still apply."
                     if presentation.finishFeed {
                         feed.finish(success: false, summary: message)
                     }

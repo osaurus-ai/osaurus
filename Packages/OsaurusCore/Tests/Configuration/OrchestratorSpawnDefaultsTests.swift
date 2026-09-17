@@ -376,6 +376,48 @@ struct SpawnPoolSeedMigrationTests {
         #expect(!merged.ramSafetyPreflightEnabled)
     }
 
+    @Test("RAM opt-out survives stale editors, config round-trip and a cold settings read")
+    func ramSafetySharedPersistence() async throws {
+        let lease = await acquireSubagentStoreSandbox("ram-safety-shared-persistence")
+        defer { lease.release() }
+
+        for enabled in [false, true, false] {
+            let baseline = SubagentConfigurationStore.snapshot()
+            var staleEditor = baseline
+            staleEditor.budgets.maxDelegateTurns = 7
+            var changed = baseline
+            changed.ramSafetyPreflightEnabled = enabled
+            SubagentConfigurationStore.save(changed)
+            let merged = SubagentConfigurationStore.saveEditorSnapshot(
+                staleEditor, loadedBaseline: baseline
+            )
+            #expect(merged.ramSafetyPreflightEnabled == enabled)
+
+            let exported = ConfigExporter.export(sections: [.delegation])
+            #expect(exported.delegation?.ramSafetyPreflight == enabled)
+            let results = await ConfigApplier.apply(document: exported, prune: false)
+            #expect(results.allSatisfy { $0.status != .failed }, "\(results)")
+            SubagentConfigurationStore.flushPendingWrites()
+            SubagentConfigurationStore.invalidateSnapshot()
+            let reloaded = try #require(SubagentConfigurationStore.load())
+            #expect(reloaded.ramSafetyPreflightEnabled == enabled)
+            // Both the default launcher and custom agents use this same
+            // shared flag; residency shape may not turn it back on.
+            for handoff in [false, true] {
+                let plan = try SubagentResidency.decidePlan(
+                    isLocal: true, modelName: "gemma",
+                    residentChatModels: ["gemma"],
+                    handoffEnabled: handoff,
+                    ramSafetyEnabled: reloaded.ramSafetyPreflightEnabled,
+                    requiredBytes: 5_899_232_198, idleWaitSeconds: 30,
+                    deniedMessage: "unused"
+                )
+                #expect(plan.ramSafetyEnabled == enabled)
+                #expect(!plan.shouldUnload)
+            }
+        }
+    }
+
     @Test("delegation export/apply round-trip is a no-op after seeding")
     func exportApplyRoundTrip_isNoOp() async throws {
         let lease = await acquireSubagentStoreSandbox("spawn-pool-export-roundtrip")

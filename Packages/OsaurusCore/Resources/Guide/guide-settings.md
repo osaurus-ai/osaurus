@@ -49,6 +49,24 @@ Ask the assistant to change declarative settings in chat (`osaurus_config`); eac
 
 Unknown-Model Metadata Fallback on the same Cache panel does **not** constrain local models. Use Context Window Cap to lower the window.
 
+## Delegation memory checks
+
+Settings → Orchestrator → **Local Models & Memory** → **Check memory before delegating**
+is one shared setting for the Orchestrator and all custom agents, not a per-agent override.
+It defaults to On. It budgets child state, reuses already-resident weights, and can
+split a batch or refuse a child under low headroom or elevated memory pressure.
+Reclamation waits for active GPU work to drain and then takes a fresh host sample;
+another delay cannot guarantee that the OS pressure or available bytes will change.
+
+Off bypasses delegation RAM admission and before/after-handoff memory preflights,
+including warning/critical pressure and unavailable estimates. Allocation failures
+or crashes remain possible. Permissions, model ownership, cancellation and explicit
+concurrency limits still apply. Server → **Memory Safety** load budgets are separate;
+**No Automatic Limits (Dangerous)** removes automatic load caps there, while explicit
+advanced overrides remain in force. Disabling the delegation check does not silently
+rewrite those server settings. Decisions report `ram_safety_enabled`; when false,
+`ram_slots` is diagnostic and does not limit the admitted capacity.
+
 ## Speculative decoding
 
 Native MTP starts **Off**. Selecting a compatible local model shows **Speculative

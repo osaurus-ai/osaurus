@@ -287,9 +287,13 @@ struct SubagentBatchAdmissionPlan: Sendable, Equatable {
     /// Preserve the exact sampled inputs with the decision. A later OS sample
     /// must not be presented as the reason for an earlier refusal.
     var memoryFacts: SubagentBatchMemoryFacts? = nil
+    /// The policy used for THIS decision, not a later settings snapshot.
+    /// With safety off, ramSlots is diagnostic only and cannot veto a child.
+    var ramSafetyEnabled = true
 
     var memoryDiagnostics: [String: Any] {
         var result: [String: Any] = [
+            "ram_safety_enabled": ramSafetyEnabled,
             "engine_slots": engineSlots,
             "ram_slots": ramSlots ?? NSNull(),
             "limited_by": limitingFactors.map(\.rawValue).sorted(),
@@ -398,6 +402,7 @@ enum SubagentBatchAdmissionPlanner {
     static func plan(_ input: SubagentBatchAdmissionInput) -> SubagentBatchAdmissionPlan {
         var plan = planInternal(input)
         plan.memoryFacts = input.memory
+        plan.ramSafetyEnabled = input.ramSafetyEnabled
         logDiagnostics(input, plan)
         return plan
     }

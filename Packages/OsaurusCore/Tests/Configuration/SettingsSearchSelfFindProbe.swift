@@ -130,6 +130,8 @@ struct SettingsSearchSelfFindProbe {
             ("agent-target model override", "settings.orchestrator.delegation.advanced"),
             ("swap local models", "settings.orchestrator.delegation.handoff"),
             ("check memory before delegating", "settings.orchestrator.delegation.handoff"),
+            ("check memory before delegating", "settings.orchestrator.delegation.ramSafety"),
+            ("stable_memory_refusal", "settings.orchestrator.delegation.ramSafety"),
             ("delegations", "settings.orchestrator.delegations"),
             // Workspaces → Shared agents: the per-workspace auto-join switch.
             ("let the orchestrator delegate to shared agents", "workspaces.agents.orchestratorAutoJoin"),

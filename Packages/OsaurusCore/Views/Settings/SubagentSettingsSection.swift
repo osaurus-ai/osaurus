@@ -94,9 +94,10 @@ struct SubagentSettingsSection: View {
                         SettingsToggle(
                             title: "Check memory before delegating",
                             description:
-                                "Before a subagent runs, budget its model weights plus KV/activation headroom against available memory; split same-model groups into smaller waves when needed, and refuse a delegation that still cannot fit instead of risking a crash.",
+                                "Applies to the Orchestrator and every agent. On: check available memory and child KV/activation costs, reusing resident weights once; split batches or refuse when needed. Off: bypass delegation memory checks, including elevated memory pressure. Allocations may fail or the app may crash. Separate Server Memory Safety load budgets and explicit concurrency limits still apply.",
                             isOn: $configuration.ramSafetyPreflightEnabled
                         )
+                        .settingsLandingAnchor("settings.orchestrator.delegation.ramSafety")
 
                         SettingsToggle(
                             title: "Keep the chat model loaded alongside subagents (experimental)",
