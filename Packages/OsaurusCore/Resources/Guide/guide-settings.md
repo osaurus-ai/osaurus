@@ -51,6 +51,22 @@ Unknown-Model Metadata Fallback on the same Cache panel does **not** constrain l
 
 ## Delegation memory checks
 
+**Swap local models for subagents**, under Settings → Orchestrator → Local
+Models & Memory, is shared by custom agents and the Orchestrator. It applies
+to local text delegation (including batches, background and resumed children),
+Browser Use, Computer Use and dedicated AppleScript calls. On swaps the exact
+invoking model out and restores it after the child. AppleScript's separate
+keep-warm policy can defer that restoration for back-to-back calls; changing
+the swap or warm setting settles the previous lease before the next run.
+
+Off skips explicit unload/restore; it does **not** override Server → Eviction
+Policy. Strict (Single Model) can still evict the parent. Keeping both models
+resident requires Flexible (Multi Model), the experimental **Keep the chat
+model loaded alongside subagents** option, and sufficient memory. Same-model
+and remote children do not need a swap. Image jobs have their own load policy;
+independent scheduled/watch jobs and background helpers do not gain permission
+to evict unrelated chat models from this switch.
+
 Settings → Orchestrator → **Local Models & Memory** → **Check memory before delegating**
 is one shared setting for the Orchestrator and all custom agents, not a per-agent override.
 It defaults to On. It budgets child state, reuses already-resident weights, and can

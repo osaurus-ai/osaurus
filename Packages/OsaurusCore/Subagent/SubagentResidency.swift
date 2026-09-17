@@ -315,8 +315,7 @@ enum SubagentResidency {
         config: SubagentConfiguration,
         idleWaitSeconds: Int,
         deniedMessage: String,
-        handoffEnabledOverride: Bool? = nil,
-        invokingParentModelName: String? = nil
+        invokingParentModelName: String?
     ) async throws -> SubagentResidencyDecision {
         let installed = ModelManager.findInstalledModel(named: modelName)
         let isLocal = installed != nil
@@ -394,12 +393,7 @@ enum SubagentResidency {
             modelName: canonicalName,
             residentChatModels: invokingParentModels,
             protectedResidentModels: protectedResidentModels,
-            // A dedicated-model kind (AppleScript) always loads a DIFFERENT
-            // bundle than the chat model, so requiring the global "Local
-            // Orchestrator Handoff" toggle would make it unusable; such kinds
-            // pass `true` to force the handoff. Chat-driven kinds (spawn,
-            // computer_use) pass `nil` and honor the user's global toggle.
-            handoffEnabled: handoffEnabledOverride ?? config.localOrchestratorTextHandoffActive,
+            handoffEnabled: config.localOrchestratorTextHandoffActive,
             ramSafetyEnabled: config.ramSafetyPreflightEnabled,
             requiredBytes: isLocal
                 ? ChatResidencyHandoff.estimatedChatModelBytes(named: modelName) : 0,
@@ -409,6 +403,36 @@ enum SubagentResidency {
             invokingParentModelName: installedParentName
         )
         return SubagentResidencyDecision(isLocal: isLocal, plan: plan)
+    }
+
+    /// Refresh only residency after scheduling/approval waits. Keep the model
+    /// already selected and approved; a removed local bundle must not silently
+    /// become a remote route or fall back to a newly configured model.
+    static func refreshedPlan(
+        for resolved: ResolvedModel,
+        invokingParentModelName: String?,
+        idleWaitSeconds: Int,
+        deniedMessage: String
+    ) async throws -> ResidencyPlan {
+        guard resolved.isLocal else { return .none }
+        guard let installed = ModelManager.findInstalledModel(named: resolved.id ?? resolved.name) else {
+            throw SubagentError.unavailable(
+                "Local model '\(resolved.name)' is no longer installed."
+            )
+        }
+        let decision = try await resolve(
+            modelName: installed.id,
+            config: SubagentConfigurationStore.snapshot(),
+            idleWaitSeconds: idleWaitSeconds,
+            deniedMessage: deniedMessage,
+            invokingParentModelName: invokingParentModelName
+        )
+        guard decision.isLocal else {
+            throw SubagentError.unavailable(
+                "Local model '\(resolved.name)' became unavailable while the run was waiting."
+            )
+        }
+        return decision.plan
     }
 
     /// Map a resolved plan onto the host handoff middleware: a real

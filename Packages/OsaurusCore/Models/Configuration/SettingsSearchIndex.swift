@@ -1141,12 +1141,26 @@ public enum SettingsSearchIndex {
             ]
         ),
         .init(
+            id: "settings.orchestrator.delegation.swapModels",
+            tab: .orchestrator,
+            section: "Local Models & Memory",
+            title: "Swap local models for subagents",
+            keywords: ["handoff", "browser use", "computer use", "applescript", "batch", "unload", "restore"],
+            disambiguation:
+                "Shared by all agents for text, Browser Use, Computer Use and AppleScript. Off skips sequencing but does not override Server Strict eviction. Image jobs have a separate load policy.",
+            declarativeSection: "delegation"
+        ),
+        .init(
             id: "settings.orchestrator.delegation.ramSafety",
             tab: .orchestrator,
             section: "Local Models & Memory",
             title: "Check memory before delegating",
-            keywords: ["ram safety", "memory pressure", "stable_memory_refusal", "preflight", "subagent", "disable memory check"],
-            disambiguation: "One shared delegation RAM check for the Orchestrator and all agents. Separate from Server → Memory Safety load budgets.",
+            keywords: [
+                "ram safety", "memory pressure", "stable_memory_refusal", "preflight", "subagent",
+                "disable memory check",
+            ],
+            disambiguation:
+                "One shared delegation RAM check for the Orchestrator and all agents. Separate from Server → Memory Safety load budgets.",
             declarativeSection: "delegation"
         ),
         .init(

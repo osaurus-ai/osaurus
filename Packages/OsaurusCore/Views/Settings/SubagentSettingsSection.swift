@@ -87,9 +87,10 @@ struct SubagentSettingsSection: View {
                         SettingsToggle(
                             title: "Swap local models for subagents",
                             description:
-                                "When a subagent uses a different local model than the chat: unload the chat model → load the subagent's model → run → reload the chat model → continue. Same-model subagents never swap. Off: the subagent runs without this sequence and the server eviction policy decides what stays loaded. Cloud subagents never need this.",
+                                "For text, Browser Use, Computer Use and AppleScript subagents using a different local model: unload the invoking model → run the subagent → reload the invoking model → continue. AppleScript keep-warm can defer the reload. Same-model and cloud subagents never swap. Off skips this sequence; Server Strict can still evict the chat model.",
                             isOn: $configuration.localTextDelegationEnabled
                         )
+                        .settingsLandingAnchor("settings.orchestrator.delegation.swapModels")
 
                         SettingsToggle(
                             title: "Check memory before delegating",
