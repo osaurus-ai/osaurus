@@ -1150,7 +1150,7 @@ public enum SettingsSearchIndex {
                 "coexistence",
             ],
             disambiguation:
-                "Shared by all agents for text, Browser Use, Computer Use and AppleScript. Off retains the invoking model during the job, including under Server Strict; memory admission remains separate. Image jobs have a separate load policy.",
+                "Shared by all agents for text, Browser Use, Computer Use, AppleScript, local image jobs and context compaction. Off retains the invoking model during the job, including under Server Strict; memory admission and image cleanup remain separate.",
             declarativeSection: "delegation"
         ),
         .init(

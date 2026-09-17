@@ -22,16 +22,28 @@ public enum SubagentPermissionPolicy: String, Codable, CaseIterable, Sendable {
 }
 
 enum SubagentImageLoadPolicy: String, Codable, CaseIterable, Sendable {
+    /// Persisted legacy value. Parent swapping now follows the shared switch;
+    /// this value is equivalent to unloading the image after the job.
     case agentSingleResidency = "agent_single_residency"
     case unloadImageAfterAgentJob = "unload_image_after_agent_job"
     case manualPanelKeepsImageLoaded = "manual_panel_keeps_image_loaded"
 
     var displayName: String {
         switch self {
-        case .agentSingleResidency: return L("Single Residency")
+        case .agentSingleResidency: return L("Unload After Agent Job")
         case .unloadImageAfterAgentJob: return L("Unload After Agent Job")
         case .manualPanelKeepsImageLoaded: return L("Manual Panel Keeps Loaded")
         }
+    }
+
+    static let visibleCases: [Self] = [.unloadImageAfterAgentJob, .manualPanelKeepsImageLoaded]
+
+    var effectiveCleanupPolicy: Self {
+        self == .agentSingleResidency ? .unloadImageAfterAgentJob : self
+    }
+
+    func unloadAfterJob(restoresParent: Bool) -> Bool {
+        restoresParent || effectiveCleanupPolicy == .unloadImageAfterAgentJob
     }
 }
 
@@ -808,12 +820,10 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         !workspaceAutoJoinDisabledIds.contains(workspaceId.lowercased())
     }
 
-    /// Whether an agent-launched image job must evict resident chat models for
-    /// the duration of the job (single-GPU-residency handoff). The other load
-    /// policies keep the chat model resident. Single source for the image
-    /// residency decision (was `NativeImageChatResidencyPolicy`).
+    /// Shared parent policy, independent of the image's post-job cleanup
+    /// preference. Exact-parent ownership is checked by SubagentResidency.
     var imageJobUnloadsChatModels: Bool {
-        imageJobLoadPolicy == .agentSingleResidency
+        localOrchestratorTextHandoffActive
     }
 
     var normalized: SubagentConfiguration {

@@ -87,7 +87,7 @@ struct SubagentSettingsSection: View {
                         SettingsToggle(
                             title: "Swap local models for subagents",
                             description:
-                                "For text, Browser Use, Computer Use and AppleScript subagents using a different local model: On unloads the invoking model, runs the subagent, then reloads it. AppleScript keep-warm can defer the reload. Off keeps the invoking model loaded during the job, including under Server Strict. Memory checks still apply. Same-model and cloud subagents never swap.",
+                                "For text, Browser Use, Computer Use, AppleScript, local image jobs and context compaction using a different local model: On unloads the invoking model, runs the job, then reloads it. AppleScript keep-warm can defer the reload. Off keeps the invoking model loaded during the job, including under Server Strict. Memory checks still apply. Same-model and cloud jobs never swap.",
                             isOn: $configuration.localTextDelegationEnabled
                         )
                         .settingsLandingAnchor("settings.orchestrator.delegation.swapModels")

@@ -3,10 +3,12 @@
 //  OsaurusCore — Subagent framework
 //
 //  The single optional handoff middleware for model-swapping subagent kinds
-//  (spawn, image). When a kind resolves a DIFFERENT local model than the
+//  (text, Browser Use, Computer Use, AppleScript and compaction). When a kind
+//  resolves a DIFFERENT local model than the
 //  resident orchestrator, the chat model must be unloaded so the subagent
 //  model takes the GPU exclusively, then reloaded after the run. Same-model
-//  kinds (computer_use) use `PassthroughHandoff` instead.
+//  execution uses `PassthroughHandoff` instead. Images retain their lifecycle
+//  inside the native producer but share the same parent-policy decision.
 //
 //  Generalized from the residency flow `NativeImageJobCoordinator` and the
 //  spawn kind (`TextSubagentKind`) each open-coded. The actual
@@ -18,7 +20,7 @@
 //  wires them to `ChatResidencyHandoff`.
 //
 //  The KIND owns the per-run `ResidencyPlan` (spawn decides from live GPU
-//  residency + its handoff flag; image from its load policy) so this
+//  residency + the shared handoff flag) so this
 //  middleware stays generic. Internal to OsaurusCore: kinds construct it in
 //  this module and the host drives it via the public `SubagentHandoff`
 //  existential.
@@ -181,7 +183,7 @@ struct ResidencyHandoff: SubagentHandoff {
     /// unloaded, so restore failure is part of this handoff's outcome.
     typealias Restore =
         @Sendable (_ lease: ChatResidencyLease, _ onPhase: (String, String) -> Void) async throws
-            -> [String]
+        -> [String]
     /// Sequence leg "unload the delegate model" — release the child model(s)
     /// this handoff cold-loaded, BEFORE the main model is reloaded. Optional
     /// so single-step fixtures keep compiling; production wires it to
@@ -189,7 +191,7 @@ struct ResidencyHandoff: SubagentHandoff {
     /// reload-only leg, which makes the two legs individually observable.
     typealias ReleaseDelegate =
         @Sendable (_ lease: ChatResidencyLease, _ onPhase: (String, String) -> Void) async throws
-            -> [String]
+        -> [String]
 
     let plan: PlanProvider
     let preflight: Preflight
@@ -251,7 +253,9 @@ struct ResidencyHandoff: SubagentHandoff {
                 _ = await ModelRuntime.shared.reclaimMemoryForSubagentAdmission()
                 try await Task.sleep(for: .milliseconds(1_100))
                 try await ChatResidencyHandoff.memoryPreflight(
-                    requiredBytes: requiredBytes, enabled: enabled, onPhase: onPhase
+                    requiredBytes: requiredBytes,
+                    enabled: enabled,
+                    onPhase: onPhase
                 )
             }
         )
@@ -263,6 +267,38 @@ struct ResidencyHandoff: SubagentHandoff {
         feed: SubagentFeed,
         run body: () async throws -> SubagentResult
     ) async throws -> SubagentResult {
+        try await withResidency(scope: scope, resolved: resolved, feed: feed, run: body) { value, plan, lease in
+            var result = value
+            let mainModelName = lease.restoreModelNames.first ?? scope.parentModelName
+            let mainWasResident = !lease.unloadedModelNames.isEmpty
+            let steps = DelegationResidencySequence.steps(
+                plan: plan,
+                mainModelName: mainModelName,
+                mainResident: mainWasResident,
+                delegateModelName: resolved.name
+            )
+            let summary = DelegationResidencySequence.summary(
+                plan: plan,
+                mainModelName: mainModelName,
+                mainResident: mainWasResident,
+                delegateModelName: resolved.name
+            )
+            feed.emit(SubagentActivityEvent(kind: .narrate, title: "model swap", detail: summary))
+            result.payload["handoff_sequence"] = steps.map(\.description)
+            result.payload["handoff_summary"] = summary
+            return result
+        }
+    }
+
+    /// The same owned lifecycle for non-tool work (e.g. compaction). Keep the
+    /// typed result intact rather than round-tripping it through a tool payload.
+    func withResidency<Value: Sendable>(
+        scope: SubagentScope,
+        resolved: ResolvedModel,
+        feed: SubagentFeed,
+        run body: () async throws -> Value,
+        onCompleted: (Value, ResidencyPlan, ChatResidencyLease) -> Value = { value, _, _ in value }
+    ) async throws -> Value {
         let plan = await self.plan(resolved)
         let emit: (String, String) -> Void = { phase, detail in
             feed.emitPhase(phase, detail: detail.isEmpty ? nil : detail)
@@ -286,8 +322,6 @@ struct ResidencyHandoff: SubagentHandoff {
             plan.maxElapsedSeconds,
             emit
         )
-        let mainModelName =
-            lease.restoreModelNames.first ?? scope.parentModelName
         let mainWasResident = !lease.unloadedModelNames.isEmpty
         // Steps 2–4 — hand the task to the delegate; its model cold-loads
         // under this lease's ownership token so step 5 can release exactly it.
@@ -297,7 +331,7 @@ struct ResidencyHandoff: SubagentHandoff {
                 ? "chat model unloaded; loading delegate \(resolved.name)"
                 : "chat model was not loaded; loading delegate \(resolved.name)"
         )
-        var result: SubagentResult
+        let result: Value
         do {
             try await postUnloadPreflight?(plan.requiredBytes, plan.ramSafetyEnabled, emit)
             result = try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(
@@ -324,26 +358,7 @@ struct ResidencyHandoff: SubagentHandoff {
         // Steps 5–6 — unload the delegate, load the main chat model back.
         _ = try await restoreOutsideCancelledRun(lease, feed: feed)
 
-        // Step 7 belongs to the caller (the chat turn continues). Surface what
-        // happened so the user can see the swap in the tool result + feed.
-        let steps = DelegationResidencySequence.steps(
-            plan: plan,
-            mainModelName: mainModelName,
-            mainResident: mainWasResident,
-            delegateModelName: resolved.name
-        )
-        let summary = DelegationResidencySequence.summary(
-            plan: plan,
-            mainModelName: mainModelName,
-            mainResident: mainWasResident,
-            delegateModelName: resolved.name
-        )
-        feed.emit(
-            SubagentActivityEvent(kind: .narrate, title: "model swap", detail: summary)
-        )
-        result.payload["handoff_sequence"] = steps.map(\.description)
-        result.payload["handoff_summary"] = summary
-        return result
+        return onCompleted(result, plan, lease)
     }
 
     /// Restore is owned cleanup, not child work. Run it in a fresh detached
@@ -505,6 +520,15 @@ struct CoexistenceHandoff: SubagentHandoff {
         feed: SubagentFeed,
         run body: () async throws -> SubagentResult
     ) async throws -> SubagentResult {
+        try await withRetainedParent(scope: scope, resolved: resolved, feed: feed, run: body)
+    }
+
+    func withRetainedParent<Value: Sendable>(
+        scope: SubagentScope,
+        resolved: ResolvedModel,
+        feed: SubagentFeed,
+        run body: () async throws -> Value
+    ) async throws -> Value {
         // Same wait bounds as the unload path (15s floor, 300s ceiling).
         let waitMs = max(15, min(maxElapsedSeconds, 300)) * 1000
         feed.emitPhase(
@@ -523,7 +547,7 @@ struct CoexistenceHandoff: SubagentHandoff {
             "parent_retained",
             detail: retention.parentIdentity?.modelName ?? "invoking model was not resident"
         )
-        let result: SubagentResult
+        let result: Value
         do {
             result = try await ParentResidencyRetentionContext.$current.withValue(retention) {
                 try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(

@@ -39,6 +39,14 @@ A **different local model** normally uses single-residency handoff so two large 
 
 The RAM-safety preflight refuses *before* evicting anything: if the subagent model won't fit, the chat model stays resident and the Orchestrator reports the shortfall instead of thrashing. Local Orchestrator Handoff is on by default and enforces one sequence for every delegation whose helper is a *different* local model — unload the chat model → load the helper → run → unload the helper → load the chat model back → continue the turn — whether or not the chat model was loaded when the delegation started, and for any agent that delegates (a custom agent's own model is the one swapped out and restored). Same-model helpers and cloud helpers never swap. With **Swap local models for subagents** off, a different-model helper retains the exact invoking parent through the job. Only that job's cold-loaded child is cleaned up afterward; previously shared residents are preserved. A queued dispatch captures its own residency authority. The former experimental coexistence flag is now inert. The spawn result reports what happened (`residency_mode`, and for a swap `handoff_sequence` + `handoff_summary`), and the activity feed shows a "model swap" line. All of these live in Settings → Orchestrator → Local Models & Memory; the same toggle is mirrored (read-only) in every spawn editor and exported as `delegation.local_text_enabled`.
 
+Local image jobs and context compaction follow the same invoking-parent switch.
+The image load-policy menu controls only image cleanup, not whether the chat
+model unloads. A swapped parent is restored only after image producer drain and
+unload; swap OFF holds the parent's exact resident generation through the job.
+Independent scheduled/watcher work has no authority over the frontmost chat;
+its own nested helpers use that job's parent/source. See
+`auxiliary-handoff-parity-2026-09-17.md` for the pending verification matrix.
+
 ## Renaming the Orchestrator
 
 Set a custom name in Settings → Orchestrator → Identity, or declaratively:

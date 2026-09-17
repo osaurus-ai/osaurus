@@ -3199,6 +3199,8 @@ final class ChatSession: ObservableObject {
         let turnsSnapshot = turns
         let existing = conversationSummary
         let sid = sessionId
+        let invocation = ModelJobInvocation(parentModelName: selectedModel, source: source)
+        let compactionAgentID = agentId ?? Agent.defaultId
         compactionState = .running(.preparing)
         compactionTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -3207,6 +3209,8 @@ final class ChatSession: ObservableObject {
                     turns: turnsSnapshot,
                     existingSummary: existing,
                     sessionId: sid,
+                    invocation: invocation,
+                    agentId: compactionAgentID,
                     onPhase: { [weak self] phase in
                         self?.compactionState = .running(phase)
                     }

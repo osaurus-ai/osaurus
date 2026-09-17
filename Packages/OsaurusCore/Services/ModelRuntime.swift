@@ -1168,7 +1168,8 @@ public actor ModelRuntime {
     func preload(
         name: String,
         intent: ModelLoadIntent = .interactive,
-        restoreOwnershipToken: ModelResidencyOwnershipToken? = nil
+        restoreOwnershipToken: ModelResidencyOwnershipToken? = nil,
+        restoreSource: RequestSource? = nil
     ) async throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -1190,12 +1191,22 @@ public actor ModelRuntime {
                 userInfo: [NSLocalizedDescriptionKey: "Installed model not found for preload: \(trimmed)"]
             )
         }
-        _ = try await loadContainer(
+        let loadedHolder = try await loadContainer(
             id: found.id,
             name: found.name,
             intent: intent,
             restoreOwnershipToken: restoreOwnershipToken
         )
+        // A restore normally publishes an unowned cold preload. Retain the
+        // exact invoking surface from its lease, but never steal a resident
+        // that another request has already used while this load suspended.
+        if intent == .handoffRestore, let restoreSource,
+            modelCache[found.name] === loadedHolder,
+            residentMetadata[found.name]?.childOwnershipToken == nil,
+            lastUseSource[found.name] == nil
+        {
+            lastUseSource[found.name] = restoreSource
+        }
         // A preload never acquires a generation lease, so without arming the
         // idle timer here the model would stay resident FOREVER if no
         // generation ever follows (the timer is otherwise only scheduled on

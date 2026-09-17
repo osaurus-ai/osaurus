@@ -194,7 +194,29 @@ enum SubagentResidency {
         invokingParentModelName: String?
     ) async throws -> SubagentResidencyDecision {
         let installed = ModelManager.findInstalledModel(named: modelName)
-        let isLocal = installed != nil
+        guard let installed else { return SubagentResidencyDecision(isLocal: false, plan: .none) }
+        let plan = try await planForLocalTarget(
+            modelName: installed.name,
+            requiredBytes: ChatResidencyHandoff.estimatedChatModelBytes(named: installed.name),
+            config: config,
+            idleWaitSeconds: idleWaitSeconds,
+            deniedMessage: deniedMessage,
+            invokingParentModelName: invokingParentModelName
+        )
+        return SubagentResidencyDecision(isLocal: true, plan: plan)
+    }
+
+    /// Local image bundles use a different registry, but must make the same
+    /// exact-parent/protected-resident decision before any unload occurs.
+    /// Callers must resolve and validate their installed target first.
+    static func planForLocalTarget(
+        modelName: String,
+        requiredBytes: Int64,
+        config: SubagentConfiguration,
+        idleWaitSeconds: Int,
+        deniedMessage: String,
+        invokingParentModelName: String?
+    ) async throws -> ResidencyPlan {
         // Compare on the canonical installed-bundle identity, not the raw
         // request string. `ModelRuntime` records resident chat models under
         // their canonical name (e.g. `qwen3.5-4b-optiq-4bit`), while a spawn
@@ -203,9 +225,7 @@ enum SubagentResidency {
         // "same model already resident" check match across those forms — so
         // spawning the SAME model the user is chatting with runs in place
         // instead of needlessly unloading + reloading the identical bundle.
-        let canonicalName = installed?.name ?? modelName
-        let residentSummaries =
-            isLocal ? await ModelRuntime.shared.cachedModelSummaries() : []
+        let residentSummaries = await ModelRuntime.shared.cachedModelSummaries()
         let residentModels: [String] = residentSummaries.map {
             ModelManager.findInstalledModel(named: $0.name)?.name ?? $0.name
         }
@@ -240,20 +260,18 @@ enum SubagentResidency {
         let protectedResidentModels = residentModels.filter {
             !invokingParentKeys.contains($0.lowercased())
         }
-        let plan = try decidePlan(
-            isLocal: isLocal,
-            modelName: canonicalName,
+        return try decidePlan(
+            isLocal: true,
+            modelName: modelName,
             residentChatModels: invokingParentModels,
             protectedResidentModels: protectedResidentModels,
             handoffEnabled: config.localOrchestratorTextHandoffActive,
             ramSafetyEnabled: config.ramSafetyPreflightEnabled,
-            requiredBytes: isLocal
-                ? ChatResidencyHandoff.estimatedChatModelBytes(named: modelName) : 0,
+            requiredBytes: requiredBytes,
             idleWaitSeconds: idleWaitSeconds,
             deniedMessage: deniedMessage,
             invokingParentModelName: installedParentName
         )
-        return SubagentResidencyDecision(isLocal: isLocal, plan: plan)
     }
 
     /// Refresh only residency after scheduling/approval waits. Keep the model

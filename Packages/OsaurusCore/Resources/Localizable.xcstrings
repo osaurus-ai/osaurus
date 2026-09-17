@@ -1,6 +1,8 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Controls image-model cleanup after a job. The shared Swap local models for subagents setting controls whether the invoking chat model unloads. Restoring that parent always unloads the image model first.": {},
+    "For text, Browser Use, Computer Use, AppleScript, local image jobs and context compaction using a different local model: On unloads the invoking model, runs the job, then reloads it. AppleScript keep-warm can defer the reload. Off keeps the invoking model loaded during the job, including under Server Strict. Memory checks still apply. Same-model and cloud jobs never swap.": {},
     "For text, Browser Use, Computer Use and AppleScript subagents using a different local model: On unloads the invoking model, runs the subagent, then reloads it. AppleScript keep-warm can defer the reload. Off keeps the invoking model loaded during the job, including under Server Strict. Memory checks still apply. Same-model and cloud subagents never swap.": {},
     "\"Swap local models for subagents\" is off. The invoking model stays loaded while a different local subagent runs, including under Server Strict. This uses more memory; memory checks can still refuse the child without evicting the parent. Change the shared setting in Settings → Orchestrator.": {},
     "Claim": {
