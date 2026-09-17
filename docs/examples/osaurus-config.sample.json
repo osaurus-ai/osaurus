@@ -30,7 +30,7 @@
         "computer_use_enabled": false,
         "relay_enabled": false
       },
-      "tools": { "mode": "manual", "enabled": ["fetch", "time"] },
+      "tools": { "mode": "manual", "enabled": ["get_current_time", "web_search"] },
       "mcp_servers": { "enabled": [], "disabled": [] },
       "plugins": { "enabled": [] },
       "sandbox": { "enabled": true, "network_enabled": true, "allowed_domains": [] },

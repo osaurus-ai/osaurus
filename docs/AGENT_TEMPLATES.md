@@ -20,7 +20,7 @@ An agent template is one agent's configuration as a portable JSON document. User
     "model": "sonnet-5",
     "temperature": 0.7,
     "capabilities": { "tools_enabled": true, "memory_enabled": false },
-    "tools": { "mode": "manual", "enabled": ["fetch", "time"] },
+    "tools": { "mode": "manual", "enabled": ["get_current_time", "web_search"] },
     "mcp_servers": { "enabled": ["Linear"], "disabled": ["Notion"] },
     "plugins": { "enabled": ["osaurus.notes"] },
     "plugin_instructions": { "osaurus.notes": "File everything under Work." },

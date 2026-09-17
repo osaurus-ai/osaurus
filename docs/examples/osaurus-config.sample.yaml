@@ -53,7 +53,7 @@ agents: # custom agents (never the Default agent)
       relay_enabled: false # HIGH RISK: reachable from outside
     tools: # per-agent tool selection
       mode: manual # auto = RAG-picked, manual = only `enabled`
-      enabled: [fetch, time] # MCP/plugin tools go under mcp_servers / plugins
+      enabled: [get_current_time, web_search] # MCP/plugin tools go under mcp_servers / plugins
     mcp_servers: # MCP server NAMES
       enabled: []
       disabled: []

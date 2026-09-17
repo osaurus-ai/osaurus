@@ -207,7 +207,7 @@ public enum ConfigManifest {
                                 "mode", .scalar(.string, example: "manual", allowed: ["auto", "manual"]),
                                 comment: "auto = RAG-picked, manual = only `enabled`"),
                             ConfigKeySpec(
-                                "enabled", .scalarList(.string, example: ["fetch", "time"]),
+                                "enabled", .scalarList(.string, example: ["get_current_time", "web_search"]),
                                 comment: "tool names; MCP/plugin tools go under mcp_servers / plugins"),
                         ]),
                         comment: "per-agent tool selection"),
