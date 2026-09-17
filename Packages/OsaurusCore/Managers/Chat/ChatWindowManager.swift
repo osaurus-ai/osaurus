@@ -853,7 +853,12 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         }
 
         print("[ChatWindowManager] Focused all \(windows.count) windows")
-        SparkleChatGate.markChatVisible()
+        // `windows` can be non-empty while `nsWindows` is empty (stale
+        // info, no NSWindow on screen). Only arm the Sparkle chat gate
+        // when a real chat window was brought forward.
+        if !nsWindows.isEmpty {
+            SparkleChatGate.markChatVisible()
+        }
     }
 
     // MARK: - Background Task Window Support
