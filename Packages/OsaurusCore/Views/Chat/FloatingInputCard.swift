@@ -4463,6 +4463,8 @@ extension FloatingInputCard {
                     ssdClearResult = nil
                 }
                 .disabled(ssdClearInProgress)
+                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity)
             }
             .padding(14)
             .background(RAMBannerShape(pointerCenterX: 28).fill(.regularMaterial))
