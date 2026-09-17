@@ -841,7 +841,10 @@ struct RuntimePolicySourceTests {
             source.range(of: "loadingTasks[name] = LoadingTaskRecord(")
         )
         let success = try #require(
-            source.range(of: "return try await finishLoadedContainer", range: taskStore.upperBound ..< source.endIndex)
+            source.range(
+                of: "let published = try await finishLoadedContainer",
+                range: taskStore.upperBound ..< source.endIndex
+            )
         )
         let loadBody = String(source[taskStart.lowerBound ..< success.lowerBound])
 
@@ -2165,7 +2168,14 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("try? await record.task.value"))
         #expect(runtime.contains("holder.container.disableCaching()"))
         #expect(runtime.contains("loadContainer: strict drain of in-flight load"))
-        #expect(runtime.contains("return try await finishLoadedContainer"))
+        // Publication can await cache configuration. Each caller must validate
+        // its own parent-retention permit again after that suspension point.
+        #expect(runtime.components(separatedBy: "let published = try await finishLoadedContainer").count == 4)
+        let normalizedRuntime = runtime.split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .joined(separator: "\n")
+        let postPublicationReturn = "try validateParentRetention(parentRetention, target: name)\nreturn published"
+        #expect(normalizedRuntime.components(separatedBy: postPublicationReturn).count == 4)
         #expect(
             !runtime.contains("loadingTasks[other]?.cancel()"),
             "Strict single-model replacement must not fire-and-forget cancel an in-flight model load"
