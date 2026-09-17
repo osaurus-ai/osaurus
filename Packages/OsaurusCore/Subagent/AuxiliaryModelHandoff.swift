@@ -13,7 +13,10 @@ struct ModelJobInvocation: Sendable, Equatable {
         )
     }
 
-    func withContext<Value: Sendable>(_ body: () async throws -> Value) async rethrows -> Value {
+    func withContext<Value: Sendable>(
+        isolation: isolated (any Actor)? = #isolation,
+        _ body: () async throws -> Value
+    ) async rethrows -> Value {
         try await ChatExecutionContext.$currentModelName.withValue(parentModelName) {
             try await ChatExecutionContext.$currentSessionSource.withValue(source) {
                 try await body()

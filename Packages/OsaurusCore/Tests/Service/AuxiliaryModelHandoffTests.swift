@@ -12,6 +12,20 @@ private enum AuxiliaryBodyFailure: Error { case expected }
 
 @Suite("Auxiliary model handoff")
 struct AuxiliaryModelHandoffTests {
+    @Test("binding invocation preserves the caller actor's isolation")
+    @MainActor
+    func invocationPreservesCallerIsolation() async {
+        let invocation = ModelJobInvocation(parentModelName: "parent-a", source: .chat)
+        var values: [String] = []
+        await invocation.withContext {
+            values.append("before")
+            await Task.yield()
+            values.append("after")
+            #expect(ChatExecutionContext.currentModelName == "parent-a")
+        }
+        #expect(values == ["before", "after"])
+    }
+
     @Test(
         "explicit invocation survives detachment without borrowing ambient provenance",
         arguments: SessionSource.allCases

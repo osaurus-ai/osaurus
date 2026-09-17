@@ -1,6 +1,6 @@
 # Image and compaction handoff parity — implementation, proof pending
 
-NOW: Follow-up to PR #2796, based on 662c0d460. Source changes are separate from the app built at 4a179cf16.
+NOW: Follow-up PR #2798 to PR #2796, based on 662c0d460. Image/compaction source changes remain separate from the retention app currently building at 662c0d460.
 DO NOT: Count source inspection, parse checks or prior text/Browser receipts as image/compaction runtime proof.
 BATCH OWNER: The actual invoking model and source across auxiliary producer lifetimes.
 NEXT: Full-module tests, source-bound isolated app, ON/OFF controls and actual image/compaction execution before merge.
@@ -31,6 +31,7 @@ Autonomous watchers/schedules do not borrow the frontmost chat parent. Their nes
 - Added deterministic tests for explicit context across every SessionSource, typed success/failure cleanup, a delayed producer surviving a caller deadline, all persisted image policy values with swap ON/OFF, restore-only provenance, and queued/in-flight image cancellation.
 - Swift parser and localization/diff checks have run; these are not typechecking or runtime proof. Full-module compilation/tests and current CI still required.
 - Required live rows: actual global and per-agent reflected controls; save/navigation/relaunch; native generate/edit and Stop with a real installed compatible image model; configured compaction model ON/OFF with visible summary and parent follow-up; actual load/retention/restore traces, physical footprint and cache telemetry. Record token/s for any text generation. No implicit downloads or OS grants.
-- The first retention PR's local build is resource-blocked by the unchanged free-memory guard. Do not merge either scope on stale app evidence. Dedicated AppleScript previous outputs hit their step limits; residency evidence does not erase that quality failure.
+- CI run 35213560870 at 4f2a083a failed compilation before tests: the image coordinator's actor-isolated closure crossed a nonisolated `ModelJobInvocation.withContext` boundary (lines 346 and 379). The binding now inherits caller isolation explicitly; a MainActor regression exercises suspension and mutable actor-local captures. Fresh CI is required; this correction is not a runtime pass.
+- The retention app build resumed after host memory recovered, with the original 24 GiB free-memory guard unchanged. Do not merge either scope on stale app evidence. Dedicated AppleScript previous outputs hit their step limits; residency evidence does not erase that quality failure.
 
 Private working audit: `/Users/eric/vmlx-private-evidence/handoff-parity-2026-09-16/implementation/FOLLOWUP-ROUTE-PLAN.md` and `ACTIVE.md`.
