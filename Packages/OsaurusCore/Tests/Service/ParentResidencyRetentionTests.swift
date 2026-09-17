@@ -22,13 +22,16 @@ struct ParentResidencyRetentionTests {
         #expect(first.childOwnershipToken != second.childOwnershipToken)
         #expect(registry.holds(parent))
         try registry.validate(first, targetModelName: "CHILD-B", currentParentIdentity: parent)
-        #expect(registry.end(first))
-        #expect(!registry.end(first))
+        let endedFirst = registry.end(first)
+        let endedFirstAgain = registry.end(first)
+        #expect(endedFirst)
+        #expect(!endedFirstAgain)
         #expect(registry.holds(parent))
         #expect(throws: ParentResidencyRetentionError.self) {
             try registry.validate(first, targetModelName: "child-b", currentParentIdentity: parent)
         }
-        #expect(registry.end(second))
+        let endedSecond = registry.end(second)
+        #expect(endedSecond)
         #expect(!registry.holds(parent))
     }
 
