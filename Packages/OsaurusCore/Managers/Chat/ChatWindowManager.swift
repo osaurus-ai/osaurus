@@ -1615,12 +1615,14 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
         let hostingView = NSHostingView(rootView: rootView)
         hostingView.sizingOptions = []
         hostingView.translatesAutoresizingMaskIntoConstraints = false
-        let fill = hostingView.widthAnchor.constraint(equalToConstant: 10_000)
-        fill.priority = .defaultLow
+        // A min/max RANGE is what makes a toolbar item flexible: AppKit
+        // stretches it into the free space. Do not pin a large preferred
+        // width instead: the toolbar measures the item's fitting size, reads
+        // that width as the space it needs, and hides the item as too wide.
         NSLayoutConstraint.activate([
             hostingView.widthAnchor.constraint(
                 greaterThanOrEqualToConstant: ChatTabStripView.minimumItemWidth),
-            fill,
+            hostingView.widthAnchor.constraint(lessThanOrEqualToConstant: 10_000),
             hostingView.heightAnchor.constraint(equalToConstant: ChatTabStripView.stripHeight),
         ])
         hostingView.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
