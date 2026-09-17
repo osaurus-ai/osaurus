@@ -1146,7 +1146,8 @@ public enum SettingsSearchIndex {
             section: "Local Models & Memory",
             title: "Check memory before delegating",
             keywords: ["ram safety", "memory pressure", "stable_memory_refusal", "preflight", "subagent", "disable memory check"],
-            disambiguation: "One shared delegation RAM check for the Orchestrator and all agents. Separate from Server → Memory Safety load budgets."
+            disambiguation: "One shared delegation RAM check for the Orchestrator and all agents. Separate from Server → Memory Safety load budgets.",
+            declarativeSection: "delegation"
         ),
         .init(
             id: "settings.orchestrator.delegations",

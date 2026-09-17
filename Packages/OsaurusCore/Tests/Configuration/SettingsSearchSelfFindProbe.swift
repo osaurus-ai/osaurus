@@ -12,6 +12,15 @@ import Testing
 @Suite("settings search self-findability")
 struct SettingsSearchSelfFindProbe {
 
+    @Test("delegation RAM safety is shared config, not a UI-only control")
+    func ramSafetyCatalogNamesWritableSection() throws {
+        let entry = try #require(SettingsSearchIndex.entries.first {
+            $0.id == "settings.orchestrator.delegation.ramSafety"
+        })
+        #expect(entry.declarativeSection == "delegation")
+        #expect(!entry.isSettingsUIOnly)
+    }
+
     @Test("every entry is findable by its own title")
     func everyEntryFindsItselfByTitle() {
         let unfindable = SettingsSearchIndex.entries
