@@ -192,69 +192,35 @@ final class ChatSession: ObservableObject {
 
     // MARK: - Run progress (slow / stalled surfacing)
 
-    /// Coarse liveness of the in-flight run, derived from time since the last
-    /// observed progress event (stream delta, tool event, image-generation
-    /// event). Drives a visible notice above the composer so a wedged
-    /// provider/model/tool reads as "stalled — Stop is right there" instead of
-    /// an indefinite shimmer the user can only interpret as a hang.
-    enum RunProgressState {
-        case active
-        /// No progress for `runSlowThreshold` — worth telling the user we're
-        /// still alive but waiting (long prefill, slow provider, big tool).
-        case slow
-        /// No progress for `runStalledThreshold` — likely wedged; surface
-        /// Stop as the recovery action. The run is NOT auto-killed: a huge
-        /// model load can legitimately take minutes, so the user decides.
-        case stalled
-    }
+    let runProgress = RunProgressMonitor()
 
-    @Published private(set) var runProgressState: RunProgressState = .active
-
-    private var lastRunProgressAt = Date()
-    private var runProgressMonitorTask: Task<Void, Never>?
-    private static let runSlowThreshold: TimeInterval = 30
-    private static let runStalledThreshold: TimeInterval = 120
-
-    /// Record run liveness. Called from every streaming/tool/image event
-    /// loop; must stay cheap (a Date store; the published state only changes
-    /// on an actual transition).
-    func noteRunProgress() {
-        lastRunProgressAt = Date()
-        if runProgressState != .active {
-            runProgressState = .active
-        }
+    func noteRunProgress(_ kind: RunProgressKind = .stream) {
+        runProgress.note(kind)
     }
 
     private func beginRunProgressMonitor() {
-        lastRunProgressAt = Date()
-        runProgressState = .active
-        runProgressMonitorTask?.cancel()
-        runProgressMonitorTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
-                guard let self, !Task.isCancelled else { return }
-                let idle = Date().timeIntervalSince(self.lastRunProgressAt)
-                let newState: RunProgressState =
-                    idle >= Self.runStalledThreshold
-                    ? .stalled
-                    : idle >= Self.runSlowThreshold ? .slow : .active
-                if newState != self.runProgressState {
-                    self.runProgressState = newState
-                    if newState == .stalled {
-                        CrashReportingService.recordBreadcrumb(
-                            category: "chat.run",
-                            message: "run stalled: no progress for \(Int(idle))s"
-                        )
-                    }
-                }
-            }
-        }
+        runProgress.start(
+            toolCallIds: { [weak self] in self?.sessionToolCallIds ?? [] },
+            sessionId: { [weak self] in self?.sessionId?.uuidString },
+            agentId: { [weak self] in self?.agentId }
+        )
     }
 
     private func endRunProgressMonitor() {
-        runProgressMonitorTask?.cancel()
-        runProgressMonitorTask = nil
-        runProgressState = .active
+        runProgress.stop()
+    }
+
+    private var sessionToolCallIds: Set<String> {
+        var ids = Set<String>()
+        for turn in turns {
+            if let calls = turn.toolCalls {
+                for call in calls { ids.insert(call.id) }
+            }
+            for call in turn.remoteToolActivity {
+                ids.insert(call.id)
+            }
+        }
+        return ids
     }
 
     @Published var lastStreamError: String?
@@ -665,6 +631,7 @@ final class ChatSession: ObservableObject {
     /// forward the prompt overlay wouldn't appear/disappear when the
     /// inner queue mutates `current`.
     nonisolated(unsafe) private var promptQueueCancellable: AnyCancellable?
+    nonisolated(unsafe) private var runProgressCancellable: AnyCancellable?
 
     /// Bridges this session's live activity (streaming / awaiting input) into
     /// `SessionActivityMonitor` keyed by session id, for the History sidebar.
@@ -894,6 +861,10 @@ final class ChatSession: ObservableObject {
         // when the queue mounts or advances. See the property comment
         // for why the explicit bridge is needed.
         promptQueueCancellable = promptQueue.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+        runProgressCancellable = runProgress.objectWillChange
             .sink { [weak self] _ in
                 self?.objectWillChange.send()
             }
@@ -1291,6 +1262,7 @@ final class ChatSession: ObservableObject {
         modelOptionsCancellable = nil
         agentAutoSpeakCancellable = nil
         promptQueueCancellable = nil
+        runProgressCancellable = nil
         activityMonitorCancellable = nil
         contextEstimateCancellable = nil
         modelCacheCancellable = nil
@@ -4997,7 +4969,7 @@ final class ChatSession: ObservableObject {
         debugLog("send: got stream, entering delta loop")
         do {
             for try await delta in stream {
-                noteRunProgress()
+                noteRunProgress(.stream)
                 if !isRunActive(runId) {
                     await processor.finalize()
                     // Cancelled mid-run: don't leave a remote tool chip
@@ -5637,7 +5609,7 @@ final class ChatSession: ObservableObject {
         }
         do {
             for try await event in stream {
-                noteRunProgress()
+                noteRunProgress(.discrete)
                 guard isRunActive(runId) else { break }
                 switch event {
                 case .loadingModel:
@@ -5902,6 +5874,7 @@ final class ChatSession: ObservableObject {
                     case .cancelled:
                         turn.content = L("Video generation cancelled.")
                     }
+                    self.noteRunProgress(.discrete)
                     self.rebuildVisibleBlocks()
                 }
             }
@@ -6925,6 +6898,7 @@ final class ChatSession: ObservableObject {
                         if !media.isEmpty {
                             toolTurn.attachments = media
                         }
+                        self.noteRunProgress(.discrete)
                         return toolTurn
                     }
 
@@ -7960,6 +7934,7 @@ final class ChatSession: ObservableObject {
                             // Start the duration timer now; the call renders running
                             // until `recordToolTurn` lands the result after execution.
                             assistantTurn.markToolCallStarted(callId)
+                            self.noteRunProgress(.discrete)
 
                             // Materialise the tool-call row BEFORE we await
                             // execute(...). Without this the chat skips
@@ -9154,15 +9129,12 @@ struct ChatView: View {
         }
     }
 
-    /// Run-liveness chip shown above the composer while a run has produced no
-    /// stream/tool/image progress for a while. `slow` reassures ("still
-    /// working"); `stalled` names the likely wedge and points at Stop — the
-    /// recovery action — without auto-killing a run that may legitimately be
-    /// deep in a long model load or tool call.
+    /// Composer chip while a run has gone quiet. `slow` reassures; `stalled`
+    /// is a silent hang. Loading-phase UI hides only `.slow`.
     @ViewBuilder
     private var runProgressNotice: some View {
         if observedSession.isStreaming {
-            switch observedSession.runProgressState {
+            switch observedSession.runProgress.state {
             case .active:
                 EmptyView()
             case .slow:
@@ -9752,7 +9724,7 @@ struct ChatView: View {
                                 .frame(maxWidth: .infinity)
                                 .animation(
                                     theme.springAnimation(),
-                                    value: observedSession.runProgressState
+                                    value: observedSession.runProgress.state
                                 )
 
                             // Follow-up suggestions render as a thread row
