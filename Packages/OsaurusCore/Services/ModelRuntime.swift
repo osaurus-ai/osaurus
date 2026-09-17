@@ -2079,6 +2079,10 @@ public actor ModelRuntime {
                 await ModelLease.shared.waitForZero(name)
             }
             guard inFlightIdleResidencyDecisions[name] == idleDecisionID else { return false }
+            // A handoff owns the child's lifetime across model steps and any
+            // explicit warm interval. A stale idle decision cannot take over
+            // that cleanup, even after the last generation lease drained.
+            guard residentMetadata[name]?.childOwnershipToken == nil else { return false }
             if let expectedIdentity,
                 residentMetadata[name]?.identity != expectedIdentity
             {
@@ -2091,6 +2095,10 @@ public actor ModelRuntime {
             }
             await MetalGate.shared.enterModelTeardown(model: name)
             guard inFlightIdleResidencyDecisions[name] == idleDecisionID else {
+                await MetalGate.shared.exitModelTeardown(model: name)
+                return false
+            }
+            guard residentMetadata[name]?.childOwnershipToken == nil else {
                 await MetalGate.shared.exitModelTeardown(model: name)
                 return false
             }
@@ -2168,6 +2176,7 @@ public actor ModelRuntime {
         // End of the residency episode once nothing is resident.
         SwapPressureMonitor.shared.endEpisodeIfIdle(residentCount: modelCache.count)
         if didRemove {
+            genLog.info("unload: model=\(name, privacy: .public) reason=\(reason.rawValue, privacy: .public)")
             if let retiredCacheCounters {
                 await MLXBatchAdapter.Registry.shared.recordRetiredCacheCounters(
                     retiredCacheCounters
@@ -2462,23 +2471,37 @@ public actor ModelRuntime {
         return cfg
     }
 
+    /// A generation finishing is not the end of a delegated job. Its owned
+    /// model has no chat window, and may be waiting on a tool or an explicit
+    /// AppleScript warm deadline. The handoff's exact-token cleanup, not the
+    /// ordinary chat idle timer, releases it. Sharing the resident with a new
+    /// request revokes ownership and restores the configured idle policy.
+    nonisolated static func resolvedIdleResidencyPolicy(
+        configured: ModelIdleResidencyPolicy,
+        source: RequestSource?,
+        referencedByChat: Bool,
+        hasHandoffOwner: Bool
+    ) -> ModelIdleResidencyPolicy {
+        if hasHandoffOwner { return .never }
+        if case .afterSeconds = configured, source == .chatUI, !referencedByChat {
+            return .immediately
+        }
+        return configured
+    }
+
     private func scheduleIdleResidency(for modelName: String) async {
         let policyRevision = idleResidencyPolicyRevision
         guard !isClearingAllResidency,
             modelCache[modelName] != nil,
             await ModelLease.shared.count(for: modelName) == 0
         else { return }
-        var policy =
+        let configured =
             await ServerConfigurationStore.load()?.modelIdleResidencyPolicy
             ?? ServerConfiguration.default.modelIdleResidencyPolicy
-        if case .afterSeconds = policy, lastUseSource[modelName] == .chatUI {
-            let stillReferenced = await MainActor.run {
+        var referencedByChat = false
+        if case .afterSeconds = configured, lastUseSource[modelName] == .chatUI {
+            referencedByChat = await MainActor.run {
                 ChatWindowManager.shared.activeLocalModelNames().contains(modelName)
-            }
-            // Cover close-during-load/generation too: the close callback may
-            // precede this final lease release, so no timer existed to shorten.
-            if !stillReferenced, lastUseSource[modelName] == .chatUI {
-                policy = .immediately
             }
         }
         guard modelCache[modelName] != nil,
@@ -2487,6 +2510,16 @@ public actor ModelRuntime {
         // A setting may change while either the policy or window snapshot
         // is awaited. Never replace its new timer with a stale policy.
         guard policyRevision == idleResidencyPolicyRevision else { return }
+        let hasHandoffOwner = residentMetadata[modelName]?.childOwnershipToken != nil
+        let policy = Self.resolvedIdleResidencyPolicy(
+            configured: configured,
+            source: lastUseSource[modelName],
+            referencedByChat: referencedByChat,
+            hasHandoffOwner: hasHandoffOwner
+        )
+        genLog.info(
+            "idleResidency: model=\(modelName, privacy: .public) policy=\(String(describing: policy), privacy: .public) handoffOwned=\(hasHandoffOwner, privacy: .public) chatReferenced=\(referencedByChat, privacy: .public)"
+        )
         if case .never = policy {
             pendingIdleResidencyDecisions.removeValue(forKey: modelName)
             await ModelResidencyManager.shared.scheduleIdleUnload(

@@ -21,6 +21,13 @@ NEXT: Run deterministic regressions, a fresh isolated development app, affected 
   and are settled on settings changes before repricing residency. Cleanup is an
   owned cancellation-independent task; concurrent waiters join it and failed
   restores retain a receipt for retry instead of being reported as success.
+- The live dedicated-helper run exposed another lifecycle conflict: ordinary
+  idle policy treated its absent chat window as a closed chat and unloaded it
+  between model steps. Handoff-owned children now use the handoff's cleanup/warm
+  deadline instead; stale idle teardown rechecks ownership before committing.
+  Unowned/shared residents still follow the configured idle/close policy. Load
+  admission, pressure cleanup and explicit unload are unchanged. This correction
+  still needs its fresh-build live reproduction.
 
 ## Explicit boundaries
 
@@ -41,3 +48,14 @@ Private audit and pre-change executable diagnoses:
 The separate native tool-stream batch fix is already merged as PR #2792; its
 live receipts are not proof of this new parity patch. Current build, tests,
 live rows, raw eval scores and remaining failures will be recorded separately.
+
+At cc76420d4a10b9f230a1c2c377f54350b204d17d, CI run 35200968418 completed
+all seven jobs. Live ON text and Browser Use handoffs restored their invoking
+models, with completed follow-ups. OFF was inconsistent: Strict evicted the
+parent for text but refused Browser Use's protected background load. The
+dedicated AppleScript run failed to produce the requested scripts and was
+cancelled; parent restoration was observed, but its follow-up stalled after
+partial text and also required Stop. These are retained failures, not a clean
+matrix. The isolated run exited normally with zero owned survivors. Computer
+Use actual control execution remains untested without macOS Accessibility
+permission. Full current-head live AgentLoop/Frontier coverage remains pending.

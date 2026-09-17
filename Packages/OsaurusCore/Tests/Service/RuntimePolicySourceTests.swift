@@ -2988,6 +2988,9 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("ModelLease.shared.count(for: name)"))
         #expect(runtime.contains("await ModelResidencyManager.shared.cancel(modelName: name)"))
         #expect(runtime.contains("await ModelResidencyManager.shared.cancelAll()"))
+        let scheduleBody = try Self.functionBody("private func scheduleIdleResidency(", in: runtime)
+        #expect(scheduleBody.contains("residentMetadata[modelName]?.childOwnershipToken != nil"))
+        #expect(scheduleBody.contains("Self.resolvedIdleResidencyPolicy("))
         #expect(manager.contains("guard await leaseCount(modelName) == 0"))
         #expect(manager.contains("guard await isResident(modelName)"))
 
@@ -3015,6 +3018,8 @@ struct RuntimePolicySourceTests {
         )
         #expect(finalDecisionGate.lowerBound < commit.lowerBound)
         #expect(commit.lowerBound < idleShutdown.lowerBound)
+        let precommit = unloadBody[idleBranch.lowerBound ..< commit.lowerBound]
+        #expect(precommit.components(separatedBy: "residentMetadata[name]?.childOwnershipToken == nil").count == 3)
 
         let markActiveBody = try Self.functionBody(
             "private func markModelActiveForResidency(",
