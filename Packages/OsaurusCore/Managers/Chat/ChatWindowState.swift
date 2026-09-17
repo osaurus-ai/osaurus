@@ -317,19 +317,6 @@ final class ChatWindowState: ObservableObject {
     /// lease); released in `cleanup()`.
     private var isObservingRoster = false
 
-    /// The window's content width, pushed by `ChatWindowDelegate` on every
-    /// resize. The tab strip sizes itself from this — it must come through
-    /// the window state because the strip's own toolbar item (and any AppKit
-    /// observer owned by its views) is REMOVED from the window when AppKit
-    /// folds an oversized item into the toolbar overflow menu, which would
-    /// freeze a view-owned measurement exactly when it's needed most.
-    @Published private(set) var windowContentWidth: CGFloat?
-
-    func updateWindowContentWidth(_ width: CGFloat) {
-        guard abs((windowContentWidth ?? -1) - width) > 0.5 else { return }
-        windowContentWidth = width
-    }
-
     /// The size the chat layout is designed to fit into at minimum: with the
     /// sidebar open (260pt) plus the tab strip, anything narrower squished
     /// the chat column, and anything shorter left the composer and the
