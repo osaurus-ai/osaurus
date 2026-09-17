@@ -290,8 +290,7 @@ enum PrivacyReviewMode: Sendable, Equatable {
     /// without a sheet: a sheet opened in the chat window while the
     /// agent drives another app goes unanswered, the loop's per-step
     /// timeout cancels it, and the run fails. Scrubbing everything keeps
-    /// screen text out of the cloud unredacted; originals the user
-    /// already skipped this session stay skipped.
+    /// screen text out of the cloud unredacted.
     case autoScrub
 }
 

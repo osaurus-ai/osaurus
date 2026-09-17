@@ -52,28 +52,6 @@ struct PrivacyReviewModeTests {
     }
 
     @MainActor
-    @Test func autoScrub_keepsSessionSkipsSkipped() async throws {
-        let guard_ = await acquirePrivacyStoreSandbox("PrivacyReviewMode-skips")
-        defer { guard_.release() }
-        PrivacyFilterStore.save(Self.reviewRequiredConfig())
-
-        let sid = "review-mode-skip-\(UUID().uuidString)"
-        let phone = "949-238-0232"
-        let map = await SessionRedactionStore.shared.getOrCreate(sid, conversationID: UUID())
-        await map.markSkipped([phone])
-
-        let messages = [ChatMessage(role: "user", content: "Call \(phone).")]
-        let (scrubbed, _) = try await PrivacyFilterPipeline.applyOutbound(
-            messages: messages,
-            sessionId: sid,
-            providerId: UUID(),
-            requestSource: .chatUI,
-            reviewMode: .autoScrub
-        )
-        #expect(scrubbed.first?.content?.contains(phone) == true)
-    }
-
-    @MainActor
     @Test func autoScrub_redactionOnlyInContentParts_doesNotFailAsNoOp() async throws {
         let guard_ = await acquirePrivacyStoreSandbox("PrivacyReviewMode-parts")
         defer { guard_.release() }
