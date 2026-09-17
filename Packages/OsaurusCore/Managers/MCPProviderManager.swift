@@ -695,7 +695,9 @@ public final class MCPProviderManager: ObservableObject {
     /// in a "Connected" state whose every tool call failed until the user
     /// manually reconnected. We now reconnect once (which rebuilds the
     /// transport with fresh auth and a fresh session) and retry the call.
-    public func executeTool(providerId: UUID, toolName: String, argumentsJSON: String) async throws -> String {
+    public func executeTool(
+        providerId: UUID, toolName: String, argumentsJSON: String, exposedToolName: String? = nil
+    ) async throws -> String {
         guard let provider = configuration.provider(id: providerId) else {
             throw MCPProviderError.providerNotFound
         }
@@ -764,8 +766,7 @@ public final class MCPProviderManager: ObservableObject {
             throw MCPProviderError.toolExecutionFailed(errorText.isEmpty ? "Tool returned error" : errorText)
         }
 
-        // Convert content to string
-        return MCPProviderTool.convertMCPContent(content)
+        return try await MCPProviderTool.prepareMCPContent(content, toolName: exposedToolName ?? toolName)
     }
 
     /// True when a tool-call failure indicates the connection/session is
