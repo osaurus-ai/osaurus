@@ -1,0 +1,41 @@
+{
+  "id": "agent_loop.write-docx-by-extension",
+  "domain": "agent_loop",
+  "label": "agent loop • create a Word document with file_write from Markdown",
+  "query": "Write a short project brief as brief.docx with a title, a one-paragraph summary about launching a recycling program, and a bulleted list of three next steps.",
+  "notes": "file_write renders Markdown/HTML into a .docx package for the .docx extension. Proves the model routes document creation to file_write (not shell/pandoc, not a .md fallback) and that the result is real OOXML.",
+  "fixtures": {},
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 5,
+      "maxToolCalls": 4,
+      "mustCallTools": [
+        "file_write"
+      ],
+      "mustNotCallTools": [
+        "shell_run"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "file_write",
+          "minCalls": 1,
+          "maxCalls": 2,
+          "maxErrors": 0,
+          "argsMustContain": "brief.docx"
+        }
+      ],
+      "files": [
+        {
+          "path": "brief.docx",
+          "exists": true
+        }
+      ],
+      "commands": [
+        {
+          "command": "unzip -l brief.docx | grep -q 'word/document.xml'",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

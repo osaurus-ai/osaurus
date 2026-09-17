@@ -1016,7 +1016,8 @@ public struct SystemPromptComposer: Sendable {
                             + "append and put only the new bytes in content. "
                             + "Keep each file_write content under "
                             + "\(WorkspaceToolContract.recommendedWriteChunkCharacters) characters; "
-                            + "for larger files use repeated calls with mode append."
+                            + "for larger files use repeated calls with mode append. "
+                            + SystemPromptTemplates.folderDocumentFormatsLine
                     )
                 )
                 let state = SystemPromptTemplates.sandboxState(
@@ -3207,7 +3208,7 @@ public struct SystemPromptComposer: Sendable {
         // Apply this after every request gate and ablation so a legacy/manual
         // selection or a schema-less backend alias cannot erase supported
         // public arguments from the final model request.
-        for name in ToolRegistry.coreWorkspaceToolNames {
+        for name in ToolRegistry.compactWorkspaceSpecToolNames {
             guard let full = byName[name] else { continue }
             byName[name] = compactWorkspaceSpec(
                 full,
@@ -3243,19 +3244,15 @@ public struct SystemPromptComposer: Sendable {
         let required: [String]
         switch tool.function.name {
         case "file_read":
-            if executionMode.usesSandboxTools, executionMode.hostReadContext == nil {
-                description =
-                    "Read UTF-8 text or list a directory in the VM working folder. "
-                    + "For binary PDF/Word/PowerPoint/XLSX files, use sandbox shell/code extraction."
-            } else if executionMode.usesSandboxTools {
-                description =
-                    "Read/list by path: trusted-folder documents extract PDF/Word/PowerPoint text "
-                    + "and preview XLSX; `/workspace/...` VM paths are raw text only."
-            } else {
-                description =
-                    "Read a file or list a directory. Directly extracts text from PDF, Word, and "
-                    + "PowerPoint and previews XLSX—call this on the document; do not unzip it manually."
-            }
+            // One contract on every route: documents and images under the
+            // VM's `/workspace` share are served by the same host
+            // extractors as a trusted folder (`WorkspaceShareRoute`).
+            description =
+                "Read a file or list a directory. Handles source/text, PDF, Word (.docx/.doc/.rtf), "
+                + "PowerPoint (.pptx), Excel (.xlsx preview; `sheet_name`), and images (shown to vision "
+                + "models, OCR text otherwise). Call it on the document itself; do not unzip or convert first."
+                + (executionMode.usesSandboxTools
+                    ? " Paths resolve in the VM working folder (`/workspace/...`)." : "")
             properties = [
                 "path": .object([
                     "type": .string("string"),
@@ -3297,35 +3294,43 @@ public struct SystemPromptComposer: Sendable {
             required = ["path"]
         case "file_write":
             description =
-                "Create, replace, append, or dry-run a UTF-8 file. To preserve existing bytes, "
-                + "choose append and send only new content."
+                "Create/overwrite text or code, or generate a document by extension: `.xlsx` from "
+                + "CSV/TSV text or JSON rows, `.docx`/`.pdf` from Markdown or HTML — built in, so pass the "
+                + "content directly instead of writing a script or looking for pandoc/reportlab. `.pptx` is "
+                + "not supported. Append adds text without replacing the file (text only); dry_run previews."
             properties = [
                 "path": .object([
                     "type": .string("string"),
-                    "description": .string("Relative file path"),
+                    "description": .string(
+                        "Relative file path; the extension selects text vs. .xlsx/.docx/.pdf generation"
+                    ),
                 ]),
                 "content": .object([
                     "type": .string("string"),
                     "maxLength": .number(Double(WorkspaceToolContract.maxWriteContentCharacters)),
                     "description": .string(
-                        "File content, at most \(WorkspaceToolContract.maxWriteContentCharacters) characters"
+                        "File text (at most \(WorkspaceToolContract.maxWriteContentCharacters) characters). "
+                            + "For .xlsx: CSV/TSV rows or {\"sheets\":[{\"name\",\"rows\"}]}; for .docx/.pdf: Markdown or HTML"
                     ),
                 ]),
                 "mode": .object([
                     "type": .string("string"),
                     "enum": .array([.string("overwrite"), .string("append")]),
-                    "description": .string("Default overwrite; append adds content without replacing the file"),
+                    "description": .string(
+                        "Default overwrite; append adds content without replacing the file (text files only; documents are regenerated whole)"
+                    ),
                 ]),
                 "dry_run": .object([
                     "type": .string("boolean"),
-                    "description": .string("Preview without writing (host paths only)"),
+                    "description": .string("Preview the diff or document summary without writing"),
                 ]),
             ]
             required = ["path", "content"]
         case "file_edit":
             description =
-                "Replace one exact, unique text occurrence, optionally as a dry run. "
-                + "For additive changes, use file_write append."
+                "Replace exact text in a UTF-8 file: one unique `old_string`, every occurrence with "
+                + "`replace_all`, or several atomic `edits`. Documents (.docx/.pdf/.xlsx) are not "
+                + "edited in place: read with file_read, then regenerate with file_write."
             properties = [
                 "path": .object([
                     "type": .string("string"),
@@ -3333,20 +3338,63 @@ public struct SystemPromptComposer: Sendable {
                 ]),
                 "old_string": .object([
                     "type": .string("string"),
-                    "description": .string("Exact unique text; omit `N|` display prefixes"),
+                    "description": .string(
+                        "Exact text to replace (unique unless replace_all); omit `N|` display prefixes"
+                    ),
                 ]),
                 "new_string": .object([
                     "type": .string("string"),
                     "description": .string("Replacement text"),
+                ]),
+                "replace_all": .object([
+                    "type": .string("boolean"),
+                    "description": .string("Replace every occurrence instead of requiring a unique match"),
+                ]),
+                "edits": .object([
+                    "type": .string("array"),
+                    "description": .string(
+                        "Batch form: [{old_string, new_string}] applied atomically; use instead of top-level old_string/new_string"
+                    ),
+                    "items": .object([
+                        "type": .string("object"),
+                        "properties": .object([
+                            "old_string": .object(["type": .string("string")]),
+                            "new_string": .object(["type": .string("string")]),
+                        ]),
+                        "required": .array([.string("old_string"), .string("new_string")]),
+                    ]),
                 ]),
                 "dry_run": .object([
                     "type": .string("boolean"),
                     "description": .string("Preview without editing (host paths only)"),
                 ]),
             ]
-            required = ["path", "old_string", "new_string"]
+            required = ["path"]
+        case "file_copy":
+            description =
+                "Copy one file to a new path as a raw byte copy (binary-safe: PDFs, images, "
+                + ".docx/.xlsx). Tracked and undoable; use it to version a file before editing."
+            properties = [
+                "source": .object([
+                    "type": .string("string"),
+                    "description": .string("Relative path of the file to copy"),
+                ]),
+                "destination": .object([
+                    "type": .string("string"),
+                    "description": .string("Relative destination path including the filename"),
+                ]),
+                "overwrite": .object([
+                    "type": .string("boolean"),
+                    "description": .string("Replace an existing destination (default false)"),
+                ]),
+            ]
+            required = ["source", "destination"]
         case "file_search":
-            description = "Search file contents or names with optional path, file filter, and result limit."
+            description =
+                "Find which files in the working folder contain a term (default) or match a name. "
+                + "Content search looks inside PDF, Word, PowerPoint, and Excel files too, so use it "
+                + "before opening documents one by one; results carry a line or page/slide/sheet locator. "
+                + "Local files only — not a web search."
             properties = [
                 "pattern": .object([
                     "type": .string("string"),

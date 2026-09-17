@@ -1155,7 +1155,8 @@ final class DBImportTool: OsaurusTool, @unchecked Sendable {
         + "no row data passes through your tokens and you don't spend a tool "
         + "call per row — use this instead of looping `db_insert` whenever "
         + "the data already lives in a file (e.g. `/workspace/output/data.csv`). "
-        + "Supports CSV, TSV, JSON (array or object), and JSONL/NDJSON; the "
+        + "Supports CSV, TSV, JSON (array or object), JSONL/NDJSON, and Excel "
+        + ".xlsx (first sheet by default; pick one with `sheet_name`); the "
         + "format is auto-detected from the extension/content. Creates the "
         + "table from the file's columns when it doesn't exist (set "
         + "`create_table` false to require an existing one). Returns a small "
@@ -1180,8 +1181,15 @@ final class DBImportTool: OsaurusTool, @unchecked Sendable {
             "format": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Optional override: `csv`, `tsv`, `json`, `jsonl`/`ndjson`. "
+                    "Optional override: `csv`, `tsv`, `json`, `jsonl`/`ndjson`, `xlsx`. "
                         + "Auto-detected from the extension/content when omitted."
+                ),
+            ]),
+            "sheet_name": .object([
+                "type": .string("string"),
+                "description": .string(
+                    ".xlsx only: which sheet to import (case-insensitive). "
+                        + "Defaults to the first non-empty sheet."
                 ),
             ]),
             "mode": .object([
@@ -1209,7 +1217,7 @@ final class DBImportTool: OsaurusTool, @unchecked Sendable {
             ]),
             "has_header": .object([
                 "type": .string("boolean"),
-                "description": .string("CSV/TSV only: first row is a header. Default true."),
+                "description": .string("CSV/TSV/XLSX only: first row is a header. Default true."),
             ]),
             "columns": .object([
                 "type": .string("array"),
@@ -1302,7 +1310,8 @@ final class DBImportTool: OsaurusTool, @unchecked Sendable {
                     explicitFormat: args["format"] as? String,
                     hasHeader: hasHeader,
                     explicitColumns: explicitColumnNames,
-                    maxRows: maxRows
+                    maxRows: maxRows,
+                    sheetName: (args["sheet_name"] as? String)
                 )
             } catch {
                 return ToolEnvelope.failure(
@@ -1379,9 +1388,9 @@ final class DBExportTool: OsaurusTool, @unchecked Sendable {
         "Run a read-only SELECT and write the rows to a file in your "
         + "sandbox workspace or host working folder. No row data passes "
         + "through your tokens — use this instead of paging `db_query` when "
-        + "you need a large extract. Supports CSV (default), JSON, and "
-        + "JSONL/NDJSON (auto-detected from the path extension). Returns a "
-        + "small summary only."
+        + "you need a large extract. Supports CSV (default), JSON, "
+        + "JSONL/NDJSON, and Excel `.xlsx` (one typed sheet; auto-detected "
+        + "from the path extension). Returns a small summary only."
 
     /// Can write the extract into the sandbox workspace (`/workspace/...`).
     var mutatesSandboxWorkspace: Bool { true }
@@ -1406,7 +1415,7 @@ final class DBExportTool: OsaurusTool, @unchecked Sendable {
             "format": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Optional override: `csv`, `json`, `jsonl`/`ndjson`. "
+                    "Optional override: `csv`, `json`, `jsonl`/`ndjson`, `xlsx`. "
                         + "Auto-detected from extension when omitted."
                 ),
             ]),
@@ -1446,7 +1455,7 @@ final class DBExportTool: OsaurusTool, @unchecked Sendable {
                 kind: .invalidArgs,
                 message:
                     "Could not detect export format from `\(path)`. "
-                    + "Pass `format`: csv, json, or jsonl.",
+                    + "Pass `format`: csv, json, jsonl, or xlsx.",
                 field: "format",
                 tool: name
             )

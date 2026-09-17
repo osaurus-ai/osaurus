@@ -41,19 +41,74 @@ enum FolderToolError: LocalizedError {
         /// `DocumentParser` threw `.readFailed` / `.unsupportedFormat` /
         /// `.fileTooLarge`.
         case parseFailed
+        /// A recognised document family (`.xls`, `.pages`, `.odt`, ...)
+        /// with no built-in adapter. Distinct from `parseFailed` so the
+        /// message can name the supported sibling format instead of
+        /// implying the file is corrupt.
+        case unsupportedFormat(family: WorkspaceFileFormatPolicy.DocumentFamily)
+
+        /// Short, model-facing statement of WHAT went wrong. Never says
+        /// "file_read only supports text" — the tool reads documents and
+        /// images, and a failure message that denies that teaches the model
+        /// the wrong contract for every later turn.
+        func explanation(path: String, extLabel: String) -> String {
+            switch self {
+            case .nulByte, .decodeFailed:
+                return
+                    "'\(path)' is a binary file\(extLabel) that file_read cannot decode as text, "
+                    + "and its extension is not one of the document or image formats file_read opens "
+                    + "(\(WorkspaceFileFormatPolicy.readableFormatsSummary))."
+            case .imageOnlyPdf:
+                return
+                    "'\(path)' is a PDF with no extractable text layer (scanned or image-only pages), "
+                    + "and OCR of its rendered pages recognised no legible text. "
+                    + "file_read extracts PDF text normally; this file simply has none."
+            case .image:
+                return
+                    "'\(path)' is an image\(extLabel). file_read shows images to vision-capable models; "
+                    + "the active model cannot view images and no text could be recognised in it."
+            case .parseFailed:
+                return
+                    "'\(path)'\(extLabel) is a document format file_read normally extracts, but this file "
+                    + "could not be parsed — it may be encrypted, password-protected, truncated, or malformed."
+            case .unsupportedFormat(let family):
+                var text =
+                    "'\(path)' is a \(family.label)\(extLabel) in a variant file_read cannot extract. "
+                    + "file_read opens \(WorkspaceFileFormatPolicy.readableFormatsSummary)."
+                if let alternative = family.supportedAlternative {
+                    text += " Convert it to \(alternative) and read that"
+                }
+                return text
+            }
+        }
+
+        var family: WorkspaceFileFormatPolicy.DocumentFamily? {
+            switch self {
+            case .unsupportedFormat(let family): return family
+            case .imageOnlyPdf: return .pdf
+            default: return nil
+            }
+        }
+
+        /// Whether a shell / sandbox pivot (`pdftotext`, `unzip`, `file`)
+        /// is a sensible next step. For an unsupported document variant the
+        /// conversion hint is the primary pivot; shell tools are secondary.
+        var suggestsShellPivot: Bool {
+            switch self {
+            case .image: return false
+            default: return true
+            }
+        }
 
         var pivotHint: String? {
             switch self {
             case .imageOnlyPdf:
                 return
-                    "The PDF has no extractable text layer (likely scanned images); use an OCR tool via shell_run."
+                    "Use an OCR tool (e.g. `ocrmypdf`, `tesseract`) via shell_run to recover the text."
             case .image:
                 return
-                    "This is an image file; file_read returns text only. Attach the image to chat or use an OCR / vision tool to read it."
-            case .parseFailed:
-                return
-                    "The document couldn't be parsed — it may be encrypted, password-protected, or malformed."
-            case .nulByte, .decodeFailed:
+                    "Ask the user to attach the image to chat for a vision model, or use an OCR tool via shell_run."
+            case .parseFailed, .unsupportedFormat, .nulByte, .decodeFailed:
                 return nil
             }
         }
@@ -518,14 +573,17 @@ enum FolderToolHelpers {
     static let maxContentSearchFileBytes = 2 * 1024 * 1024
 
     /// Extensions skipped by a content search before any read: obvious
-    /// binary/media/archive/office-binary types that can't yield a useful
-    /// text substring match. The UTF-8 decode `nil`-skip remains the backstop.
+    /// binary/media/archive types that can't yield a useful text substring
+    /// match, plus document families with no extractor (`.xls`, `.key`, …).
+    /// Documents WITH an adapter (PDF/DOCX/PPTX/XLSX) are not here — they
+    /// are searched through `DocumentTextExtractionCache`. The UTF-8 decode
+    /// `nil`-skip remains the backstop.
     static let contentSearchSkippedExtensions: Set<String> = [
         "png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp", "heic", "ico", "icns",
         "mov", "mp4", "m4v", "avi", "mkv", "webm",
         "mp3", "wav", "aac", "m4a", "flac", "ogg",
         "zip", "gz", "tar", "tgz", "bz2", "xz", "7z", "rar", "dmg",
-        "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "key", "numbers", "pages",
+        "xls", "ppt", "key", "numbers", "pages", "odt", "ods", "odp",
         "bin", "exe", "dll", "so", "dylib", "o", "a", "class", "wasm",
     ]
 }
@@ -790,11 +848,13 @@ struct FileTreeTool: OsaurusTool {
 struct FileReadTool: OsaurusTool {
     let name = "file_read"
     let description =
-        "Read a file's contents, or list a directory's contents — the path decides. Files return text "
-        + "with `N|` line-number prefixes (UTF-8 source files, including HTML/RTF/SVG, are returned raw; "
-        + "trusted-folder paths also extract PDF, Word, and PowerPoint text and provide a bounded XLSX "
-        + "preview; VM sandbox paths are raw-text only, so process binary documents there with shell/code); "
-        + "bound large reads with "
+        "Read a file's contents, or list a directory's contents — the path decides. Handles every "
+        + "file type in one call: UTF-8 source/text (including HTML/RTF/SVG) is returned raw; PDF, "
+        + "Word (.docx/.doc/.rtfd), and PowerPoint (.pptx) documents are extracted to text; Excel "
+        + "(.xlsx) returns a bounded cell preview (`sheet_name`, `max_rows`, `max_columns`); images "
+        + "(.png/.jpg/.gif/.webp/.heic/…) are shown to vision models and OCR'd to text otherwise. "
+        + "Call it on the document itself — never unzip, convert, or shell out first. Files return "
+        + "text with `N|` line-number prefixes plus `format`/`source` metadata; bound large reads with "
         + "start_line/end_line, tail_lines, or max_chars. Directories return a listing; bound with "
         + "max_depth. Example: {\"path\": \"src/app.py\", \"start_line\": 1, \"end_line\": 120}"
     let parameters: JSONValue? = .object([
@@ -872,14 +932,18 @@ struct FileReadTool: OsaurusTool {
         else {
             return .unsupported
         }
-        // PDF text-layer extraction has a fully async, cancellation-aware
-        // adapter path below. Other parser-backed formats still pass through
-        // DocumentParser's synchronous compatibility shim, so they cannot be
-        // owned by a spawned operation yet.
+        // PDF extraction is the only document route audited for
+        // cooperative cancellation (`PDFAdapter` checks between pages —
+        // see SpawnedPDFReadTests). Word/RTF parse through one blocking
+        // `NSAttributedString(url:)` call and XLSX/PPTX have no drain
+        // proof yet, so they stay unsupported for spawned ownership, as do
+        // images (attached or OCR'd on a detached task).
         if ext == "pdf" {
             return .cooperative
         }
-        guard !WorkspaceFileFormatPolicy.prefersDocumentExtraction(ext) else {
+        guard !WorkspaceFileFormatPolicy.prefersDocumentExtraction(ext),
+            WorkspaceFileFormatPolicy.readSupport(for: ext) != .workbook
+        else {
             return .unsupported
         }
         if DocumentParser.isImageFile(url: fileURL), ext != "svg" {
@@ -908,9 +972,35 @@ struct FileReadTool: OsaurusTool {
     /// heuristic.
     private static let binarySniffBytes = 4096
 
+    /// Where the text came from. Carried into the result payload so the
+    /// model can tell raw source from an extracted text layer (a PDF's
+    /// "line 12" is a line of extracted prose, not a line of the file).
+    enum ContentSource: String {
+        case rawText = "raw_text"
+        case extractedText = "extracted_text"
+        case ocrText = "ocr_text"
+    }
+
     private struct LoadedFileContent {
         let text: String
         let rawRead: RawReadMetadata?
+        /// Short format id for the payload (`text`, `pdf`, `docx`, `pptx`, …).
+        let format: String
+        let source: ContentSource
+        /// Cheap structural counts the adapter already computed
+        /// (`pages`, `slides`). Empty for raw reads.
+        var counts: [String: Int] = [:]
+        /// Provenance note surfaced as `note` (e.g. OCR caveats).
+        var note: String? = nil
+    }
+
+    private enum ImageReadOutcome {
+        /// Vision-capable surface: the envelope carries an `image_ref`.
+        case attached(String)
+        /// Text-only surface: OCR lines flow through the normal `N|` path.
+        case recognizedText(LoadedFileContent)
+        /// The bytes are not a decodable image; take the ordinary read path.
+        case notAnImage
     }
 
     private struct RawReadMetadata {
@@ -942,6 +1032,16 @@ struct FileReadTool: OsaurusTool {
         if combinedFileRoute(path: relativePath) == .sandbox,
             let bridge = ChatExecutionContext.sandboxReadBridge
         {
+            // Documents and images under the VirtioFS share are served
+            // host-side (same extractors/OCR as a trusted-folder read);
+            // everything else keeps the raw-text bridge.
+            if let served = try await Self.readFromWorkspaceShare(
+                path: relativePath,
+                home: bridge.home,
+                args: args
+            ) {
+                return served
+            }
             return try await sandboxBridgeRead(
                 bridge,
                 path: relativePath,
@@ -994,6 +1094,61 @@ struct FileReadTool: OsaurusTool {
             }
             throw FolderToolError.fileNotFound(relativePath)
         }
+        return try await readResolved(
+            fileURL: fileURL,
+            relativePath: relativePath,
+            isDirectory: isDirectory.boolValue,
+            rootPath: rootPath,
+            args: args
+        )
+    }
+
+    /// Host-side read of a sandbox document/image under the `/workspace`
+    /// share (combined mode and VM-only mode). Returns `nil` when the path
+    /// is not a share-served format, is rejected by the sandbox sanitizer,
+    /// or does not exist host-side — the caller then falls back to the raw
+    /// bridge, whose envelopes carry the specific rejection / not-found
+    /// reason. `path` in the result is the absolute sandbox path the model
+    /// can reuse.
+    static func readFromWorkspaceShare(
+        path: String,
+        home: String,
+        args: [String: Any]
+    ) async throws -> String? {
+        guard let resolved = WorkspaceShareRoute.resolveForRead(path: path, home: home) else {
+            return nil
+        }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: resolved.hostURL.path, isDirectory: &isDirectory)
+        else { return nil }
+        // A directory whose name merely ends in a document extension is a
+        // listing, which the bridge handles (RTFD packages are directories
+        // but extract as documents).
+        if isDirectory.boolValue,
+            !WorkspaceFileFormatPolicy.prefersDocumentExtraction(resolved.fileExtension)
+        {
+            return nil
+        }
+        return try await FileReadTool(rootPath: WorkspaceShareRoute.shareRoot).readResolved(
+            fileURL: resolved.hostURL,
+            relativePath: resolved.sandboxPath,
+            isDirectory: isDirectory.boolValue,
+            rootPath: WorkspaceShareRoute.shareRoot,
+            args: args
+        )
+    }
+
+    /// Everything after path resolution: listing, workbook preview, image
+    /// attach/OCR, document extraction, and the `N|` rendering contract.
+    /// Shared by the host route and the `/workspace` share route.
+    private func readResolved(
+        fileURL: URL,
+        relativePath: String,
+        isDirectory isDirectoryFlag: Bool,
+        rootPath: URL,
+        args: [String: Any]
+    ) async throws -> String {
+        let isDirectory = ObjCBool(isDirectoryFlag)
         let ext = fileURL.pathExtension.lowercased()
 
         // A directory path lists rather than reads (the path carries the
@@ -1037,14 +1192,50 @@ struct FileReadTool: OsaurusTool {
             sheetName: sheetName,
             args: args
         ) {
-            return ToolEnvelope.success(tool: name, text: workbookPreview)
+            var result: [String: Any] = [
+                "kind": "workbook",
+                "text": workbookPreview.text,
+                "path": relativePath,
+                "format": "xlsx",
+                "source": "workbook_preview",
+                "sheets": workbookPreview.sheetCount,
+                "sheet_names": workbookPreview.sheetNames,
+                "preview_note":
+                    "Bounded cell preview (`max_rows`/`max_columns`, `start_line`/`end_line` = rows); "
+                    + "pass `sheet_name` to focus one sheet.",
+            ]
+            if let sheetName { result["sheet_name"] = sheetName }
+            return ToolEnvelope.success(tool: name, result: result)
         }
 
-        let content = try await loadFileContent(
-            url: fileURL,
-            relativePath: relativePath,
-            ext: ext
-        )
+        // Pixel images: attach for a vision model, OCR for everyone else.
+        // SVG is XML source and keeps the raw text path.
+        let imageByPolicy = WorkspaceFileFormatPolicy.readSupport(for: ext) == .image
+        let content: LoadedFileContent
+        if ext != "svg", !isDirectory.boolValue,
+            imageByPolicy || DocumentParser.isImageFile(url: fileURL)
+        {
+            switch try await readImage(fileURL: fileURL, relativePath: relativePath, ext: ext) {
+            case .attached(let envelope):
+                return envelope
+            case .recognizedText(let loaded):
+                content = loaded
+            case .notAnImage:
+                // Mislabelled bytes (e.g. source text saved as `.png`):
+                // UTF-8 source still wins over the extension.
+                content = try await loadFileContent(
+                    url: fileURL,
+                    relativePath: relativePath,
+                    ext: ext
+                )
+            }
+        } else {
+            content = try await loadFileContent(
+                url: fileURL,
+                relativePath: relativePath,
+                ext: ext
+            )
+        }
         let lines = content.text.components(separatedBy: .newlines)
 
         // `tail_lines` (last N lines, for logs) overrides an explicit
@@ -1177,6 +1368,13 @@ struct FileReadTool: OsaurusTool {
             // wrong-answer retry loop.
             "line_format": "each line is `<line number>|<content>`; content starts after the first `|`",
             "path": relativePath,
+            // Self-describing provenance: `format` is the file type that
+            // was opened, `source` says whether the lines are the file's
+            // own bytes or a text layer extracted from a document. Without
+            // this a PDF read is indistinguishable from a `.txt` read and
+            // the model reasons about "line 12 of the file" literally.
+            "format": content.format,
+            "source": content.source.rawValue,
             "start_line": validStart,
             "end_line": lastLineIncluded,
             "total_lines": lines.count,
@@ -1190,6 +1388,12 @@ struct FileReadTool: OsaurusTool {
         if let continuationStart {
             result["next_start_line"] = continuationStart
             result["next_end_line"] = validEnd
+        }
+        for (key, value) in content.counts {
+            result[key] = value
+        }
+        if let note = content.note {
+            result["note"] = note
         }
         // Anti-paging guard: a model on chunk 2+ of a file too large to
         // ever fit is usually sequentially paging the whole thing through
@@ -1259,6 +1463,95 @@ struct FileReadTool: OsaurusTool {
         )
     }
 
+    /// Image branch. When the running surface can carry an image to a
+    /// vision model (`ChatExecutionContext.toolResultImagesEnabled`), the
+    /// bytes are bounded, spilled to `AttachmentBlobStore`, and referenced
+    /// from a `kind: "image"` envelope that `ToolResultMediaBridge` turns
+    /// into a multimodal tool message. Otherwise Vision OCR recognises the
+    /// text so a text-only model still reads the picture; an image with no
+    /// recognisable text throws the `.image` binary envelope.
+    private func readImage(
+        fileURL: URL,
+        relativePath: String,
+        ext: String
+    ) async throws -> ImageReadOutcome {
+        let loaded: FileReadImageSupport.LoadedImage
+        do {
+            loaded = try await Task.detached(priority: .userInitiated) {
+                try FileReadImageSupport.load(url: fileURL)
+            }.value
+        } catch FileReadImageSupport.LoadError.tooLarge(let bytes) {
+            throw FolderToolError.operationFailed(
+                "'\(relativePath)' is a \(bytes / (1024 * 1024)) MB image, above the "
+                    + "\(FileReadImageSupport.maxSourceBytes / (1024 * 1024)) MB limit file_read attaches or OCRs. "
+                    + "Downscale it first (e.g. `sips -Z 2048` via shell_run)."
+            )
+        } catch {
+            // Not decodable as an image after all (mislabelled bytes): let
+            // the ordinary path read UTF-8 source or raise the binary error.
+            return .notAnImage
+        }
+        try Task.checkCancellation()
+
+        let format =
+            loaded.mimeSubtype == "jpeg" && ext != "jpg" && ext != "jpeg" && !loaded.downscaled
+            ? loaded.mimeSubtype : (ext.isEmpty ? loaded.mimeSubtype : ext)
+        let dimensions = "\(loaded.pixelWidth)x\(loaded.pixelHeight)"
+
+        if ChatExecutionContext.toolResultImagesEnabled {
+            let hash: String
+            do {
+                hash = try AttachmentBlobStore.write(loaded.data)
+            } catch {
+                throw FolderToolError.operationFailed(
+                    "Could not stage the image for the model: \(error.localizedDescription)"
+                )
+            }
+            var text =
+                "Image \(relativePath) (\(dimensions), \(format.uppercased()), \(loaded.sourceBytes) bytes) "
+                + "is attached to this tool result and visible to you as an image. Describe or analyse it directly; "
+                + "do not call a shell tool or OCR to inspect it."
+            if loaded.downscaled {
+                text += " It was downscaled to \(loaded.pixelWidth)x\(loaded.pixelHeight) JPEG for transport."
+            }
+            let result: [String: Any] = [
+                "kind": "image",
+                "path": relativePath,
+                "format": format,
+                "source": "image",
+                "width": loaded.pixelWidth,
+                "height": loaded.pixelHeight,
+                "bytes": loaded.sourceBytes,
+                "image_ref": [
+                    "hash": hash,
+                    "byte_count": loaded.data.count,
+                    "mime": "image/\(loaded.mimeSubtype)",
+                ],
+                "text": text,
+            ]
+            return .attached(ToolEnvelope.success(tool: name, result: result))
+        }
+
+        let lines = await FileReadImageSupport.recognizeTextLines(in: loaded.data)
+        try Task.checkCancellation()
+        guard !lines.isEmpty else {
+            throw Self.binaryError(path: relativePath, ext: ext, detail: .image)
+        }
+        return .recognizedText(
+            LoadedFileContent(
+                text: lines.joined(separator: "\n"),
+                rawRead: nil,
+                format: format,
+                source: .ocrText,
+                counts: ["width": loaded.pixelWidth, "height": loaded.pixelHeight],
+                note:
+                    "The active model cannot view images, so these lines are OCR text recognised in the "
+                    + "\(dimensions) image (reading order is approximate; layout, colours, and non-text "
+                    + "content are not represented)."
+            )
+        )
+    }
+
     /// Pull text out of the file at `url`, throwing `binaryContent` when
     /// the file is not text or text-extractable:
     ///   - PDFs use `PDFAdapter` directly so spawned reads remain
@@ -1278,28 +1571,33 @@ struct FileReadTool: OsaurusTool {
         ext: String
     ) async throws -> LoadedFileContent {
         if ext == "pdf" {
-            return LoadedFileContent(
-                text: try await extractPDFTextLayer(
-                    url: url,
-                    relativePath: relativePath,
-                    ext: ext
-                ),
-                rawRead: nil
+            return try await extractPDFTextLayer(
+                url: url,
+                relativePath: relativePath,
+                ext: ext
+            )
+        }
+
+        if case .unsupportedDocument(let family) = WorkspaceFileFormatPolicy.readSupport(for: ext) {
+            // Recognised family, no adapter: say so precisely instead of
+            // falling through to a "could not be parsed" or binary message.
+            throw Self.binaryError(
+                path: relativePath,
+                ext: ext,
+                detail: .unsupportedFormat(family: family)
             )
         }
 
         if WorkspaceFileFormatPolicy.prefersDocumentExtraction(ext) {
-            DocumentAdaptersBootstrap.registerBuiltIns()
-            guard DocumentParser.canParse(url: url) else {
+            DocumentAdaptersBootstrap.registerBuiltIns(registry: documentRegistry)
+            guard let adapter = documentRegistry.adapter(for: url) else {
                 throw Self.binaryError(path: relativePath, ext: ext, detail: .parseFailed)
             }
-            return LoadedFileContent(
-                text: try await extractRichDocumentText(
-                    url: url,
-                    relativePath: relativePath,
-                    ext: ext
-                ),
-                rawRead: nil
+            return try await extractRichDocumentText(
+                adapter: adapter,
+                url: url,
+                relativePath: relativePath,
+                ext: ext
             )
         }
 
@@ -1324,15 +1622,16 @@ struct FileReadTool: OsaurusTool {
             if DocumentParser.isImageFile(url: url) {
                 throw Self.binaryError(path: relativePath, ext: ext, detail: .image)
             }
-            DocumentAdaptersBootstrap.registerBuiltIns()
-            if DocumentParser.canParse(url: url) {
-                return LoadedFileContent(
-                    text: try await extractRichDocumentText(
-                        url: url,
-                        relativePath: relativePath,
-                        ext: ext
-                    ),
-                    rawRead: nil
+            DocumentAdaptersBootstrap.registerBuiltIns(registry: documentRegistry)
+            if let adapter = documentRegistry.adapter(for: url),
+                adapter.formatId != PlainTextAdapter().formatId,
+                !adapter.formatId.hasPrefix("csv")
+            {
+                return try await extractRichDocumentText(
+                    adapter: adapter,
+                    url: url,
+                    relativePath: relativePath,
+                    ext: ext
                 )
             }
             throw error
@@ -1347,19 +1646,49 @@ struct FileReadTool: OsaurusTool {
         url: URL,
         relativePath: String,
         ext: String
-    ) async throws -> String {
+    ) async throws -> LoadedFileContent {
         do {
             let document = try await PDFAdapter().parse(
                 url: url,
                 sizeLimit: Int64(DocumentParser.maxFileSize)
             )
             try Task.checkCancellation()
-            return document.textFallback
+            var counts: [String: Int] = [:]
+            if let pdf = document.representation.underlying as? PDFDocumentRepresentation {
+                counts["pages"] = pdf.pages.count
+            }
+            return LoadedFileContent(
+                text: document.textFallback,
+                rawRead: nil,
+                format: "pdf",
+                source: .extractedText,
+                counts: counts
+            )
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as DocumentAdapterError {
             switch error {
             case .emptyContent:
+                // No text layer: scanned pages. OCR a bounded number of
+                // rendered pages so the document is still readable here
+                // instead of bouncing the model to a shell tool.
+                if let ocr = await FileReadImageSupport.ocrImageOnlyPDF(url: url) {
+                    try Task.checkCancellation()
+                    var note =
+                        "This PDF has no text layer; the lines are OCR text recognised from "
+                        + "\(ocr.pagesScanned) rendered page(s) (reading order approximate)."
+                    if ocr.pagesScanned < ocr.totalPages {
+                        note += " Only the first \(ocr.pagesScanned) of \(ocr.totalPages) pages were scanned."
+                    }
+                    return LoadedFileContent(
+                        text: ocr.text,
+                        rawRead: nil,
+                        format: "pdf",
+                        source: .ocrText,
+                        counts: ["pages": ocr.totalPages, "pages_scanned": ocr.pagesScanned],
+                        note: note
+                    )
+                }
                 throw Self.binaryError(path: relativePath, ext: ext, detail: .imageOnlyPdf)
             case .cancelled:
                 throw CancellationError()
@@ -1369,39 +1698,64 @@ struct FileReadTool: OsaurusTool {
         }
     }
 
-    /// Run the non-PDF `DocumentParser.parse(url:)` compatibility path on a
-    /// detached task so the
-    /// parser's internal `runBlocking` semaphore can't starve the
-    /// cooperative thread pool. Matches the production pattern in
-    /// `FloatingInputCard`.
+    /// Run a registered non-PDF document adapter directly (async, so the
+    /// adapter's own cancellation checks reach the owning task) and fold
+    /// the structural counts it already computed into the payload.
     private func extractRichDocumentText(
+        adapter: any DocumentFormatAdapter,
         url: URL,
         relativePath: String,
         ext: String
-    ) async throws -> String {
-        let attachment: Attachment
+    ) async throws -> LoadedFileContent {
+        let document: StructuredDocument
         do {
-            attachment = try await Task.detached(priority: .userInitiated) {
-                try DocumentParser.parse(url: url)
-            }.value
-        } catch let err as DocumentParser.ParseError {
-            switch err {
+            document = try await adapter.parse(
+                url: url,
+                sizeLimit: DocumentLimits.limit(forFormatId: adapter.formatId)
+            )
+            try Task.checkCancellation()
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as DocumentAdapterError {
+            switch error {
             case .emptyContent:
                 // Empty rich doc — surface as empty string; downstream
                 // slicing produces the same "(empty)" output the plain-
                 // text path would for a zero-byte `.txt`.
-                return ""
-            case .unsupportedFormat, .readFailed, .fileTooLarge:
+                return LoadedFileContent(
+                    text: "",
+                    rawRead: nil,
+                    format: Self.formatLabel(ext: ext, adapter: adapter),
+                    source: .extractedText
+                )
+            case .cancelled:
+                throw CancellationError()
+            case .unsupportedFormat, .sizeLimitExceeded, .readFailed, .writeFailed:
                 throw Self.binaryError(path: relativePath, ext: ext, detail: .parseFailed)
             }
+        } catch {
+            throw Self.binaryError(path: relativePath, ext: ext, detail: .parseFailed)
         }
-        if case .document(_, let text, _) = attachment.kind {
-            return text
+        var counts: [String: Int] = [:]
+        if let presentation = document.representation.underlying as? PresentationDocument {
+            counts["slides"] = presentation.slides.count
         }
-        // Image-only PDF (DocumentParser falls back to per-page image
-        // attachments). We can't surface those through file_read — emit
-        // the binary envelope so the model pivots instead of retrying.
-        throw Self.binaryError(path: relativePath, ext: ext, detail: .imageOnlyPdf)
+        return LoadedFileContent(
+            text: document.textFallback,
+            rawRead: nil,
+            format: Self.formatLabel(ext: ext, adapter: adapter),
+            source: .extractedText,
+            counts: counts
+        )
+    }
+
+    /// Payload `format` id: the file extension when it is a known document
+    /// extension (`docx`, `pptx`), else the adapter's id (`richdoc`).
+    private static func formatLabel(ext: String, adapter: any DocumentFormatAdapter) -> String {
+        if !ext.isEmpty, WorkspaceFileFormatPolicy.readSupport(for: ext).isDocument {
+            return ext
+        }
+        return adapter.formatId
     }
 
     private static func loadBoundedRawText(
@@ -1473,7 +1827,9 @@ struct FileReadTool: OsaurusTool {
                 byteLimit: Self.rawReadByteLimit,
                 fileSize: fileSize,
                 truncatedByByteLimit: truncatedByByteLimit
-            )
+            ),
+            format: ext.isEmpty ? "text" : ext,
+            source: .rawText
         )
     }
 
@@ -1525,12 +1881,18 @@ struct FileReadTool: OsaurusTool {
         return "\(bytes) bytes"
     }
 
+    struct WorkbookPreview {
+        let text: String
+        let sheetCount: Int
+        let sheetNames: [String]
+    }
+
     private func workbookPreviewIfAvailable(
         fileURL: URL,
         relativePath: String,
         sheetName: String?,
         args: [String: Any]
-    ) async throws -> String? {
+    ) async throws -> WorkbookPreview? {
         guard let adapter = workbookAdapter(for: fileURL) else { return nil }
         let document = try await adapter.parse(
             url: fileURL,
@@ -1550,7 +1912,7 @@ struct FileReadTool: OsaurusTool {
         let startRow = max(1, coerceInt(args["start_line"]) ?? 1)
         let endRow = max(startRow, coerceInt(args["end_line"]) ?? Int.max)
 
-        return Self.renderWorkbookPreview(
+        let text = Self.renderWorkbookPreview(
             document: document,
             workbook: workbook,
             relativePath: relativePath,
@@ -1559,6 +1921,11 @@ struct FileReadTool: OsaurusTool {
             endRow: endRow,
             maxRows: maxRows,
             maxColumns: maxColumns
+        )
+        return WorkbookPreview(
+            text: text,
+            sheetCount: workbook.sheets.count,
+            sheetNames: Array(workbook.sheets.map(\.name).prefix(50))
         )
     }
 
@@ -1734,13 +2101,14 @@ struct FileReadTool: OsaurusTool {
 struct FileWriteTool: OsaurusTool, PermissionedTool {
     let name = "file_write"
     let description =
-        "Create, overwrite, or append to a UTF-8 text file — always pass `path` (that exact key) as the FIRST argument, before `content`. "
+        "Create, overwrite, or append to a text file, or generate a document by extension — always pass `path` (that exact key) as the FIRST argument, before `content`. "
         + "Parent directories are created automatically. You MUST provide the file contents in the "
-        + "`content` parameter. Use `mode: \"append\"` for any additive change so existing content remains intact. "
-        + "For a large file, keep calls bounded: write the first chunk normally, "
-        + "then pass `mode: \"append\"` for later chunks. Pass `dry_run: true` to preview the diff and risk warnings without "
-        + "writing. Binary document/package extensions such as `.docx`, `.xlsx`, `.pdf`, and `.pptx` "
-        + "are rejected — write UTF-8 formats such as Markdown/HTML/CSV/TSV instead. "
+        + "`content` parameter. Text/code of any extension is written as UTF-8. Documents are generated from text: "
+        + "`.xlsx` from CSV/TSV rows or JSON `{\"sheets\":[{\"name\":..,\"rows\":[[..]]}]}`; `.docx` and `.pdf` from Markdown or HTML. "
+        + "`.pptx` and other presentation/legacy formats are not supported (write Markdown, `.docx`, or `.pdf` instead). "
+        + "Use `mode: \"append\"` for any additive change to a text file so existing content remains intact "
+        + "(documents are regenerated whole; append is refused). For a large text file, keep calls bounded: write the first chunk normally, "
+        + "then pass `mode: \"append\"` for later chunks. Pass `dry_run: true` to preview the diff (text) or the document summary without writing. "
         + "For runnable code, a successful write proves only persistence; run an available check before claiming it works. "
         + "Example: {\"path\": \"notes/summary.md\", \"content\": \"# Summary\\n...\"}"
     let parameters: JSONValue? = .object([
@@ -1755,14 +2123,15 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
                 "type": .string("string"),
                 "maxLength": .number(Double(WorkspaceToolContract.maxWriteContentCharacters)),
                 "description": .string(
-                    "Content to write (maximum \(WorkspaceToolContract.maxWriteContentCharacters) characters per call; use append for more)"
+                    "Content to write (maximum \(WorkspaceToolContract.maxWriteContentCharacters) characters per call; use append for more). "
+                        + "For `.xlsx`: CSV/TSV rows or JSON `{\"sheets\":[{\"name\",\"rows\"}]}`; for `.docx`/`.pdf`: Markdown or HTML."
                 ),
             ]),
             "mode": .object([
                 "type": .string("string"),
                 "enum": .array([.string("overwrite"), .string("append")]),
                 "description": .string(
-                    "Write mode (default: overwrite). Use append for additive changes or later chunks."
+                    "Write mode (default: overwrite). Use append for additive changes or later chunks of a text file; generated documents are always regenerated whole."
                 ),
             ]),
             "dry_run": .object([
@@ -1780,9 +2149,14 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
     var mutatesHostFolder: Bool { true }
 
     private let fixedRootPath: URL?
+    private let documentRegistry: DocumentFormatRegistry
+    /// Tool name stamped on document-route envelopes when this instance
+    /// serves another tool (`sandbox_write_file` on the share route).
+    fileprivate var envelopeToolName: String? = nil
 
-    init(rootPath: URL? = nil) {
+    init(rootPath: URL? = nil, documentRegistry: DocumentFormatRegistry = .shared) {
         self.fixedRootPath = rootPath
+        self.documentRegistry = documentRegistry
     }
 
     func execute(argumentsJSON: String) async throws -> String {
@@ -1840,6 +2214,17 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         if combinedFileRoute(path: relativePath) == .sandbox,
             let bridge = ChatExecutionContext.sandboxReadBridge
         {
+            // Generated documents (.xlsx/.docx/.pdf) under the VirtioFS
+            // share are rendered host-side; the bridge only carries text.
+            if let served = try await Self.writeDocumentToWorkspaceShare(
+                path: relativePath,
+                home: bridge.home,
+                content: content,
+                mode: mode,
+                dryRun: dryRun
+            ) {
+                return served
+            }
             if dryRun {
                 return ToolEnvelope.failure(
                     kind: .invalidArgs,
@@ -1873,6 +2258,20 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
                 tool: name
             )
         }
+        // Document generation by extension (.xlsx / .docx / .pdf) — the
+        // content is CSV/TSV/JSON rows or Markdown/HTML, not the bytes.
+        if let target = FileWriteDocumentRouting.target(forExtension: fileURL.pathExtension.lowercased()) {
+            return try await writeDocument(
+                target: target,
+                content: content,
+                mode: mode,
+                dryRun: dryRun,
+                relativePath: relativePath,
+                fileURL: fileURL,
+                rootPath: rootPath
+            )
+        }
+
         if let rejected = WorkspaceWriteSafety.structuredTextWriteRejection(
             path: relativePath,
             fileExtension: fileURL.pathExtension.lowercased(),
@@ -1949,6 +2348,215 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
             warnings: preview.warnings
         )
     }
+
+    /// Host-side generated-document write for a sandbox path under the
+    /// `/workspace` share (combined mode and VM-only mode). Returns `nil`
+    /// when the extension is not a generated document or the path is not a
+    /// share path — the caller falls back to the text bridge. `dry_run`
+    /// works here (unlike the bridge) because the preview is host-side.
+    static func writeDocumentToWorkspaceShare(
+        path: String,
+        home: String,
+        content: String,
+        mode: String,
+        dryRun: Bool,
+        tool: String = "file_write"
+    ) async throws -> String? {
+        let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
+        guard let target = FileWriteDocumentRouting.target(forExtension: ext) else { return nil }
+        guard let resolved = WorkspaceShareRoute.resolveForWrite(path: path, home: home) else {
+            // A generated document that the host cannot reach must never
+            // fall through to the text bridge — that would write CSV or
+            // Markdown bytes into a `.xlsx`/`.docx`/`.pdf`.
+            return documentShareUnavailableRejection(path: path, fileExtension: ext, tool: tool)
+        }
+        var writer = FileWriteTool(rootPath: WorkspaceShareRoute.shareRoot)
+        writer.envelopeToolName = tool
+        return try await writer.writeDocument(
+            target: target,
+            content: content,
+            mode: mode,
+            dryRun: dryRun,
+            relativePath: resolved.sandboxPath,
+            logPath: resolved.shareRelativePath,
+            fileURL: resolved.hostURL,
+            rootPath: WorkspaceShareRoute.shareRoot,
+            area: "sandbox"
+        )
+    }
+
+    /// Rejection for a generated-document write whose sandbox path the host
+    /// cannot serve (outside `/workspace`, rejected by the sanitizer, or the
+    /// share root is missing). Names the working alternatives instead of
+    /// letting text bytes land in a document extension.
+    static func documentShareUnavailableRejection(
+        path: String,
+        fileExtension ext: String,
+        tool: String
+    ) -> String {
+        ToolEnvelope.failure(
+            kind: .rejected,
+            message:
+                "Refused to write '\(path)': .\(ext) documents are generated host-side and this path is not "
+                + "under the `\(WorkspaceShareRoute.mountPoint)` share the host can reach. Write the document "
+                + "under your sandbox home or `\(WorkspaceShareRoute.mountPoint)/shared`, or write the same "
+                + "content as Markdown/CSV text here.",
+            field: "path",
+            expected: "a `.\(ext)` path under `\(WorkspaceShareRoute.mountPoint)/...`, or a text extension",
+            tool: tool,
+            retryable: false,
+            metadata: ["extension": ext]
+        )
+    }
+
+    /// Generated-document route for `.xlsx` / `.docx` / `.pdf`. Builds the
+    /// document from the model's text, previews it on `dry_run`, and on a
+    /// real write captures the previous bytes (any encoding) so `file_undo`
+    /// restores an overwritten package exactly. `logPath` is the path
+    /// relative to `rootPath` recorded for undo (defaults to
+    /// `relativePath`; differs on the `/workspace` share route where the
+    /// model-facing path is absolute).
+    private func writeDocument(
+        target: FileWriteDocumentRouting.Target,
+        content: String,
+        mode: String,
+        dryRun: Bool,
+        relativePath: String,
+        logPath: String? = nil,
+        fileURL: URL,
+        rootPath: URL,
+        area: String = "workspace"
+    ) async throws -> String {
+        let name = envelopeToolName ?? self.name
+        let ext = target.rawValue
+        if mode == "append" {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "`mode: \"append\"` is not supported for generated .\(ext) documents — the file is rendered "
+                    + "as a whole. Read the current content with `file_read`, then call file_write once with the "
+                    + "complete new content (\(target.contentHint)).",
+                field: "mode",
+                expected: "omit `mode` (or `write`) for .\(ext); documents are regenerated whole",
+                tool: name,
+                retryable: false
+            )
+        }
+
+        let plan: FileWriteDocumentRouting.Plan
+        do {
+            plan = try FileWriteDocumentRouting.plan(
+                target: target,
+                content: content,
+                filename: fileURL.lastPathComponent
+            )
+        } catch let error as FileWriteDocumentRouting.RoutingError {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Cannot build the .\(ext) document from `content`: \(error.localizedDescription)",
+                field: "content",
+                expected: target.contentHint,
+                tool: name,
+                retryable: false,
+                metadata: ["extension": ext]
+            )
+        }
+
+        let previousBytes = WorkspaceWriteSafety.existingBytes(at: fileURL)
+        let existed = previousBytes != nil
+        let parentDir = fileURL.deletingLastPathComponent()
+        let createsParentDirectories = !FileManager.default.fileExists(atPath: parentDir.path)
+
+        var payload: [String: Any] = [
+            "path": relativePath,
+            "format": ext,
+            "action": existed ? "overwrite" : "create",
+            "input": plan.summary["input"] ?? "",
+        ]
+        for (key, value) in plan.summary where key != "input" {
+            payload[key] = value
+        }
+        var warnings: [String] = []
+        if existed {
+            warnings.append(
+                "Overwrites the existing .\(ext) at '\(relativePath)' (previous bytes are captured for `file_undo`)."
+            )
+        }
+        if createsParentDirectories {
+            warnings.append("Creates missing parent directories for '\(relativePath)'.")
+        }
+
+        if dryRun {
+            payload["kind"] = "document_write_preview"
+            payload["dry_run"] = true
+            payload["applied"] = false
+            payload["note"] =
+                "Preview only — nothing was written. Call again without `dry_run` to generate the .\(ext)."
+            return ToolEnvelope.success(tool: name, result: payload, warnings: warnings.isEmpty ? nil : warnings)
+        }
+
+        let written: FileWriteDocumentRouting.Written
+        do {
+            written = try await FileWriteDocumentRouting.write(plan, to: fileURL, registry: documentRegistry)
+        } catch let error as FileWriteDocumentRouting.RoutingError {
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: "Failed to generate '\(relativePath)': \(error.localizedDescription)",
+                tool: name,
+                retryable: false,
+                metadata: ["extension": ext]
+            )
+        } catch let error as WorkbookWorkflowError {
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: "Failed to generate '\(relativePath)': \(error.localizedDescription)",
+                tool: name,
+                retryable: false,
+                metadata: ["extension": ext]
+            )
+        } catch let error as DocumentAdapterError {
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: "Failed to generate '\(relativePath)': \(error.localizedDescription)",
+                tool: name,
+                retryable: false,
+                metadata: ["extension": ext]
+            )
+        }
+
+        if let sessionId = ChatExecutionContext.currentSessionId {
+            let encoded = FileOperation.encodePreviousContent(previousBytes)
+            let operation = FileOperation(
+                type: existed ? .write : .create,
+                path: logPath ?? relativePath,
+                previousContent: encoded.content,
+                previousContentEncoding: encoded.encoding,
+                sessionId: sessionId,
+                batchId: ChatExecutionContext.currentBatchId,
+                rootPath: rootPath.standardizedFileURL.path
+            )
+            await FileOperationLog.shared.log(operation)
+            payload["operation_id"] = operation.id.uuidString
+        }
+
+        payload["kind"] = "document_write_result"
+        payload["applied"] = true
+        payload["bytes_written"] = written.bytesWritten
+        for (key, value) in written.extra {
+            payload[key] = value
+        }
+        payload["file_reference"] = [
+            "kind": area == "sandbox" ? "sandbox_file" : "workspace_file",
+            "path": relativePath,
+            "exportable": true,
+        ]
+        payload["area"] = area
+        payload["verification"] =
+            "Generated .\(ext). Open it with `file_read` to confirm the content reads back as intended."
+        payload["share_hint"] =
+            "To surface this document as a clickable card in chat, call `share_artifact` with this path."
+        return ToolEnvelope.success(tool: name, result: payload, warnings: warnings.isEmpty ? nil : warnings)
+    }
 }
 
 // MARK: - Coding Tools
@@ -1972,7 +2580,8 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         + "For many distinct replacements pass `edits`: an array of {old_string, new_string} applied "
         + "atomically in one call — if any edit fails to match, nothing is written. Prefer one `edits` "
         + "call over many single-edit calls; for large pattern rewrites consider `shell_run` with `sed`. "
-        + "Binary document/package extensions are rejected; this tool edits UTF-8 source only. "
+        + "Documents (.pdf/.docx/.xlsx/.pptx …) are not edited in place: read them with `file_read`, change the text, "
+        + "and regenerate with `file_write` (`.docx`/`.pdf` from Markdown or HTML, `.xlsx` from CSV/JSON rows). "
         + "For runnable code, verify the result before claiming it works; a truncated diff is only a shortened review preview, not a partial edit. "
         + "Pass `dry_run: true` to preview the diff without modifying the file. "
         + "Example: {\"path\": \"config.py\", \"old_string\": \"debug = True\", \"new_string\": \"debug = False\"}"
@@ -2139,6 +2748,17 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         if combinedFileRoute(path: relativePath) == .sandbox,
             let bridge = ChatExecutionContext.sandboxReadBridge
         {
+            // Documents are never text-edited on either route: the pivot is
+            // read (extracted) -> change the text -> regenerate whole.
+            if let rejected = WorkspaceWriteSafety.documentEditRejection(
+                path: relativePath,
+                fileExtension: URL(fileURLWithPath: relativePath).pathExtension.lowercased(),
+                toolName: name,
+                regenerateHint:
+                    "regenerate the whole document with `file_write` (`.docx`/`.pdf` from Markdown or HTML, `.xlsx` from CSV/TSV or JSON rows)."
+            ) {
+                return rejected
+            }
             if dryRun {
                 return ToolEnvelope.failure(
                     kind: .invalidArgs,
@@ -2186,10 +2806,12 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                 tool: name
             )
         }
-        if let rejected = WorkspaceWriteSafety.structuredTextWriteRejection(
+        if let rejected = WorkspaceWriteSafety.documentEditRejection(
             path: relativePath,
             fileExtension: fileURL.pathExtension.lowercased(),
-            toolName: name
+            toolName: name,
+            regenerateHint:
+                "regenerate the whole document with `file_write` (`.docx`/`.pdf` from Markdown or HTML, `.xlsx` from CSV/TSV or JSON rows)."
         ) {
             return rejected
         }
@@ -2699,6 +3321,8 @@ struct FileSearchTool: OsaurusTool {
     let description =
         "Search files in the working directory. With `target=\"content\"` (default) it finds text by "
         + "case-insensitive substring match, returning matching lines with file paths and line numbers. "
+        + "Content search also looks inside PDF, Word, PowerPoint, and Excel files (extracted text; matches "
+        + "carry a `[page N]` / `[slide N]` / `[Sheet row N]` locator instead of a line number). "
         + "With `target=\"files\"` it finds files by name (case-insensitive substring, e.g. `q4` matches "
         + "`q4_sales_report.xlsx`; use `*`/`?` for a glob like `*.swift`). "
         + "Example: {\"pattern\": \"TODO\", \"path\": \"src\", \"file_pattern\": \"*.py\"}"
@@ -2872,9 +3496,11 @@ struct FileSearchTool: OsaurusTool {
         var skipRemaining = offset
         let collectCap = maxResults + 1
         // Files the search never looked inside (binary extension, over the
-        // size cap, or undecodable). Counted so "No matches" can't silently
-        // mean "the file you care about was skipped".
-        var skippedFiles = 0
+        // size cap, undecodable, or an unextractable document). Tallied so
+        // "No matches" can't silently mean "the file you care about was
+        // skipped", and so the note names WHICH kinds were left out.
+        var skippedFiles = ContentSearchSkipTally()
+        let documentBudget = DocumentSearchBudget()
 
         // Determine if searching a file or directory
         var isDirectory: ObjCBool = false
@@ -2952,7 +3578,8 @@ struct FileSearchTool: OsaurusTool {
                 switch try await searchFile(
                     fileURL,
                     pattern: pattern,
-                    maxResults: collectCap - totalMatches + skipRemaining
+                    maxResults: collectCap - totalMatches + skipRemaining,
+                    documentBudget: documentBudget
                 ) {
                 case .matches(var matches):
                     let drop = min(skipRemaining, matches.count)
@@ -2960,21 +3587,26 @@ struct FileSearchTool: OsaurusTool {
                     matches.removeFirst(drop)
                     results.append(contentsOf: matches)
                     totalMatches += matches.count
-                case .skipped:
-                    skippedFiles += 1
+                case .skipped(let reason):
+                    skippedFiles.record(reason)
                 }
             }
         } else {
             // Search single file
-            switch try await searchFile(searchURL, pattern: pattern, maxResults: collectCap + skipRemaining) {
+            switch try await searchFile(
+                searchURL,
+                pattern: pattern,
+                maxResults: collectCap + skipRemaining,
+                documentBudget: documentBudget
+            ) {
             case .matches(var matches):
                 let drop = min(skipRemaining, matches.count)
                 skipRemaining -= drop
                 matches.removeFirst(drop)
                 results.append(contentsOf: matches)
                 totalMatches = matches.count
-            case .skipped:
-                skippedFiles += 1
+            case .skipped(let reason):
+                skippedFiles.record(reason)
             }
         }
         // The (maxResults + 1)th match is the "more exists" probe, never
@@ -3085,12 +3717,31 @@ struct FileSearchTool: OsaurusTool {
     }
 
     /// Human/structured note for files the content search never read.
-    /// Returns nil when nothing was skipped.
-    private static func skippedFilesNote(_ count: Int) -> String? {
-        guard count > 0 else { return nil }
+    /// Names the kinds skipped so the model knows whether the file it
+    /// cares about was one of them. Returns nil when nothing was skipped.
+    static func skippedFilesNote(_ tally: ContentSearchSkipTally) -> String? {
+        guard tally.total > 0 else { return nil }
         let mb = FolderToolHelpers.maxContentSearchFileBytes / (1024 * 1024)
-        return
-            "\(count) file(s) skipped (binary or >\(mb)MB) — their contents were not searched."
+        var parts: [String] = []
+        if tally.binary > 0 {
+            parts.append("\(tally.binary) media/archive/executable file(s)")
+        }
+        if tally.tooLarge > 0 {
+            parts.append("\(tally.tooLarge) text file(s) over \(mb)MB")
+        }
+        if tally.undecodable > 0 {
+            parts.append("\(tally.undecodable) non-UTF-8 file(s)")
+        }
+        if tally.documents > 0 {
+            let exts = tally.documentExtensions.sorted().map { ".\($0)" }.joined(separator: "/")
+            parts.append(
+                "\(tally.documents) document(s) (\(exts)) that could not be extracted here "
+                    + "(over \(DocumentTextExtractionCache.maxDocumentBytes / (1024 * 1024))MB, unparseable, "
+                    + "or past the \(maxDocumentsExtractedPerSearch)-document search budget) — open them with `file_read`"
+            )
+        }
+        return "\(tally.total) file(s) skipped: " + parts.joined(separator: "; ")
+            + ". Their contents were not searched."
     }
 
     /// Appended when a search stops at `maxEntriesVisited` rather than from
@@ -3313,39 +3964,105 @@ struct FileSearchTool: OsaurusTool {
         case matches([String])
         /// File was never searched: binary extension, over the size cap,
         /// or not decodable as UTF-8.
-        case skipped
+        case skipped(ContentSearchSkipReason)
+    }
+
+    /// Why a file was not searched — tallied so the skipped note can say
+    /// which kinds were left out instead of a bare count.
+    enum ContentSearchSkipReason: Equatable {
+        /// Media/archive/executable extension: never searchable.
+        case binaryExtension
+        /// Text file over `maxContentSearchFileBytes`.
+        case tooLarge
+        /// Not decodable as UTF-8 (or unreadable).
+        case undecodable
+        /// A document (PDF/Word/PowerPoint/Excel) that could not be
+        /// extracted: over the document cap, no adapter, parse failure, or
+        /// the per-search document budget was spent.
+        case document(extension: String)
+    }
+
+    /// Tally of skipped files for the search note.
+    struct ContentSearchSkipTally {
+        var binary = 0
+        var tooLarge = 0
+        var undecodable = 0
+        var documents = 0
+        var documentExtensions: Set<String> = []
+
+        var total: Int { binary + tooLarge + undecodable + documents }
+
+        mutating func record(_ reason: ContentSearchSkipReason) {
+            switch reason {
+            case .binaryExtension: binary += 1
+            case .tooLarge: tooLarge += 1
+            case .undecodable: undecodable += 1
+            case .document(let ext):
+                documents += 1
+                documentExtensions.insert(ext)
+            }
+        }
+    }
+
+    /// Documents extracted per search before further documents are
+    /// reported as skipped — keeps one search from extracting a whole
+    /// archive of PDFs cold (the cache makes the next search cheap).
+    static let maxDocumentsExtractedPerSearch = 200
+
+    /// Per-search counter of document extractions (cold or cached).
+    private final class DocumentSearchBudget: @unchecked Sendable {
+        private let lock = NSLock()
+        private var extracted = 0
+        func take() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            guard extracted < FileSearchTool.maxDocumentsExtractedPerSearch else { return false }
+            extracted += 1
+            return true
+        }
     }
 
     private func searchFile(
         _ url: URL,
         pattern: String,
-        maxResults: Int
+        maxResults: Int,
+        documentBudget: DocumentSearchBudget
     ) async throws -> ContentSearchFileOutcome {
         try Task.checkCancellation()
+        let ext = url.pathExtension.lowercased()
+        // Documents are searched through their extracted text (same
+        // adapters as `file_read`), with page/slide/sheet locators.
+        if DocumentTextExtractionCache.isSearchableDocument(extension: ext) {
+            return try await searchDocument(
+                url,
+                ext: ext,
+                pattern: pattern,
+                maxResults: maxResults,
+                documentBudget: documentBudget
+            )
+        }
         // Skip obvious binaries by extension and any file over the size cap
         // before loading it into memory; the UTF-8 decode below is the final
         // backstop for misnamed or unexpectedly-large text.
-        if FolderToolHelpers.contentSearchSkippedExtensions.contains(
-            url.pathExtension.lowercased()
-        ) {
-            return .skipped
+        if FolderToolHelpers.contentSearchSkippedExtensions.contains(ext) {
+            return .skipped(.binaryExtension)
         }
         if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
             size > FolderToolHelpers.maxContentSearchFileBytes
         {
-            return .skipped
+            return .skipped(.tooLarge)
         }
         let content: String
         do {
-            guard let loaded = try await contentReader(url) else { return .skipped }
+            guard let loaded = try await contentReader(url) else { return .skipped(.undecodable) }
             content = loaded
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            return .skipped
+            return .skipped(.undecodable)
         }
 
-        guard let rootPath else { return .skipped }
+        guard let rootPath else { return .skipped(.undecodable) }
         let relativePath = FolderToolHelpers.displayPath(for: url, under: rootPath)
 
         let lines = content.components(separatedBy: .newlines)
@@ -3361,6 +4078,38 @@ struct FileSearchTool: OsaurusTool {
             }
         }
 
+        return .matches(matches)
+    }
+
+    /// Content search inside one document. Matches are rendered as
+    /// `path [page 3]: text` — the bracketed locator replaces the line
+    /// number because the text is an extracted layer, not the file's bytes.
+    private func searchDocument(
+        _ url: URL,
+        ext: String,
+        pattern: String,
+        maxResults: Int,
+        documentBudget: DocumentSearchBudget
+    ) async throws -> ContentSearchFileOutcome {
+        guard documentBudget.take() else { return .skipped(.document(extension: ext)) }
+        let extracted: ExtractedDocumentText
+        do {
+            extracted = try await DocumentTextExtractionCache.shared.units(for: url)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return .skipped(.document(extension: ext))
+        }
+        guard let rootPath else { return .skipped(.document(extension: ext)) }
+        let relativePath = FolderToolHelpers.displayPath(for: url, under: rootPath)
+        var matches: [String] = []
+        for unit in extracted.units {
+            try Task.checkCancellation()
+            guard matches.count < maxResults else { break }
+            if unit.text.localizedCaseInsensitiveContains(pattern) {
+                matches.append("\(relativePath) [\(unit.locator)]: \(unit.text)")
+            }
+        }
         return .matches(matches)
     }
 
@@ -4154,11 +4903,13 @@ enum FolderToolFactory {
     /// global built-in (registered in `ToolRegistry.registerBuiltInTools`)
     /// so it works in plain chat / folder / sandbox alike.
     ///
-    /// Lean by design: filesystem mutations (`mv`, `cp`, `rm`, `mkdir`)
+    /// Lean by design: filesystem mutations (`mv`, `rm`, `mkdir`)
     /// go through `shell_run` rather than discrete `file_move` /
-    /// `file_copy` / `file_delete` / `dir_create` tools so the model
-    /// picks "shell command" once instead of differentiating four
-    /// near-identical tool names. `shell_run` is loaded on every folder
+    /// `file_delete` / `dir_create` tools so the model picks "shell
+    /// command" once instead of differentiating near-identical tool
+    /// names. `file_copy` is the one exception: a byte copy that is
+    /// tracked in the operation log and undoable (shell `cp` is not).
+    /// `shell_run` is loaded on every folder
     /// mount (not gated on a detected project type) so the prompt's
     /// "use `shell_run` for `mv`/`cp`/`rm`/`mkdir`" advice always
     /// matches the schema. Multi-step orchestration goes through
@@ -4186,9 +4937,9 @@ enum FolderToolFactory {
             DetectPIITool(rootPath: rootPath),
             RedactFileTool(rootPath: rootPath),
             ShellRunTool(rootPath: rootPath),
-            // Combined-mode bridge: registered with the folder set (it
-            // needs the root) but hidden outside combined sandbox +
-            // host-read mode (`ToolRegistry.combinedModeBridgeToolNames`).
+            // Binary-safe, undoable duplicate (host→host; host↔share when
+            // a sandbox bridge is bound). Hidden in VM-only mode
+            // (`ToolRegistry.hostWorkspaceOnlyToolNames`).
             FileCopyTool(rootPath: rootPath),
         ]
     }

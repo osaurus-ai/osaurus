@@ -2193,16 +2193,21 @@ public final class ToolRegistry: ObservableObject {
         "file_write", "file_edit",
     ]
 
-    /// Folder tools that exist ONLY for combined mode. `file_copy` bridges
-    /// file bytes between the workspace and the sandbox — meaningless in
-    /// plain folder mode (shell `cp` covers host-side copies) and in plain
-    /// sandbox mode (no workspace). Visible in BOTH read-only and writable
-    /// combined mode; host-bound destinations are gated at execute time on
-    /// the `ChatExecutionContext.allowHostFolderWrites` task-local (always
-    /// false now that combined mode is gone), not by hiding the tool.
-    static let combinedModeBridgeToolNames: Set<String> = [
+    /// Folder tools that need a host workspace but are NOT part of the
+    /// five-tool VM contract. `file_copy` is the binary-safe duplicate
+    /// (host→host in folder mode; host↔`/workspace` share when a sandbox
+    /// bridge is bound). Hidden in VM-only mode where shell `cp` covers
+    /// sandbox-side copies and there is no workspace to copy from.
+    static let hostWorkspaceOnlyToolNames: Set<String> = [
         "file_copy"
     ]
+
+    /// Tool names that receive the compact public workspace schema in
+    /// `SystemPromptComposer.resolveTools`: the five VM-contract tools plus
+    /// `file_copy` when the mode exposes it.
+    static var compactWorkspaceSpecToolNames: Set<String> {
+        coreWorkspaceToolNames.union(hostWorkspaceOnlyToolNames)
+    }
 
     /// Runtime-managed tools are execution infrastructure, always loaded when registered.
     var runtimeManagedToolNames: Set<String> {
@@ -2263,10 +2268,6 @@ public final class ToolRegistry: ObservableObject {
             }
             excluded.formUnion(folderExcluded)
         } else {
-            // Plain folder mode: hide the combined-mode-only bridge —
-            // there is no sandbox to bridge to, and `shell_run` (`cp`)
-            // covers host-side copies.
-            excluded.formUnion(Self.combinedModeBridgeToolNames)
             // Git tools are registered process-wide with the rest of the
             // folder surface but only make sense against a repo — filter
             // them per request from THIS session's folder context (the old

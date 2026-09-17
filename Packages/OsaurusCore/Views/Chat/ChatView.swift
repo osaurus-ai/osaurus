@@ -3940,6 +3940,44 @@ final class ChatSession: ObservableObject {
         }
     }
 
+    /// Card-only enrichment for a `file_read` image result: stage the
+    /// blob bytes as a context artifact so the tool card renders a
+    /// thumbnail. Returns the input unchanged on any failure.
+    private func processFileReadImageResult(
+        toolName: String,
+        toolResult: String
+    ) async -> String {
+        guard let sessionId,
+            let payload = ToolEnvelope.successPayload(toolResult) as? [String: Any],
+            let ref = payload["image_ref"] as? [String: Any],
+            let hash = ref["hash"] as? String
+        else { return toolResult }
+        let path = (payload["path"] as? String) ?? "image"
+        let contextId = sessionId.uuidString
+        let outcome: Result<SharedArtifact.ProcessingResult, SharedArtifact.ResolutionFailure>? =
+            await Task.detached(priority: .utility) {
+                guard let bytes = try? AttachmentBlobStore.read(hash) else { return nil }
+                let mime = (ref["mime"] as? String) ?? "image/png"
+                let ext = mime.split(separator: "/").last.map(String.init) ?? "png"
+                let baseName = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+                let stagingDir = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("osaurus-file-read-\(UUID().uuidString)", isDirectory: true)
+                try? FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
+                defer { try? FileManager.default.removeItem(at: stagingDir) }
+                let staged = stagingDir.appendingPathComponent("\(baseName).\(ext == "jpeg" ? "jpg" : ext)")
+                guard (try? bytes.write(to: staged)) != nil else { return nil }
+                return SharedArtifact.processTrustedLocalFileResult(
+                    fileURL: staged,
+                    mimeType: mime,
+                    description: "Read by \(toolName): \(path)",
+                    contextId: contextId,
+                    contextType: .chat
+                )
+            }.value
+        guard case .success(let processed)? = outcome else { return toolResult }
+        return ToolEnvelope.success(tool: toolName, text: processed.enrichedToolResult)
+    }
+
     /// Translate a `SharedArtifact.ResolutionFailure` into a model-readable
     /// failure envelope. The mapping lives on `SharedArtifact` so the
     /// spawned-worker intercept (`SpawnArtifactCollector`) shares it.
@@ -6721,11 +6759,15 @@ final class ChatSession: ObservableObject {
                                 isLastTurn: isLastTurn
                             )
                         case .tool:
-                            return ChatMessage(
-                                role: "tool",
+                            // Tool results that staged an image (`file_read`
+                            // on a picture) ride as multimodal tool messages
+                            // for vision models. Same helper as warm-up so
+                            // both serialise byte-identical history.
+                            return ToolResultMediaBridge.toolMessage(
                                 content: t.content,
-                                tool_calls: nil,
-                                tool_call_id: t.toolCallId
+                                toolCallId: t.toolCallId,
+                                attachments: t.attachments,
+                                supportsImages: turnSupportsImages
                             )
                         case .user:
                             let base = Self.buildUserChatMessage(
@@ -6787,7 +6829,9 @@ final class ChatSession: ObservableObject {
                             }
                         }
 
-                        return msgs
+                        // Only the most recent tool-result images stay live;
+                        // older ones collapse to text (mirrored in warm-up).
+                        return ToolResultMediaBridge.collapsingOlderImages(msgs)
                     }
 
                     var maxAttempts = max(chatCfg.maxToolAttempts ?? 15, 1)
@@ -6856,6 +6900,15 @@ final class ChatSession: ObservableObject {
                         owner.setToolResult(toolCardOverrides[callId] ?? result, for: callId)
                         let toolTurn = ChatTurn(role: .tool, content: result)
                         toolTurn.toolCallId = callId
+                        // Staged tool-result images (file_read on a picture)
+                        // become turn attachments so they persist with the
+                        // transcript and reach the model via `turnToMessage`.
+                        let toolName =
+                            owner.toolCalls?.first(where: { $0.id == callId })?.function.name ?? ""
+                        let media = ToolResultMediaBridge.attachments(toolName: toolName, result: result)
+                        if !media.isEmpty {
+                            toolTurn.attachments = media
+                        }
                         return toolTurn
                     }
 
@@ -7034,6 +7087,21 @@ final class ChatSession: ObservableObject {
                         // spawn return and attach to the owning assistant turn.
                         if SubagentCapabilityRegistry.spawn.toolNames.contains(inv.toolName) {
                             await self.promoteWorkerSharedArtifacts(callId: callId)
+                        }
+
+                        if ToolResultMediaBridge.imageProducingTools.contains(inv.toolName),
+                            ToolResultMediaBridge.isImageEnvelope(resultText)
+                        {
+                            // The model keeps the compact image envelope (the
+                            // bytes ride as a multimodal part); the card shows
+                            // the picture through the artifact renderer.
+                            let enriched = await self.processFileReadImageResult(
+                                toolName: inv.toolName,
+                                toolResult: resultText
+                            )
+                            if enriched != resultText {
+                                toolCardOverrides[callId] = enriched
+                            }
                         }
 
                         if let fileCard = WorkspaceFileReference.cardResult(
@@ -8403,7 +8471,13 @@ final class ChatSession: ObservableObject {
             await ChatExecutionContext.$currentEnableThinking.withValue(
                 turnGenerationControls.enableThinking
             ) { [self] () async -> Void in
+            // Same flag `turnToMessage` uses to encode tool-turn images, so
+            // `file_read` never stages an image the request would drop.
+            await ChatExecutionContext.$toolResultImagesEnabled.withValue(
+                turnSupportsImages
+            ) { [self] () async -> Void in
                 await runTurn()
+            }  // ChatExecutionContext.$toolResultImagesEnabled.withValue
             }  // ChatExecutionContext.$currentEnableThinking.withValue
             }  // ChatExecutionContext.$currentModelName.withValue
             }  // ChatExecutionContext.$currentUserRequest.withValue

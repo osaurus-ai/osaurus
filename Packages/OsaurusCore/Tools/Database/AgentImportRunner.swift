@@ -73,7 +73,8 @@ enum AgentImportRunner {
         explicitFormat: String? = nil,
         hasHeader: Bool = true,
         explicitColumns: [String]? = nil,
-        maxRows: Int? = nil
+        maxRows: Int? = nil,
+        sheetName: String? = nil
     ) throws -> DatabaseImport.Parsed {
         let data = try Data(contentsOf: url)
         let sample = String(data: data.prefix(8192), encoding: .utf8) ?? ""
@@ -87,7 +88,9 @@ enum AgentImportRunner {
             format: format,
             hasHeader: hasHeader,
             explicitColumns: explicitColumns,
-            maxRows: maxRows
+            maxRows: maxRows,
+            sheetName: sheetName,
+            filename: url.lastPathComponent
         )
     }
 

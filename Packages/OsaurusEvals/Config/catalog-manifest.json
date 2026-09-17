@@ -1,5 +1,5 @@
 {
-  "_comment": "Committed inventory of the eval catalog: suite directory -> sorted case ids. EvalCatalogManifestTests regenerates this map from Suites/**/*.json on every CI run and fails on ANY drift \u2014 so deleting, renaming, or re-homing a case is always a deliberate, reviewable diff here rather than a silent catalog change (the decode smokes only assert floor counts, which additions never break but deletions could slip past). When the test fails it writes the freshly computed manifest to a temp path and prints it; copy that file over this one after confirming the catalog change is intentional. The test also enforces globally unique case ids and zero decode failures across the catalog.",
+  "_comment": "Committed inventory of the eval catalog: suite directory -> sorted case ids. EvalCatalogManifestTests regenerates this map from Suites/**/*.json on every CI run and fails on ANY drift — so deleting, renaming, or re-homing a case is always a deliberate, reviewable diff here rather than a silent catalog change (the decode smokes only assert floor counts, which additions never break but deletions could slip past). When the test fails it writes the freshly computed manifest to a temp path and prints it; copy that file over this one after confirming the catalog change is intentional. The test also enforces globally unique case ids and zero decode failures across the catalog.",
   "suites": {
     "AgentChannels": [
       "agent_channels.external-mcp-denial",
@@ -65,9 +65,14 @@
       "agent_loop.no-clarify-when-default-obvious",
       "agent_loop.over-budget-hard-overflow",
       "agent_loop.parallel-batch-reads",
+      "agent_loop.read-image-directly",
+      "agent_loop.read-pdf-directly",
+      "agent_loop.read-pptx-directly",
+      "agent_loop.read-xlsx-directly",
       "agent_loop.recover-from-failing-command",
       "agent_loop.rejection-stops-run",
       "agent_loop.repeated-call-nudge",
+      "agent_loop.search-inside-pdfs",
       "agent_loop.search-then-multi-file-edit",
       "agent_loop.spawn-wave-continuous-batching-off",
       "agent_loop.spawn-wave-two-configured-workers",
@@ -77,8 +82,11 @@
       "agent_loop.todo-discipline-multistep",
       "agent_loop.workspace-escape-refused",
       "agent_loop.wrap-up-on-budget",
+      "agent_loop.write-docx-by-extension",
       "agent_loop.write-new-file",
-      "agent_loop.write-then-verify-with-shell"
+      "agent_loop.write-pdf-by-extension",
+      "agent_loop.write-then-verify-with-shell",
+      "agent_loop.write-xlsx-by-extension"
     ],
     "AgentLoopFrontier": [
       "frontier.agent-db-workflow",
@@ -97,15 +105,18 @@
       "frontier.constraint-retention-format-marker",
       "frontier.constraint-retention-no-redo",
       "frontier.constraint-retention-ordering-rule",
+      "frontier.contract-search-then-cite",
       "frontier.csv-aggregate-by-region",
       "frontier.data-analysis-artifact",
       "frontier.db-view-and-report",
       "frontier.debug-from-stack-trace",
+      "frontier.document-roundtrip",
       "frontier.exact-bytes-version-contract",
       "frontier.fix-failing-tests",
       "frontier.fix-one-bug-keep-test",
       "frontier.format-contract",
       "frontier.honest-failure",
+      "frontier.image-to-spreadsheet",
       "frontier.implement-from-spec",
       "frontier.json-config-migration",
       "frontier.kitchen-sink",

@@ -281,7 +281,9 @@ struct CreditsTopUpSheet: View {
         guard !trimmed.isEmpty else { return nil }
         let cleaned = trimmed.hasPrefix("$") ? String(trimmed.dropFirst()) : trimmed
         guard let dollars = Double(cleaned), dollars.isFinite, dollars > 0 else { return nil }
-        return Int((dollars * 1_000_000).rounded())
+        let micro = (dollars * 1_000_000).rounded()
+        guard micro <= Double(Int.max) else { return nil }
+        return Int(micro)
     }
 
     private var isValid: Bool {

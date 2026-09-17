@@ -1071,7 +1071,7 @@ extension ContentBlock {
     /// `FileDiff.inferredEditPath`, which matches a streaming edit's
     /// `old_string` against these to name the card before its `path`
     /// argument streams.
-    private static func knownFileContents(in turns: [ChatTurn]) -> [(path: String, content: String)] {
+    static func knownFileContents(in turns: [ChatTurn]) -> [(path: String, content: String)] {
         var latest: [String: String] = [:]
         for turn in turns {
             guard let calls = turn.toolCalls else { continue }
@@ -1081,6 +1081,11 @@ extension ContentBlock {
                     guard let result = turn.toolResults[call.id],
                         let payload = ToolEnvelope.successPayload(result) as? [String: Any],
                         (payload["kind"] as? String) != "directory",
+                        // Image and workbook envelopes carry descriptive
+                        // text, not file bytes — never ground a diff on them.
+                        (payload["kind"] as? String) != "image",
+                        (payload["kind"] as? String) != "workbook",
+                        (payload["source"] as? String) != "ocr_text",
                         let path = payload["path"] as? String, !path.isEmpty,
                         let text = payload["text"] as? String
                     else { continue }

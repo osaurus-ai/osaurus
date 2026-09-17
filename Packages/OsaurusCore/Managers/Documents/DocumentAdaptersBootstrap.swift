@@ -34,6 +34,8 @@ public enum DocumentAdaptersBootstrap {
         registry.register(emitter: CSVEmitter(delimiter: .comma))
         registry.register(emitter: CSVEmitter(delimiter: .tab))
         registry.register(emitter: XLSXEmitter())
+        registry.register(emitter: DOCXEmitter())
+        registry.register(emitter: PDFEmitter())
         if registry === DocumentFormatRegistry.shared {
             didRegisterShared = true
         }

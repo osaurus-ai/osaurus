@@ -324,7 +324,8 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
         "Fetch a URL and return its page text or data (raw CSV/TSV/JSON preserved; large "
         + "structured data comes back as a compact `data_ref` for `render_chart`). After "
         + "`web_search`, pass the chosen result's URL in `url` — never search for the URL. With no "
-        + "URL, `query` searches and extracts the top results in one step."
+        + "URL, `query` searches and extracts the top results in one step. Web only: for files in "
+        + "the working folder use `file_search` / `file_read`."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),

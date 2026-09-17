@@ -333,19 +333,37 @@ internal func sandboxBinaryDocumentRefusal(path: String, tool: String) -> String
         return nil
     }
     let label = ext == "pdf" ? "PDF" : ".\(ext) document"
+    let hostServed = WorkspaceShareRoute.servesRead(extension: ext)
+    let pivot: String
+    if hostServed {
+        // The format IS supported — the file just isn't where the host can
+        // reach it (outside `/workspace`, or missing).
+        pivot =
+            "Documents under `/workspace/...` (your sandbox home or `/workspace/shared`) are read "
+            + "directly — text is extracted from PDF/Word/PowerPoint and XLSX is previewed. "
+            + "This path is outside the share or does not exist: copy it under your sandbox home "
+            + "(`cp` via the shell tool) and read it from there. "
+    } else {
+        pivot = "No built-in reader exists for .\(ext); "
+    }
     return ToolEnvelope.failure(
         kind: .invalidArgs,
         message:
-            "`\(path)` is a \(label) — a binary format the sandbox file reader cannot decode "
-            + "(it returns raw bytes only). If this document belongs to a knowledge collection, "
+            "`\(path)` is a \(label). " + pivot
+            + "If this document belongs to a knowledge collection, "
             + "read its text with `read_knowledge` using the collection-relative path from "
             + "`search_knowledge` / `list_knowledge`. Otherwise extract the text inside the "
-            + "sandbox with `sandbox_exec` (e.g. `pdftotext`, or Python with `pypdf` / "
-            + "`python-docx` / `openpyxl` after `sandbox_install`) and read the output file.",
+            + "sandbox with the shell tool (e.g. `pdftotext`, or Python with `pypdf` / "
+            + "`python-docx` / `openpyxl`) and read the output file.",
         field: "path",
-        expected: "a text file, or a document read via `read_knowledge` / `sandbox_exec` extraction",
+        expected:
+            "a text file, a document under `/workspace/...`, or a document read via `read_knowledge` / shell extraction",
         tool: tool,
-        retryable: false
+        retryable: false,
+        metadata: [
+            "extension": ext,
+            "readable_formats": WorkspaceFileFormatPolicy.readableFormatsSummary,
+        ]
     )
 }
 
@@ -1593,6 +1611,9 @@ private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_read_file"
     let description =
         "Read a file's contents from the sandbox. **Use this instead of `cat`/`head`/`tail` in `sandbox_exec`.** "
+        + "Text is returned raw; PDF, Word, and PowerPoint documents are extracted to text, XLSX returns a cell "
+        + "preview, and images are shown to vision models (OCR text otherwise) — call it on the document itself, "
+        + "never `pdftotext`/`unzip` first. "
         + "Supports line ranges (`start_line` + `line_count`), log-style tails (`tail_lines`), and a per-call "
         + "character cap (`max_chars`). Pass either a path under the agent home (e.g. `notes.txt`) or an "
         + "absolute path inside the sandbox (e.g. `/workspace/shared/data.csv`). Surfaces stderr on failure."
@@ -1648,12 +1669,32 @@ private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
         let resolvedReq = requirePath(path, home: home, tool: name)
         guard case .value(let resolved) = resolvedReq else { return resolvedReq.failureEnvelope ?? "" }
 
+        // Documents and images under the VirtioFS share are served by the
+        // host extractors (PDF/Word/PowerPoint text, XLSX preview, image
+        // attach/OCR) — the same coverage as a trusted-folder `file_read`.
+        // Translate the sandbox `start_line`+`line_count` range to the host
+        // `start_line`/`end_line` convention first.
+        var hostArgs = args
+        hostArgs.removeValue(forKey: "line_count")
+        if let start = coerceInt(args["start_line"]), start > 0,
+            let count = coerceInt(args["line_count"]), count > 0
+        {
+            hostArgs["end_line"] = start + count - 1
+        }
+        if let served = try await FileReadTool.readFromWorkspaceShare(
+            path: resolved,
+            home: home,
+            args: hostArgs
+        ) {
+            return relabelToolEnvelope(served, tool: name)
+        }
+
         // The sandbox read is a raw `head`/`sed`/`tail` over the bytes; a
-        // PDF / Office package comes back as compressed streams that fail
-        // the UTF-8 decode and collapse to an empty or garbage read. The
-        // model then saw an opaque failure and abandoned the document
-        // (osaurus#2680) even though `read_knowledge` extracts the same
-        // file's text. Refuse up front and name the working paths instead.
+        // PDF / Office package outside the share (or in a format with no
+        // adapter) comes back as compressed streams that fail the UTF-8
+        // decode and collapse to an empty or garbage read. The model then
+        // saw an opaque failure and abandoned the document (osaurus#2680).
+        // Refuse up front and name the working paths instead.
         if let refusal = sandboxBinaryDocumentRefusal(path: resolved, tool: name) {
             return refusal
         }
@@ -1970,7 +2011,9 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         + "`echo`/`cat` heredoc / `sed` / `awk` in `sandbox_exec`.** Creates parent directories as "
         + "needed. For an edit, `old_string` must uniquely match one location — include surrounding "
         + "context lines if needed; it fails if `old_string` is missing or matches multiple locations. "
-        + "Binary document/package extensions are rejected; this tool writes UTF-8 source only. "
+        + "Text of any extension is written as UTF-8; `.xlsx` is generated from CSV/TSV or JSON rows and "
+        + "`.docx`/`.pdf` from Markdown or HTML (`content` only — documents are regenerated whole, not edited). "
+        + "`.pptx` is not supported. "
         + "For runnable code, verify the result before claiming it works; a truncated diff is only a shortened review preview, not a partial mutation."
     let agentName: String
     let home: String
@@ -2035,9 +2078,40 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
 
         let resolvedReq = requirePath(path, home: home, tool: name)
         guard case .value(let resolved) = resolvedReq else { return resolvedReq.failureEnvelope ?? "" }
+        let ext = URL(fileURLWithPath: resolved).pathExtension.lowercased()
+
+        // Generated documents (.xlsx/.docx/.pdf) are rendered host-side into
+        // the VirtioFS share — the shell pipeline below only carries text.
+        // An in-place edit of a document is refused with the
+        // read-then-regenerate pivot, like host `file_edit`.
+        if WorkspaceShareRoute.servesWrite(extension: ext) {
+            if args["old_string"] != nil,
+                let rejection = WorkspaceWriteSafety.documentEditRejection(
+                    path: path,
+                    fileExtension: ext,
+                    toolName: name,
+                    regenerateHint: "call `\(name)` with `content` holding the complete new document."
+                )
+            {
+                return rejection
+            }
+            if let content = args["content"] as? String {
+                let mode = (args["mode"] as? String) ?? "overwrite"
+                if let served = try await FileWriteTool.writeDocumentToWorkspaceShare(
+                    path: resolved,
+                    home: home,
+                    content: content,
+                    mode: mode,
+                    dryRun: false,
+                    tool: name
+                ) {
+                    return served
+                }
+            }
+        }
         if let rejected = WorkspaceWriteSafety.structuredTextWriteRejection(
             path: path,
-            fileExtension: URL(fileURLWithPath: resolved).pathExtension.lowercased(),
+            fileExtension: ext,
             toolName: name
         ) {
             return rejected

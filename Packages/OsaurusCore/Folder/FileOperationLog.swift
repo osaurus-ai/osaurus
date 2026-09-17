@@ -262,14 +262,16 @@ public actor FileOperationLog {
             // Undo write/edit: restore previous content or delete if it was new.
             // file_edit always supplies previousContent (the full pre-edit
             // file body) so undo just rewrites the file in place.
-            if let previousContent = operation.previousContent {
+            if let previousData = operation.previousContentData {
                 do {
-                    try previousContent.write(to: fileURL, atomically: true, encoding: .utf8)
+                    try previousData.write(to: fileURL, options: .atomic)
                 } catch {
                     throw FileUndoError.fileSystemError(
                         "Failed to restore file content: \(error.localizedDescription)"
                     )
                 }
+            } else if operation.previousContent != nil {
+                throw FileUndoError.cannotUndo("Recorded previous content could not be decoded")
             } else {
                 // File didn't exist before, delete it
                 if fm.fileExists(atPath: fileURL.path) {
@@ -296,13 +298,26 @@ public actor FileOperationLog {
             }
 
         case .copy:
-            // Undo copy: delete the destination
+            // Undo copy: restore the overwritten destination bytes when the
+            // copy replaced a file, otherwise delete the destination.
             guard let destPath = operation.destinationPath else {
                 throw FileUndoError.cannotUndo("Copy operation missing destination path")
             }
             let destURL = root.appendingPathComponent(destPath)
 
-            if fm.fileExists(atPath: destURL.path) {
+            if let previousData = operation.previousContentData {
+                do {
+                    try fm.createDirectory(
+                        at: destURL.deletingLastPathComponent(),
+                        withIntermediateDirectories: true
+                    )
+                    try previousData.write(to: destURL, options: .atomic)
+                } catch {
+                    throw FileUndoError.fileSystemError(
+                        "Failed to restore overwritten file: \(error.localizedDescription)"
+                    )
+                }
+            } else if fm.fileExists(atPath: destURL.path) {
                 do {
                     try fm.removeItem(at: destURL)
                 } catch {
@@ -322,7 +337,11 @@ public actor FileOperationLog {
                 // Ensure parent directory exists
                 let parentDir = fileURL.deletingLastPathComponent()
                 try fm.createDirectory(at: parentDir, withIntermediateDirectories: true)
-                try previousContent.write(to: fileURL, atomically: true, encoding: .utf8)
+                if let previousData = operation.previousContentData {
+                    try previousData.write(to: fileURL, options: .atomic)
+                } else {
+                    try previousContent.write(to: fileURL, atomically: true, encoding: .utf8)
+                }
             } catch {
                 throw FileUndoError.fileSystemError(
                     "Failed to restore deleted file: \(error.localizedDescription)"

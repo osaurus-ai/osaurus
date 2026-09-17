@@ -18,7 +18,7 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 
 - Tools (on by default) and Memory (on by default).
 - Off by default, opt in per agent: Charts, Voice output, Memory Recall (search past memory), Self-scheduling, Computer Use, Database (per-agent private SQLite), Knowledge collections, sandbox execution options.
-- Working Folder: the one folder the agent works inside. Picking a folder with the chat Folder chip remembers it on the agent, so new chats, schedules, watchers, and other background runs without their own folder start there; it also grants remote agent runs file access confined to that folder.
+- Working Folder: the one folder the agent works inside. Picking a folder with the chat Folder chip remembers it on the agent, so new chats, schedules, watchers, and other background runs without their own folder start there; it also grants remote agent runs file access confined to that folder. Inside it, `file_read` handles every file type (text, PDF, Word, PowerPoint, Excel preview, images for vision models or via OCR) and `file_write` generates `.xlsx`, `.docx`, and `.pdf` as well as text — see the Chat topic, "File formats the folder tools handle".
 
 ## The Orchestrator (default agent) vs custom agents
 

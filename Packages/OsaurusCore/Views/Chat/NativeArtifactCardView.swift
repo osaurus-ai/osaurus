@@ -972,6 +972,12 @@ final class NativeArtifactCardView: NSView {
         if artifact.isDirectory { return "folder.fill" }
         if artifact.isImage { return "photo" }
         if artifact.isPDF { return "doc.richtext.fill" }
+        switch artifact.officeDocumentKind {
+        case .wordProcessing: return "doc.text.fill"
+        case .spreadsheet: return "tablecells.fill"
+        case .presentation: return "rectangle.on.rectangle.angled.fill"
+        case nil: break
+        }
         if artifact.isVideo { return "film" }
         if artifact.isAudio { return "waveform" }
         if artifact.isHTML { return "globe" }
@@ -991,6 +997,12 @@ final class NativeArtifactCardView: NSView {
         }
         if artifact.isImage { return [c("8b5cf6"), c("7c3aed")] }
         if artifact.isPDF { return [c("ef4444"), c("dc2626")] }
+        switch artifact.officeDocumentKind {
+        case .wordProcessing: return [c("2b579a"), c("1e3f73")]
+        case .spreadsheet: return [c("217346"), c("185a37")]
+        case .presentation: return [c("d24726"), c("b03a1c")]
+        case nil: break
+        }
         if artifact.isVideo { return [c("ec4899"), c("db2777")] }
         if artifact.isAudio { return [c("f59e0b"), c("d97706")] }
         if artifact.isHTML { return [c("3b82f6"), c("2563eb")] }
