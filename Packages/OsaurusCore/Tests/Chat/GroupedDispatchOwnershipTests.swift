@@ -156,7 +156,7 @@ struct GroupedDispatchOwnershipTests {
         try await ChatHistoryTestStorage.run {
             let manager = BackgroundTaskManager.makeForTesting()
             let context = ExecutionContext(agentId: UUID(), source: .schedule)
-            func state() -> BackgroundTaskState {
+            @MainActor func state() -> BackgroundTaskState {
                 BackgroundTaskState(
                     id: context.id,
                     taskTitle: "repeat",
