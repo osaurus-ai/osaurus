@@ -302,6 +302,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         // actually on screen, and still fires on a later launch if the user
         // quit before the post-onboarding window opened.
         FeatureTelemetry.firstTimeChatShown()
+        SparkleChatGate.markChatVisible()
     }
 
     /// Hide a window by ID
@@ -852,6 +853,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         }
 
         print("[ChatWindowManager] Focused all \(windows.count) windows")
+        SparkleChatGate.markChatVisible()
     }
 
     // MARK: - Background Task Window Support

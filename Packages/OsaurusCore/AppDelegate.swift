@@ -800,11 +800,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         }
 
         // Start Sparkle at launch so update checks run whenever the app is
-        // open, not only when the settings window is first shown. First access
-        // instantiates the lazy updater controller, which also arms Sparkle's
-        // own 24h scheduled check cycle for long-running sessions. Delayed a
-        // few seconds so it stays clear of the busy launch window (server
-        // bind, prewarms, database opens).
+        // open. First access instantiates the lazy updater controller, which
+        // also arms Sparkle's own 24h scheduled check cycle for long-running
+        // sessions. Delayed a few seconds so it stays clear of the busy
+        // launch window (server bind, prewarms, database opens). After that
+        // settle, wait until a real chat window has been shown (or 60s) so
+        // the Sparkle alert appears over chat, not Settings.
         if !keychainDisabledTestMode {
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .seconds(5))
@@ -813,6 +814,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 // Wait out resource pressure before arming the check cycle.
                 while Self.isUnderResourcePressure {
                     try? await Task.sleep(for: .seconds(30))
+                }
+                var waited: TimeInterval = 0
+                while !SparkleChatGate.chatHasBeenShown && waited < 60 {
+                    try? await Task.sleep(for: .seconds(1))
+                    waited += 1
                 }
                 self?.updater.checkForUpdatesInBackground()
             }
