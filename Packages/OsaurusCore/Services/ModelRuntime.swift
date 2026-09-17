@@ -4094,11 +4094,16 @@ public actor ModelRuntime {
             if let existingRecord = loadingTasks[name] {
                 do {
                     let holder = try await existingRecord.task.value
-                    return try await finishLoadedContainer(
+                    let published = try await finishLoadedContainer(
                         name: name,
                         holder: holder,
                         loadID: existingRecord.id
                     )
+                    // A coalesced load validates its original owner, not this
+                    // waiter. Explicit parent unload may revoke our permit
+                    // while the foreign load (or its warm-up) is awaited.
+                    try validateParentRetention(parentRetention, target: name)
+                    return published
                 } catch is CancellationError {
                     if loadingTasks[name]?.id == existingRecord.id {
                         loadingTasks.removeValue(forKey: name)
@@ -4191,11 +4196,13 @@ public actor ModelRuntime {
             if let existingRecord = loadingTasks[name] {
                 do {
                     let holder = try await existingRecord.task.value
-                    return try await finishLoadedContainer(
+                    let published = try await finishLoadedContainer(
                         name: name,
                         holder: holder,
                         loadID: existingRecord.id
                     )
+                    try validateParentRetention(parentRetention, target: name)
+                    return published
                 } catch is CancellationError {
                     if loadingTasks[name]?.id == existingRecord.id {
                         loadingTasks.removeValue(forKey: name)
@@ -4720,11 +4727,13 @@ public actor ModelRuntime {
                 category: "model.load",
                 message: "loaded model=\(name) elapsedMs=\(elapsedMs)"
             )
-            return try await finishLoadedContainer(
+            let published = try await finishLoadedContainer(
                 name: name,
                 holder: holder,
                 loadID: loadID
             )
+            try validateParentRetention(parentRetention, target: name)
+            return published
         } catch {
             if loadingTasks[name]?.id == loadID {
                 loadingTasks.removeValue(forKey: name)

@@ -12,6 +12,7 @@ NEXT: Full-module tests, source-bound isolated app, ON/OFF controls and actual i
 - ImageGenerationService cancelled the task iterating the engine stream when the outward stream terminated. AsyncStream cancellation can end that iteration before an unstructured engine producer drains. Cancellation now stops a queued gate waiter or requests soft cancellation after entry; it does not cancel the engine consumer. Coordinator cleanup joins that exact job. Duplicate active job IDs are rejected.
 - Context compaction used an interactive load with no invoking-parent handoff. ChatView now snapshots the selected model/source together with the turns, and the summarizer uses the shared lifecycle. The entire owned operation sits inside the non-rejoining timeout so a timed-out caller cannot release admission or restore over a still-draining producer.
 - Restored scheduled/API/plugin parents previously lost their source on preload. Restore carries the original request source; preload supplies it only for a newly unused handoff-restored resident, never overwriting a resident already used by another request.
+- A coalesced cold-load waiter must validate its own parent hold after waiting, not only the load creator's hold. All three return paths now revalidate after publication/warm-up; an explicit unload during that suspension cannot let a stale waiter continue. This is a source-audit correction with policy/wiring regression coverage; the concurrent live interleaving remains unproven.
 
 ## Settings contract
 

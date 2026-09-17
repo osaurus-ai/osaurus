@@ -198,8 +198,12 @@ struct ParentResidencyRetentionTests {
             encoding: .utf8
         )
         #expect(
-            runtime.components(separatedBy: "try validateParentRetention(parentRetention, target: name)").count == 4
+            runtime.components(separatedBy: "try validateParentRetention(parentRetention, target: name)").count == 7
         )
+        // All three load return paths (both coalesced waiters and the cold
+        // owner) revalidate their own capability after publication/warm-up.
+        #expect(runtime.components(separatedBy: "let published = try await finishLoadedContainer(").count == 4)
+        #expect(runtime.components(separatedBy: "return published").count == 4)
         #expect(runtime.contains("validateParentRetention(loadingRecord.parentRetention, target: name)"))
         #expect(runtime.components(separatedBy: "policy == .strictSingleModel, parentRetention == nil").count == 3)
         #expect(runtime.contains("intent: parentRetention == nil ? intent : .background"))
