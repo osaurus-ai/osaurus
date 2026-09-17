@@ -82,14 +82,14 @@ struct RedactionReviewSheet: View {
     /// / Send anyway) with stable layout.
     private var listToolbar: some View {
         HStack(spacing: 8) {
-            Button(action: { withoutAnimation(state.approveAll) }) {
+            Button(action: state.approveAll) {
                 Text("privacy.review.approveAll", bundle: .module)
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
             .fixedSize()
 
-            Button(action: { withoutAnimation(state.skipAll) }) {
+            Button(action: state.skipAll) {
                 Text("privacy.review.skipAll", bundle: .module)
             }
             .buttonStyle(.bordered)
@@ -102,22 +102,9 @@ struct RedactionReviewSheet: View {
         .padding(.bottom, 6)
     }
 
-    /// Apply a bulk approve/skip without animating the row switches.
-    /// Flipping every native switch at once animates rows scrolled out
-    /// of view too, and a fully clipped switch animation submits a
-    /// zero-instance Metal draw that trips API Validation under Xcode.
-    /// Toggling rows one by one only animates visible switches.
-    private func withoutAnimation(_ change: () -> Void) {
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction, change)
-    }
-
     private var list: some View {
         ScrollView {
-            // Lazy so rows outside the viewport (and their switches) are
-            // not instantiated, which keeps bulk changes off-screen-free.
-            LazyVStack(spacing: 8) {
+            VStack(spacing: 8) {
                 ForEach(state.entities) { entity in
                     row(for: entity)
                 }
