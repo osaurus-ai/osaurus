@@ -19,11 +19,16 @@ struct LocalInputTokenUsageTests {
         }
     }
 
-    @Test(arguments: [0, 257])
-    func preparedCountPrecedesImmediateToolDispatch(_ count: Int) async throws {
+    @Test(arguments: [0, 257], [false, true])
+    func preparedCountPrecedesCompletedToolDispatch(_ count: Int, terminalInfo: Bool) async throws {
         let source = AsyncStream<Generation> { continuation in
             continuation.yield(.toolCall(MLXLMCommon.ToolCall(function: .init(
                 name: "lookup_zone", arguments: ["zone": .string("east")]))))
+            if terminalInfo {
+                continuation.yield(.info(GenerateCompletionInfo(
+                    promptTokenCount: count, generationTokenCount: 8,
+                    promptTime: 0.1, generationTime: 0.2)))
+            }
             continuation.finish()
         }
         let events = GenerationEventMapper.map(events: source, promptTokenCount: count)
@@ -35,12 +40,15 @@ struct LocalInputTokenUsageTests {
                 inputCount = StreamingInputTokenHint.decode(delta) ?? inputCount
                 terminalCount = StreamingStatsHint.decode(delta)?.tokenCount ?? terminalCount
             }
-            Issue.record("Expected immediate tool dispatch")
+            Issue.record("Expected completed tool dispatch")
         } catch let call as ServiceToolInvocation {
             #expect(call.toolName == "lookup_zone")
         }
         #expect(inputCount == count)
-        #expect(terminalCount == nil)
+        // The tool batch now waits for logical completion, so terminal
+        // accounting must arrive too. A clean EOF without engine info keeps
+        // the mapper's existing zero-text estimate (not measured tool tokens).
+        #expect(terminalCount == (terminalInfo ? 8 : 0))
     }
 
     @Test(arguments: [12, 257])

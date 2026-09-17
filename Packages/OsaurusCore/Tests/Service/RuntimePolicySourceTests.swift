@@ -3529,8 +3529,8 @@ struct RuntimePolicySourceTests {
         )
     }
 
-    @Test("local streamWithTools dispatches immediately and preserves cache drain")
-    func localStreamWithToolsDispatchesImmediatelyAndPreservesCacheDrain() throws {
+    @Test("local streamWithTools preserves the complete batch and cache drain")
+    func localStreamWithToolsPreservesCompleteBatchAndCacheDrain() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
         let streamStart = try #require(
             runtime.range(of: "func streamWithTools("),
@@ -3545,29 +3545,33 @@ struct RuntimePolicySourceTests {
             streamWithTools.range(of: "case .toolInvocation(let name, let argsJSON):"),
             "ModelRuntime.streamWithTools must handle parsed vMLX toolInvocation events."
         )
-        let afterToolCase = streamWithTools[toolCase.lowerBound...]
+        let toolCaseEnd = try #require(
+            streamWithTools[toolCase.upperBound...].range(of: "case .completionInfo:"),
+            "The invocation case must remain distinct from response completion."
+        )
+        let invocationCase = streamWithTools[toolCase.lowerBound ..< toolCaseEnd.lowerBound]
 
         #expect(
-            streamWithTools.contains("var dispatchedTool = false")
-                && afterToolCase.contains("ServiceToolInvocation(")
-                && afterToolCase.contains("toolName: name")
-                && afterToolCase.contains("jsonArguments: argsJSON")
-                && afterToolCase.contains("dispatchedTool = true")
-                && afterToolCase.contains("continuation.finish(throwing: tool)")
-                && afterToolCase.contains("continue"),
-            "streamWithTools must dispatch the parsed invocation immediately, then keep consuming the upstream vMLX stream so cache persistence can finish behind the running tool."
+            streamWithTools.contains("var completedTools: [ServiceToolInvocation] = []")
+                && invocationCase.contains("completedTools.append(")
+                && invocationCase.contains("ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)")
+                && !invocationCase.contains("continuation.finish(")
+                && !invocationCase.contains("dispatchedTools = true"),
+            "Each closed invocation must enter the ordered batch without ending or cancelling generation before later calls can arrive."
         )
         #expect(
-            streamWithTools.contains("continuation.yield(StreamingToolHint.encode(name))")
-                && streamWithTools.contains("continuation.yield(StreamingToolHint.encodeArgs(argsJSON))")
-                && streamWithTools.contains("if dispatchedTool { continue }")
+            invocationCase.contains("continuation.yield(StreamingToolHint.encode(name))")
+                && invocationCase.contains("continuation.yield(StreamingToolHint.encodeArgs(argsJSON))")
+                && streamWithTools.contains("if dispatchedTools { continue }")
                 && streamWithTools.contains("if case .cancelled = termination")
                 && streamWithTools.contains("producerTask.cancel()"),
             "The native UI must receive the tool envelope immediately, while only a real consumer cancellation may cancel the engine-owned terminal drain."
         )
         #expect(
-            !afterToolCase.contains("pendingTools.append"),
-            "The local streaming path must not batch-collect tool invocations after a parsed tool event; batch collection belongs to the non-streaming tool response path."
+            streamWithTools.contains("if !collectCompleteResponse, !completedTools.isEmpty")
+                && streamWithTools.contains("continuation.finish(throwing: ServiceToolInvocations(invocations: completedTools))")
+                && streamWithTools.contains("else if !dispatchedTools"),
+            "Native dispatch must publish the whole batch at logical completion, with clean EOF fallback and no cancellation of the remaining wrapper drain."
         )
     }
 
