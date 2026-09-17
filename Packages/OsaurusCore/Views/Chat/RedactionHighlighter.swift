@@ -113,12 +113,14 @@ enum RedactionHighlighter {
         on storage: NSTextStorage,
         highlights: [String: RedactionHighlight],
         accentColor: NSColor,
+        underlineStyle: NSUnderlineStyle = [.single, .patternDot],
         a11yLabelBuilder: (RedactionHighlight) -> String
     ) -> [AppliedRedactionRange] {
         return applyInternal(
             on: storage,
             highlights: highlights,
             accentColor: accentColor,
+            underlineStyle: underlineStyle,
             a11yLabelBuilder: a11yLabelBuilder,
             scanRange: NSRange(location: 0, length: storage.length),
             seedFromExistingAttributes: false
@@ -162,6 +164,7 @@ enum RedactionHighlighter {
             on: storage,
             highlights: highlights,
             accentColor: accentColor,
+            underlineStyle: [.single, .patternDot],
             a11yLabelBuilder: a11yLabelBuilder,
             scanRange: NSRange(location: start, length: length),
             seedFromExistingAttributes: true
@@ -172,6 +175,7 @@ enum RedactionHighlighter {
         on storage: NSTextStorage,
         highlights: [String: RedactionHighlight],
         accentColor: NSColor,
+        underlineStyle: NSUnderlineStyle,
         a11yLabelBuilder: (RedactionHighlight) -> String,
         scanRange: NSRange,
         seedFromExistingAttributes: Bool
@@ -225,8 +229,7 @@ enum RedactionHighlighter {
                 if !overlaps, !isInsideWord(candidate, in: storageString) {
                     let attributes: [NSAttributedString.Key: Any] = [
                         .foregroundColor: accentColor,
-                        .underlineStyle: NSUnderlineStyle.single.rawValue
-                            | NSUnderlineStyle.patternDot.rawValue,
+                        .underlineStyle: underlineStyle.rawValue,
                         .underlineColor: underlineColor,
                         .redactionPlaceholder: highlight.placeholderToken,
                         .redactionDirection: highlight.direction.rawValue,
