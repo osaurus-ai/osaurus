@@ -172,4 +172,19 @@ final class RecipeClassifierTests: XCTestCase {
         )
         XCTAssertGreaterThanOrEqual(effect, .edit)
     }
+
+    /// Finder guidance must reach the model whole: the universal dialog flow
+    /// takes the first of the three rendered slots, so Finder keeps two.
+    func testFinderGuidanceWarnsReturnRenamesAndKeepsFolderFlow() {
+        let matched = AppRecipes.matching(app: "Finder").map(\.id)
+        XCTAssertEqual(Set(matched), ["dialog", "finder"])
+        guard let text = AppRecipes.guidanceText(for: "Finder") else {
+            return XCTFail("Finder should render guidance")
+        }
+        XCTAssertTrue(text.contains("Go to a folder or open an item"))
+        XCTAssertTrue(text.contains("Create a folder and move files into it"))
+        XCTAssertTrue(text.contains("return RENAMES"))
+        XCTAssertTrue(text.contains("open with the folder path"))
+        XCTAssertTrue(AppRecipes.signals(for: "Finder").consequential.contains("empty trash"))
+    }
 }
