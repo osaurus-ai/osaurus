@@ -507,14 +507,9 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     /// is freed, the job is rejected instead of unloading the orchestrator and
     /// failing to load the spawn model. See `ChatResidencyHandoff.memoryPreflight`.
     var ramSafetyPreflightEnabled: Bool
-    /// When true, a local spawn model may load ALONGSIDE the resident chat
-    /// model instead of the unload→run→reload handoff — but only when the
-    /// server eviction policy is Flexible (Multi Model) AND the live RAM
-    /// projection says both fit (see `SubagentResidency.decidePlan`'s
-    /// coexistence gate). Default OFF: two resident MLX graphs is the
-    /// historical BUG G concurrent-GPU crash class, so single residency stays
-    /// the default until the direction-matrix crash lane proves a machine's
-    /// configuration safe. Strict eviction policy ignores this flag entirely.
+    /// Legacy persisted key, retained for config round-trip compatibility only.
+    /// OFF on the shared swap switch now retains the parent; no second opt-in
+    /// or Flexible server policy is required. This field has no runtime effect.
     var subagentCoexistenceEnabled: Bool
     /// Per-capability model override for the DEFAULT / main-chat agent's subagent
     /// kinds, keyed by capability id (`"spawn"`, `"computer_use"`). An entry

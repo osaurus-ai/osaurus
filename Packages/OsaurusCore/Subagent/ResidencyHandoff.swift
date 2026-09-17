@@ -42,35 +42,26 @@ struct ResidencyPlan: Sendable {
     var ramSafetyEnabled: Bool
     /// Idle-wait budget (seconds) before the unload gives up on chat going idle.
     var maxElapsedSeconds: Int
-    /// RAM-aware coexistence: a DIFFERENT local model loads alongside the
-    /// resident orchestrator (no unload, no restore) because the projection
-    /// said both fit under the flexible eviction policy. The handoff still
+    /// Keep-parent mode: a DIFFERENT local model loads alongside the invoking
+    /// parent (no parent unload or restore), including under Strict policy.
+    /// RAM admission remains separate. The handoff still
     /// waits for local chat generation to go idle before the run — the drain
     /// keeps "two resident graphs" from becoming "two GENERATING graphs"
     /// (the BUG G crash class) at run start; process-wide exclusivity for the
     /// run itself comes from the admission class.
     var coexists: Bool
-    /// The user turned the "Local Orchestrator Handoff" toggle OFF and the
-    /// delegate is a DIFFERENT local model: the run proceeds with NO
-    /// unload/reload sequencing (the runtime's own eviction policy decides
-    /// what happens to the chat model). Never a refusal — this flag exists
-    /// so the tool result and activity readout can say so.
-    var sequencingDisabled: Bool
-
     init(
         shouldUnload: Bool,
         requiredBytes: Int64 = 0,
         ramSafetyEnabled: Bool = false,
         maxElapsedSeconds: Int = 300,
-        coexists: Bool = false,
-        sequencingDisabled: Bool = false
+        coexists: Bool = false
     ) {
         self.shouldUnload = shouldUnload
         self.requiredBytes = requiredBytes
         self.ramSafetyEnabled = ramSafetyEnabled
         self.maxElapsedSeconds = maxElapsedSeconds
         self.coexists = coexists
-        self.sequencingDisabled = sequencingDisabled
     }
 
     /// A plan that performs no residency change.
@@ -80,7 +71,6 @@ struct ResidencyPlan: Sendable {
     var mode: String {
         if shouldUnload { return "swap_unload_reload" }
         if coexists { return "coexist" }
-        if sequencingDisabled { return "sequencing_off" }
         return "in_place"
     }
 }
@@ -158,15 +148,13 @@ enum DelegationResidencySequence {
                 + "unloaded it, then loaded '\(main)' for the chat turn"
         }
         if plan.coexists {
+            if !mainResident {
+                return
+                    "\"Swap local models for subagents\" is off: '\(main)' was not resident; ran '\(delegateModelName)' without a parent reload"
+            }
             return
-                "kept chat model '\(main)' loaded and ran delegate '\(delegateModelName)' "
+                "\"Swap local models for subagents\" is off: kept chat model '\(main)' loaded and ran delegate '\(delegateModelName)' "
                 + "alongside it (coexistence)"
-        }
-        if plan.sequencingDisabled {
-            return
-                "\"Swap local models for subagents\" is off: ran subagent model '\(delegateModelName)' "
-                + "without the unload/reload sequence; the runtime's eviction policy "
-                + "decides whether '\(main)' stays loaded"
         }
         return "delegate '\(delegateModelName)' ran in place; no model swap was needed"
     }
@@ -450,24 +438,63 @@ struct ResidencyOwnershipHandoff: SubagentHandoff {
     }
 }
 
-/// Coexistence handoff: the subagent model loads ALONGSIDE the resident
-/// orchestrator (flexible eviction policy + RAM projection passed), so there
-/// is nothing to unload or restore. The one residency obligation kept from the
-/// single-residency flow is the idle drain: local chat generation must be idle
+/// Keep-parent handoff: a registered exact-parent hold permits this child to
+/// load alongside it without changing global Strict/background policy. The
+/// owned child is cleaned up before releasing the hold. Local generation must be idle
 /// before the run starts, so a second MLX graph never begins producing while
 /// another graph is mid-generation (the BUG G crash class). `waitForIdle` is
 /// injectable for tests; `.production` wires it to `InferenceLoadCoordinator`.
 struct CoexistenceHandoff: SubagentHandoff {
     typealias WaitForIdle = @Sendable (_ timeoutMs: Int) async -> Bool
+    typealias Retain = @Sendable (SubagentScope, ResolvedModel) async throws -> ParentResidencyRetention
+    typealias Finish = @Sendable (ParentResidencyRetention) async throws -> Void
 
     let maxElapsedSeconds: Int
     let waitForIdle: WaitForIdle
+    var retain: Retain? = nil
+    var finish: Finish? = nil
 
-    static func production(maxElapsedSeconds: Int) -> CoexistenceHandoff {
+    static func production(plan: ResidencyPlan) -> CoexistenceHandoff {
         CoexistenceHandoff(
-            maxElapsedSeconds: maxElapsedSeconds,
+            maxElapsedSeconds: plan.maxElapsedSeconds,
             waitForIdle: { timeoutMs in
                 await InferenceLoadCoordinator.shared.waitForChatIdle(timeoutMs: timeoutMs)
+            },
+            retain: { scope, resolved in
+                // Warm reuse allocates no second set of weights. Per-child
+                // request/KV costs are handled by admission; do not charge
+                // the cold-load weight estimate again here.
+                let targetIsResident =
+                    await ModelRuntime.shared.residencyIdentity(
+                        named: resolved.id ?? resolved.name
+                    ) != nil
+                try await ChatResidencyHandoff.memoryPreflight(
+                    requiredBytes: plan.requiredBytes,
+                    enabled: plan.ramSafetyEnabled && !targetIsResident
+                )
+                return try await ModelRuntime.shared.retainInvokingParent(
+                    named: scope.parentModelName,
+                    for: resolved.id ?? resolved.name,
+                    source: ChatExecutionContext.currentSessionSource?.inferenceSource
+                )
+            },
+            finish: { retention in
+                do {
+                    // Release only this job's cold-loaded graphs. A reused
+                    // target never acquires the token and remains untouched.
+                    _ = try await ChatResidencyHandoff.releaseOwnedChildModels(
+                        ChatResidencyLease(
+                            unloadedModelNames: [],
+                            restoreModelNames: [],
+                            unloadedParentIdentity: nil,
+                            childOwnershipToken: retention.childOwnershipToken
+                        )
+                    )
+                } catch {
+                    await ModelRuntime.shared.releaseInvokingParent(retention)
+                    throw error
+                }
+                await ModelRuntime.shared.releaseInvokingParent(retention)
             }
         )
     }
@@ -490,6 +517,37 @@ struct CoexistenceHandoff: SubagentHandoff {
                 "Local chat generation did not become idle before the coexistence run."
             )
         }
-        return try await body()
+        guard let retain, let finish else { return try await body() }
+        let retention = try await retain(scope, resolved)
+        feed.emitPhase(
+            "parent_retained",
+            detail: retention.parentIdentity?.modelName ?? "invoking model was not resident"
+        )
+        let result: SubagentResult
+        do {
+            result = try await ParentResidencyRetentionContext.$current.withValue(retention) {
+                try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(
+                    retention.childOwnershipToken
+                ) {
+                    try await body()
+                }
+            }
+        } catch let bodyError {
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    try await finish(retention)
+                }.value
+            } catch let cleanupError {
+                throw ResidencyHandoffFailure.bodyAndRestoreFailed(
+                    body: bodyError.localizedDescription,
+                    restore: cleanupError.localizedDescription
+                )
+            }
+            throw bodyError
+        }
+        try await Task.detached(priority: .userInitiated) {
+            try await finish(retention)
+        }.value
+        return result
     }
 }

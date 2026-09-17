@@ -229,8 +229,10 @@ struct AppleScriptWarmResidencyHandoff: SubagentHandoff {
             allowAdoption: plan.shouldUnload && keepWarmSeconds > 0
         )
         guard plan.shouldUnload else {
-            try await preflight(plan.requiredBytes, plan.ramSafetyEnabled) { phase, detail in
-                feed.emitPhase(phase, detail: detail.isEmpty ? nil : detail)
+            if !plan.coexists {
+                try await preflight(plan.requiredBytes, plan.ramSafetyEnabled) { phase, detail in
+                    feed.emitPhase(phase, detail: detail.isEmpty ? nil : detail)
+                }
             }
             return try await SubagentResidency.handoff(for: plan).around(
                 scope: scope,

@@ -445,6 +445,7 @@ public actor ModelRuntime {
         /// to resident metadata only after `finishLoadedContainer` publishes
         /// the holder successfully.
         let childOwnershipToken: ModelResidencyOwnershipToken?
+        let parentRetention: ParentResidencyRetention?
     }
 
     private var loadingTasks: [String: LoadingTaskRecord] = [:]
@@ -456,6 +457,7 @@ public actor ModelRuntime {
         var childOwnershipToken: ModelResidencyOwnershipToken?
     }
     private var residentMetadata: [String: ResidentMetadata] = [:]
+    private var parentRetentions = ParentResidencyRetentions()
     /// Serializes teardown of one exact published generation. Without this,
     /// two actor-reentrant unload calls can both pass an identity check, then
     /// one can remove/reload the name while the other is suspended draining a
@@ -1005,6 +1007,63 @@ public actor ModelRuntime {
     func residencyIdentity(named name: String) -> ModelResidencyIdentity? {
         guard let key = residentKey(matching: name) else { return nil }
         return residentMetadata[key]?.identity
+    }
+
+    /// A job-lifetime hold, separate from a generation's ModelLease. Holding a
+    /// ModelLease here could deadlock a cold load against budget eviction.
+    func retainInvokingParent(
+        named parent: String?,
+        for target: String,
+        source: RequestSource?
+    ) throws -> ParentResidencyRetention {
+        guard !isClearingAllResidency else { throw CancellationError() }
+        let canonicalTarget = ModelManager.findInstalledModel(named: target)?.name ?? target
+        let canonicalParent = parent.map { ModelManager.findInstalledModel(named: $0)?.name ?? $0 }
+        let identity = canonicalParent.flatMap { residencyIdentity(named: $0) }
+        if let identity {
+            let owned =
+                source.map { isResident(named: identity.modelName, ownedBy: $0) }
+                ?? isChatOwnedResident(named: identity.modelName)
+            guard owned, residencyUnloadClaims[identity.modelName] == nil else {
+                throw ChatResidencyHandoff.HandoffError.parentNotReclaimable(identity.modelName)
+            }
+        }
+        let lease = parentRetentions.begin(
+            targetModelName: canonicalTarget,
+            parentModelName: canonicalParent,
+            parentIdentity: identity
+        )
+        genLog.info(
+            "handoffRetention: begin id=\(lease.id.uuidString, privacy: .public) target=\(canonicalTarget, privacy: .public) parent=\(canonicalParent ?? "none", privacy: .public) generation=\(identity?.generation.uuidString ?? "absent", privacy: .public)"
+        )
+        return lease
+    }
+
+    func releaseInvokingParent(_ lease: ParentResidencyRetention) async {
+        guard parentRetentions.end(lease) else { return }
+        genLog.info(
+            "handoffRetention: end id=\(lease.id.uuidString, privacy: .public) target=\(lease.targetModelName, privacy: .public) parent=\(lease.parentModelName ?? "none", privacy: .public)"
+        )
+        if let parent = lease.parentIdentity,
+            residencyIdentity(named: parent.modelName) == parent
+        {
+            await scheduleIdleResidency(for: parent.modelName)
+        }
+    }
+
+    private func validateParentRetention(
+        _ lease: ParentResidencyRetention?,
+        target: String
+    ) throws {
+        guard let lease else { return }
+        guard !isClearingAllResidency,
+            lease.parentIdentity.map({ residencyUnloadClaims[$0.modelName] == nil }) ?? true
+        else { throw ParentResidencyRetentionError.expiredOrChanged }
+        try parentRetentions.validate(
+            lease,
+            targetModelName: target,
+            currentParentIdentity: lease.parentModelName.flatMap { residencyIdentity(named: $0) }
+        )
     }
 
     func isChatOwnedResident(named name: String) -> Bool {
@@ -1892,6 +1951,14 @@ public actor ModelRuntime {
             throw CancellationError()
         }
 
+        do {
+            try validateParentRetention(loadingRecord.parentRetention, target: name)
+        } catch {
+            holder.container.disableCaching()
+            loadingTasks.removeValue(forKey: name)
+            throw error
+        }
+
         modelCache[name] = holder
         residentMetadata[name] = ResidentMetadata(
             identity: ModelResidencyIdentity(modelName: name, generation: UUID()),
@@ -2043,6 +2110,15 @@ public actor ModelRuntime {
         }
         if let expectedOwnershipToken,
             residentMetadata[name]?.childOwnershipToken != expectedOwnershipToken
+        {
+            return false
+        }
+
+        // Ordinary idle, GC, pressure and other model switches cannot take a
+        // parent promised to a running child. Explicit unload/clear/quit remain
+        // authoritative and invalidate the child's exact-identity permit.
+        if parentRetentions.holds(residentMetadata[name]?.identity),
+            reason != .explicit, reason != .settingsClear, reason != .shutdown
         {
             return false
         }
@@ -2226,7 +2302,10 @@ public actor ModelRuntime {
     /// so the timeout is a pure safety valve. The UI enforces one local
     /// generation at a time, so this mainly backstops non-interactive loaders
     /// (server requests, scheduler) and races.
-    private func strictEvict(_ other: String) async {
+    private func strictEvict(_ other: String) async throws {
+        if parentRetentions.holds(residentMetadata[other]?.identity) {
+            throw ParentResidencyRetentionError.parentBusy(other)
+        }
         if await ModelLease.shared.count(for: other) > 0 {
             genLog.info(
                 "loadContainer: deferring strict eviction of \(other, privacy: .public) until in-flight generation drains"
@@ -2234,7 +2313,9 @@ public actor ModelRuntime {
             _ = await ModelLease.shared.waitForZero(other, timeoutSeconds: 300)
         }
         genLog.info("loadContainer: strict eviction of \(other, privacy: .public)")
-        await unload(name: other, reason: .modelSwitch)
+        guard await unload(name: other, reason: .modelSwitch) || residencyIdentity(named: other) == nil else {
+            throw ParentResidencyRetentionError.unloadDidNotComplete(other)
+        }
     }
 
     /// Unloads any loaded model whose name is not in `activeNames`.
@@ -2510,7 +2591,9 @@ public actor ModelRuntime {
         // A setting may change while either the policy or window snapshot
         // is awaited. Never replace its new timer with a stale policy.
         guard policyRevision == idleResidencyPolicyRevision else { return }
-        let hasHandoffOwner = residentMetadata[modelName]?.childOwnershipToken != nil
+        let hasHandoffOwner =
+            residentMetadata[modelName]?.childOwnershipToken != nil
+            || parentRetentions.holds(residentMetadata[modelName]?.identity)
         let policy = Self.resolvedIdleResidencyPolicy(
             configured: configured,
             source: lastUseSource[modelName],
@@ -3623,16 +3706,6 @@ public actor ModelRuntime {
         )
     }
 
-    /// Exact pre-side-effect Memory Safety verdict for the coexistence route.
-    /// The separate flexible-resident budget remains authoritative for
-    /// eviction; this answers only whether the normal loader admits the target
-    /// bundle under the current Memory Safety request budget.
-    func subagentCoexistenceMemorySafetyAllowsLoad(
-        for modelName: String
-    ) async -> Bool {
-        await subagentMemoryProfile(for: modelName)?.memorySafetyAllowsLoad ?? false
-    }
-
     func subagentBatchMemoryFacts(
         for modelName: String,
         residencyPlan: ResidencyPlan,
@@ -3700,7 +3773,7 @@ public actor ModelRuntime {
                 .flatMap(Self.nonnegativeUInt64),
             releasableParentBytes: 0,
             resolvedLoadBudgetBytes: profile.resolvedLoadBudgetBytes,
-            osHeadroomBytes: Self.nonnegativeUInt64(SubagentCoexistence.headroomBytes) ?? 0,
+            osHeadroomBytes: Self.nonnegativeUInt64(ChatResidencyHandoff.headroomBytes) ?? 0,
             memoryPressure: SubagentMemoryPressure.sampled(),
             allocatorCacheAllowanceBytes: allocatorAllowance
         )
@@ -3965,7 +4038,11 @@ public actor ModelRuntime {
             genLog.info(
                 "loadContainer: flexible budget eviction of \(candidate.key, privacy: .public) before loading \(targetName, privacy: .public) residentBytes=\(self.residentWeightBytes(excluding: targetName), privacy: .public) incomingBytes=\(incomingWeightsSizeBytes, privacy: .public) limitBytes=\(limit, privacy: .public)"
             )
-            await unload(name: candidate.key, reason: .modelSwitch)
+            guard await unload(name: candidate.key, reason: .modelSwitch)
+                || residencyIdentity(named: candidate.key) == nil
+            else {
+                throw ParentResidencyRetentionError.unloadDidNotComplete(candidate.key)
+            }
         }
     }
 
@@ -3978,6 +4055,7 @@ public actor ModelRuntime {
         alignmentRepairSession: String? = nil
     ) async throws -> SessionHolder {
         try Task.checkCancellation()
+        let parentRetention = ParentResidencyRetentionContext.current
         // Admission applies to warm reuse too, before eviction or MLX allocation.
         if let directory = Self.findLocalDirectory(forModelId: id) {
             try ModelManifest.validateLoad(at: directory)
@@ -3993,6 +4071,7 @@ public actor ModelRuntime {
 
         while true {
             try Task.checkCancellation()
+            try validateParentRetention(parentRetention, target: name)
             if let existing = modelCache[name] {
                 let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - loadStartedAt) * 1000)
                 genLog.info(
@@ -4025,6 +4104,12 @@ public actor ModelRuntime {
             }
 
             if let otherLoading = loadingTasks.first(where: { $0.key != name }) {
+                if parentRetention != nil {
+                    throw ResidencyRefusedError(
+                        requestedModel: name,
+                        conflict: .wouldCancelLoadInFlight(otherLoading.key)
+                    )
+                }
                 try await resolveConflictingLoad(
                     requestedName: name,
                     otherName: otherLoading.key,
@@ -4037,7 +4122,7 @@ public actor ModelRuntime {
                 continue
             }
 
-            if policy == .strictSingleModel,
+            if policy == .strictSingleModel, parentRetention == nil,
                 let other = modelCache.keys.first(where: { $0 != name })
             {
                 if intent == .handoffRestore {
@@ -4070,7 +4155,7 @@ public actor ModelRuntime {
                         requested: name,
                         conflict: .wouldEvictResident(other)
                     )
-                    await strictEvict(other)
+                    try await strictEvict(other)
                 }
                 continue
             }
@@ -4083,6 +4168,7 @@ public actor ModelRuntime {
 
         while true {
             try Task.checkCancellation()
+            try validateParentRetention(parentRetention, target: name)
             if let existing = modelCache[name] {
                 let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - loadStartedAt) * 1000)
                 genLog.info(
@@ -4115,6 +4201,12 @@ public actor ModelRuntime {
             }
 
             if let otherLoading = loadingTasks.first(where: { $0.key != name }) {
+                if parentRetention != nil {
+                    throw ResidencyRefusedError(
+                        requestedModel: name,
+                        conflict: .wouldCancelLoadInFlight(otherLoading.key)
+                    )
+                }
                 // Re-checked after `acquireColdLoadSlot()`, which suspends —
                 // the actor is reentrant across it, so the pre-slot check above
                 // proves nothing about the state we see now.
@@ -4130,7 +4222,7 @@ public actor ModelRuntime {
                 continue
             }
 
-            if policy == .strictSingleModel,
+            if policy == .strictSingleModel, parentRetention == nil,
                 let other = modelCache.keys.first(where: { $0 != name })
             {
                 if intent == .handoffRestore {
@@ -4162,7 +4254,7 @@ public actor ModelRuntime {
                         requested: name,
                         conflict: .wouldEvictResident(other)
                     )
-                    await strictEvict(other)
+                    try await strictEvict(other)
                 }
                 continue
             }
@@ -4415,7 +4507,7 @@ public actor ModelRuntime {
             try await unloadForFlexibleResidentBudget(
                 targetName: name,
                 incomingWeightsSizeBytes: loadFootprintBytes,
-                intent: intent,
+                intent: parentRetention == nil ? intent : .background,
                 restoreOwnershipToken: restoreOwnershipToken
             )
         }
@@ -4445,6 +4537,7 @@ public actor ModelRuntime {
         // the single owner of parser execution and `.toolCall` emission.
 
         let loadID = allocateLoadingTaskID()
+        try validateParentRetention(parentRetention, target: name)
         let task = Task<SessionHolder, Error> {
             if let activity = alignmentRepairActivity {
                 await AlignmentPreparationState.shared.begin(
@@ -4596,7 +4689,8 @@ public actor ModelRuntime {
         loadingTasks[name] = LoadingTaskRecord(
             id: loadID,
             task: task,
-            childOwnershipToken: ModelResidencyOwnershipContext.childOwnershipToken
+            childOwnershipToken: ModelResidencyOwnershipContext.childOwnershipToken,
+            parentRetention: parentRetention
         )
 
         do {

@@ -31,99 +31,6 @@ struct SubagentResidencyDecision: Sendable {
     let plan: ResidencyPlan
 }
 
-/// Live RAM numbers for the coexistence gate in `decidePlan`, resolved by the
-/// `resolve` wrapper so the decision itself stays a pure function. `.disabled`
-/// (allowed == false) preserves the single-residency default.
-struct SubagentCoexistence: Sendable {
-    /// User opt-in AND flexible eviction policy. Strict policy must pass
-    /// false: the runtime itself strict-evicts any other resident model on
-    /// load, which would silently evict the orchestrator with NO restore lease.
-    var allowed: Bool
-    /// Reclaimable physical memory right now (free + inactive + purgeable),
-    /// WITHOUT counting resident chat models — they stay loaded.
-    var availableBytes: Int64
-    /// Sum of resident chat-model weight bytes (they remain resident).
-    var residentBytes: Int64
-    /// The runtime's flexible-mode resident-weights soft cap
-    /// (`ModelRuntime.flexibleResidentBudgetBytes`). Loading past it triggers
-    /// the runtime's own budget eviction — which would evict the orchestrator
-    /// without a restore lease — so the gate must stay under it. `0` = no cap.
-    var flexibleBudgetBytes: Int64
-    /// Result of applying the exact bundle-aware Memory Safety request estimate
-    /// used by `ModelRuntime.loadContainer`. Coexistence must not approve a
-    /// target that the loader will immediately reject under the user's active
-    /// Memory Safety profile or explicit budget.
-    var memorySafetyAllowsTargetLoad: Bool = true
-
-    static let disabled = SubagentCoexistence(
-        allowed: false,
-        availableBytes: 0,
-        residentBytes: 0,
-        flexibleBudgetBytes: 0
-    )
-
-    /// Same footprint model as `ChatResidencyHandoff.memoryPreflight`: weights
-    /// inflate ~1.3x once resident (KV + activations + framework overhead)…
-    static let residencyInflation = 1.3
-    /// …plus fixed headroom kept for the OS/app.
-    ///
-    /// TRACE vs the authoritative Memory Safety plan (review 2026-08-28):
-    /// these two constants predate the bounded-delegation work (they are
-    /// the #2221-era coexistence gate, kept in parity with
-    /// `ChatResidencyHandoff.memoryPreflight`) and are NOT additive with
-    /// `resolveMemorySafetyLoadPlan`. The gate consults the authoritative
-    /// plan separately via `memorySafetyAllowsTargetLoad`, and the batch
-    /// planner receives the plan's `resolvedLoadBudgetBytes` as its own
-    /// clamp; `headroomBytes` enters ONLY the physical-reclaimable
-    /// inequality (`availableBytes` — measured free+inactive+purgeable),
-    /// which the load-budget clamp deliberately excludes (see the
-    /// planner's `resolveMemoryCapacity` comment). Two disjoint
-    /// constraints joined by min — no double subtraction inside either.
-    /// Making these persisted settings is a product decision deliberately
-    /// NOT taken in the delegation PR.
-    /// Bounded resident-child reuse under normal pressure now prices the
-    /// actual shared allocator ceiling plus each child's state instead of
-    /// reapplying this cold/coexistence allowance (see the batch planner).
-    static let headroomBytes: Int64 = 3 * 1024 * 1024 * 1024
-
-    /// Whether a subagent model of `requiredBytes` (on-disk weights) fits
-    /// alongside the resident models. Unknown size (`<= 0`) never fits — the
-    /// gate must be able to prove the projection, not assume it.
-    func fits(
-        requiredBytes: Int64,
-        targetAlreadyResident: Bool = false
-    ) -> Bool {
-        guard allowed, requiredBytes > 0 else { return false }
-        // The normal loader returns an already-resident holder before it
-        // evaluates a cold-load request estimate. Mirror that ownership
-        // boundary here: tightening Memory Safety may refuse a new load, but
-        // must not make safe reuse of an existing protected target disappear.
-        guard memorySafetyAllowsTargetLoad || targetAlreadyResident else {
-            return false
-        }
-        // `residentBytes` already includes an existing protected target. Reuse
-        // therefore needs only the non-weight working-set allowance (the 30%
-        // portion of the same conservative estimate), not a second copy of
-        // its weights. The batch planner separately charges each child's
-        // architecture-aware KV/SSM/activation state.
-        let weightMultiplier =
-            targetAlreadyResident ? Self.residencyInflation - 1 : Self.residencyInflation
-        let needed =
-            Int64(Double(requiredBytes) * weightMultiplier)
-            + Self.headroomBytes
-        guard availableBytes >= needed else { return false }
-        // Mirror the runtime's flexible-budget eviction check (raw weights,
-        // uninflated — same terms `unloadForFlexibleResidentBudget` compares).
-        let incrementalWeights = targetAlreadyResident ? 0 : requiredBytes
-        if flexibleBudgetBytes > 0,
-            residentBytes + incrementalWeights > flexibleBudgetBytes
-        {
-            return false
-        }
-        return true
-    }
-}
-
 enum SubagentResidency {
     /// Pure residency decision — the delegation RAM-safety decision table, no
     /// `ModelRuntime` / `ModelManager`, so it unit-tests with no GPU:
@@ -135,12 +42,11 @@ enum SubagentResidency {
     ///                                              reload main (also when the
     ///                                              main model is NOT loaded:
     ///                                              the reload leg still runs)
-    ///   different local + handoff toggle OFF     ⇒ NO sequencing: coexist when
-    ///                                              the user opted in and it
-    ///                                              fits, else run in place and
-    ///                                              let the runtime's eviction
-    ///                                              policy decide. Never a
-    ///                                              refusal.
+    ///   different local + handoff toggle OFF     ⇒ retain the invoking parent
+    ///                                              for the job, load the child
+    ///                                              alongside it, clean up only
+    ///                                              the job's owned child.
+    /// Memory admission is separate: refusal must never fall back to eviction.
     ///
     /// `residentChatModels` is the live set of resident chat-model names that
     /// belong to the invoking parent (empty when the model isn't local or the
@@ -158,7 +64,6 @@ enum SubagentResidency {
         requiredBytes: Int64,
         idleWaitSeconds: Int,
         deniedMessage: String,
-        coexistence: SubagentCoexistence = .disabled,
         invokingParentModelName: String? = nil
     ) throws -> ResidencyPlan {
         // A remote/router model never touches local GPU residency.
@@ -187,6 +92,18 @@ enum SubagentResidency {
 
         let otherResidentModels = residentChatModels.filter {
             $0.caseInsensitiveCompare(modelName) != .orderedSame
+        }
+        if !handoffEnabled,
+            !otherResidentModels.isEmpty
+                || invokingParentModelName.map({ $0.caseInsensitiveCompare(modelName) != .orderedSame }) == true
+        {
+            return ResidencyPlan(
+                shouldUnload: false,
+                requiredBytes: requiredBytes,
+                ramSafetyEnabled: ramSafetyEnabled,
+                maxElapsedSeconds: idleWaitSeconds,
+                coexists: true
+            )
         }
         guard !otherResidentModels.isEmpty else {
             let unrelatedProtectedModels = protectedResidentModels.filter {
@@ -223,34 +140,7 @@ enum SubagentResidency {
                 maxElapsedSeconds: idleWaitSeconds
             )
         }
-        // RAM-aware coexistence lives in the NO-sequencing mode only (handoff
-        // toggle OFF): both models fit (flexible policy, projection proven) →
-        // keep the chat model loaded and run alongside. With the toggle ON the
-        // user asked for the unload/reload sequence everywhere, so coexistence
-        // never overrides it. Tight RAM or unknown size falls through.
-        let targetAlreadyResident =
-            residentChatModels.contains {
-                $0.caseInsensitiveCompare(modelName) == .orderedSame
-            }
-            || protectedResidentModels.contains {
-                $0.caseInsensitiveCompare(modelName) == .orderedSame
-            }
-        if !handoffEnabled,
-            coexistence.fits(
-                requiredBytes: requiredBytes,
-                targetAlreadyResident: targetAlreadyResident
-            )
-        {
-            return ResidencyPlan(
-                shouldUnload: false,
-                requiredBytes: requiredBytes,
-                ramSafetyEnabled: ramSafetyEnabled,
-                maxElapsedSeconds: idleWaitSeconds,
-                coexists: true
-            )
-        }
-        // Reusing a protected target is safe only when the invoking parent can
-        // coexist with it. If coexistence did not pass above, unloading the
+        // Reusing a protected target is safe only in keep-parent mode. Unloading the
         // parent and running on an API/plugin/scheduled-owned target would
         // strand the parent: restore correctly refuses to evict a resident the
         // handoff does not own. Refuse before touching the parent.
@@ -283,20 +173,6 @@ enum SubagentResidency {
                     + "or finish the other API/plugin work first."
             )
         }
-        // Handoff toggle OFF: the user opted out of the unload/reload
-        // sequence. Run in place with NO sequencing — nothing is unloaded or
-        // restored by the delegation; the runtime's own eviction policy
-        // decides what happens to the chat model when the delegate loads.
-        // This is a mode, never a refusal (`deniedMessage` is not thrown).
-        guard handoffEnabled else {
-            return ResidencyPlan(
-                shouldUnload: false,
-                requiredBytes: requiredBytes,
-                ramSafetyEnabled: ramSafetyEnabled,
-                maxElapsedSeconds: idleWaitSeconds,
-                sequencingDisabled: true
-            )
-        }
         return ResidencyPlan(
             shouldUnload: true,
             requiredBytes: requiredBytes,
@@ -308,8 +184,8 @@ enum SubagentResidency {
     /// Live residency decision for a resolved model name. Reads the installed
     /// bundle (`ModelManager`) + the resident chat models (`ModelRuntime`) and
     /// feeds them to `decidePlan`. A different local model with the handoff
-    /// toggle OFF runs without sequencing (see `decidePlan`); the only throws
-    /// left are the pre-existing protected-resident ownership guards.
+    /// toggle OFF uses scoped parent retention, not the ordinary interactive
+    /// eviction path. Memory admission and ownership guards remain separate.
     static func resolve(
         modelName: String,
         config: SubagentConfiguration,
@@ -364,30 +240,6 @@ enum SubagentResidency {
         let protectedResidentModels = residentModels.filter {
             !invokingParentKeys.contains($0.lowercased())
         }
-        // Coexistence gate inputs (live numbers; the decision itself is pure).
-        // Only meaningful when the user opted in AND the server eviction policy
-        // is Flexible — under Strict the runtime itself evicts any other
-        // resident model on load, which would strand the orchestrator with no
-        // restore lease, so Strict always keeps the single-residency handoff.
-        let coexistence: SubagentCoexistence
-        if isLocal, config.subagentCoexistenceEnabled {
-            let policy = await MainActor.run {
-                ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
-            }
-            let memorySafetyAllowsTargetLoad =
-                await ModelRuntime.shared.subagentCoexistenceMemorySafetyAllowsLoad(
-                    for: canonicalName
-                )
-            coexistence = SubagentCoexistence(
-                allowed: policy == .manualMultiModel,
-                availableBytes: ChatResidencyHandoff.availableMemoryBytes(),
-                residentBytes: residentSummaries.reduce(Int64(0)) { $0 + $1.bytes },
-                flexibleBudgetBytes: ModelRuntime.flexibleResidentBudgetBytes(),
-                memorySafetyAllowsTargetLoad: memorySafetyAllowsTargetLoad
-            )
-        } else {
-            coexistence = .disabled
-        }
         let plan = try decidePlan(
             isLocal: isLocal,
             modelName: canonicalName,
@@ -399,7 +251,6 @@ enum SubagentResidency {
                 ? ChatResidencyHandoff.estimatedChatModelBytes(named: modelName) : 0,
             idleWaitSeconds: idleWaitSeconds,
             deniedMessage: deniedMessage,
-            coexistence: coexistence,
             invokingParentModelName: installedParentName
         )
         return SubagentResidencyDecision(isLocal: isLocal, plan: plan)
@@ -441,7 +292,7 @@ enum SubagentResidency {
     static func handoff(for plan: ResidencyPlan) -> SubagentHandoff {
         if plan.shouldUnload { return ResidencyHandoff.production { _ in plan } }
         if plan.coexists {
-            return CoexistenceHandoff.production(maxElapsedSeconds: plan.maxElapsedSeconds)
+            return CoexistenceHandoff.production(plan: plan)
         }
         return PassthroughHandoff()
     }

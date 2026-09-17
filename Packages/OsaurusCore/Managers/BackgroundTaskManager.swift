@@ -1131,6 +1131,10 @@ public final class BackgroundTaskManager: ObservableObject {
         // that marks a run as "started" (the `agent_runs` row, the
         // task-local bindings, `context.start`) lives here so a queued
         // request has no execution side effects until promoted.
+        // A queued closure runs in pumpQueue's task, not the invoker's task.
+        // Capture residency authority now; otherwise a delayed child loses its
+        // keep-parent hold/cleanup ownership, or borrows another job's token.
+        let residencyContext = DelegationResidencyContext.capture(source: request.source)
         let startWork: @MainActor () async -> Void = { [weak state] in
             guard let state else { return }
 
@@ -1201,7 +1205,9 @@ public final class BackgroundTaskManager: ObservableObject {
                         await ChatExecutionContext.$currentRunId.withValue(boundRunId) {
                             await ChatExecutionContext.$currentRunActor.withValue(boundActor) {
                                 await ChatExecutionContext.$currentBackgroundId.withValue(context.id) {
-                                    await context.start(prompt: request.prompt)
+                                    await residencyContext.run {
+                                        await context.start(prompt: request.prompt)
+                                    }
                                 }
                             }
                         }

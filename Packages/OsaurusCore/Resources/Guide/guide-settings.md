@@ -59,10 +59,12 @@ invoking model out and restores it after the child. AppleScript's separate
 keep-warm policy can defer that restoration for back-to-back calls; changing
 the swap or warm setting settles the previous lease before the next run.
 
-Off skips explicit unload/restore; it does **not** override Server → Eviction
-Policy. Strict (Single Model) can still evict the parent. Keeping both models
-resident requires Flexible (Multi Model), the experimental **Keep the chat
-model loaded alongside subagents** option, and sufficient memory. Same-model
+Off keeps the exact invoking model resident for the child's lifetime, including
+under Server Strict. Only that job's newly loaded child is cleaned up afterward;
+an already-resident shared target is not evicted. Memory checks may refuse a child,
+but never fall back to evicting the parent. The redundant experimental coexistence
+switch was removed; its old configuration key is retained only for compatibility.
+If the parent was already unloaded, Off does not reload it. Same-model
 and remote children do not need a swap. Image jobs have their own load policy;
 independent scheduled/watch jobs and background helpers do not gain permission
 to evict unrelated chat models from this switch.

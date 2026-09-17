@@ -194,6 +194,8 @@ enum ChatResidencyHandoff {
     /// so a too-large job never leaves the user with the orchestrator evicted
     /// and nothing loaded. `requiredBytes <= 0` or `enabled == false` skips the
     /// check. Throws `.insufficientMemory` when it won't fit.
+    static let headroomBytes: Int64 = 3 * 1024 * 1024 * 1024
+
     static func memoryPreflight(
         requiredBytes: Int64,
         enabled: Bool,
@@ -204,8 +206,7 @@ enum ChatResidencyHandoff {
         // Models occupy more resident RAM than their on-disk weights (KV +
         // activations + framework overhead); inflate the on-disk estimate.
         let inflation = 1.3
-        let headroom: Int64 = 3 * 1024 * 1024 * 1024  // keep 3 GB for the OS/app
-        let needed = Int64(Double(requiredBytes) * inflation) + headroom
+        let needed = Int64(Double(requiredBytes) * inflation) + headroomBytes
         // Disk shard sizes are not resident/releasable bytes. The host sample
         // already includes reclaimable file-backed pages, and a handoff may
         // release only its exact parent. Never add all chat-owned shard sizes.

@@ -1145,9 +1145,12 @@ public enum SettingsSearchIndex {
             tab: .orchestrator,
             section: "Local Models & Memory",
             title: "Swap local models for subagents",
-            keywords: ["handoff", "browser use", "computer use", "applescript", "batch", "unload", "restore"],
+            keywords: [
+                "handoff", "browser use", "computer use", "applescript", "batch", "unload", "restore", "keep loaded",
+                "coexistence",
+            ],
             disambiguation:
-                "Shared by all agents for text, Browser Use, Computer Use and AppleScript. Off skips sequencing but does not override Server Strict eviction. Image jobs have a separate load policy.",
+                "Shared by all agents for text, Browser Use, Computer Use and AppleScript. Off retains the invoking model during the job, including under Server Strict; memory admission remains separate. Image jobs have a separate load policy.",
             declarativeSection: "delegation"
         ),
         .init(

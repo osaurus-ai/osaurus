@@ -96,7 +96,7 @@ struct AppleScriptWarmHandoffTests {
             keepWarmSeconds: 90
         )
         let handoff = AppleScriptWarmResidencyHandoff(
-            plan: ResidencyPlan(shouldUnload: false, sequencingDisabled: true),
+            plan: ResidencyPlan(shouldUnload: false),
             model: resolved.name,
             keepWarmSeconds: 90,
             coordinator: coordinator,
