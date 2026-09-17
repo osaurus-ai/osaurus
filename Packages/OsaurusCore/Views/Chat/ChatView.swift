@@ -192,61 +192,113 @@ final class ChatSession: ObservableObject {
 
     // MARK: - Run progress (slow / stalled surfacing)
 
-    /// Coarse liveness of the in-flight run, derived from time since the last
-    /// observed progress event (stream delta, tool event, image-generation
-    /// event). Drives a visible notice above the composer so a wedged
-    /// provider/model/tool reads as "stalled — Stop is right there" instead of
-    /// an indefinite shimmer the user can only interpret as a hang.
-    enum RunProgressState {
-        case active
-        /// No progress for `runSlowThreshold` — worth telling the user we're
-        /// still alive but waiting (long prefill, slow provider, big tool).
-        case slow
-        /// No progress for `runStalledThreshold` — likely wedged; surface
-        /// Stop as the recovery action. The run is NOT auto-killed: a huge
-        /// model load can legitimately take minutes, so the user decides.
-        case stalled
-    }
-
+    /// Coarse liveness of the in-flight run. Derived from time since the last
+    /// progress *event* (stream delta, tool, live exec, load/prefill update)
+    /// via `RunProgressEvaluator` — never from “a tool is still open” or
+    /// “a load flag is still set”. Drives the composer notice so a wedged
+    /// provider/model/tool reads as "stalled — Stop is right there".
     @Published private(set) var runProgressState: RunProgressState = .active
 
     private var lastRunProgressAt = Date()
+    private var streamProgressTimestamps: [Date] = []
+    /// One-shot: a discrete event unlatches on the next evaluate, then this
+    /// clears so a single tool commit cannot keep resetting `previous`.
+    private var lastEventClearsLatch = false
     private var runProgressMonitorTask: Task<Void, Never>?
-    private static let runSlowThreshold: TimeInterval = 30
-    private static let runStalledThreshold: TimeInterval = 120
+    private var runProgressSubscriptions = Set<AnyCancellable>()
+    private var liveExecOutputSubscriptions: [String: AnyCancellable] = [:]
+    private var subagentEventSubscriptions: [String: AnyCancellable] = [:]
 
-    /// Record run liveness. Called from every streaming/tool/image event
-    /// loop; must stay cheap (a Date store; the published state only changes
-    /// on an actual transition).
-    func noteRunProgress() {
+    /// Record run liveness. Stream tokens latch `.slow`/`.stalled` until a
+    /// burst; discrete events reset `previous` then follow 30/120s.
+    func noteRunProgress(_ kind: RunProgressKind = .stream) {
         lastRunProgressAt = Date()
-        if runProgressState != .active {
-            runProgressState = .active
+        if kind == .stream {
+            streamProgressTimestamps.append(lastRunProgressAt)
+            let cutoff = lastRunProgressAt.addingTimeInterval(
+                -RunProgressEvaluator.streamBurstWindow
+            )
+            if streamProgressTimestamps.first.map({ $0 < cutoff }) == true {
+                streamProgressTimestamps.removeAll { $0 < cutoff }
+            }
         }
+        lastEventClearsLatch = (kind == .discrete)
+        applyRunProgressState()
+    }
+
+    private func applyRunProgressState() {
+        let now = Date()
+        let idle = now.timeIntervalSince(lastRunProgressAt)
+        let newState = RunProgressEvaluator.state(
+            idle: idle,
+            previous: runProgressState,
+            isSustainedStreamBurst: RunProgressEvaluator.isSustainedStreamBurst(
+                timestamps: streamProgressTimestamps,
+                now: now
+            ),
+            clearsLatch: lastEventClearsLatch,
+            hasVisibleLoadingPhase: hasVisibleLoadingPhase
+        )
+        lastEventClearsLatch = false
+        if newState != runProgressState {
+            runProgressState = newState
+            if newState == .stalled {
+                CrashReportingService.recordBreadcrumb(
+                    category: "chat.run",
+                    message: "run stalled: no progress for \(Int(idle))s"
+                )
+            }
+        }
+    }
+
+    /// Same sources as `NativeTypingIndicatorView`'s loading phase. Used only
+    /// to hide the redundant `.slow` chip — never to block `.stalled`.
+    private var hasVisibleLoadingPhase: Bool {
+        let progress = InferenceProgressManager.shared
+        let sandbox = SandboxManager.State.shared
+        let agentId = self.agentId ?? Agent.defaultId
+        let agentUsesSandbox =
+            AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
+        let sandboxBooting = sandbox.status == .starting || sandbox.isProvisioning
+        if agentUsesSandbox && sandboxBooting { return true }
+        if progress.prefillProgress != nil { return true }
+        if progress.isLoadingModel { return true }
+        let warmupPhases = WarmupProgressHub.shared.phases.values
+        if warmupPhases.contains(.loadingModel) { return true }
+        if warmupPhases.contains(where: {
+            if case .prefilling = $0 { return true }
+            return false
+        }) {
+            return true
+        }
+        return false
+    }
+
+    private var sessionToolCallIds: Set<String> {
+        var ids = Set<String>()
+        for turn in turns {
+            if let calls = turn.toolCalls {
+                for call in calls { ids.insert(call.id) }
+            }
+            for call in turn.remoteToolActivity {
+                ids.insert(call.id)
+            }
+        }
+        return ids
     }
 
     private func beginRunProgressMonitor() {
         lastRunProgressAt = Date()
+        streamProgressTimestamps = []
+        lastEventClearsLatch = false
         runProgressState = .active
         runProgressMonitorTask?.cancel()
+        bindRunProgressSources()
         runProgressMonitorTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 guard let self, !Task.isCancelled else { return }
-                let idle = Date().timeIntervalSince(self.lastRunProgressAt)
-                let newState: RunProgressState =
-                    idle >= Self.runStalledThreshold
-                    ? .stalled
-                    : idle >= Self.runSlowThreshold ? .slow : .active
-                if newState != self.runProgressState {
-                    self.runProgressState = newState
-                    if newState == .stalled {
-                        CrashReportingService.recordBreadcrumb(
-                            category: "chat.run",
-                            message: "run stalled: no progress for \(Int(idle))s"
-                        )
-                    }
-                }
+                self.applyRunProgressState()
             }
         }
     }
@@ -254,7 +306,119 @@ final class ChatSession: ObservableObject {
     private func endRunProgressMonitor() {
         runProgressMonitorTask?.cancel()
         runProgressMonitorTask = nil
+        clearRunProgressSources()
+        streamProgressTimestamps = []
+        lastEventClearsLatch = false
         runProgressState = .active
+    }
+
+    private func bindRunProgressSources() {
+        clearRunProgressSources()
+
+        LiveExecRegistry.shared.entriesPublisher
+            .receive(on: RunLoop.main)
+            .sink { [weak self] entries in
+                self?.syncLiveExecSubscriptions(entries)
+            }
+            .store(in: &runProgressSubscriptions)
+
+        SubagentFeedRegistry.shared.feedsPublisher
+            .receive(on: RunLoop.main)
+            .sink { [weak self] feeds in
+                self?.syncSubagentFeedSubscriptions(feeds)
+            }
+            .store(in: &runProgressSubscriptions)
+
+        let inference = InferenceProgressManager.shared
+        inference.$prefillProgress
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.noteRunProgress(.discrete)
+            }
+            .store(in: &runProgressSubscriptions)
+        inference.$loadInFlightCount
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.noteRunProgress(.discrete)
+            }
+            .store(in: &runProgressSubscriptions)
+
+        let sandbox = SandboxManager.State.shared
+        sandbox.$status
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.noteRunProgress(.discrete)
+            }
+            .store(in: &runProgressSubscriptions)
+        sandbox.$isProvisioning
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.noteRunProgress(.discrete)
+            }
+            .store(in: &runProgressSubscriptions)
+        sandbox.$provisioningProgress
+            .dropFirst()
+            .throttle(for: .seconds(1), scheduler: RunLoop.main, latest: true)
+            .sink { [weak self] _ in
+                self?.noteRunProgress(.discrete)
+            }
+            .store(in: &runProgressSubscriptions)
+
+        syncLiveExecSubscriptions(LiveExecRegistry.shared.currentEntries())
+        // `feedsPublisher` is a CurrentValueSubject — the sink above fires
+        // immediately with the current map.
+    }
+
+    private func syncLiveExecSubscriptions(_ entries: [String: LiveExecRegistry.Entry]) {
+        let owned = sessionToolCallIds
+        let relevantIds = Set(entries.keys.filter { owned.contains($0) })
+        for id in Set(liveExecOutputSubscriptions.keys).subtracting(relevantIds) {
+            liveExecOutputSubscriptions[id]?.cancel()
+            liveExecOutputSubscriptions[id] = nil
+        }
+        for (id, entry) in entries where relevantIds.contains(id) && liveExecOutputSubscriptions[id] == nil {
+            liveExecOutputSubscriptions[id] = entry.outputPublisher
+                .receive(on: RunLoop.main)
+                .throttle(for: .seconds(1), scheduler: RunLoop.main, latest: true)
+                .sink { [weak self] _ in
+                    self?.noteRunProgress(.discrete)
+                }
+        }
+    }
+
+    private func syncSubagentFeedSubscriptions(_ feeds: [String: SubagentFeed]) {
+        let sessionKey = sessionId?.uuidString
+        let ownedCalls = sessionToolCallIds
+        let relevant = feeds.filter { _, feed in
+            if let sessionKey, feed.parentSessionId == sessionKey { return true }
+            return ownedCalls.contains(feed.toolCallId)
+        }
+        let relevantIds = Set(relevant.keys)
+        for id in Set(subagentEventSubscriptions.keys).subtracting(relevantIds) {
+            subagentEventSubscriptions[id]?.cancel()
+            subagentEventSubscriptions[id] = nil
+        }
+        for (id, feed) in relevant where subagentEventSubscriptions[id] == nil {
+            subagentEventSubscriptions[id] = feed.eventsPublisher
+                .dropFirst()
+                .receive(on: RunLoop.main)
+                .sink { [weak self] _ in
+                    self?.noteRunProgress(.discrete)
+                }
+        }
+    }
+
+    private func clearRunProgressSources() {
+        runProgressSubscriptions.forEach { $0.cancel() }
+        runProgressSubscriptions.removeAll()
+        liveExecOutputSubscriptions.values.forEach { $0.cancel() }
+        liveExecOutputSubscriptions.removeAll()
+        subagentEventSubscriptions.values.forEach { $0.cancel() }
+        subagentEventSubscriptions.removeAll()
     }
 
     @Published var lastStreamError: String?
@@ -4981,7 +5145,7 @@ final class ChatSession: ObservableObject {
         debugLog("send: got stream, entering delta loop")
         do {
             for try await delta in stream {
-                noteRunProgress()
+                noteRunProgress(.stream)
                 if !isRunActive(runId) {
                     await processor.finalize()
                     // Cancelled mid-run: don't leave a remote tool chip
@@ -5621,7 +5785,7 @@ final class ChatSession: ObservableObject {
         }
         do {
             for try await event in stream {
-                noteRunProgress()
+                noteRunProgress(.discrete)
                 guard isRunActive(runId) else { break }
                 switch event {
                 case .loadingModel:
@@ -5886,6 +6050,7 @@ final class ChatSession: ObservableObject {
                     case .cancelled:
                         turn.content = L("Video generation cancelled.")
                     }
+                    self.noteRunProgress(.discrete)
                     self.rebuildVisibleBlocks()
                 }
             }
@@ -6909,6 +7074,7 @@ final class ChatSession: ObservableObject {
                         if !media.isEmpty {
                             toolTurn.attachments = media
                         }
+                        self.noteRunProgress(.discrete)
                         return toolTurn
                     }
 
@@ -7944,6 +8110,7 @@ final class ChatSession: ObservableObject {
                             // Start the duration timer now; the call renders running
                             // until `recordToolTurn` lands the result after execution.
                             assistantTurn.markToolCallStarted(callId)
+                            self.noteRunProgress(.discrete)
 
                             // Materialise the tool-call row BEFORE we await
                             // execute(...). Without this the chat skips
@@ -9139,10 +9306,10 @@ struct ChatView: View {
     }
 
     /// Run-liveness chip shown above the composer while a run has produced no
-    /// stream/tool/image progress for a while. `slow` reassures ("still
-    /// working"); `stalled` names the likely wedge and points at Stop — the
-    /// recovery action — without auto-killing a run that may legitimately be
-    /// deep in a long model load or tool call.
+    /// progress events for a while. `slow` reassures ("still working");
+    /// `stalled` names a silent hang and points at Stop. Visible loading
+    /// (typing-row phase) hides only `.slow`; a wedged load still reaches
+    /// `.stalled`.
     @ViewBuilder
     private var runProgressNotice: some View {
         if observedSession.isStreaming {
