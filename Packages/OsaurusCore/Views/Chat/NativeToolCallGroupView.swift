@@ -903,6 +903,9 @@ final class NativeToolCallRowView: NSView {
     private var subagentFeedHeightConstraint: NSLayoutConstraint?
     private var subagentFeedSubscription: AnyCancellable?
     private var subagentFeedBoundCallId: String?
+    /// Tool-call id the hosted pane was built for; a reused row re-hosts
+    /// when it is configured for a different call.
+    private var subagentFeedHostedCallId: String?
     private let separatorView = NSView()
     /// pins contentContainer height for hit-testing; toggled when result section is shown
     private var contentBottomToArgs: NSLayoutConstraint?
@@ -1313,9 +1316,13 @@ final class NativeToolCallRowView: NSView {
         // 0) Unified subagent feed: any row whose tool-call-id has a live
         //    (or grace-tail) `SubagentFeed` renders the shared activity pane.
         //    Drives spawn / image / computer_use live rows.
-        //    Falls through to the markdown summary once the grace tail drops
-        //    the feed.
-        if let feed = SubagentFeedRegistry.shared.feed(for: item.call.id) {
+        //    Once the grace tail drops the live feed, a finished Computer Use /
+        //    AppleScript run keeps its step log from the saved run log (the
+        //    pane header carries the outcome and failure reason); other kinds
+        //    fall through to the markdown summary.
+        if let feed = SubagentFeedRegistry.shared.feed(for: item.call.id)
+            ?? SubagentRunLogArchive.shared.feed(for: item.call.id)
+        {
             tearDownResultSection()
             tearDownTerminalView()
             mountSubagentFeedView(feed: feed, theme: theme)
@@ -1497,6 +1504,12 @@ final class NativeToolCallRowView: NSView {
     /// two active bottom pins.
     private func mountSubagentFeedView(feed: SubagentFeed, theme: any ThemeProtocol) {
         let host: NSView
+        // Rows are reused across tool calls: a pane built for another call
+        // (or for this call's live feed, now replaced by its saved log with
+        // identical content) must not be shown for a different run.
+        if subagentFeedHostingView != nil, subagentFeedHostedCallId != feed.toolCallId {
+            removeSubagentFeedHost()
+        }
         if let existing = subagentFeedHostingView {
             host = existing
         } else {
@@ -1523,6 +1536,7 @@ final class NativeToolCallRowView: NSView {
             let pin = contentContainer.bottomAnchor.constraint(equalTo: hosting.bottomAnchor)
             subagentFeedBottomConstraint = pin
             subagentFeedHostingView = hosting
+            subagentFeedHostedCallId = feed.toolCallId
             host = hosting
         }
         // Swap pins atomically (see mountTerminalView for why).
@@ -1536,14 +1550,22 @@ final class NativeToolCallRowView: NSView {
         subagentFeedSubscription?.cancel()
         subagentFeedSubscription = nil
         subagentFeedBoundCallId = nil
+        guard subagentFeedHostingView != nil else { return }
+        removeSubagentFeedHost()
+        contentBottomToArgs?.isActive = true
+        applyHeight()
+    }
+
+    /// Remove the hosted pane and its constraints, leaving the registry
+    /// subscription intact (used when re-hosting for a different call).
+    private func removeSubagentFeedHost() {
         guard let host = subagentFeedHostingView else { return }
         subagentFeedBottomConstraint?.isActive = false
         subagentFeedBottomConstraint = nil
         subagentFeedHeightConstraint = nil
         host.removeFromSuperview()
         subagentFeedHostingView = nil
-        contentBottomToArgs?.isActive = true
-        applyHeight()
+        subagentFeedHostedCallId = nil
     }
 
     // MARK: - Private

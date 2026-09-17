@@ -172,7 +172,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// Highest schema version this build knows how to produce.
     /// Internal (not private) so migration-repair tests assert "reconciled
     /// to the latest" against the real constant instead of a stale literal.
-    static let latestSchemaVersion = 16
+    static let latestSchemaVersion = 17
 
     /// Forward-compatibility invariant. Every chat-history migration is
     /// **additive** — it only `ADD COLUMN`s, `CREATE INDEX`es, or `CREATE
@@ -220,7 +220,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         [
             migrateToV1, migrateToV2, migrateToV3, migrateToV4, migrateToV5, migrateToV6,
             migrateToV7, migrateToV8, migrateToV9, migrateToV10, migrateToV11, migrateToV12,
-            migrateToV13, migrateToV14, migrateToV15, migrateToV16,
+            migrateToV13, migrateToV14, migrateToV15, migrateToV16, migrateToV17,
         ]
     }
 
@@ -261,7 +261,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         "tool_calls", "tool_call_id", "tool_results", "thinking", "content_hash",
         "created_at", "completed_at", "generation_token_count", "time_to_first_token",
         "tool_call_durations", "thinking_duration", "router_billing",
-        "terminal_stop_reason", "model_context_excluded",
+        "terminal_stop_reason", "model_context_excluded", "tool_call_logs",
     ]
 
     private func assertWritableSchema() throws {
@@ -537,6 +537,14 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             "CREATE INDEX IF NOT EXISTS idx_sessions_remote_agent ON sessions (remote_agent_address)"
         )
         try setSchemaVersion(16)
+    }
+
+    /// v17: `tool_call_logs` — JSON map of `callId -> SubagentRunLog`, the
+    /// finished Computer Use / AppleScript step log shown under the tool
+    /// row. Nullable; legacy turns have none.
+    private func migrateToV17() throws {
+        try addColumnIfMissing("turns", "tool_call_logs", "TEXT")
+        try setSchemaVersion(17)
     }
 
     // MARK: - Public API: sessions
@@ -1456,6 +1464,11 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if !turn.toolCallDurations.isEmpty, let durations = try? encoder.encode(turn.toolCallDurations) {
             hasher.update(data: durations)
         }
+        // A step log lands with (or just after) its tool result; hash it so
+        // the incremental upsert writes the row that now carries it.
+        if !turn.toolCallLogs.isEmpty, let logs = try? encoder.encode(turn.toolCallLogs) {
+            hasher.update(data: logs)
+        }
         if let thinkingDuration = turn.thinkingDuration {
             hasher.update(data: Data(String(thinkingDuration).utf8))
         }
@@ -1593,8 +1606,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
              tool_calls, tool_call_id, tool_results, thinking, content_hash,
              created_at, completed_at, generation_token_count, time_to_first_token,
              tool_call_durations, thinking_duration, router_billing, terminal_stop_reason,
-             model_context_excluded)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+             model_context_excluded, tool_call_logs)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
         ON CONFLICT(id) DO UPDATE SET
             session_id             = excluded.session_id,
             seq                    = excluded.seq,
@@ -1615,7 +1628,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             thinking_duration      = excluded.thinking_duration,
             router_billing         = excluded.router_billing,
             terminal_stop_reason   = excluded.terminal_stop_reason,
-            model_context_excluded = excluded.model_context_excluded
+            model_context_excluded = excluded.model_context_excluded,
+            tool_call_logs         = excluded.tool_call_logs
         """
 
     private static let selectTurnsSQL = """
@@ -1623,7 +1637,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
                tool_calls, tool_call_id, tool_results, thinking,
                created_at, completed_at, generation_token_count, time_to_first_token,
                tool_call_durations, thinking_duration, router_billing, terminal_stop_reason,
-               model_context_excluded
+               model_context_excluded, tool_call_logs
         FROM turns
         WHERE session_id = ?1
         ORDER BY seq ASC
@@ -1711,6 +1725,10 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             .flatMap(decodeJSON)
         let terminalStopReason = sqlite3_column_text(stmt, 16).map { String(cString: $0) }
         let modelContextExcluded = sqlite3_column_int(stmt, 17) != 0
+        let toolCallLogs: [String: SubagentRunLog] =
+            sqlite3_column_text(stmt, 18)
+            .map { String(cString: $0) }
+            .flatMap(decodeJSON) ?? [:]
         return ChatTurnData(
             id: UUID(uuidString: idStr) ?? UUID(),
             role: role,
@@ -1729,7 +1747,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             timeToFirstToken: timeToFirstToken,
             terminalStopReason: terminalStopReason,
             modelContextExcluded: modelContextExcluded,
-            routerBilling: routerBilling
+            routerBilling: routerBilling,
+            toolCallLogs: toolCallLogs
         )
     }
 
@@ -1776,6 +1795,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         bindText(stmt, index: 19, value: turn.routerBilling.flatMap(encodeJSON))
         bindText(stmt, index: 20, value: turn.terminalStopReason)
         sqlite3_bind_int(stmt, 21, turn.modelContextExcluded ? 1 : 0)
+        bindText(stmt, index: 22, value: turn.toolCallLogs.isEmpty ? nil : encodeJSON(turn.toolCallLogs))
     }
 
     static func bindNullableDouble(_ stmt: OpaquePointer, index: Int, value: Double?) {

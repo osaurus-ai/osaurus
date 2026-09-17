@@ -269,6 +269,9 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// id. Recorded by `setToolResult(_:for:)` and persisted so a reloaded chat
     /// still shows "· 1.2s" next to the tool title.
     @Published var toolCallDurations: [String: TimeInterval] = [:]
+    /// Finished Computer Use / AppleScript step logs by call id, captured
+    /// when the result lands (the live feed is dropped seconds later).
+    var toolCallLogs: [String: SubagentRunLog] = [:]
 
     // MARK: - Remote-agent (Mode 2) tool activity — display only
 
@@ -426,6 +429,14 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Use this instead of assigning `toolResults` directly so durations persist.
     func setToolResult(_ result: String, for callId: String) {
         toolResults[callId] = result
+        // The run has finished by the time its result lands, and the feed
+        // registry keeps it for a short grace window. Keep the log.
+        if toolCallLogs[callId] == nil,
+            let log = SubagentFeedRegistry.shared.feed(for: callId)?.finishedRunLog()
+        {
+            toolCallLogs[callId] = log
+            SubagentRunLogArchive.shared.store(log, for: callId)
+        }
         guard toolCallDurations[callId] == nil, let start = toolCallStartedAt[callId] else { return }
         let elapsed = Date().timeIntervalSince(start)
         if elapsed >= Self.minDisplayableToolDuration {
