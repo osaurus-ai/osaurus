@@ -142,24 +142,27 @@ struct LocalToolCompletionContractTests {
         #expect(rate == 17.5)
     }
 
-    @Test func agentRequestsKeepImmediateDispatch() async throws {
+    @Test func agentRequestsKeepEveryCall() async throws {
         let capture = Capture()
         let engine = ChatEngine(services: [Service(capture: capture)], installedModelsProvider: { [] })
         let response = try await engine.completeChat(request: request(agent: true))
         #expect(response.usage.prompt_tokens == 257)
         #expect(await capture.complete == false)
-        #expect(response.choices.first?.message.tool_calls?.count == 1)
+        #expect(response.choices.first?.message.tool_calls?.map(\.function.arguments) == [#"{"zone":"east"}"#, #"{"zone":"west"}"#])
+        #expect(response.usage.completion_tokens == 59)
+        #expect(response.usage.tokens_per_second == 17.5)
         #expect(response.choices.first?.message.content == nil)
         #expect(response.choices.first?.message.reasoning_content == nil)
     }
 
-    @Test func chatUISourceKeepsImmediateDispatchWithoutAgentMarker() async throws {
+    @Test func chatUISourceKeepsEveryCallWithoutAgentMarker() async throws {
         let capture = Capture()
         let engine = ChatEngine(services: [Service(capture: capture)], installedModelsProvider: { [] }, source: .chatUI)
         let response = try await engine.completeChat(request: request())
         #expect(response.usage.prompt_tokens == 257)
         #expect(await capture.complete == false)
-        #expect(response.choices.first?.message.tool_calls?.count == 1)
+        #expect(response.choices.first?.message.tool_calls?.map(\.function.arguments) == [#"{"zone":"east"}"#, #"{"zone":"west"}"#])
+        #expect(response.usage.completion_tokens == 59)
         #expect(response.choices.first?.message.content == nil)
     }
 

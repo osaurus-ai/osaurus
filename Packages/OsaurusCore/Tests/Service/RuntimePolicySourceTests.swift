@@ -1461,6 +1461,11 @@ struct RuntimePolicySourceTests {
             adapter.contains("await engine.cancelActiveSoloGenerationAndWait()"),
             "adapter cancellation must explicitly cancel and await the underlying vmlx solo producer before releasing its gate"
         )
+        #expect(
+            !adapter.contains("toolEarlyStopRequested")
+                && !adapter.contains("if case .toolCall = event, soloLease != nil"),
+            "the first parsed call must not stop solo decoding and erase later calls in the same response"
+        )
     }
 
     @Test("chat classifies tool rejection as errored cleanup")

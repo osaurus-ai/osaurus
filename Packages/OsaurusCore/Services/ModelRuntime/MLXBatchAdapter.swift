@@ -1674,7 +1674,6 @@ struct MLXBatchAdapter {
         let producerSubmitAt = CFAbsoluteTimeGetCurrent()
         let producerTask = Task<Void, Never> {
             var terminalInfo: Generation?
-            var toolEarlyStopRequested = false
             await withTaskCancellationHandler {
                 for await event in upstream {
                     if case .info(let info) = event {
@@ -1701,26 +1700,10 @@ struct MLXBatchAdapter {
                     if !Task.isCancelled {
                         continuation.yield(event)
                     }
-                    // A parsed tool call ends the useful part of this turn:
-                    // the host dispatches the tool the moment the event lands,
-                    // and everything the model decodes after it is discarded.
-                    // Request an early stop of the direct B=1 producer NOW —
-                    // vmlx finishes the generation with a natural `.stop`
-                    // (the loop's emitted-tool-call rule), runs its boundary
-                    // stores, and closes the upstream, so this drain loop
-                    // ends within a token instead of riding the model's
-                    // post-tool prose to EOS (up to maxTokens of zombie
-                    // decode at full GPU cost while the tool executes). All
-                    // ordering tails below — STREAM-DRAINED, onEngineDrained,
-                    // lease and Metal-gate release — are unchanged.
-                    if case .toolCall = event, soloLease != nil,
-                        !toolEarlyStopRequested
-                    {
-                        toolEarlyStopRequested = true
-                        Task {
-                            await engine.cancelActiveSoloGenerationAndWait()
-                        }
-                    }
+                    // A closed tool envelope is not a completed response.
+                    // Keep decoding: subsequent chunks may contain more calls
+                    // in the same batch. Only real consumer cancellation below
+                    // may cancel the producer; the engine owns EOS/token limits.
                 }
             } onCancel: {
                 // Breaking a wrapping AsyncStream's consumer is not itself an

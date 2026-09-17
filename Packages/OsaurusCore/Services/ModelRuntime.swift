@@ -5766,34 +5766,46 @@ public actor ModelRuntime {
         )
     }
 
-    /// Expose a parsed tool call to the agent loop immediately, but keep
-    /// consuming the engine-owned event stream through terminal drain. vMLX
-    /// persists the reusable KV/prefix checkpoint during that drain; cancelling
-    /// as soon as `.toolInvocation` arrived made every following tool step
-    /// re-prefill the entire growing history.
+    /// Preserve the entire tool batch before handing it to the agent loop.
+    /// A closed invocation is not the end of the model's response: another
+    /// call may arrive in a later chunk. Native callers dispatch at the logical
+    /// completion event; full-response APIs retain their EOF/error contract.
+    /// Normal dispatch never cancels the cache-owning upstream drain.
     nonisolated static func bridgeToolEventStream(
         _ events: AsyncThrowingStream<ModelRuntimeEvent, Error>,
         collectCompleteResponse: Bool = false
     ) -> AsyncThrowingStream<String, Error> {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let producerTask = Task {
-            // Chat UI streaming must dispatch a parsed local tool call as soon
-            // as vmlx emits `.toolInvocation`. A trailing `.completionInfo`
-            // is useful telemetry, but it is not part of the executable tool
-            // contract: the parser has already closed the envelope and built
-            // canonical JSON. Waiting for stats lets a model/runtime stream
-            // that never reaches EOS leave the UI stuck with a complete-looking
-            // tool row and no actual dispatch. Finish-by-throw immediately,
-            // then silently drain the engine-owned tail so it can persist the
-            // reusable cache checkpoint.
-            var dispatchedTool = false
+            var dispatchedTools = false
             var completedTools: [ServiceToolInvocation] = []
+            var hasCompletedToolPreview = false
+            let traceID = PrefillDebugLog.shared.isEnabled ? UUID().uuidString : ""
+
+            func finishTools() {
+                if !completedTools.isEmpty {
+                    PrefillDebugLog.shared.log(
+                        "TOOL-BATCH published id=\(traceID) count=\(completedTools.count) completeResponse=\(collectCompleteResponse)"
+                    )
+                }
+                if completedTools.count == 1 {
+                    continuation.finish(throwing: completedTools[0])
+                } else if !completedTools.isEmpty {
+                    continuation.finish(throwing: ServiceToolInvocations(invocations: completedTools))
+                } else {
+                    continuation.finish()
+                }
+            }
+
             do {
                 for try await ev in events {
-                    // Once the call is delivered, the public stream is already
-                    // finished. Continue draining silently so vMLX can commit
-                    // cache state and release its generation lease.
-                    if dispatchedTool { continue }
+                    if Task.isCancelled {
+                        continuation.finish()
+                        return
+                    }
+                    // Only logical completion closes the batch. Any wrapper
+                    // cleanup after it still owns its generation/cache lease.
+                    if dispatchedTools { continue }
 
                     if case .completionInfo(
                         let tokenCount,
@@ -5813,12 +5825,11 @@ public actor ModelRuntime {
                                 mtp: mtp
                             )
                         )
+                        if !collectCompleteResponse, !completedTools.isEmpty {
+                            dispatchedTools = true
+                            finishTools()
+                        }
                         continue
-                    }
-
-                    if Task.isCancelled {
-                        continuation.finish()
-                        return
                     }
                     switch ev {
                     case .inputTokenCount(let count):
@@ -5841,54 +5852,44 @@ public actor ModelRuntime {
                         // tool-call card alive instead of showing a frozen
                         // spinner during a long file-write call.
                         if !envelopeDelta.isEmpty {
+                            if hasCompletedToolPreview {
+                                // The next envelope is a different call, not
+                                // another fragment of the prior canonical args.
+                                continuation.yield(StreamingToolHint.encode(""))
+                                hasCompletedToolPreview = false
+                            }
                             continuation.yield(
                                 StreamingToolCallProgressHint.encode(envelopeDelta)
                             )
                         }
                     case .toolInvocation(let name, let argsJSON):
-                        if collectCompleteResponse {
-                            // APIs describe the whole completion, unlike an
-                            // agent waiting to execute its first available call.
-                            // Preserve subsequent calls, reasoning and terminal
-                            // stats; don't end or cancel the cache-owning stream.
-                            completedTools.append(
-                                ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
-                            )
-                            continue
-                        }
-                        // Surface the first parsed tool call and terminate the
-                        // public generation step immediately so the tool can
-                        // execute without waiting for optional stats/EOS. The
-                        // producer deliberately keeps draining the engine tail
-                        // below; vMLX retains its generation lease until cache
-                        // persistence and allocator teardown finish, so the
-                        // following inference cannot race the saved boundary.
-                        continuation.yield(StreamingToolHint.encode(name))
-                        continuation.yield(StreamingToolHint.encodeArgs(argsJSON))
-                        let tool = ServiceToolInvocation(
-                            toolName: name,
-                            jsonArguments: argsJSON
+                        completedTools.append(
+                            ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
                         )
-                        dispatchedTool = true
-                        continuation.finish(throwing: tool)
-                        continue
+                        PrefillDebugLog.shared.log(
+                            "TOOL-BATCH parsed id=\(traceID) index=\(completedTools.count - 1) name=\(name)"
+                        )
+                        if !collectCompleteResponse {
+                            // Preview is immediate; execution waits for the
+                            // full ordered batch, including delayed calls.
+                            continuation.yield(StreamingToolHint.encode(name))
+                            continuation.yield(StreamingToolHint.encodeArgs(argsJSON))
+                            hasCompletedToolPreview = true
+                        }
                     case .completionInfo:
                         continue
                     }
                 }
-                if !dispatchedTool {
-                    if completedTools.count == 1 {
-                        continuation.finish(throwing: completedTools[0])
-                    } else if !completedTools.isEmpty {
-                        continuation.finish(throwing: ServiceToolInvocations(invocations: completedTools))
-                    } else {
-                        continuation.finish()
-                    }
+                if Task.isCancelled {
+                    continuation.finish()
+                } else if !dispatchedTools {
+                    // Clean EOF also supports producers without a stats event.
+                    finishTools()
                 }
             } catch {
                 if Task.isCancelled {
-                    if !dispatchedTool { continuation.finish() }
-                } else if !dispatchedTool {
+                    continuation.finish()
+                } else if !dispatchedTools {
                     continuation.finish(throwing: error)
                 } else {
                     // The tool is already executing and cannot receive a

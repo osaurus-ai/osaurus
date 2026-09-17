@@ -137,8 +137,9 @@ struct GenerationParameters: Sendable {
     /// Rides on `GenerationParameters` for the same reason `loadIntent` does.
     let auxiliaryCacheIntent: Bool
 
-    /// Plain completion APIs need every tool call and terminal decode stats.
-    /// Interactive agent loops keep immediate dispatch plus background cache drain.
+    /// Plain completion APIs retain the full EOF/error and content contract.
+    /// Native loops preview calls immediately and dispatch the whole batch at
+    /// logical completion. Both modes preserve every call and terminal stats.
     /// Internal transport policy only; never forwarded to a model or provider.
     let collectCompleteToolResponse: Bool
 
@@ -231,10 +232,10 @@ struct ServiceToolInvocation: Error, Sendable {
 /// vmlx-swift's `BatchEngine.generate` surfaces each as its own
 /// `Generation.toolCall(ToolCall)` event; `GenerationEventMapper`
 /// translates them to `ModelRuntimeEvent.toolInvocation(...)`, and
-/// `ModelRuntime.streamWithTools` collects them for whole-completion HTTP
-/// requests. Interactive local agent streams instead dispatch the first call
-/// immediately and drain the engine tail for cache persistence. Remote
-/// providers may also return this batch form.
+/// `ModelRuntime.streamWithTools` collects them for both HTTP completions and
+/// native Chat/agent requests. Native previews can arrive before the full batch;
+/// execution starts only once the response is complete. Remote providers may
+/// also return this batch form.
 ///
 /// `invocations` is guaranteed non-empty. Consumers should `catch let invs as
 /// ServiceToolInvocations` BEFORE `catch let inv as ServiceToolInvocation`

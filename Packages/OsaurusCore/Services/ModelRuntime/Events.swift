@@ -39,7 +39,10 @@ enum ModelRuntimeEvent: Sendable {
     /// fully parsed call still arrives once as `.toolInvocation` when the
     /// envelope closes, so `.toolInvocation` remains the actionable tool event.
     case toolCallProgress(String)
-    /// Completion stats for the just-finished generation.
+    /// Logical response completion, with final generation stats. The local
+    /// engine flushes every parsed tool call before this boundary. This does
+    /// not grant ownership of the engine's cache/allocator cleanup: the adapter
+    /// retains its lease until the upstream producer has fully drained.
     ///
     /// `unclosedReasoning` mirrors vmlx's `GenerateCompletionInfo.unclosedReasoning`:
     /// `true` when the stream ended while the reasoning parser was still
