@@ -40,12 +40,27 @@ struct DiskCacheQuotaNoticePolicy {
     }
 }
 
+/// The user's "Don't show this again" choice, kept across launches in the same
+/// UserDefaults store as the app's other skip-this-notice flags.
+enum DiskCacheQuotaNoticeSuppression {
+    static let defaultsKey = "ssdCacheQuotaNoticeSuppressed"
+
+    static func isSuppressed(defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: defaultsKey)
+    }
+
+    static func suppress(defaults: UserDefaults = .standard) {
+        defaults.set(true, forKey: defaultsKey)
+    }
+}
+
 @MainActor
 final class DiskCacheQuotaNotices {
     static let shared = DiskCacheQuotaNotices()
     private var policy = DiskCacheQuotaNoticePolicy()
 
     func claim(_ snapshot: DiskCacheQuotaSnapshot) -> Bool {
-        policy.claim(snapshot)
+        guard !DiskCacheQuotaNoticeSuppression.isSuppressed() else { return false }
+        return policy.claim(snapshot)
     }
 }
