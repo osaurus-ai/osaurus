@@ -18,7 +18,7 @@
       "web_search_enabled": false,
       "knowledge_enabled": false
     },
-    "tools": { "mode": "manual", "enabled": ["fetch", "time"] },
+    "tools": { "mode": "auto" },
     "sandbox": { "enabled": true, "network_enabled": true, "allowed_domains": [] },
     "subagents": { "enabled": true, "agents": [], "models": [] }
   },
