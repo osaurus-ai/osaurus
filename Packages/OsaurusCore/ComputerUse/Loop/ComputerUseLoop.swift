@@ -386,6 +386,13 @@ public enum ComputerUseLoop {
                 return terminate(.stepCapReached)
             }
 
+            // Collapse old screen listings in batches before building the step
+            // input (see `compactStaleViews`).
+            let compacted = compactStaleViews(&messages)
+            if compacted > 0 {
+                ComputerUseTraceLog.note("compacted \(compacted) stale view(s) before step \(step + 1)")
+            }
+
             // Decide: force the single agent_action tool. When a screenshot is in
             // context, reserve its estimated tokens so the text trim leaves room.
             var iterationBudget = budgetManager
@@ -2067,6 +2074,64 @@ public enum ComputerUseLoop {
                 .joined(separator: "\n")
             messages[i] = ChatMessage(role: messages[i].role, content: text)
         }
+    }
+
+    // MARK: - Stale view compaction
+
+    /// Placeholder left where an older screen listing was removed.
+    static let compactedViewMarker = "(older screen listing omitted; act on the latest view)"
+    /// Full screen listings always kept (the current one and the one before,
+    /// so a verify delta still has its reference).
+    static let keptRecentViews = 2
+    /// Stale listings allowed to pile up before one compaction pass.
+    static let viewCompactionBatch = 8
+
+    /// Collapse all but the latest `keepRecent` screen listings once
+    /// `batchSize` stale ones have accumulated. Every step appends a full
+    /// listing (~2.5K tokens) and the history re-sends all of them, so a
+    /// 30-step run grew from 3.5K to 68K prompt tokens and each step got
+    /// slower. Rewriting old messages on EVERY step would keep the prompt
+    /// minimal but change the prefix each time, defeating provider prompt
+    /// caching; batching rewrites the history once per batch and keeps it
+    /// append-only in between. The goal text and each action's result line
+    /// survive; only the listing after them is dropped. Returns how many
+    /// listings were collapsed.
+    @discardableResult
+    static func compactStaleViews(
+        _ messages: inout [ChatMessage],
+        keepRecent: Int = keptRecentViews,
+        batchSize: Int = viewCompactionBatch
+    ) -> Int {
+        let viewIndices = messages.indices.filter { viewListingStart(in: messages[$0].content) != nil }
+        guard viewIndices.count >= keepRecent + batchSize else { return 0 }
+        let stale = viewIndices.dropLast(keepRecent)
+        for index in stale {
+            let message = messages[index]
+            guard let content = message.content, let cut = viewListingStart(in: content) else { continue }
+            let kept = content[..<cut].trimmingCharacters(in: .whitespacesAndNewlines)
+            let replaced = kept.isEmpty ? compactedViewMarker : kept + "\n" + compactedViewMarker
+            messages[index] = ChatMessage(
+                role: message.role,
+                content: replaced,
+                tool_calls: message.tool_calls,
+                tool_call_id: message.tool_call_id
+            )
+        }
+        return stale.count
+    }
+
+    /// Where a rendered `AgentView` listing begins in a message: the
+    /// "Current view:" label when present (step results, the goal message),
+    /// else the listing header line (`open` results start straight at
+    /// "App: … [tier: …]"). Nil for messages without a listing, including
+    /// ones already compacted.
+    static func viewListingStart(in content: String?) -> String.Index? {
+        guard let content else { return nil }
+        if let label = content.range(of: "Current view:\n") { return label.lowerBound }
+        guard let tier = content.range(of: " [tier: ") else { return nil }
+        let lineStart = content[..<tier.lowerBound].lastIndex(of: "\n").map { content.index(after: $0) }
+            ?? content.startIndex
+        return content[lineStart...].hasPrefix("App: ") ? lineStart : nil
     }
 
     // MARK: - App guidance
