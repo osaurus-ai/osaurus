@@ -424,6 +424,7 @@ enum PrivacyFilterPipeline {
         let preExistingSnapshot = await map.snapshot()
         let preExistingOriginals: Set<String> = Set(preExistingSnapshot.map(\.1))
         let preDetectionCounters = await map.counterSnapshot
+        let sessionSkipped = await map.skippedOriginals
 
         var detections: [DetectedEntity] = []
         for segment in segments {
@@ -461,6 +462,18 @@ enum PrivacyFilterPipeline {
         var seen: Set<String> = []
         detections = detections.filter { entity in
             seen.insert(entity.original).inserted
+        }
+
+        // Originals the user already skipped this session stay skipped:
+        // no second review prompt and no substitution. Detection re-
+        // interned them, so un-intern here too (counters untouched; a
+        // gap in indices is harmless, reusing a shipped one is not).
+        if !sessionSkipped.isEmpty {
+            let reSkipped = Set(detections.map(\.original)).intersection(sessionSkipped)
+            if !reSkipped.isEmpty {
+                await map.removeOriginals(reSkipped)
+                detections.removeAll { reSkipped.contains($0.original) }
+            }
         }
 
         // Partition: originals already minted on a prior turn (the
@@ -621,11 +634,17 @@ enum PrivacyFilterPipeline {
         // by definition (they were in the detection list), and
         // counting them again would block the send right after the
         // user told us to let them through.
-        let skippedOriginals: Set<String> = Set(
+        let skippedThisTurn: Set<String> = Set(
             approvedFromReview
                 .filter { !$0.approved }
                 .map(\.original)
         )
+        // Make the skip final for the rest of the session (see
+        // `RedactionMap.markSkipped`). Earlier skips are exempt from
+        // the leak scan too, or a skipped phone number would block
+        // the next agent-loop iteration as a "leak".
+        await map.markSkipped(skippedThisTurn)
+        let skippedOriginals = skippedThisTurn.union(sessionSkipped)
         // Scope the regex re-scan to the message range detection
         // actually classified (the latest user turn onward). Carry-
         // over substitution can dirty EARLIER history messages (a
