@@ -2,13 +2,15 @@
 //  FileCopyTool.swift
 //  osaurus
 //
-//  Combined-mode bridge tool: copies file BYTES between the user's host
-//  workspace folder and the Linux sandbox's VirtioFS-backed storage
-//  (`/workspace/...`), host-side via FileManager. This is the only way a
-//  binary file (PDF, image, archive) crosses the boundary — `file_read`
-//  extracts text and `file_write` carries text through tokens, so neither
-//  can deliver raw bytes. Registered with the folder tools but visible
-//  ONLY in combined sandbox + host-read mode.
+//  Binary-safe file duplicate. In folder mode it copies BYTES between two
+//  paths in the user's workspace (version-before-edit, duplicate a
+//  template, stage a PDF next to its summary) — `file_read` extracts text
+//  and `file_write` carries text through tokens, so neither can deliver
+//  raw bytes. When a sandbox bridge is bound, an absolute `/workspace/...`
+//  path is the Linux sandbox's VirtioFS share and the copy crosses the
+//  boundary host-side via FileManager. Host-side writes are logged as
+//  `FileOperation.copy` (previous destination bytes captured, any
+//  encoding) so `file_undo` reverts an overwrite exactly.
 //
 
 import Foundation
@@ -16,29 +18,24 @@ import Foundation
 struct FileCopyTool: OsaurusTool, PermissionedTool {
     let name = "file_copy"
     let description =
-        "Copy a file between the user's workspace folder and the sandbox — the only way to move "
-        + "binary files (PDFs, images, archives) between them. Bytes are copied directly; nothing "
-        + "passes through the conversation. Each path routes like the other file tools: a relative "
-        + "path is the workspace, an absolute `/workspace/...` path is the sandbox. To process a "
-        + "workspace file with sandbox commands, copy it to a path under your sandbox home first. "
-        + "Pass `overwrite: true` to replace an existing destination. "
-        + "Example: {\"source\": \"data/report.pdf\", \"destination\": \"/workspace/agents/NAME/report.pdf\"} "
-        + "(where `/workspace/agents/NAME` is your sandbox home)"
+        "Copy one file to a new path as a raw byte copy — binary-safe (PDFs, images, archives, "
+        + "generated .docx/.xlsx), nothing passes through the conversation. Use it to duplicate or "
+        + "version a file before editing it. Paths are relative to the working folder and route like "
+        + "the other file tools. Pass `overwrite: true` to replace an existing destination (the "
+        + "previous bytes stay undoable with `file_undo`). "
+        + "Example: {\"source\": \"reports/q3.docx\", \"destination\": \"reports/q3-draft.docx\"}"
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
         "properties": .object([
             "source": .object([
                 "type": .string("string"),
-                "description": .string(
-                    "File to copy: relative path = workspace, `/workspace/...` = sandbox"
-                ),
+                "description": .string("File to copy, relative to the working folder"),
             ]),
             "destination": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Where to copy it (including the filename): relative path = workspace, "
-                        + "`/workspace/...` = sandbox"
+                    "Where to copy it (including the filename), relative to the working folder"
                 ),
             ]),
             "overwrite": .object([
@@ -53,15 +50,19 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
 
     var requirements: [String] { [] }
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
-    /// A host-bound copy mutates the selected folder; the registry's dual
-    /// checkpoint (host + sandbox in combined mode) makes every copy land
-    /// in the Changes sheet and stay undoable, whichever side it touched.
+    /// A host-bound copy mutates the selected folder; the registry's
+    /// checkpoint makes every copy land in the Changes sheet and stay
+    /// undoable.
     var mutatesHostFolder: Bool { true }
 
     /// Same 512 MB precedent as `SandboxManager.maxArtifactDownloadBytes`:
     /// far above any realistic document, but stops a runaway copy of a
-    /// disk image / model checkpoint from filling the sandbox share.
+    /// disk image / model checkpoint from filling the disk.
     static let defaultMaxCopyBytes = 512 * 1024 * 1024
+
+    /// Overwritten destination bytes above this are not captured for undo
+    /// (the operation is still logged; undo reports it cannot restore).
+    static let maxUndoCaptureBytes = 64 * 1024 * 1024
 
     private let fixedRootPath: URL?
     private let maxCopyBytes: Int
@@ -83,7 +84,7 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
         let sourceReq = requireString(
             args,
             "source",
-            expected: "relative workspace path or absolute `/workspace/...` sandbox path",
+            expected: "relative working-folder path or absolute `/workspace/...` sandbox path",
             tool: name
         )
         guard case .value(let source) = sourceReq else {
@@ -92,7 +93,7 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
         let destinationReq = requireString(
             args,
             "destination",
-            expected: "relative workspace path or absolute `/workspace/...` sandbox path",
+            expected: "relative working-folder path or absolute `/workspace/...` sandbox path",
             tool: name
         )
         guard case .value(let destination) = destinationReq else {
@@ -100,27 +101,15 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
         }
         let overwrite = coerceBool(args["overwrite"]) ?? false
 
-        // Combined-mode-only surface: without the sandbox identity there is
-        // no second filesystem to bridge to, so refuse instead of guessing
-        // (plain folder mode has shell `cp`; plain sandbox mode has no
-        // workspace).
-        guard ChatExecutionContext.sandboxReadBridge != nil else {
-            return ToolEnvelope.failure(
-                kind: .rejected,
-                message:
-                    "`file_copy` is only available in combined sandbox + workspace mode. "
-                    + "Use `shell_run` (`cp`) in folder or sandbox mode.",
-                tool: name,
-                retryable: false
-            )
-        }
+        let bridge = ChatExecutionContext.sandboxReadBridge
+        let sourceRoute: CombinedFileRoute = bridge == nil ? .host : combinedFileRoute(path: source)
+        let destinationRoute: CombinedFileRoute =
+            bridge == nil ? .host : combinedFileRoute(path: destination)
 
-        let sourceRoute = combinedFileRoute(path: source)
-        let destinationRoute = combinedFileRoute(path: destination)
-
-        // Host-bound destinations are writes to the user's folder — gated
-        // on the same per-agent opt-in as `file_write` / `file_edit`.
-        if destinationRoute == .host, !ChatExecutionContext.allowHostFolderWrites {
+        // Host-bound destinations are writes to the user's folder — when a
+        // sandbox is attached they are gated on the same per-agent opt-in
+        // as `file_write` / `file_edit`.
+        if bridge != nil, destinationRoute == .host, !ChatExecutionContext.allowHostFolderWrites {
             return ToolEnvelope.failure(
                 kind: .rejected,
                 message:
@@ -141,12 +130,12 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
             }
             sourceURL = try FolderToolHelpers.resolvePath(source, rootPath: rootPath)
             // Copying a secret INTO the sandbox is exactly the exfiltration
-            // path the combined-mode read denylist exists to block.
+            // path the read denylist exists to block.
             if FolderToolHelpers.shouldRefuseSecret(fileURL: sourceURL) {
                 return FolderToolHelpers.secretRefusalEnvelope(relativePath: source, tool: name)
             }
         case .sandbox:
-            sourceURL = try Self.resolveSandboxURL(source)
+            sourceURL = try Self.resolveSandboxURL(source, home: bridge?.home)
         }
 
         var sourceIsDirectory: ObjCBool = false
@@ -159,8 +148,7 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
                 kind: .invalidArgs,
                 message:
                     "`source` '\(source)' is a directory — `file_copy` copies a single file. "
-                    + "Copy files individually (sandbox-to-sandbox directory copies can use "
-                    + "`shell_run` with `cp -r`).",
+                    + "Copy files individually, or use `shell_run` with `cp -r` for a directory tree.",
                 field: "source",
                 expected: "path to a single file",
                 tool: name,
@@ -183,22 +171,24 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
         }
 
         let destinationURL: URL
+        var logRoot: URL? = nil
         switch destinationRoute {
         case .host:
             guard let rootPath else {
                 return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
             }
             destinationURL = try FolderToolHelpers.resolvePath(destination, rootPath: rootPath)
-            // Same tamper gate as `file_write`: a sandbox-driven agent must
-            // not create or overwrite secret-shaped files in the workspace.
+            // Same tamper gate as `file_write`: an agent must not create or
+            // overwrite secret-shaped files in the workspace.
             if FolderToolHelpers.shouldRefuseSecret(fileURL: destinationURL) {
                 return FolderToolHelpers.secretWriteRefusalEnvelope(
                     relativePath: destination,
                     tool: name
                 )
             }
+            logRoot = rootPath
         case .sandbox:
-            destinationURL = try Self.resolveSandboxURL(destination)
+            destinationURL = try Self.resolveSandboxURL(destination, home: bridge?.home)
         }
 
         if destinationURL.standardizedFileURL.path == sourceURL.standardizedFileURL.path {
@@ -242,6 +232,21 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
             )
         }
 
+        // Capture the overwritten bytes (any encoding) before replacing
+        // them so the copy is undoable byte-for-byte.
+        var previousBytes: Data? = nil
+        var previousCaptured = true
+        if destinationExists, logRoot != nil {
+            let existingSize =
+                (try? FileManager.default.attributesOfItem(atPath: destinationURL.path))?[.size]
+                as? Int64 ?? 0
+            if existingSize <= Int64(Self.maxUndoCaptureBytes) {
+                previousBytes = try? Data(contentsOf: destinationURL)
+            } else {
+                previousCaptured = false
+            }
+        }
+
         do {
             try FileManager.default.createDirectory(
                 at: destinationURL.deletingLastPathComponent(),
@@ -257,37 +262,58 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
             )
         }
 
+        var result: [String: Any] = [
+            "kind": "file_copy_result",
+            "source": source,
+            "destination": destination,
+            "source_area": Self.areaLabel(sourceRoute),
+            "destination_area": Self.areaLabel(destinationRoute),
+            "bytes": sourceBytes,
+            "overwrote": destinationExists,
+            "file_reference": [
+                "kind": destinationRoute == .host ? "workspace_file" : "sandbox_file",
+                "path": destination,
+                "exportable": true,
+            ],
+        ]
+        var warnings: [String] = []
+        if let logRoot, let sessionId = ChatExecutionContext.currentSessionId {
+            let encoded = FileOperation.encodePreviousContent(previousBytes)
+            let operation = FileOperation(
+                type: .copy,
+                path: source,
+                destinationPath: destination,
+                previousContent: encoded.content,
+                previousContentEncoding: encoded.encoding,
+                sessionId: sessionId,
+                batchId: ChatExecutionContext.currentBatchId,
+                rootPath: logRoot.standardizedFileURL.path
+            )
+            await FileOperationLog.shared.log(operation)
+            result["operation_id"] = operation.id.uuidString
+            if destinationExists, !previousCaptured {
+                warnings.append(
+                    "The overwritten destination was larger than \(Self.formatBytes(Int64(Self.maxUndoCaptureBytes))); "
+                        + "`file_undo` will remove the copy but cannot restore the previous bytes."
+                )
+            }
+        }
         return ToolEnvelope.success(
             tool: name,
-            result: [
-                "source": source,
-                "destination": destination,
-                "source_area": Self.areaLabel(sourceRoute),
-                "destination_area": Self.areaLabel(destinationRoute),
-                "bytes": sourceBytes,
-                "overwrote": destinationExists,
-            ]
+            result: result,
+            warnings: warnings.isEmpty ? nil : warnings
         )
     }
 
-    /// Map an absolute `/workspace/...` path to its host-side URL inside
-    /// the VirtioFS share (`OsaurusPaths.containerWorkspace()` is mounted
-    /// as `/workspace` in the VM). Reuses `resolvePath` for the
-    /// symlink-safe containment check, so `..` traversal and in-share
-    /// symlinks cannot escape the container workspace.
-    private static func resolveSandboxURL(_ path: String) throws -> URL {
-        var relative = String(path.dropFirst("/workspace".count))
-        if relative.hasPrefix("/") { relative.removeFirst() }
-        guard !relative.isEmpty else {
-            throw FolderToolError.invalidArguments(
-                "'/workspace' itself is a directory — pass a file path under it "
-                    + "(e.g. under your sandbox home)."
-            )
+    /// Map a sandbox path (relative to the agent home, or absolute
+    /// `/workspace/...`) to its host-side URL inside the VirtioFS share
+    /// (`OsaurusPaths.containerWorkspace()` is mounted as `/workspace` in
+    /// the VM); see `WorkspaceShareRoute`.
+    private static func resolveSandboxURL(_ path: String, home: String?) throws -> URL {
+        if let home, let absolute = WorkspaceShareRoute.absoluteSandboxPath(path, home: home) {
+            return try WorkspaceShareRoute.hostURL(forSandboxPath: absolute)
         }
-        return try FolderToolHelpers.resolvePath(
-            relative,
-            rootPath: OsaurusPaths.containerWorkspace()
-        )
+        return try WorkspaceShareRoute.hostURL(forSandboxPath: path)
     }
 
     private static func areaLabel(_ route: CombinedFileRoute) -> String {

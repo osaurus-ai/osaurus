@@ -1408,9 +1408,11 @@ struct SystemPromptComposerToolResolutionTests {
                 #expect(
                     propertyNames("file_write") == ["path", "content", "mode", "dry_run"]
                 )
+                // Batch (`edits`) and `replace_all` forms must stay reachable
+                // from the compact schema.
                 #expect(
                     propertyNames("file_edit") == [
-                        "path", "old_string", "new_string", "dry_run",
+                        "path", "old_string", "new_string", "edits", "replace_all", "dry_run",
                     ]
                 )
                 #expect(propertyNames("shell_run") == ["command", "timeout"])
@@ -1419,7 +1421,12 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     @Test
-    func compactVMSchemaIsHonestAboutRawDocumentReads() async {
+    func compactVMSchemaAdvertisesDocumentAndImageReads() async {
+        // `/workspace` is a VirtioFS share of the container workspace, so
+        // documents and images in the VM are served by the same host
+        // extractors as a trusted folder (`WorkspaceShareRoute`). The VM
+        // schema must advertise that instead of steering to shell
+        // extraction.
         await withSandboxAgent(autonomous: true) { agentId in
             withRegisteredSandboxBuiltins {
                 let tools = SystemPromptComposer.resolveTools(
@@ -1429,8 +1436,27 @@ struct SystemPromptComposerToolResolutionTests {
                 let readDescription =
                     tools.first { $0.function.name == "file_read" }?.function.description ?? ""
                 #expect(readDescription.contains("VM"))
-                #expect(readDescription.contains("shell/code extraction"))
-                #expect(!readDescription.contains("do not unzip"))
+                #expect(readDescription.contains("PDF"))
+                #expect(readDescription.contains("images"))
+                #expect(readDescription.contains("do not unzip"))
+                #expect(!readDescription.contains("shell/code extraction"))
+                #expect(!readDescription.lowercased().contains("raw text only"))
+
+                let writeDescription =
+                    tools.first { $0.function.name == "file_write" }?.function.description ?? ""
+                #expect(writeDescription.contains(".xlsx"))
+                #expect(writeDescription.contains(".docx"))
+                #expect(writeDescription.contains(".pptx` is not"))
+
+                var editProps: [String: JSONValue] = [:]
+                if case .object(let schema)? = tools.first(where: { $0.function.name == "file_edit" })?
+                    .function.parameters,
+                    case .object(let properties)? = schema["properties"]
+                {
+                    editProps = properties
+                }
+                #expect(editProps["edits"] != nil)
+                #expect(editProps["replace_all"] != nil)
             }
         }
     }
@@ -1453,9 +1479,13 @@ struct SystemPromptComposerToolResolutionTests {
                 }
                 // `file_tree` no longer exists as a separate tool.
                 #expect(byName["file_tree"] == nil)
-                // `file_copy` is combined-mode-only: plain folder mode has
-                // no sandbox to bridge to (`shell_run` `cp` covers copies).
-                #expect(byName["file_copy"] == nil)
+                // `file_copy` is the tracked, undoable byte copy in folder
+                // mode (host→host); its description must not frame it as a
+                // sandbox bridge when no sandbox is attached.
+                let copy = byName["file_copy"]
+                #expect(copy != nil)
+                let copyDescription = copy?.function.description ?? ""
+                #expect(copyDescription.contains("/workspace/") == false)
             }
         }
     }

@@ -139,6 +139,16 @@ public enum ChatExecutionContext {
     /// chat-owned resident in the process as the invoking orchestrator.
     @TaskLocal public static var currentModelName: String?
 
+    /// Whether the surface driving this tool call can deliver image bytes
+    /// from a tool result to the model (the tool turn becomes a multimodal
+    /// message and the active model accepts images). `file_read` uses it
+    /// to decide between returning an image attachment and running OCR so
+    /// text-only models — and text-only surfaces such as the HTTP API or
+    /// plugin hosts — still "read" the picture. Bound by the chat loop
+    /// (`selectedModelSupportsImages`) and the spawned-agent runner; false
+    /// everywhere else.
+    @TaskLocal public static var toolResultImagesEnabled: Bool = false
+
     /// Explicit Thinking choice frozen for the logical parent turn. Nested
     /// Computer Use, AppleScript, Browser Use, and spawn loops reconstruct their
     /// own requests, so they read this value through `SubagentScope` instead of

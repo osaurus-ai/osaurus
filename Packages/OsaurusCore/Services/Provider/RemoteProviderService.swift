@@ -3879,12 +3879,14 @@ public actor RemoteProviderService: ToolCapableService {
             let anthropicRequest = request.toAnthropicRequest()
             bodyData = try encoder.encode(anthropicRequest)
         case .openResponses:
-            let openResponsesRequest = try request.toOpenResponsesRequest()
+            var outbound = request
+            outbound.messages = ToolResultMediaBridge.hoistingToolImagesToUserMessages(outbound.messages)
+            let openResponsesRequest = try outbound.toOpenResponsesRequest()
             bodyData = try encoder.encode(openResponsesRequest)
         case .openAICodex:
             var outbound = request
             outbound.messages = codexMessagesForCurrentCapabilities(
-                outbound.messages,
+                ToolResultMediaBridge.hoistingToolImagesToUserMessages(outbound.messages),
                 modelId: outbound.model
             )
             bodyData = try outbound.toCodexOpenResponsesRequest().toCodexOAuthPayloadData(
@@ -3893,13 +3895,20 @@ public actor RemoteProviderService: ToolCapableService {
             )
         case .gemini:
             try Self.rejectDroppedMediaInputs(in: request.messages, wireName: "Gemini")
-            let geminiRequest = request.toGeminiRequest()
+            var outbound = request
+            // functionResponse parts are text-only; tool images ride in a
+            // following user turn as inline data.
+            outbound.messages = ToolResultMediaBridge.hoistingToolImagesToUserMessages(outbound.messages)
+            let geminiRequest = outbound.toGeminiRequest()
             bodyData = try encoder.encode(geminiRequest)
         case .openaiLegacy, .azureOpenAI, .osaurus, .osaurusRouter:
             // OpenAI-compat wire. RemoteReasoningPolicy decides how prior-turn
             // reasoning is re-sent: strip (default), keep `reasoning_content`
             // (DeepSeek), or fold it back into `<think>` content (MiniMax).
             var outbound = request
+            // Chat Completions rejects image parts on the tool role: hoist
+            // tool-result images into a following user message.
+            outbound.messages = ToolResultMediaBridge.hoistingToolImagesToUserMessages(outbound.messages)
             outbound.messages = RemoteReasoningPolicy.resolve(
                 providerType: requestProviderType,
                 host: provider.host,
@@ -4992,12 +5001,24 @@ struct RemoteChatRequest: Encodable {
                 // a non-whitespace marker for an empty result.
                 if let toolCallId = msg.tool_call_id {
                     let resultText = RemoteProviderService.toolResultText(msg.content)
+                    // Tool results that carry images (`file_read` on a
+                    // picture) become `[text, image...]` blocks — the
+                    // Messages API accepts image blocks inside tool_result.
+                    let imageBlocks: [AnthropicContentBlock] = msg.imageUrls.compactMap { url in
+                        RemoteProviderService.anthropicImageBlock(fromImageUrl: url).map { .image($0) }
+                    }
+                    let content: AnthropicToolResultContent
+                    if imageBlocks.isEmpty {
+                        content = .text(resultText)
+                    } else {
+                        content = .blocks([.text(AnthropicTextBlock(text: resultText))] + imageBlocks)
+                    }
                     pendingToolResults.append(
                         .toolResult(
                             AnthropicToolResultBlock(
                                 type: "tool_result",
                                 tool_use_id: toolCallId,
-                                content: .text(resultText),
+                                content: content,
                                 is_error: nil
                             )
                         )

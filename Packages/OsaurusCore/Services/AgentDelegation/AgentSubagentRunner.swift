@@ -170,6 +170,12 @@ enum AgentSubagentRunner {
         var recordedCancelCause: SubagentCancelCause?
 
         let contextWindow = await AgentLoopBudget.resolveContextWindow(modelId: modelName)
+        // Whether the child's model can view images. Gates both what
+        // `file_read` stages (image vs OCR) and how the tool message is
+        // encoded, so the two never disagree.
+        let childAcceptsImages = await MainActor.run {
+            ComputerUseTool.modelAcceptsImages(modelName)
+        }
         let toolTokens: Int
         if let set = toolset {
             toolTokens = await MainActor.run { ToolRegistry.shared.totalEstimatedTokens(for: set.specs) }
@@ -208,7 +214,7 @@ enum AgentSubagentRunner {
                     messages.append(ChatMessage(role: "user", content: notice))
                 }
                 return AgentLoopBudget.composeIterationMessages(
-                    messages,
+                    ToolResultMediaBridge.collapsingOlderImages(messages),
                     notices: [],
                     manager: budgetManager,
                     watermark: watermark
@@ -361,7 +367,11 @@ enum AgentSubagentRunner {
                 // temporarily bind its target id inside the individual
                 // operation so registry policy follows the child's persona.
                 let operation = ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-                    toolset.beginExecution(invocation)
+                    ChatExecutionContext.$currentModelName.withValue(modelName) {
+                        ChatExecutionContext.$toolResultImagesEnabled.withValue(childAcceptsImages) {
+                            toolset.beginExecution(invocation)
+                        }
+                    }
                 }
                 let result: String
                 do {
@@ -385,12 +395,18 @@ enum AgentSubagentRunner {
                 } catch {
                     result = ToolEnvelope.fromError(error, tool: invocation.toolName)
                 }
+                // Image tool results (file_read on a picture) reach a
+                // vision-capable child as multimodal tool messages; the
+                // live window is trimmed in `buildMessages`.
                 messages.append(
-                    ChatMessage(
-                        role: "tool",
+                    ToolResultMediaBridge.toolMessage(
                         content: result,
-                        tool_calls: nil,
-                        tool_call_id: callId
+                        toolCallId: callId,
+                        attachments: ToolResultMediaBridge.attachments(
+                            toolName: invocation.toolName,
+                            result: result
+                        ),
+                        supportsImages: childAcceptsImages
                     )
                 )
                 return AgentLoopToolExecution(

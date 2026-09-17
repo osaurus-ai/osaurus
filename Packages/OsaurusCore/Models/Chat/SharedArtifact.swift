@@ -91,7 +91,15 @@ public struct SharedArtifact: Identifiable, Codable, Sendable, Equatable {
         case "md", "markdown": return "text/markdown"
         case "txt": return "text/plain"
         case "csv": return "text/csv"
+        case "tsv": return "text/tab-separated-values"
         case "pdf": return "application/pdf"
+        case "docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        case "xlsx": return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        case "pptx": return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        case "doc": return "application/msword"
+        case "xls": return "application/vnd.ms-excel"
+        case "ppt": return "application/vnd.ms-powerpoint"
+        case "rtf": return "application/rtf"
         case "zip": return "application/zip"
         case "tar": return "application/x-tar"
         case "gz": return "application/gzip"
@@ -136,11 +144,48 @@ public struct SharedArtifact: Identifiable, Codable, Sendable, Equatable {
     /// Whether this artifact is a PDF document.
     public var isPDF: Bool { mimeType == "application/pdf" }
 
+    /// Office document family (OOXML or legacy binary).
+    public enum OfficeDocumentKind: Sendable {
+        case wordProcessing
+        case spreadsheet
+        case presentation
+
+        /// Human-readable category label.
+        public var label: String {
+            switch self {
+            case .wordProcessing: return "Word Document"
+            case .spreadsheet: return "Spreadsheet"
+            case .presentation: return "Presentation"
+            }
+        }
+    }
+
+    /// Office document family, or nil for anything else.
+    public var officeDocumentKind: OfficeDocumentKind? {
+        switch mimeType {
+        case "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/msword", "application/rtf":
+            return .wordProcessing
+        case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel":
+            return .spreadsheet
+        case "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/vnd.ms-powerpoint":
+            return .presentation
+        default:
+            return nil
+        }
+    }
+
+    /// Whether this artifact is an Office document (Word/Excel/PowerPoint).
+    public var isOfficeDocument: Bool { officeDocumentKind != nil }
+
     /// Human-readable content category label.
     public var categoryLabel: String {
         if isDirectory { return "Directory" }
         if isImage { return "Image" }
         if isPDF { return "PDF" }
+        if let office = officeDocumentKind { return office.label }
         if isAudio { return "Audio" }
         if isVideo { return "Video" }
         if isHTML { return "Web Page" }

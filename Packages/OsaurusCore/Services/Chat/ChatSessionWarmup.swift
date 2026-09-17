@@ -94,7 +94,8 @@ extension ChatSession: ChatWarmupSessionContext {
                 msgs.append(msg)
             }
         }
-        return msgs
+        // Same live-image window as the send path's `buildMessages`.
+        return ToolResultMediaBridge.collapsingOlderImages(msgs)
     }
 
     func warmupTurnToMessage(_ turn: ChatTurn, isLastTurn: Bool) -> ChatMessage? {
@@ -107,11 +108,13 @@ extension ChatSession: ChatWarmupSessionContext {
             // history that the next real send correctly omits.
             return Self.modelVisibleAssistantMessage(turn, isLastTurn: isLastTurn)
         case .tool:
-            return ChatMessage(
-                role: "tool",
+            // Identical to the send path's `turnToMessage`: image tool
+            // results become multimodal tool messages for vision models.
+            return ToolResultMediaBridge.toolMessage(
                 content: turn.content,
-                tool_calls: nil,
-                tool_call_id: turn.toolCallId
+                toolCallId: turn.toolCallId,
+                attachments: turn.attachments,
+                supportsImages: selectedModelSupportsImages
             )
         case .user:
             let base = Self.buildUserChatMessage(

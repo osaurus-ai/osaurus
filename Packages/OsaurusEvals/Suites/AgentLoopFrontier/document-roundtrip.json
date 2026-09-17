@@ -1,0 +1,80 @@
+{
+  "id": "frontier.document-roundtrip",
+  "domain": "agent_loop",
+  "label": "frontier • read a PDF and a workbook, produce a .docx brief and a .xlsx summary, verify by reading them back",
+  "query": "Read report.pdf and budget.xlsx. Then (1) write summary.xlsx containing one sheet with each department and its Q3 figure, and (2) write brief.docx with a heading, a three-sentence summary of the report, and the total Q3 budget across all departments. Finally read both new files back with file_read to confirm they open, and tell me the total you computed.",
+  "notes": "End-to-end unified file tools: document reads (PDF extraction + workbook preview), document writes routed by extension (.xlsx from rows, .docx from Markdown), and verification reads of generated documents. The Q3 total (311500) only exists as a derived number.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "report.pdf",
+        "contentsFromFixture": "Documents/report.pdf"
+      },
+      {
+        "path": "budget.xlsx",
+        "contentsFromFixture": "Documents/budget.xlsx"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "maxToolCalls": 10,
+      "mustCallTools": [
+        "file_read",
+        "file_write"
+      ],
+      "mustNotCallTools": [
+        "shell_run"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "file_write",
+          "minCalls": 2,
+          "maxCalls": 3,
+          "maxErrors": 0
+        },
+        {
+          "tool": "file_read",
+          "minCalls": 3,
+          "maxCalls": 6,
+          "maxErrors": 0
+        }
+      ],
+      "files": [
+        {
+          "path": "summary.xlsx",
+          "exists": true
+        },
+        {
+          "path": "brief.docx",
+          "exists": true
+        }
+      ],
+      "commands": [
+        {
+          "command": "unzip -l summary.xlsx | grep -q 'xl/workbook.xml'",
+          "expectExitCode": 0
+        },
+        {
+          "command": "unzip -l brief.docx | grep -q 'word/document.xml'",
+          "expectExitCode": 0
+        },
+        {
+          "command": "unzip -p summary.xlsx xl/sharedStrings.xml xl/worksheets/sheet1.xml | grep -q 'Marketing'",
+          "expectExitCode": 0
+        },
+        {
+          "command": "unzip -p brief.docx word/document.xml | grep -qi 'zephyr'",
+          "expectExitCode": 0
+        }
+      ],
+      "finalTextContains": [
+        "311"
+      ],
+      "rubric": [
+        "The final answer states the total Q3 budget as 311500 (or 311,500) and mentions that both generated files were verified by reading them back."
+      ]
+    }
+  }
+}

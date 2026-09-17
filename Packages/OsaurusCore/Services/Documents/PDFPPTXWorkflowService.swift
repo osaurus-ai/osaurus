@@ -58,7 +58,7 @@ public struct PDFPPTXWorkflowService: Sendable {
             reasonCode: .missingEmitter,
             emitterFormatId: nil,
             message:
-                "No structured PDF/PPTX emitter is registered; file_write remains text-only and must not fake a binary package."
+                "No structured emitter is registered for this document. file_write generates .pdf/.docx (from Markdown or HTML) and .xlsx (from CSV/TSV/JSON rows); .pptx generation is not built in."
         )
     }
 

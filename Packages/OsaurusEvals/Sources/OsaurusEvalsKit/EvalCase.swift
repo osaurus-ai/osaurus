@@ -478,7 +478,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// file's contents. Resolved by the agent_loop runner under
         /// `Packages/OsaurusEvals/Fixtures/` (with a `Fixtures/AgentDB/`
         /// fallback), so large import fixtures live next to the suite
-        /// instead of inline.
+        /// instead of inline. Bytes are copied verbatim, so binary
+        /// documents (`Fixtures/Documents/*.pdf|xlsx|pptx|png`) seed too.
         public let contentsFromFixture: String?
 
         public init(

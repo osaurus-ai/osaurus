@@ -1444,8 +1444,8 @@ public enum SystemPromptTemplates {
         let shellBullet = sandboxShellBullet(backgroundEnabled: backgroundEnabled)
         return """
             Tool dispatch:
-            - Files: `file_read` (read/list), `file_write` (whole-file/append), and `file_edit` (one exact replacement).
-            - Search: `file_search` with `target="content"` or `target="files"`.
+            - Files: `file_read` (read/list — text, PDF/Word/PowerPoint text, XLSX preview, images), `file_write` (text whole-file/append; `.xlsx` from CSV/JSON rows, `.docx`/`.pdf` from Markdown/HTML), and `file_edit` (exact text replacement).
+            - Search: `file_search` with `target="content"` (also inside PDF/Word/PowerPoint/XLSX) or `target="files"`.
             \(shellBullet)
             - Multi-line code/scripts: `file_write` the script, then `shell_run` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks.
             - Run independent calls in parallel; chain dependent shell steps with `&&`.
@@ -1514,7 +1514,7 @@ public enum SystemPromptTemplates {
             : "`shell_run` (single-line)"
         return """
             Tool dispatch:
-            - Files: `file_read` (read/list), `file_write` (whole-file/append), `file_edit` (exact replacement). Search: `file_search` (`target="content"|"files"`).
+            - Files: `file_read` (read/list; opens text, PDF/Word/PowerPoint, XLSX preview, images — call it on the document), `file_write` (text whole-file/append; generates `.xlsx`/`.docx`/`.pdf`), `file_edit` (exact text replacement). Search: `file_search` (`target="content"|"files"`, content also inside documents).
             - Shell: \(shell). Multi-line code: `file_write` a script then `shell_run` it (e.g. `python3 script.py`) — never `python3 -c` / `node -e`.
             - Install deps with `sandbox_install` (\(sandboxInstallManagers)); inspect large logs with \(sandboxReadFileHint). Run independent calls in parallel; chain dependent steps with `&&`. Sandbox is disposable.
             """
@@ -1693,6 +1693,7 @@ public enum SystemPromptTemplates {
             After creating or changing runnable code, run an available syntax/build/test/behavior check before saying it works; a successful file mutation proves only that bytes were saved.
             To append while preserving a file, call file_write with mode append and put only the new bytes in content.
             Keep each file_write content under \(WorkspaceToolContract.recommendedWriteChunkCharacters) characters; for larger files use repeated calls with mode append.
+            \(folderDocumentFormatsLine)
             """
         if let contextFiles = folder.contextFiles, !contextFiles.isEmpty {
             section += """
@@ -1706,6 +1707,15 @@ public enum SystemPromptTemplates {
     }
 
     // MARK: - Folder Building Blocks
+
+    /// One-line format contract for the file tools. Lives in the prompt (not
+    /// only in tool descriptions) because models otherwise fall back to
+    /// shell converters or "PDF needs a library" priors before reading the
+    /// `file_write` schema.
+    static let folderDocumentFormatsLine =
+        "The file tools handle documents natively: `file_read` opens PDF, Word, PowerPoint, Excel, and images "
+        + "(and lists directories); `file_write` renders `.xlsx` from CSV/JSON rows and `.docx`/`.pdf` from "
+        + "Markdown or HTML — no converter, library check, or generator script is needed."
 
     /// One-line restatement of the path-arg rule. Each `file_*` tool's
     /// description carries the per-arg detail; this lives in the prompt
@@ -1721,11 +1731,13 @@ public enum SystemPromptTemplates {
     static let folderToolGuide = """
         Tool dispatch (always prefer these over their shell equivalents — \
         `cat`/`ls`/`grep`/`find`/`sed`/`awk`/`echo` in `shell_run`):
-        - Read / list: `file_read` to read a file or list a directory — the path decides (optional line range, or `max_depth` for a directory).
-        - Search: `file_search` for content (case-insensitive substring), or `target:"files"` to find files by name (case-insensitive substring, e.g. `q4`).
+        - Read / list: `file_read` to read a file or list a directory — the path decides (optional line range, or `max_depth` for a directory). It opens every file type directly: text/code, PDF, Word, PowerPoint (extracted text), Excel (cell preview), and images (shown to vision models, OCR otherwise) — never unzip, convert, or `pdftotext` first.
+        - Search: `file_search` for content (case-insensitive substring; also inside PDF/Word/PowerPoint/XLSX), or `target:"files"` to find files by name (case-insensitive substring, e.g. `q4`).
         - Find a file by name: use `file_search` with `target:"files"` and a short distinctive token from the name (not the whole phrase).
-        - Edit: `file_edit` for targeted in-place edits, `file_write` for new files or full rewrites.
-        - Shell: `shell_run` for builds, tests, git, processes, and `mv` / `cp` / `rm` / `mkdir` (simple forms join the undo log; complex commands warn that they don't).
+        - Edit: `file_edit` for targeted in-place text edits (`replace_all`, batch `edits`), `file_write` for new files or full rewrites.
+        - Documents: `file_write` generates them by extension — `.xlsx` from CSV/TSV or JSON rows, `.docx`/`.pdf` from Markdown or HTML — no converter, script, or `shell_run` check needed (`.pptx` is not supported). To change a document, `file_read` it, edit the text, and `file_write` it again.
+        - Copy: `file_copy(source, destination)` duplicates any file byte-for-byte (binary-safe, undoable) — version a file before editing it.
+        - Shell: `shell_run` for builds, tests, git, processes, and `mv` / `rm` / `mkdir` (simple forms join the undo log; complex commands warn that they don't).
         - Undo: `file_undo` reverts logged operations; `file_operation_history` shows what is revertible.
         """
 
@@ -1826,7 +1838,7 @@ public enum SystemPromptTemplates {
                 Rules:
                 - Read / list / search either area with `file_read` and `file_search`.
                 - Write either area with `file_write` (whole file) or `file_edit` (`old_string`+`new_string`).
-                - Commands run ONLY in the sandbox (`shell_run`), which has no copy of the workspace. To process a workspace file with a command, first copy it into the sandbox with `file_copy(source, destination)` — a raw byte copy that also works for binaries (PDFs, images, archives) that `file_read`/`file_write` cannot carry. Copy results back to a relative path to put them in the folder.
+                - Commands run ONLY in the sandbox (`shell_run`), which has no copy of the workspace. To process a workspace file with a command, first copy it into the sandbox with `file_copy(source, destination)` — a raw byte copy that moves the exact bytes (PDFs, images, archives) — `file_read` opens documents and images directly, but commands need the file itself. Copy results back to a relative path to put them in the folder.
                 - Prefer `/workspace/...` for scratch and iterative work; write to the workspace when the user wants the file in their folder. Surface chat deliverables with `share_artifact`. \(secretLine) Secret files also cannot be written.
                 """
         }
@@ -1837,7 +1849,7 @@ public enum SystemPromptTemplates {
             - **Workspace** (your read-only host folder) — the default. For "what's in my workspace / on my Desktop", use `file_read` (it reads a file or lists a directory) and `file_search`. Relative paths and `/Users/...` paths are the workspace.
             - **Sandbox** scratch area — pass a `/workspace/...` path to the SAME `file_read` / `file_search`.
 
-            The workspace is read-only — you cannot create, edit, or delete files in it, so never offer to; say so if asked (the user can enable folder writes in the agent's sandbox settings). Create or change sandbox files with `file_write` / `file_edit` using `/workspace/...` paths, and run commands with `shell_run` (the sandbox has no copy of the workspace — to process a workspace file with a command, first stage it into a `/workspace/...` path with `file_copy`, a byte copy that also carries binaries `file_read` cannot open). Surface results with `share_artifact`. \(secretLine)
+            The workspace is read-only — you cannot create, edit, or delete files in it, so never offer to; say so if asked (the user can enable folder writes in the agent's sandbox settings). Create or change sandbox files with `file_write` / `file_edit` using `/workspace/...` paths, and run commands with `shell_run` (the sandbox has no copy of the workspace — to process a workspace file with a command, first stage it into a `/workspace/...` path with `file_copy`, a byte copy of the exact file, so commands can process documents and binaries `file_read` only extracts). Surface results with `share_artifact`. \(secretLine)
             """
     }
 

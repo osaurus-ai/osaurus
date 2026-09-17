@@ -206,8 +206,10 @@ extension EvalRunner {
                     at: target.deletingLastPathComponent(),
                     withIntermediateDirectories: true
                 )
-                let body = try workspaceFileContents(file)
-                try body.write(to: target, atomically: true, encoding: .utf8)
+                // Bytes, not text: document/image fixtures (PDF, XLSX,
+                // PPTX, PNG) seed as-is for the unified file_read lane.
+                let body = try workspaceFileData(file)
+                try body.write(to: target, options: .atomic)
             }
         } catch {
             try? FileManager.default.removeItem(at: workspace)
@@ -1119,16 +1121,38 @@ extension EvalRunner {
     static func workspaceFileContents(_ file: EvalCase.WorkspaceFile) throws -> String {
         if let inline = file.contents { return inline }
         if let fixture = file.contentsFromFixture, !fixture.isEmpty {
-            return try resolveFixtureFileContents(fixture)
+            let data = try resolveFixtureFileData(fixture)
+            guard let text = String(data: data, encoding: .utf8) else {
+                throw NSError(
+                    domain: "OsaurusEvals",
+                    code: 2,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "contentsFromFixture '\(fixture)' is binary; this seeding path only carries UTF-8 text"
+                    ]
+                )
+            }
+            return text
         }
         return ""
     }
 
-    /// Load a fixture file's text, trying the candidate locations in order.
-    private static func resolveFixtureFileContents(_ relative: String) throws -> String {
+    /// Raw bytes for a workspace seed file. Inline `contents` is UTF-8;
+    /// `contentsFromFixture` is copied verbatim so committed binary
+    /// documents (PDF/XLSX/PPTX/PNG) land byte-identical in the workspace.
+    static func workspaceFileData(_ file: EvalCase.WorkspaceFile) throws -> Data {
+        if let inline = file.contents { return Data(inline.utf8) }
+        if let fixture = file.contentsFromFixture, !fixture.isEmpty {
+            return try resolveFixtureFileData(fixture)
+        }
+        return Data()
+    }
+
+    /// Load a fixture file's bytes, trying the candidate locations in order.
+    private static func resolveFixtureFileData(_ relative: String) throws -> Data {
         let candidates = fixtureContentCandidateURLs(relative)
         for url in candidates where FileManager.default.fileExists(atPath: url.path) {
-            return try String(contentsOf: url, encoding: .utf8)
+            return try Data(contentsOf: url)
         }
         throw NSError(
             domain: "OsaurusEvals",

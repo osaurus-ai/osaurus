@@ -67,13 +67,13 @@ struct FileReadDocumentFormatsTests {
         #expect(text.contains("binary") == false)
     }
 
-    // MARK: - Images stay refused
+    // MARK: - Mislabelled image bytes
 
-    @Test func fileReadRefusesImagesWithImagePivot() async throws {
+    @Test func fileReadMislabelledImageBytesFailHonestly() async throws {
         let root = tmpRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        // `isImageFile` keys off the extension/UTI, so the bytes don't have
-        // to be a real PNG for the refusal gate to fire.
+        // A `.png` that is not decodable as an image: the image branch must
+        // fall back to a binary refusal that never claims text-only support.
         let image = root.appendingPathComponent("photo.png")
         try Data([0x89, 0x50, 0x4E, 0x47]).write(to: image)
 
@@ -88,10 +88,8 @@ struct FileReadDocumentFormatsTests {
         #expect(ToolEnvelope.isError(envelope))
         #expect(EnvelopeAssertions.failureRetryable(envelope) == false)
         let message = EnvelopeAssertions.failureMessage(envelope) ?? ""
-        #expect(
-            message.contains("image"),
-            "image refusal message missing the image pivot hint: \(message)"
-        )
+        #expect(!message.contains("only supports text"), Comment(rawValue: message))
+        #expect(!message.isEmpty)
     }
 
     // MARK: - Source / CSV stays on the raw line-numbered path

@@ -14,14 +14,148 @@ import Foundation
 /// format (HTML, RTF, SVG). Binary document packages take the parser path and
 /// cannot be fabricated by the UTF-8 text writer.
 enum WorkspaceFileFormatPolicy {
-    static let parserPreferredExtensions: Set<String> = [
-        "pdf",
-        "doc", "docx", "docm", "dot", "dotx", "dotm", "rtfd",
-        "xls", "xlsx", "xlsm", "xlsb", "xlt", "xltx", "xltm",
-        "ppt", "pptx", "pptm", "pot", "potx", "potm", "pps", "ppsx", "ppsm",
-        "pages", "numbers", "key",
-        "odt", "ods", "odp",
+    /// Coarse document family, used for model-facing labels and for the
+    /// per-family pivot hints in envelopes.
+    enum DocumentFamily: String, Sendable, Equatable {
+        case pdf
+        case word
+        case presentation
+        case spreadsheet
+        case appleIWork
+        case openDocument
+
+        var label: String {
+            switch self {
+            case .pdf: return "PDF document"
+            case .word: return "Word document"
+            case .presentation: return "presentation"
+            case .spreadsheet: return "spreadsheet"
+            case .appleIWork: return "Apple iWork document"
+            case .openDocument: return "OpenDocument file"
+            }
+        }
+
+        /// Format the built-in extractor DOES handle for this family, so an
+        /// unsupported-variant message can name the concrete conversion target.
+        var supportedAlternative: String? {
+            switch self {
+            case .pdf: return nil
+            case .word: return ".docx"
+            case .presentation: return ".pptx"
+            case .spreadsheet: return ".xlsx"
+            case .appleIWork: return ".docx / .xlsx / .pdf (File > Export in Pages, Numbers, Keynote)"
+            case .openDocument: return ".docx / .xlsx / .pdf"
+            }
+        }
+    }
+
+    /// What `file_read` can do with a file, decided by extension. Raw UTF-8
+    /// decoding still wins at runtime for anything not listed here (an
+    /// unknown extension is `.rawText` until the byte sniff says otherwise).
+    enum ReadSupport: Equatable, Sendable {
+        /// Plain UTF-8 read with `N|` line numbers (source, Markdown, CSV, HTML, RTF, SVG, ...).
+        case rawText
+        /// A registered document adapter extracts the text layer.
+        case extractedText(family: DocumentFamily)
+        /// `XLSXAdapter` parses it into a bounded, sheet-aware preview.
+        case workbook
+        /// Pixel image: shown to vision models, OCR'd for text-only models.
+        case image
+        /// A recognised document family with no built-in adapter. Never
+        /// "text only": the message names the supported sibling format.
+        case unsupportedDocument(family: DocumentFamily)
+
+        var isDocument: Bool {
+            switch self {
+            case .extractedText, .workbook, .unsupportedDocument: return true
+            case .rawText, .image: return false
+            }
+        }
+
+        var family: DocumentFamily? {
+            switch self {
+            case .extractedText(let family), .unsupportedDocument(let family): return family
+            case .workbook: return .spreadsheet
+            case .rawText, .image: return nil
+            }
+        }
+    }
+
+    /// Single source of truth for extension → read behaviour. Keep in sync
+    /// with the adapters registered in `DocumentAdaptersBootstrap`.
+    static let readSupportByExtension: [String: ReadSupport] = [
+        // Built-in extraction (PDFAdapter / RichDocumentAdapter / PPTXAdapter).
+        "pdf": .extractedText(family: .pdf),
+        "docx": .extractedText(family: .word),
+        "doc": .extractedText(family: .word),
+        "rtfd": .extractedText(family: .word),
+        "pptx": .extractedText(family: .presentation),
+        "potx": .extractedText(family: .presentation),
+        // Workbook preview (XLSXAdapter).
+        "xlsx": .workbook,
+        // Recognised document families without a built-in adapter.
+        "docm": .unsupportedDocument(family: .word),
+        "dot": .unsupportedDocument(family: .word),
+        "dotx": .unsupportedDocument(family: .word),
+        "dotm": .unsupportedDocument(family: .word),
+        "xls": .unsupportedDocument(family: .spreadsheet),
+        "xlsm": .unsupportedDocument(family: .spreadsheet),
+        "xlsb": .unsupportedDocument(family: .spreadsheet),
+        "xlt": .unsupportedDocument(family: .spreadsheet),
+        "xltx": .unsupportedDocument(family: .spreadsheet),
+        "xltm": .unsupportedDocument(family: .spreadsheet),
+        "ppt": .unsupportedDocument(family: .presentation),
+        "pptm": .unsupportedDocument(family: .presentation),
+        "pot": .unsupportedDocument(family: .presentation),
+        "potm": .unsupportedDocument(family: .presentation),
+        "pps": .unsupportedDocument(family: .presentation),
+        "ppsx": .unsupportedDocument(family: .presentation),
+        "ppsm": .unsupportedDocument(family: .presentation),
+        "pages": .unsupportedDocument(family: .appleIWork),
+        "numbers": .unsupportedDocument(family: .appleIWork),
+        "key": .unsupportedDocument(family: .appleIWork),
+        "odt": .unsupportedDocument(family: .openDocument),
+        "ods": .unsupportedDocument(family: .openDocument),
+        "odp": .unsupportedDocument(family: .openDocument),
+        // Pixel images. SVG is XML source and deliberately absent.
+        "png": .image, "jpg": .image, "jpeg": .image, "gif": .image, "bmp": .image,
+        "tiff": .image, "tif": .image, "webp": .image, "heic": .image, "heif": .image,
     ]
+
+    static func readSupport(for ext: String) -> ReadSupport {
+        readSupportByExtension[ext.lowercased()] ?? .rawText
+    }
+
+    /// Extensions that take the document-extraction route (including the
+    /// families we recognise but cannot parse, so they get an honest
+    /// unsupported-format message instead of a UTF-8 decode failure).
+    static let parserPreferredExtensions: Set<String> = Set(
+        readSupportByExtension.compactMap { ext, support in
+            support.isDocument ? ext : nil
+        }
+    )
+
+    /// Extensions that read through a working adapter today.
+    static let extractableDocumentExtensions: Set<String> = Set(
+        readSupportByExtension.compactMap { ext, support in
+            switch support {
+            case .extractedText, .workbook: return ext
+            default: return nil
+            }
+        }
+    )
+
+    /// Model-facing summary of what `file_read` opens. Shared by the tool
+    /// description, the compact schema, and every unsupported-format message
+    /// so the contract the model learns is identical everywhere.
+    static let readableFormatsSummary =
+        "text/source (any UTF-8 file), PDF, Word (.docx/.doc/.rtfd), "
+        + "PowerPoint (.pptx/.potx), Excel (.xlsx), and images (.png/.jpg/.gif/.webp/.heic/...)"
+
+    /// Model-facing summary of what `file_write` produces.
+    static let writableFormatsSummary =
+        "UTF-8 text/code (any extension), `.xlsx` from CSV/TSV text or JSON rows, "
+        + "and `.docx`/`.pdf` from Markdown or HTML"
 
     /// Files whose successful persistence is not evidence that the delivered
     /// program or interactive artifact actually runs.
@@ -72,128 +206,33 @@ enum WorkspaceWriteSafety {
     private static let maxDiffMatrixCells = 200_000
     private static let largeWriteCharacters = 1_000_000
 
-    private static let structuredTargets: [String: StructuredTarget] = [
-        "xlsx": StructuredTarget(
-            label: "structured workbook package",
-            pivot: "Use a spreadsheet/XLSX tool for workbook output, or write CSV/TSV text instead."
-        ),
-        "xlsm": StructuredTarget(
-            label: "structured workbook package",
-            pivot: "Use a spreadsheet/XLSX tool for workbook output, or write CSV/TSV text instead."
-        ),
-        "xltx": StructuredTarget(
-            label: "structured workbook package",
-            pivot: "Use a spreadsheet/XLSX tool for workbook output, or write CSV/TSV text instead."
-        ),
-        "xltm": StructuredTarget(
-            label: "structured workbook package",
-            pivot: "Use a spreadsheet/XLSX tool for workbook output, or write CSV/TSV text instead."
-        ),
-        "xlsb": StructuredTarget(
-            label: "structured workbook package",
-            pivot: "Use a spreadsheet/XLSX tool for workbook output, or write CSV/TSV text instead."
-        ),
-        "xls": StructuredTarget(
-            label: "structured workbook package",
-            pivot: "Use a spreadsheet/XLSX tool for workbook output, or write CSV/TSV text instead."
-        ),
-        "xlt": StructuredTarget(
-            label: "legacy binary workbook template",
-            pivot: "Use a spreadsheet creation path that emits a real workbook template, or write CSV/TSV text instead."
-        ),
-        "docx": StructuredTarget(
-            label: "structured Word document package",
-            pivot: "Use a document creation path that emits a real DOCX package, or write Markdown/HTML text instead."
-        ),
-        "docm": StructuredTarget(
-            label: "structured Word document package",
-            pivot: "Use a document creation path that emits a real DOCM package, or write Markdown/HTML text instead."
-        ),
-        "doc": StructuredTarget(
-            label: "legacy binary Word document",
-            pivot: "Use a document creation path that emits a real Word document, or write Markdown/HTML text instead."
-        ),
-        "dot": StructuredTarget(
-            label: "legacy binary Word template",
-            pivot: "Use a document creation path that emits a real Word template, or write Markdown/HTML text instead."
-        ),
-        "dotx": StructuredTarget(
-            label: "structured Word template package",
-            pivot: "Use a document creation path that emits a real DOTX package, or write Markdown/HTML text instead."
-        ),
-        "dotm": StructuredTarget(
-            label: "structured Word template package",
-            pivot: "Use a document creation path that emits a real DOTM package, or write Markdown/HTML text instead."
-        ),
-        "rtfd": StructuredTarget(
-            label: "rich-text document package",
-            pivot: "Use a rich-document creation path that emits a real RTFD package, or write RTF/Markdown/HTML text instead."
-        ),
-        "pdf": StructuredTarget(
-            label: "PDF document",
-            pivot: "Use a PDF/document creation path that emits a real PDF package."
-        ),
-        "pptx": StructuredTarget(
-            label: "presentation package",
-            pivot: "Use a presentation/PPTX creation path that emits a real OpenXML presentation."
-        ),
-        "pptm": StructuredTarget(
-            label: "presentation package",
-            pivot: "Use a presentation/PPTX creation path that emits a real OpenXML presentation."
-        ),
-        "potx": StructuredTarget(
-            label: "presentation template package",
-            pivot: "Use a presentation/PPTX creation path that emits a real OpenXML presentation."
-        ),
-        "potm": StructuredTarget(
-            label: "presentation template package",
-            pivot: "Use a presentation/PPTX creation path that emits a real OpenXML presentation."
-        ),
-        "ppsx": StructuredTarget(
-            label: "presentation slideshow package",
-            pivot: "Use a presentation/PPTX creation path that emits a real OpenXML presentation."
-        ),
-        "ppsm": StructuredTarget(
-            label: "presentation slideshow package",
-            pivot: "Use a presentation/PPTX creation path that emits a real OpenXML presentation."
-        ),
-        "ppt": StructuredTarget(
-            label: "presentation document",
-            pivot: "Use a presentation/PPTX creation path instead of writing plain text to a presentation extension."
-        ),
-        "pot": StructuredTarget(
-            label: "legacy binary presentation template",
-            pivot: "Use a presentation creation path that emits a real template package."
-        ),
-        "pps": StructuredTarget(
-            label: "legacy binary presentation slideshow",
-            pivot: "Use a presentation creation path that emits a real slideshow package."
-        ),
-        "pages": StructuredTarget(
-            label: "Apple Pages document package",
-            pivot: "Use a document creation path that emits a real Pages package, or write Markdown/HTML text instead."
-        ),
-        "numbers": StructuredTarget(
-            label: "Apple Numbers document package",
-            pivot: "Use a spreadsheet creation path that emits a real Numbers package, or write CSV/TSV text instead."
-        ),
-        "key": StructuredTarget(
-            label: "Apple Keynote document package",
-            pivot: "Use a presentation creation path that emits a real Keynote package."
-        ),
-        "odt": StructuredTarget(
-            label: "OpenDocument text package",
-            pivot: "Use a document creation path that emits a real ODT package, or write Markdown/HTML text instead."
-        ),
-        "ods": StructuredTarget(
-            label: "OpenDocument spreadsheet package",
-            pivot: "Use a spreadsheet creation path that emits a real ODS package, or write CSV/TSV text instead."
-        ),
-        "odp": StructuredTarget(
-            label: "OpenDocument presentation package",
-            pivot: "Use a presentation creation path that emits a real ODP package."
-        ),
-    ]
+    /// Document extensions `file_write` cannot generate. `.xlsx`, `.docx`,
+    /// and `.pdf` are NOT here — they route through
+    /// `FileWriteDocumentRouting`. Every pivot names what the tool does
+    /// produce so the model never learns "file_write is text only".
+    private static let structuredTargets: [String: StructuredTarget] = {
+        let spreadsheetPivot =
+            "Write the same data as `.xlsx` (file_write builds a real workbook from CSV/TSV text or JSON rows) or as CSV/TSV text."
+        let wordPivot =
+            "Write the same content as `.docx` or `.pdf` (file_write renders Markdown/HTML into a real document) or as Markdown text."
+        let presentationPivot =
+            "Presentation generation is not built in: write the outline as Markdown, `.docx`, or `.pdf` instead, or use the `osaurus.pptx` plugin if it is installed."
+        var table: [String: StructuredTarget] = [:]
+        for ext in ["xlsm", "xltx", "xltm", "xlsb", "xls", "xlt", "ods", "numbers"] {
+            table[ext] = StructuredTarget(label: "spreadsheet format", pivot: spreadsheetPivot)
+        }
+        for ext in ["docm", "doc", "dot", "dotx", "dotm", "rtfd", "odt", "pages"] {
+            table[ext] = StructuredTarget(label: "word-processing format", pivot: wordPivot)
+        }
+        for ext in ["pptx", "pptm", "potx", "potm", "ppsx", "ppsm", "ppt", "pot", "pps", "odp", "key"] {
+            table[ext] = StructuredTarget(label: "presentation format", pivot: presentationPivot)
+        }
+        return table
+    }()
+
+    /// Extensions `file_write` refuses (no generator). Exposed for
+    /// descriptions and tests.
+    static var unsupportedDocumentWriteExtensions: Set<String> { Set(structuredTargets.keys) }
 
     static func structuredTextWriteRejection(
         path: String,
@@ -204,14 +243,48 @@ enum WorkspaceWriteSafety {
         return ToolEnvelope.failure(
             kind: .rejected,
             message:
-                "Refused to write '\(path)' with \(toolName): .\(ext) is a \(target.label), "
-                + "but \(toolName) only writes UTF-8 text. \(target.pivot)",
+                "Refused to write '\(path)' with \(toolName): .\(ext) is a \(target.label) that \(toolName) cannot generate. "
+                + "\(toolName) writes \(WorkspaceFileFormatPolicy.writableFormatsSummary). \(target.pivot)",
             field: "path",
-            expected: "path for a UTF-8 text file; for .\(ext), use a structured document writer",
+            expected: "a UTF-8 text path, or `.xlsx` / `.docx` / `.pdf` for a generated document",
+            tool: toolName,
+            retryable: false,
+            metadata: ["extension": ext, "writable_formats": WorkspaceFileFormatPolicy.writableFormatsSummary]
+        )
+    }
+
+    /// Rejection for `file_edit` / redaction tools, which only operate on
+    /// UTF-8 text: any document extension (including the generated
+    /// `.xlsx`/`.docx`/`.pdf`) gets the read-then-regenerate pivot.
+    static func documentEditRejection(
+        path: String,
+        fileExtension ext: String,
+        toolName: String,
+        regenerateHint: String,
+        verb: String = "edit"
+    ) -> String? {
+        let support = WorkspaceFileFormatPolicy.readSupport(for: ext)
+        guard support.isDocument else { return nil }
+        let label = support.family?.label ?? "document"
+        return ToolEnvelope.failure(
+            kind: .rejected,
+            message:
+                "Refused to \(verb) '\(path)' with \(toolName): .\(ext) is a \(label), and \(toolName) \(verb)s UTF-8 text only. "
+                + "Read it with `file_read` (documents are extracted to text), apply the change to that text, then \(regenerateHint)",
+            field: "path",
+            expected: "a UTF-8 text file; for documents, read with file_read and regenerate with file_write",
             tool: toolName,
             retryable: false,
             metadata: ["extension": ext]
         )
+    }
+
+    /// Bytes of an existing file (any content), or `nil` when it does not
+    /// exist. Used by the document write route so an overwrite of a
+    /// binary package is captured for undo instead of refused.
+    static func existingBytes(at fileURL: URL) -> Data? {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
+        return try? Data(contentsOf: fileURL)
     }
 
     static func existingText(
@@ -367,6 +440,9 @@ enum WorkspaceWriteSafety {
         }
         if let batchId = operation.batchId {
             entry["batch_id"] = batchId.uuidString
+        }
+        if let contentKind = operation.contentKind {
+            entry["content_kind"] = contentKind
         }
         return entry
     }

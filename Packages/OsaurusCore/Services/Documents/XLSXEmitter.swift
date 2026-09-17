@@ -36,6 +36,12 @@ public struct XLSXEmitter: DocumentFormatEmitter {
         }
     }
 
+    /// Synchronous package bytes for a workbook — for callers that already
+    /// run inside a serialized, non-async context (e.g. `db_export`).
+    static func packageBytes(for workbook: Workbook) throws -> Data {
+        try packageData(for: workbook)
+    }
+
     // MARK: - Package assembly
 
     private static let spreadsheetNamespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
