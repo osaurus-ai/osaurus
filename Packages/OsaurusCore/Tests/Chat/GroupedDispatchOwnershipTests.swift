@@ -35,10 +35,10 @@ struct GroupedDispatchOwnershipTests {
 
     @Test(arguments: [SessionSource.schedule, .watcher, .http, .plugin, .delegation], [false, true])
     func lookupReusesActiveOrInactiveWindowOwner(source: SessionSource, inactive: Bool) async throws {
-        let agent = Agent(name: "Grouped ownership window test", autonomousExec: AutonomousExecConfig(enabled: false))
-        AgentManager.shared.add(agent)
-        do {
-            try await ChatHistoryTestStorage.run {
+        try await ChatHistoryTestStorage.run {
+            let agent = Agent(name: "Grouped ownership window test", autonomousExec: AutonomousExecConfig(enabled: false))
+            AgentManager.shared.add(agent)
+            do {
                 let data = stored(agentId: agent.id, source: source)
                 ChatSessionStore.save(data)
                 let window = ChatWindowState(windowId: UUID(), agentId: data.agentId!, sessionData: data)
@@ -66,12 +66,12 @@ struct GroupedDispatchOwnershipTests {
                             == ["first", "answer", "newer unsaved live turn", "new dispatch result"]
                     )
                 }
+            } catch {
+                _ = await AgentManager.shared.delete(id: agent.id)
+                throw error
             }
-        } catch {
             _ = await AgentManager.shared.delete(id: agent.id)
-            throw error
         }
-        _ = await AgentManager.shared.delete(id: agent.id)
     }
 
     @Test(arguments: [false, true])
