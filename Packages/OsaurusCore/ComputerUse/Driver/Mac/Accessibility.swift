@@ -1369,6 +1369,12 @@ private func openFolderInFinder(_ folder: URL) async -> Result<MacAppInfo, MacAp
     config.activates = true
     do {
         let app = try await workspace.open([folder], withApplicationAt: finderURL, configuration: config)
+        // `config.activates` is a request macOS may decline for an app that is
+        // not itself frontmost (Osaurus usually isn't while Computer Use
+        // drives). Without an active Finder, shortcuts like cmd+shift+n posted
+        // afterwards silently miss; a traced run pressed it four times until an
+        // explicit `open Finder`, which activates, made the next press land.
+        await MainActor.run { _ = app.activate() }
         let pid = app.processIdentifier
         await AccessibilityManager.runOffMain {
             AccessibilityManager.shared.prepareForAccessibility(pid: pid)
