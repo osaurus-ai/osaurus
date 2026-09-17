@@ -23,7 +23,11 @@ struct AgentTemplateBuiltInTests {
         #expect(names.isSuperset(of: ["Sub Agent", "Cloud Agent", "Local Agent"]))
         for template in builtIn {
             #expect(template.availableToOrchestrator)
-            #expect(template.agent.tools?.mode == "manual")
+            // General-purpose workers RAG-pick their tools. A hardcoded
+            // manual list was how the bundled templates shipped tool names
+            // that do not exist (`fetch`, `time`), so every created agent
+            // came back "Skipped tools not installed here".
+            #expect(template.agent.tools?.mode == "auto")
             #expect(template.agent.sandbox?.enabled == true)
             #expect(template.modelPolicy == .preferred)
             #expect(template.agent.capabilities?.relayEnabled == nil)
@@ -42,6 +46,23 @@ struct AgentTemplateBuiltInTests {
         #expect(local.agent.capabilities?.memoryEnabled == true)
         let cloud = try #require(store.template(named: "CLOUD AGENT"))
         #expect(cloud.agent.model == .value("sonnet-5"))
+    }
+
+    /// Any manual tool a bundled template names must be a real registered
+    /// tool, or applying the template silently drops it. Auto-mode
+    /// templates carry no list, so this is vacuously true for today's
+    /// built-ins — it guards the next one that opts into a curated list.
+    @Test
+    func bundledManualTools_areAllRegistered() {
+        let registered = Set(ToolRegistry.shared.listTools().map(\.name))
+        for template in AgentTemplateStore.shared.builtIn {
+            guard template.agent.tools?.mode == "manual" else { continue }
+            for name in template.agent.tools?.enabled ?? [] {
+                #expect(
+                    registered.contains(name),
+                    "\(template.name) lists unknown tool `\(name)`")
+            }
+        }
     }
 
     @Test
