@@ -21,6 +21,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     /// Display-only producer attribution. Residency continues to use
     /// `inferenceSource`; delegated helpers are chat-owned but shown as Agent.
     private let activitySource: InferenceSource?
+    /// Privacy Filter review policy for every request this engine sends.
+    private let privacyReviewMode: PrivacyReviewMode
 
     init(
         services: [ModelService] = [FoundationModelService(), ClaudeCodeService(), MLXService()],
@@ -45,7 +47,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 }
             },
         source: InferenceSource = .httpAPI,
-        activitySource: InferenceSource? = nil
+        activitySource: InferenceSource? = nil,
+        privacyReviewMode: PrivacyReviewMode = .interactive
     ) {
         self.services = services
         self.installedModelsProvider = installedModelsProvider
@@ -54,6 +57,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         self.agentModelOptionsProvider = agentModelOptionsProvider
         self.inferenceSource = source
         self.activitySource = activitySource
+        self.privacyReviewMode = privacyReviewMode
     }
     /// Errors thrown by `ChatEngine` that carry a classification so the
     /// HTTP layer can emit a proper 4xx/5xx instead of a generic 500.
@@ -264,6 +268,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             cacheStableSystemPrefix: request.cacheStableSystemPrefix,
             admissionPositionLimit: request.admissionPositionLimit,
             requestSource: inferenceSource,
+            privacyReviewMode: privacyReviewMode,
             loadIntent: request.backgroundModelLoad ? .background : .interactive,
             alignmentRepairModel: inferenceSource == .chatUI && !request.backgroundModelLoad
                 && !request.warmupPrefill && !request.suppressProgressUI

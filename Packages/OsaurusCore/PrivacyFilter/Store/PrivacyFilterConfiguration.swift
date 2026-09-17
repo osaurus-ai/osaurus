@@ -23,6 +23,16 @@ import Foundation
 public enum PrivacyAIBackend: String, Codable, Sendable, CaseIterable {
     case openai
     case rampart
+
+    /// True when this backend's bundle is on disk. Pure filesystem
+    /// check (no actor hop) so `resolvedAIBackend` can be called from
+    /// the outbound pipeline and the settings UI alike.
+    public static func isBundleInstalled(_ backend: PrivacyAIBackend) -> Bool {
+        switch backend {
+        case .openai: return PrivacyFilterModelBundle.exists()
+        case .rampart: return RampartModelManager.bundleExists()
+        }
+    }
 }
 
 /// Top-level privacy-filter preference shape. `Codable` so it
@@ -68,10 +78,23 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
     /// detection runs regex-only (never blocks on a missing model).
     public var aiDetectionEnabled: Bool
 
-    /// Which model backend AI detection uses when `aiDetectionEnabled`.
+    /// Which model backend the user picked as default for AI detection.
     /// Defaults to `.openai` for backward compatibility with installs
-    /// that already downloaded that bundle.
+    /// that already downloaded that bundle. This is a preference, not
+    /// a guarantee the bundle exists — callers must go through
+    /// `resolvedAIBackend(isInstalled:)` to find the backend that will
+    /// actually run.
     public var aiDetectionBackend: PrivacyAIBackend
+
+    /// The backend AI detection actually runs with: the user's default
+    /// when its bundle is installed, otherwise whichever other backend
+    /// is installed, otherwise `nil`. Installing a single model must be
+    /// enough to use it — a user who downloads only Rampart should never
+    /// be blocked because the untouched default still says OpenAI.
+    public func resolvedAIBackend(isInstalled: (PrivacyAIBackend) -> Bool) -> PrivacyAIBackend? {
+        if isInstalled(aiDetectionBackend) { return aiDetectionBackend }
+        return PrivacyAIBackend.allCases.first(where: isInstalled)
+    }
 
     /// Per-provider enable map keyed by `RemoteProvider.id.uuidString`.
     /// Missing keys fall back to `defaultForCloudProvider` (true).

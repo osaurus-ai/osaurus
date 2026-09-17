@@ -203,6 +203,7 @@ public final class SubagentFeed: @unchecked Sendable {
         agentId: UUID? = nil,
         parentSessionId: String? = nil,
         suppressActivityMirror: Bool = false,
+        startedAt: Date = Date(),
         beforeEventPublicationForTesting:
             (@Sendable (_ revision: UInt64) -> Void)?
     ) {
@@ -212,7 +213,7 @@ public final class SubagentFeed: @unchecked Sendable {
         self.agentId = agentId
         self.parentSessionId = parentSessionId
         self.suppressActivityMirror = suppressActivityMirror
-        self.startedAt = Date()
+        self.startedAt = startedAt
         self.beforeEventPublicationForTesting =
             beforeEventPublicationForTesting
         self.eventsSubject = CurrentValueSubject([])
@@ -391,6 +392,121 @@ public final class SubagentFeed: @unchecked Sendable {
     public func finish(success: Bool, summary: String) {
         if case .finished = statusSubject.value { return }
         statusSubject.send(.finished(success: success, summary: summary))
+    }
+}
+
+// MARK: - Persisted run log
+
+extension SubagentActivityEvent.Kind: Codable {}
+extension SubagentActivityEvent: Codable {}
+
+/// A finished run's activity feed, saved with the chat turn so the step log
+/// survives the registry's grace-tail drop and app relaunches. UI evidence
+/// only: it lives beside the tool result, never inside it, so it is never
+/// sent back to the model.
+public struct SubagentRunLog: Codable, Sendable, Equatable {
+    public let kindId: String
+    public let title: String
+    public let startedAt: Date
+    public let success: Bool
+    public let summary: String
+    public let events: [SubagentActivityEvent]
+    /// Events dropped from the front to fit `maxPersistedEvents`.
+    public let truncatedEventCount: Int
+
+    /// Kinds whose step log is worth keeping after the run. Computer Use and
+    /// AppleScript narrate every perceive/act/verify step; other kinds either
+    /// have their own transcript (spawn opens a real chat) or nothing to show.
+    static let persistedKindIds: Set<String> = [
+        SubagentCapabilityRegistry.computerUse.id,
+        SubagentCapabilityRegistry.appleScript.id,
+    ]
+    /// Bounds on what one turn row stores. The live feed already caps at
+    /// 2,000 events; a saved log keeps the tail the user cares about.
+    static let maxPersistedEvents = 500
+    static let maxPersistedDetailCharacters = 2_000
+}
+
+extension SubagentFeed {
+    /// Snapshot a finished run for persistence. Nil while running, and for
+    /// kinds outside `SubagentRunLog.persistedKindIds`.
+    public func finishedRunLog() -> SubagentRunLog? {
+        guard SubagentRunLog.persistedKindIds.contains(kindId),
+            case .finished(let success, let summary) = currentStatus()
+        else { return nil }
+        let all = currentEvents()
+        let kept = all.suffix(SubagentRunLog.maxPersistedEvents).map { event in
+            guard let detail = event.detail,
+                detail.count > SubagentRunLog.maxPersistedDetailCharacters
+            else { return event }
+            return SubagentActivityEvent(
+                id: event.id,
+                timestamp: event.timestamp,
+                step: event.step,
+                kind: event.kind,
+                title: event.title,
+                detail: String(detail.suffix(SubagentRunLog.maxPersistedDetailCharacters)),
+                success: event.success,
+                fraction: event.fraction
+            )
+        }
+        return SubagentRunLog(
+            kindId: kindId,
+            title: title,
+            startedAt: startedAt,
+            success: success,
+            summary: summary,
+            events: Array(kept),
+            truncatedEventCount: all.count - kept.count
+        )
+    }
+
+    /// A finished, read-only feed rebuilt from a saved log, so the same
+    /// `SubagentFeedView` renders history exactly as it rendered the run.
+    static func restored(toolCallId: String, log: SubagentRunLog) -> SubagentFeed {
+        let feed = SubagentFeed(
+            toolCallId: toolCallId,
+            kindId: log.kindId,
+            title: log.title,
+            startedAt: log.startedAt,
+            beforeEventPublicationForTesting: nil
+        )
+        feed.mutateEvents { $0 = log.events }
+        feed.finish(success: log.success, summary: log.summary)
+        return feed
+    }
+}
+
+/// Finished run logs by tool-call id, for rows whose live feed is gone
+/// (grace tail elapsed, or the chat was reopened). Filled when a result
+/// lands on a turn and when a saved turn loads. Holds the log values the
+/// turns already own (shared copy-on-write storage) and builds a read-only
+/// feed per row on demand.
+public final class SubagentRunLogArchive: @unchecked Sendable {
+    public static let shared = SubagentRunLogArchive()
+
+    private let lock = NSLock()
+    private var logs: [String: SubagentRunLog] = [:]
+    private var restoredFeeds: [String: SubagentFeed] = [:]
+
+    private init() {}
+
+    public func store(_ log: SubagentRunLog, for toolCallId: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard logs[toolCallId] != log else { return }
+        logs[toolCallId] = log
+        restoredFeeds.removeValue(forKey: toolCallId)
+    }
+
+    public func feed(for toolCallId: String) -> SubagentFeed? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let feed = restoredFeeds[toolCallId] { return feed }
+        guard let log = logs[toolCallId] else { return nil }
+        let feed = SubagentFeed.restored(toolCallId: toolCallId, log: log)
+        restoredFeeds[toolCallId] = feed
+        return feed
     }
 }
 

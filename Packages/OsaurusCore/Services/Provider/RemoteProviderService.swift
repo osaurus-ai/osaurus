@@ -515,7 +515,8 @@ public actor RemoteProviderService: ToolCapableService {
                 messages: messages,
                 sessionId: parameters.sessionId,
                 providerId: provider.id,
-                requestSource: parameters.requestSource
+                requestSource: parameters.requestSource,
+                reviewMode: parameters.privacyReviewMode
             )
             // Every remote request funnels through here, so this is the one
             // place attached images get sized for the wire (oversized Retina
