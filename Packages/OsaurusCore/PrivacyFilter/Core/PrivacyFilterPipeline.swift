@@ -280,6 +280,21 @@ enum PrivacyFilterPipelineError: Error, Equatable, LocalizedError {
     }
 }
 
+/// How fresh detections on an outbound request are confirmed.
+enum PrivacyReviewMode: Sendable, Equatable {
+    /// Normal behaviour: chat UI requests open the review sheet, other
+    /// origins follow `requireReviewForNonInteractive`.
+    case interactive
+    /// Model steps inside a delegated loop the user is not looking at
+    /// (Computer Use, AppleScript). Every fresh detection is redacted
+    /// without a sheet: a sheet opened in the chat window while the
+    /// agent drives another app goes unanswered, the loop's per-step
+    /// timeout cancels it, and the run fails. Scrubbing everything keeps
+    /// screen text out of the cloud unredacted; originals the user
+    /// already skipped this session stay skipped.
+    case autoScrub
+}
+
 enum PrivacyFilterPipeline {
     /// Outbound scrub. Returns the original messages + `nil` map when
     /// the filter is disabled, when the model isn't loaded, or when a
@@ -303,7 +318,8 @@ enum PrivacyFilterPipeline {
         messages: [ChatMessage],
         sessionId: String?,
         providerId: UUID,
-        requestSource: RequestSource = .httpAPI
+        requestSource: RequestSource = .httpAPI,
+        reviewMode: PrivacyReviewMode = .interactive
     ) async throws -> (messages: [ChatMessage], map: RedactionMap?) {
         let config = PrivacyFilterStore.snapshot()
         guard config.isEnabled(forProviderId: providerId) else {
@@ -513,11 +529,22 @@ enum PrivacyFilterPipeline {
         // a presenter registered — so a server-origin request can't
         // hang its client on a sheet the user isn't expecting. They
         // fail closed (or auto-approve per the settings opt-out).
-        let outcome = await PrivacyReviewService.shared.review(
-            detections: newDetections,
-            sessionId: sid,
-            allowInteractive: requestSource == .chatUI
-        )
+        let outcome: PrivacyReviewOutcome
+        switch reviewMode {
+        case .interactive:
+            outcome = await PrivacyReviewService.shared.review(
+                detections: newDetections,
+                sessionId: sid,
+                allowInteractive: requestSource == .chatUI
+            )
+        case .autoScrub:
+            print("[PrivacyFilter] Review: auto-scrubbing \(newDetections.count) detections for a delegated loop step.")
+            outcome = .approved(newDetections.map { entity in
+                var approved = entity
+                approved.approved = true
+                return approved
+            })
+        }
         let approvedFromReview: [DetectedEntity]
         switch outcome {
         case .approved(let entities):
@@ -813,8 +840,25 @@ enum PrivacyFilterPipeline {
                 dirty.insert(idx)
                 continue
             }
+            // Multimodal messages (Computer Use screenshots) carry their
+            // text in `contentParts`, which detection scans and
+            // `applyingScrub` rewrites. Without this, a redaction found
+            // only there reads as "nothing changed" and fails the send
+            // as `scrubNoOp`, and the leak scan skips the message.
+            if Self.textParts(a) != Self.textParts(b) {
+                changedCount += 1
+                dirty.insert(idx)
+                continue
+            }
         }
         return (changedCount, dirty)
+    }
+
+    private static func textParts(_ message: ChatMessage) -> [String] {
+        (message.contentParts ?? []).compactMap { part in
+            if case .text(let text) = part { return text }
+            return nil
+        }
     }
 
     /// Wrap a streaming AsyncThrowingStream so each yielded chunk is

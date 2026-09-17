@@ -93,6 +93,10 @@ struct GenerationParameters: Sendable {
     /// kept warm by API clients. Defaults to `.httpAPI` — the conservative
     /// choice (never accelerated) for paths that don't set it explicitly.
     let requestSource: RequestSource
+    /// How the Privacy Filter confirms fresh detections for this request.
+    /// `.autoScrub` is set only by delegated loops (Computer Use,
+    /// AppleScript) so their model steps never wait on a review sheet.
+    let privacyReviewMode: PrivacyReviewMode
     /// Whether this generation's model load may disturb a model someone else is
     /// using. `.interactive` (the default) keeps today's behaviour: a human is
     /// waiting, so the load may evict a resident model or cancel an in-flight
@@ -168,6 +172,7 @@ struct GenerationParameters: Sendable {
         cacheStableSystemPrefix: String? = nil,
         admissionPositionLimit: Int? = nil,
         requestSource: RequestSource = .httpAPI,
+        privacyReviewMode: PrivacyReviewMode = .interactive,
         loadIntent: ModelLoadIntent = .interactive,
         alignmentRepairModel: String? = nil,
         claudeCode: ClaudeCodeRunOptions? = nil,
@@ -200,6 +205,7 @@ struct GenerationParameters: Sendable {
         self.cacheStableSystemPrefix = cacheStableSystemPrefix
         self.admissionPositionLimit = admissionPositionLimit
         self.requestSource = requestSource
+        self.privacyReviewMode = privacyReviewMode
         self.loadIntent = loadIntent
         self.alignmentRepairModel = alignmentRepairModel
         self.claudeCode = claudeCode

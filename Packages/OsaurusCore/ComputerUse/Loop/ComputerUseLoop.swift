@@ -246,7 +246,11 @@ public enum ComputerUseLoop {
         // Default path drives the live ChatEngine; an injected `nextAction`
         // (tests / scripted-model evals) drives the loop deterministically and
         // never constructs an engine.
-        let engine: ChatEngine? = nextAction == nil ? ChatEngine(source: .chatUI) : nil
+        // Auto-scrub: the user is watching the app being driven, not the
+        // chat window, so a Privacy Filter review sheet per step would go
+        // unanswered until the step timeout failed the run.
+        let engine: ChatEngine? =
+            nextAction == nil ? ChatEngine(source: .chatUI, privacyReviewMode: .autoScrub) : nil
 
         // Capture availability once: it gates the escalation ladder (som/vision
         // need Screen Recording) for the whole run.
