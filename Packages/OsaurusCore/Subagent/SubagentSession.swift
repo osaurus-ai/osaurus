@@ -279,7 +279,7 @@ public enum SubagentSession {
                     )
                 }
             }
-            _ = await runPrepared(
+            let completedEnvelope = await runPrepared(
                 prepared,
                 presentation: SubagentRunPresentation(
                     feed: feed,
@@ -305,6 +305,7 @@ public enum SubagentSession {
                 title: title,
                 success: success,
                 summary: summary,
+                completedEnvelope: completedEnvelope,
                 to: parentSession
             )
         }

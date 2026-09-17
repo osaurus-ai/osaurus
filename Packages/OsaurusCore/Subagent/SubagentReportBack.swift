@@ -21,11 +21,28 @@ enum SubagentReportBack {
 
     /// The follow-up turn text. Prefixed so the model (and the user) can
     /// tell a helper report from an ordinary user message.
-    static func message(title: String, success: Bool, summary: String) -> String {
+    static func message(
+        title: String,
+        success: Bool,
+        summary: String,
+        completedEnvelope: String? = nil
+    ) -> String {
         let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
         let outcome = success ? "finished" : "failed"
         let body = trimmed.isEmpty ? "(no summary provided)" : trimmed
-        return "[Helper report] \(title) \(outcome): \(body)"
+        let report = "[Helper report] \(title) \(outcome): \(body)"
+        // The immediate background ack has no worker yet. Preserve the actual
+        // persisted handle from the completed spawn result, just as foreground
+        // spawn_agent does; a summary alone cannot support `continue`.
+        guard success,
+            let completedEnvelope,
+            ToolEnvelope.isSuccess(completedEnvelope),
+            let payload = ToolEnvelope.successPayload(completedEnvelope) as? [String: Any],
+            payload["kind"] as? String == "spawn_result",
+            let rawID = payload["session_id"] as? String,
+            let sessionID = UUID(uuidString: rawID)
+        else { return report }
+        return report + "\nWorker session_id (spawn_agent continue): \(sessionID.uuidString)"
     }
 
     /// Deliver the digest to the launching session once it is idle —
@@ -38,9 +55,15 @@ enum SubagentReportBack {
         title: String,
         success: Bool,
         summary: String,
+        completedEnvelope: String? = nil,
         to box: WeakChatSessionBox?
     ) async {
-        let report = message(title: title, success: success, summary: summary)
+        let report = message(
+            title: title,
+            success: success,
+            summary: summary,
+            completedEnvelope: completedEnvelope
+        )
         while !Task.isCancelled {
             guard let session = box?.session else { return }
             if !session.isStreaming, session.awaitingClarify == nil {
