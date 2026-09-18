@@ -28,8 +28,8 @@ Both admin readouts repeated the short-name lookup and showed null defaults.
 
 ## Verification status
 
-PARTIAL — implementation and regression cases prepared; fresh build, focused
-tests and corrected native sampler/image/tool/multiturn evidence pending.
+PARTIAL — corrected native sampler/image/tool/multiturn evidence below;
+current-head focused unit tests and ordinary PR CI are still pending.
 Regression cases exercise two orgs with different defaults, full-ID selection,
 ambiguous short-name refusal, snapshot lifetime and explicit request precedence.
 Existing LocalGenerationDefaults and MLXBatchAdapter suites cover JANG/HF merge,
@@ -45,3 +45,49 @@ live-captures/run5-packed-long-media/admin-generation-settings.json.
 Native9878-token image-history/tool turn completed correctly at29.8tok/s;
 this is failure-reproduction evidence for defaults, not corrected proof or
 a causal speed comparison. No release, tag, installation or dispatch.
+
+## Corrected native run, September 18
+
+SOURCE EVIDENCE: production changes through
+`05da5c9c55d1a37dbe771af3af4911822c1098e2`; integration app
+`1643da66eb63fa625978016145ee97da0b69439e`, engine
+`6c4fee39fd10284dcefb8115d79b163ec7ca329c` (packed-load/media-prefill
+candidates, not this PR's production pin). Binary SHA256
+`e762a0b4657aba2331adb1cebf89df6e0fdd3e3f3e086baa16dbcb06177ca380`.
+The isolated Release development build completed; it was neither installed nor
+published. Earlier failed warmup-consumer build remains recorded above.
+
+LIVE EVIDENCE: private `runtime-followup-2026-09-18/BONSAI-RUN6.md`,
+`run6-launch.json`, `run6.oslog`, `run6-prefill-full.log`, `run6-prompts/`,
+`run6-measurements.jsonl` and `live-captures/run6-*`. Native Settings/Chat controls
+and complete visual results were inspected. Both org aliases remained installed.
+
+- Loaded OsaurusAI Bonsai-2-27B-1.75bit-JANG and Ternary-JANG sequentially.
+  Both admin readouts retained the correct loaded snapshot: temperature 1,
+  topP .95, topK 20. Thirteen submits used it without overrides; the other two
+  honored the explicit override below. No bundle/template/sampler constants changed.
+- In real Settings, saved temperature 0/topK 5, navigated away/back, and ran
+  the packed image-history/file_read turn. Effective sampler changed to 0/.95/5
+  while diagnostics retained bundle defaults 1/.95/20. Cleared both fields,
+  saved, and subsequent submits returned to bundle defaults.
+- Five packed turns completed (eight natural-stop generations): image-to-file,
+  another real file read, long image/history, Extra High changed to None during
+  active prefill, then a no-thinking follow-up. Actual current turn retained
+  xhigh; next turn used None. Final rates 30.3/29.9/22.4/20.2/22.3 tok/s.
+- Four ternary turns (seven natural-stop generations) included image-to-file,
+  read-back, 9,233-token image/history and real cached continuations. Full-task
+  score 3/4: one follow-up answered the prior log-entry question instead of the
+  requested file line count. Filename-specific follow-up returned six lines.
+  Final rates 22.2/22.0/24.5/25.9 tok/s. No loops or protocol-marker leaks;
+  the incomplete answer is not a passing row or attributed to this fix.
+- Actual topology: 16 KV + 48 Mamba/SSM layers, FP16, paged RAM off, TQ0,
+  full-hybrid disk restores. Tool-result continuations restored up to 9,480
+  tokens; long prefill is still slow. Not a model speedup or all-quality claim.
+- Normal Quit exit 0; no owned survivors; swap unchanged at 1.67 GiB.
+  Sampled app peak 15,860,452,064 bytes (kernel lifetime 16,082,587,920), under
+  the 20 GiB guard. This is not low-RAM or 16GB-machine qualification.
+
+One separate measured latency issue remains: a tool-result recall explicitly
+saying "do not run another tool" was classified as required by the existing
+chat tool-intent heuristic and therefore bypassed disk restore (23.3s fresh
+prefill). This PR does not alter that policy or its cache-safety guard.
