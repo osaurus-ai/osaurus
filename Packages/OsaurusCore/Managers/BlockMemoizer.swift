@@ -232,7 +232,7 @@ final class BlockMemoizer {
 
     private func limited(streaming: Bool) -> [ContentBlock] {
         // synthetic stress thread for profiling — must not truncate (see MockChatData)
-        if ProcessInfo.processInfo.environment["USE_MOCK_CHAT_DATA"] == "1" {
+        if ProcessEnvironment.value("USE_MOCK_CHAT_DATA") == "1" {
             return rolledUp(ContentBlock.coalesceToolGroups(cached))
         }
         // during streaming, cap tightly to prevent layout thrash on every delta.

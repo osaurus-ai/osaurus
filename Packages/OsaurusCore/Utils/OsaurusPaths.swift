@@ -51,7 +51,7 @@ public enum OsaurusPaths {
         if let override = overrideRoot {
             return override
         }
-        if let envRoot = ProcessInfo.processInfo.environment["OSAURUS_TEST_ROOT"],
+        if let envRoot = ProcessEnvironment.value("OSAURUS_TEST_ROOT"),
             !envRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
             return URL(fileURLWithPath: envRoot, isDirectory: true)
