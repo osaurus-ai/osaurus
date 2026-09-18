@@ -403,16 +403,30 @@ struct FeatureTelemetryEventTests {
             category: "runtime_start_failed",
             backend: "vm",
             phase: "runtime_start",
+            errorClass: "posix_eexist",
+            trigger: "launch_autostart",
+            coldStart: false,
             service: service
         )
 
         #expect(rec.events.count == 1)
         #expect(rec.events[0].name == "sandbox_provision_failure")
         let props = business(rec.events[0].props)
-        #expect(props.count == 3)
+        #expect(props.count == 6)
         #expect(props["category"] as? String == "runtime_start_failed")
         #expect(props["backend"] as? String == "vm")
         #expect(props["phase"] as? String == "runtime_start")
+        #expect(props["error_class"] as? String == "posix_eexist")
+        #expect(props["trigger"] as? String == "launch_autostart")
+        #expect(props["cold_start"] as? Bool == false)
+        // Every value is a token from a closed set — no message, path, or
+        // agent identity can be smuggled through these dimensions.
+        #expect(
+            SandboxToolRegistrar.failureErrorClasses.contains(props["error_class"] as! String)
+        )
+        #expect(
+            SandboxToolRegistrar.RegistrationTrigger(rawValue: props["trigger"] as! String) != nil
+        )
     }
 
     // MARK: - Remote-id hashing

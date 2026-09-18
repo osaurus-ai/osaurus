@@ -1427,6 +1427,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             ScheduleManager.shared.stop()
             WatcherManager.shared.stop()
             KnowledgeFolderWatcher.shared.stop()
+            // Detach the sandbox registrar from the container status stream
+            // BEFORE phase 2 stops the VM. Otherwise the `.running -> .stopped`
+            // edge from `stopContainer` re-enters `registerTools`, which
+            // treats a set-up sandbox as warm-restartable and re-acquires the
+            // vmnet lease + re-boots the VM inside the quit window — the
+            // relaunched app then finds the lease held by a live, exiting
+            // owner (`vmnet_in_use`).
+            SandboxToolRegistrar.shared.prepareForTermination()
             await runWithDeadline(seconds: 2) {
                 await AgentChannelTransportSupervisor.shared.stop()
             }

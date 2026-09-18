@@ -367,10 +367,17 @@ enum FeatureTelemetry {
     /// A sandbox startup or per-agent provisioning failure. Every property is
     /// a closed, low-cardinality token produced by the registrar; never pass
     /// through an error message, path, domain, environment value, or agent id.
+    ///
+    /// - `errorClass`: one of `SandboxToolRegistrar.failureErrorClasses`.
+    /// - `trigger`: `SandboxToolRegistrar.RegistrationTrigger` raw value.
+    /// - `coldStart`: whether the attempt was a first-run cold provision.
     static func sandboxProvisionFailure(
         category: String,
         backend: String,
         phase: String,
+        errorClass: String,
+        trigger: String,
+        coldStart: Bool,
         service: TelemetryService = .shared
     ) {
         service.track(
@@ -379,6 +386,9 @@ enum FeatureTelemetry {
                 "category": category,
                 "backend": backend,
                 "phase": phase,
+                "error_class": errorClass,
+                "trigger": trigger,
+                "cold_start": coldStart,
             ]
         )
     }

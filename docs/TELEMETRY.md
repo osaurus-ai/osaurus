@@ -177,6 +177,25 @@ below are sent.
 | `kind` | string | `cold` (full image unpack), `warm` (reused rootfs), `warmFallback` (warm attempt failed, cold rebuild succeeded), or `template` (rootfs cloned copy-on-write from the immutable base template) |
 | `duration_bucket` | string | Coarse total-boot latency bucket: `lt_1s`, `1_5s`, `5_15s`, `15_60s`, `1_5m`, `gte_5m` |
 
+### `sandbox_provision_failure`
+
+Emitted once per distinct sandbox startup or per-agent provisioning failure
+recorded by `SandboxToolRegistrar`. The cool-down and lockout notices that
+follow one failure are local-only and do not re-emit. Every value is a token
+from a closed list; the user-facing error message, paths, hosts, and agent
+identity stay on the machine (a mirror of the same tokens is kept in
+`~/.osaurus/container/startup-failures.json` and shown in Settings → Sandbox →
+Diagnostics so users can self-report).
+
+| Property | Type | Values / meaning |
+|----------|------|------------------|
+| `category` | string | `container_unavailable` (cold start could not provision), `runtime_start_failed` (a previously provisioned VM did not start or was lost), `agent_provision_failed` (VM up, per-agent bootstrap failed), `vmnet_in_use` (another Osaurus process owns the VM) |
+| `backend` | string | `vm` (macOS 26+ Containerization VM) or `seatbelt` (macOS 15 and earlier `sandbox-exec` fallback) |
+| `phase` | string | `availability`, `runtime_start`, `vm_ownership`, `agent_provision`, or the refined `agent_provision.bootstrap_exec` / `agent_provision.bootstrap_script` / `agent_provision.bootstrap_timeout` |
+| `error_class` | string | One of `SandboxToolRegistrar.failureErrorClasses`: `sandbox_*` cases of `SandboxError`, `posix_*` (`eexist`, `ebusy`, `eaddrinuse`, `eacces`, `eperm`, `enospc`, `other`), `cocoa_*` (`file_exists`, `out_of_space`, `no_permission`, `other`), `url_*` (`offline`, `timeout`, `dns`, `other`), `sdk_grpc`, `sdk_vmnet`, `cancelled`, `none`, `other` |
+| `trigger` | string | What ran the registration: `launch_autostart`, `on_demand` (first sandboxed tool use), `agent_switch`, `agent_updated`, `status_change`, `auto_retry`, `runtime_recovery`, `external` (chat send / plugin host / evals) |
+| `cold_start` | bool | `true` when the sandbox had never completed setup on this machine (first-run download path), `false` for a warm restart |
+
 ### `app_launched`
 
 Emitted once at launch. No properties. Baseline signal for retention.
