@@ -147,6 +147,15 @@ enum ChatToolChoicePolicy {
             "do not call",
             "don't call",
             "dont call",
+            "without calling",
+            "do not run",
+            "don't run",
+            "dont run",
+            "without running",
+            "do not invoke",
+            "don't invoke",
+            "dont invoke",
+            "without invoking",
         ].contains { text.contains($0) }
     }
 
