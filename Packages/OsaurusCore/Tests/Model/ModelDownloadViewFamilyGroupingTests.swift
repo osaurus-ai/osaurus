@@ -20,7 +20,8 @@ struct ModelDownloadViewFamilyGroupingTests {
         id: String,
         sizeGB: Int64? = nil,
         isTopSuggestion: Bool = false,
-        releasedAt: Date? = nil
+        releasedAt: Date? = nil,
+        rootDirectory: URL? = nil
     ) -> MLXModel {
         MLXModel(
             id: id,
@@ -33,7 +34,26 @@ struct ModelDownloadViewFamilyGroupingTests {
             // Pin to a directory that never exists so `isDownloaded` is
             // deterministically false — otherwise a dev machine that
             // actually has one of these repos on disk skews the ranking.
-            rootDirectory: URL(fileURLWithPath: "/nonexistent/osaurus-grouping-tests")
+            rootDirectory: rootDirectory
+                ?? URL(fileURLWithPath: "/nonexistent/osaurus-grouping-tests")
+        )
+    }
+
+    private func makeTempModelRoot() throws -> URL {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-model-grid-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+
+    private func markDownloaded(_ model: MLXModel) throws {
+        let directory = model.localDirectory
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: directory.appendingPathComponent("config.json"))
+        try Data("{}".utf8).write(to: directory.appendingPathComponent("tokenizer.json"))
+        _ = FileManager.default.createFile(
+            atPath: directory.appendingPathComponent("model.safetensors").path,
+            contents: Data()
         )
     }
 
@@ -121,6 +141,7 @@ struct ModelDownloadViewFamilyGroupingTests {
             filterState: ModelManager.ModelFilterState(),
             selectedTab: .all,
             sortOption: .recommended,
+            favoriteKeys: [],
             totalMemoryGB: 48
         )
         let lists = ModelDownloadView.makeGridLists(input)
@@ -145,5 +166,78 @@ struct ModelDownloadViewFamilyGroupingTests {
             downloadStates: [:]
         )
         #expect(pick.id == curated.id)
+    }
+
+    @Test func makeGridLists_pinsFavouriteCatalogFamiliesAheadOfTopPicks() {
+        let favorite = model(
+            id: "OsaurusAI/gemma-4-12B-it-qat-MXFP4",
+            sizeGB: 8,
+            releasedAt: Date(timeIntervalSince1970: 1)
+        )
+        let topPick = model(
+            id: "OsaurusAI/Qwen3.6-27B-MXFP4",
+            sizeGB: 15,
+            isTopSuggestion: true,
+            releasedAt: Date(timeIntervalSince1970: 2)
+        )
+
+        let input = ModelDownloadView.GridListInput(
+            availableModels: [],
+            suggestedModels: [topPick, favorite],
+            deduplicatedModels: [],
+            downloadStates: [:],
+            searchText: "",
+            filterState: ModelManager.ModelFilterState(),
+            selectedTab: .all,
+            sortOption: .recommended,
+            favoriteKeys: [favorite.favoriteKey],
+            totalMemoryGB: 48
+        )
+
+        let lists = ModelDownloadView.makeGridLists(input)
+
+        #expect(lists.favorites.map(\.id) == [favorite.id])
+        #expect(lists.suggested.map(\.id) == [topPick.id])
+        #expect(lists.displayed.prefix(2).map(\.id) == [favorite.id, topPick.id])
+    }
+
+    @Test func makeGridLists_pinsDownloadedFavouritesAfterActiveDownloads() throws {
+        let root = try makeTempModelRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let active = model(id: "OsaurusAI/active-download", sizeGB: 4)
+        let favoriteDownloaded = model(
+            id: "OsaurusAI/zzz-favorite-downloaded",
+            sizeGB: 4,
+            rootDirectory: root
+        )
+        let otherDownloaded = model(
+            id: "OsaurusAI/aaa-other-downloaded",
+            sizeGB: 4,
+            rootDirectory: root
+        )
+        try markDownloaded(favoriteDownloaded)
+        try markDownloaded(otherDownloaded)
+
+        let input = ModelDownloadView.GridListInput(
+            availableModels: [],
+            suggestedModels: [],
+            deduplicatedModels: [otherDownloaded, favoriteDownloaded, active],
+            downloadStates: [active.id: .downloading(progress: 0.5)],
+            searchText: "",
+            filterState: ModelManager.ModelFilterState(),
+            selectedTab: .downloaded,
+            sortOption: .nameAsc,
+            favoriteKeys: [favoriteDownloaded.favoriteKey],
+            totalMemoryGB: 48
+        )
+
+        let lists = ModelDownloadView.makeGridLists(input)
+
+        #expect(lists.downloaded.map(\.id) == [
+            active.id,
+            favoriteDownloaded.id,
+            otherDownloaded.id,
+        ])
     }
 }
