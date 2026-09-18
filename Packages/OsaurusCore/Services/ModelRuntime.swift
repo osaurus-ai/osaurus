@@ -6619,12 +6619,22 @@ public actor ModelRuntime {
 
         var out = messages
         if let lastUserIndex = out.lastIndex(where: { $0.role == "user" }) {
-            let existing = out[lastUserIndex].content ?? ""
+            let original = out[lastUserIndex]
+            let existing = original.content ?? ""
+            let suffix = existing.isEmpty ? directive : "\n\n" + directive
+            // Keep media and in-process carriers when augmenting the request.
+            // Parts and flattened text must carry the same added directive.
             out[lastUserIndex] = ChatMessage(
-                role: out[lastUserIndex].role,
-                content: existing.isEmpty ? directive : existing + "\n\n" + directive,
-                tool_calls: out[lastUserIndex].tool_calls,
-                tool_call_id: out[lastUserIndex].tool_call_id
+                role: original.role,
+                content: existing + suffix,
+                contentParts: original.contentParts.map { $0 + [.text(suffix)] },
+                localAudioSamples: original.localAudioSamples,
+                tool_calls: original.tool_calls,
+                tool_call_id: original.tool_call_id,
+                reasoning_content: original.reasoning_content,
+                reasoning_item_id: original.reasoning_item_id,
+                reasoning_encrypted: original.reasoning_encrypted,
+                responses_output_items: original.responses_output_items
             )
         } else {
             out.append(ChatMessage(role: "user", content: directive))
