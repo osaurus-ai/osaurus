@@ -304,9 +304,11 @@ let package = Package(
         // tool selection, keeping rendered image slots aligned with pixels.
         // Also preserves the Bonsai2 strict Hadamard/packed ternary loading,
         // native Qwen template/schema handling and multimodal tool history.
+        // Isolated proof stack only: packed-load481 + media-prefill482.
+        // Not a released/main pin; full native qualification remains pending.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "87a686e929c4bbd9e99728126b30095339d0df5b"
+            revision: "6c4fee39fd10284dcefb8115d79b163ec7ca329c"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
