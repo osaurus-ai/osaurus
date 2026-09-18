@@ -311,7 +311,7 @@ let package = Package(
         // retaining FP32 GDN recurrence and isolating old cache precision.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "73ebf52507743a871bac58c432e9c0522bf262c2"
+            revision: "6026359408f02c5867643d84300b0ca2225a2e88"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
