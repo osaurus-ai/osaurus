@@ -27,6 +27,7 @@ Related: [`IDENTITY.md`](IDENTITY.md) (identity model, key derivation),
 8. [Crypto inventory for iOS](#8-crypto-inventory-for-ios)
 9. [Compatibility contract](#9-compatibility-contract)
 10. [Sequence diagrams](#10-sequence-diagrams)
+11. [Osaurus Connect pairing (6-digit code)](#11-osaurus-connect-pairing-6-digit-code)
 
 ---
 
@@ -702,3 +703,72 @@ sequenceDiagram
     R-->>P: 502 agent_offline
     Note over P: re-discover (roster now lists new address) · owner redeem again
 ```
+
+---
+
+## 11. Osaurus Connect pairing (6-digit code)
+
+The iOSaurus app pairs with **one** Mac by typing a 6-digit code shown in
+Settings → Osaurus Connect. It needs no master key on the phone and yields a
+master-scoped `osk-v1` key covering every agent on that Mac, plus each agent's
+crypto address for the Secure Channel (§6.2). One phone per Mac: a new
+pairing revokes the previous phone's key.
+
+### 11.1 Discovery
+
+While the server is exposed to the network the Mac advertises itself (not an
+agent) as `_osaurus-mobile._tcp` with TXT `name=<computer name>`, `v=1`. The
+phone may also accept a manually entered host and port.
+
+### 11.2 Generating the code (Mac)
+
+"Generate Pairing Code" mints the master-scoped key immediately (biometric
+prompt — the user is at the Mac) and shows a uniformly random 6-digit code.
+The code is single-use, valid for 5 minutes, and discarded after 5 wrong
+guesses from any source; an unused code's key is deleted.
+
+### 11.3 Redeeming (phone)
+
+```
+POST /pair/code            (unauthenticated, LAN only, rate-limited per IP)
+{"v":1,"code":"123456","deviceId":"<stable per-install id>",
+ "deviceName":"My iPhone","encPub":"<base64url X25519 pub>"}
+
+→ 200 {"v":1,"sealed":{"enc":"<base64url>","ct":"<base64url>"}}
+
+sealed = HPKE(X25519, HKDF-SHA256, ChaCha20-Poly1305) to encPub,
+         info = utf8("osaurus-connect-pair-v1:<deviceId>")
+plaintext = {"apiKey":"osk-v1.…","keyExpiresAt":<unix s>|null,
+             "hostName":"…","agents":[{"id":"<uuid>","name":"…","address":"0x…"}]}
+```
+
+| Status | Body `error` | Meaning |
+|---|---|---|
+| `400` | `bad_request` | Malformed body, unsupported `v`, missing device fields, bad `encPub` (code not consumed) |
+| `401` | `invalid_code` | Wrong, expired, locked out, or no active code — deliberately indistinguishable |
+| `403` | `lan_only` | Arrived through the relay |
+| `429` | — | Per-IP rate limit (shared with `/pair`) |
+
+The phone pins every returned `address` against its agent `id` and uses the
+key as the Bearer inside the Secure Channel. `GET /agents` and
+`GET /agents/{id}` include an additive `address` field so agents created after
+pairing can be learned; fetch the roster **inside** the Secure Channel of an
+already-pinned agent so the new addresses are authenticated.
+
+### 11.4 Lifecycle
+
+- Keys last 90 days; re-pair to renew. Unpair on the Mac revokes the key
+  immediately (inner `401` for the phone, which should return to pairing).
+- "Keep Mac Awake for Paired iPhone" (default on) holds an idle-system-sleep
+  assertion while a phone is paired.
+
+### 11.5 Security notes
+
+The code travels in cleartext on the LAN. A passive observer learns a
+single-use code that is useless after redemption, and the key itself is
+sealed to the phone's ephemeral key. An **active** LAN attacker who
+intercepts the code inside its 5-minute window can redeem it first; the Mac
+then shows the attacker's device name under "Paired iPhone", and the real
+phone's redemption fails. The residual risk is accepted for v1 (LAN-only,
+short-lived, user-initiated); a PAKE (e.g. SPAKE2 over the code) would remove
+it.
