@@ -359,10 +359,16 @@ actor MLXService: ToolCapableService {
             return true
         }
 
-        if let directory = modelDirectory ?? localModelDirectory(modelId: modelId),
-            let format = resolvedToolCallFormat(in: directory)
-        {
-            return format != nil
+        if let directory = modelDirectory ?? localModelDirectory(modelId: modelId) {
+            if let declared = explicitToolSupport(in: directory), !declared {
+                return false
+            }
+            if let zayaVLTemplateSupport = zayaVLTemplateSupportsTools(in: directory) {
+                return zayaVLTemplateSupport
+            }
+            if let format = resolvedToolCallFormat(in: directory) {
+                return format != nil
+            }
         }
 
         // Unknown/local-unscanned bundles remain permissive; vmlx still owns
@@ -407,6 +413,54 @@ actor MLXService: ToolCapableService {
         // Genuinely tool-less families (e.g. gemma3n) are gated by name in
         // `supportsLocalToolCalling` before this is ever consulted.
         return ToolCallFormat.infer(from: modelType, configData: configData) ?? .json
+    }
+
+    /// Honor the bundle's explicit capability bit before treating a parser
+    /// name as proof that tools are usable. Parser metadata describes how to
+    /// decode a call *if one exists*; it cannot override `supports_tools=false`.
+    private nonisolated static func explicitToolSupport(in directory: URL) -> Bool? {
+        guard
+            let data = try? Data(
+                contentsOf: directory.appendingPathComponent("jang_config.json")
+            ),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        if let capabilities = root["capabilities"] as? [String: Any],
+            let supported = capabilities["supports_tools"] as? Bool
+        {
+            return supported
+        }
+        return root["supports_tools"] as? Bool
+    }
+
+    /// Compatibility guard for already-published ZAYA1-VL bundles that were
+    /// accidentally stamped with the text model's `supports_tools=true` and
+    /// `zaya_xml` parser. The shipped VL template has no tools input and no
+    /// tool-call output contract; live AgentLoop trials therefore copied the
+    /// schema into malformed arguments instead of executing a call. Require
+    /// both sides of a real template contract. A future repaired VL template
+    /// can opt back in without an app release by carrying `tools` plus a
+    /// `tool_call` emission marker.
+    private nonisolated static func zayaVLTemplateSupportsTools(
+        in directory: URL
+    ) -> Bool? {
+        guard
+            let configData = try? Data(contentsOf: directory.appendingPathComponent("config.json")),
+            let type = modelType(inConfig: configData)?.lowercased(),
+            type == "zaya1_vl" || type == "zaya_vl"
+        else { return nil }
+
+        let candidates = [
+            "chat_template.jinja", "chat_template.json", "tokenizer_config.json",
+        ]
+        let templates = candidates.compactMap { name in
+            try? String(
+                contentsOf: directory.appendingPathComponent(name),
+                encoding: .utf8
+            )
+        }.joined(separator: "\n")
+        let normalized = templates.lowercased()
+        return normalized.contains("tools") && normalized.contains("tool_call")
     }
 
     private nonisolated static func explicitToolFormat(inJangConfig data: Data) -> ToolCallFormat?? {
