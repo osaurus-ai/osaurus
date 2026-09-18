@@ -106,7 +106,9 @@ extension ChatSession: ChatWarmupSessionContext {
             // by the bounded retry remains visible in the UI but carries
             // `modelContextExcluded`; warming it would prefill poisoned
             // history that the next real send correctly omits.
-            return Self.modelVisibleAssistantMessage(turn, isLastTurn: isLastTurn)
+            return Self.modelVisibleAssistantMessage(
+                turn, isLastTurn: isLastTurn,
+                includeReasoning: !DeclaredReasoningEffort.historyReasoningOmitted(forModelId: selectedModel))
         case .tool:
             // Identical to the send path's `turnToMessage`: image tool
             // results become multimodal tool messages for vision models.
