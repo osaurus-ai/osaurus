@@ -304,9 +304,12 @@ let package = Package(
         // tool selection, keeping rendered image slots aligned with pixels.
         // Also preserves the Bonsai2 strict Hadamard/packed ternary loading,
         // native Qwen template/schema handling and multimodal tool history.
+        // vmlx-swift#481 fuses exact packed-ternary expansion on Metal;
+        // #482 bounds Qwen3.5/Bonsai2 media language prefill while retaining
+        // full-prompt M-RoPE positions and complete KV/GDN companion state.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "87a686e929c4bbd9e99728126b30095339d0df5b"
+            revision: "125f961272908697f87a983f972ccf50e0810a05"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
