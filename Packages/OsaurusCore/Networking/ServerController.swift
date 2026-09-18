@@ -238,8 +238,10 @@ final class ServerController: ObservableObject {
 
             if configuration.exposeToNetwork {
                 BonjourAdvertiser.shared.startAdvertising(port: configuration.port)
+                MobileConnectAdvertiser.shared.startAdvertising(port: configuration.port)
             } else {
                 BonjourAdvertiser.shared.stopAdvertising()
+                MobileConnectAdvertiser.shared.stopAdvertising()
             }
             RelayTunnelManager.shared.reconnectIfNeeded(port: configuration.port)
         } catch {
@@ -271,6 +273,7 @@ final class ServerController: ObservableObject {
 
         RelayTunnelManager.shared.disconnectAll()
         BonjourAdvertiser.shared.stopAdvertising()
+        MobileConnectAdvertiser.shared.stopAdvertising()
         isRunning = false
 
         // Stop the actor-backed server if present. The event-loop group is
@@ -298,6 +301,7 @@ final class ServerController: ObservableObject {
         // `ensureShutdown` is the only teardown the AppDelegate calls, so
         // without this an advertised service could linger past quit.
         BonjourAdvertiser.shared.stopAdvertising()
+        MobileConnectAdvertiser.shared.stopAdvertising()
         isRunning = false
         serverHealth = .stopping
 

@@ -527,7 +527,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Plugin routes handle their own auth per-route, so skip the global gate.
             // Loopback connections (CLI / local tools) are trusted without a token.
             let publicPaths: Set<String> = [
-                "/", "/health", "/pair", "/pair/challenge", "/pair-invite", "/secure/session",
+                "/", "/health", "/pair", "/pair/challenge", "/pair/code", "/pair-invite", "/secure/session",
             ]
             let isPluginRoute = path.hasPrefix("/plugins/")
             // Agent Channel webhook routes are authenticated by the connection's
@@ -858,6 +858,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } else if head.method == .POST, path == "/pair" {
                 handlePairEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/pair/code" {
+                handlePairCodeEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/pair-invite" {
                 handlePairInviteEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/secure/session" {
@@ -3234,7 +3236,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// ever carry a small JSON envelope.
     private func bodyByteLimit(for head: HTTPRequestHead) -> Int {
         let path = normalize(extractPath(from: head.uri))
-        if path == "/pair" || path == "/pair-invite" || path == "/secure/session" {
+        if path == "/pair" || path == "/pair/code" || path == "/pair-invite" || path == "/secure/session" {
             return configuration.maxPairingBodyBytes
         }
         return configuration.maxRequestBodyBytes
@@ -4276,6 +4278,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let memory_entry_count: Int
         let created_at: String
         let updated_at: String
+        /// Crypto address the Secure Channel handshake is signed with. Remote
+        /// clients pin it; nil when the agent has no derived identity yet.
+        let address: String?
     }
 
     private struct AgentListResponse: Codable {
@@ -4353,6 +4358,118 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             responseStatus: 200,
             startTime: startTime
         )
+    }
+
+    // MARK: - /pair/code (Osaurus Connect 6-digit pairing)
+
+    /// POST /pair/code — redeem the 6-digit code shown in Settings → Osaurus
+    /// Connect for a master-scoped access key and the agent roster, HPKE-sealed
+    /// to the phone's ephemeral key (docs/MOBILE_PROTOCOL.md §11). LAN only:
+    /// relay-origin requests are refused so the code can't be guessed from
+    /// the internet. Wrong codes get one uniform `invalid_code` answer; the
+    /// code itself dies after `PairingCode.maxFailedAttempts` wrong guesses.
+    private func handlePairCodeEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let path = "/pair/code"
+        let cors = stateRef.value.corsHeaders
+
+        func reply(status: HTTPResponseStatus, body: String, logBody: String? = nil) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            // Never log the code, the device id, or the sealed key.
+            logRequest(
+                method: "POST",
+                path: path,
+                userAgent: userAgent,
+                requestBody: "<redacted>",
+                responseBody: logBody ?? body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        guard !stateRef.value.isRelayOrigin else {
+            reply(
+                status: .forbidden,
+                body: #"{"error":"lan_only","message":"Pair on the same network as this Mac."}"#
+            )
+            return
+        }
+        let pairingIP = remoteIP(context)
+        guard PairingRateLimiter.shared.allow(ip: pairingIP) else {
+            sendPairingRateLimited(
+                head: head,
+                context: context,
+                path: path,
+                method: "POST",
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(MobilePairRequest.self, from: data) else {
+            reply(status: .badRequest, body: #"{"error":"bad_request","message":"Invalid pairing request"}"#)
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let outcome = await MainActor.run { MobilePairingService.shared.redeem(request) }
+            hop {
+                let context = ctx.value
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                let status: HTTPResponseStatus
+                let body: String
+                var logBody: String?
+                switch outcome {
+                case .paired(let response, _):
+                    status = .ok
+                    body =
+                        (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) }
+                        ?? #"{"error":"encoding_failed"}"#
+                    logBody = #"{"v":1,"sealed":"<redacted>"}"#
+                case .invalidCode:
+                    PairingRateLimiter.shared.penalize(ip: pairingIP)
+                    status = .unauthorized
+                    body = #"{"error":"invalid_code","message":"That code is wrong or has expired."}"#
+                case .badRequest(let message):
+                    status = .badRequest
+                    let encoded =
+                        (try? JSONEncoder().encode(["error": "bad_request", "message": message]))
+                        .map { String(decoding: $0, as: UTF8.self) } ?? #"{"error":"bad_request"}"#
+                    body = encoded
+                }
+                self.sendResponse(
+                    context: context,
+                    version: head.version,
+                    status: status,
+                    headers: headers,
+                    body: body
+                )
+                self.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: "<redacted>",
+                    responseBody: logBody ?? body,
+                    responseStatus: Int(status.code),
+                    startTime: startTime
+                )
+            }
+        }
     }
 
     // MARK: - Secure Channel (E2E encryption)
@@ -5613,7 +5730,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     is_built_in: agent.isBuiltIn,
                     memory_entry_count: memoryCounts[agent.id.uuidString] ?? 0,
                     created_at: formatter.string(from: agent.createdAt),
-                    updated_at: formatter.string(from: agent.updatedAt)
+                    updated_at: formatter.string(from: agent.updatedAt),
+                    address: agent.agentAddress?.lowercased()
                 )
             }
 
@@ -5762,7 +5880,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 is_built_in: agent.isBuiltIn,
                 memory_entry_count: memoryEntryCount,
                 created_at: formatter.string(from: agent.createdAt),
-                updated_at: formatter.string(from: agent.updatedAt)
+                updated_at: formatter.string(from: agent.updatedAt),
+                address: agent.agentAddress?.lowercased()
             )
             let json =
                 (try? JSONEncoder.osaurusCanonical().encode(item)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
