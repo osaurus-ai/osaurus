@@ -2808,7 +2808,9 @@ struct RuntimePolicySourceTests {
         #expect(httpHandler.contains("\"generation_defaults\""))
         #expect(httpHandler.contains("\"last_effective_generation\""))
         #expect(httpHandler.contains("\"stage\": settings.stage"))
-        #expect(httpHandler.contains("LocalGenerationDefaults.defaults(forModelId: summary.name)"))
+        #expect(httpHandler.contains("summary.generationDefaults"))
+        #expect(httpHandler.contains("effective.modelDefaults"))
+        #expect(!httpHandler.contains("LocalGenerationDefaults.defaults(forModelId: summary.name)"))
         #expect(httpHandler.contains("lastEffectiveGenerationSettingsSnapshot()"))
         #expect(httpHandler.contains("path == \"/admin/generation-settings\""))
         #expect(httpHandler.contains("handleGenerationSettingsEndpoint("))
@@ -2820,6 +2822,10 @@ struct RuntimePolicySourceTests {
         #expect(adapter.contains("stage: \"pending_preload\""))
         #expect(adapter.contains("stage: \"submitted_to_batch_engine\""))
         #expect(runtime.contains("MLXBatchAdapter.recordPendingEffectiveGenerationSettings("))
+        #expect(runtime.contains("generationDefaults: LocalGenerationDefaults.load(fromDirectory: localURL)"))
+        #expect(runtime.contains("modelDefaults: holder.generationDefaults"))
+        #expect(adapter.contains("LocalGenerationDefaults.defaults(forModelId: modelId)"))
+        #expect(!adapter.contains("LocalGenerationDefaults.defaults(forModelId: modelName)"))
     }
 
     @Test("admin cache stats exposes resolved and per-load memory safety status")

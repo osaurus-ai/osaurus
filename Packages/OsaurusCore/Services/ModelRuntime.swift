@@ -250,6 +250,9 @@ public actor ModelRuntime {
         /// a model loaded before a settings edit can otherwise make a newly
         /// saved cap look live when it is not.
         let activeCachePolicy: ActiveCachePolicy?
+        /// Defaults belonging to the weights actually loaded, not a short-name
+        /// catalog lookup that may become ambiguous when another org is imported.
+        var generationDefaults: LocalGenerationDefaults.Defaults = .empty
     }
 
     struct ActiveCachePolicy: Equatable, Sendable {
@@ -346,6 +349,7 @@ public actor ModelRuntime {
     private final class SessionHolder: NSObject, @unchecked Sendable {
         let name: String
         let container: ModelContainer
+        let generationDefaults: LocalGenerationDefaults.Defaults
         let weightsSizeBytes: Int64
         /// Identifies the *weights that are actually loaded*, so a prefix-cache
         /// entry cannot outlive them. See `weightsFingerprint(for:)`.
@@ -374,6 +378,7 @@ public actor ModelRuntime {
         init(
             name: String,
             container: ModelContainer,
+            generationDefaults: LocalGenerationDefaults.Defaults,
             weightsSizeBytes: Int64,
             weightsFingerprint: String,
             isVLM: Bool = false,
@@ -387,6 +392,7 @@ public actor ModelRuntime {
         ) {
             self.name = name
             self.container = container
+            self.generationDefaults = generationDefaults
             self.weightsSizeBytes = weightsSizeBytes
             self.weightsFingerprint = weightsFingerprint
             self.isVLM = isVLM
@@ -1387,7 +1393,8 @@ public actor ModelRuntime {
                         diskL2Enabled: $0.enableDiskCache,
                         diskL2MaxGB: Double($0.diskCacheMaxGB)
                     )
-                }
+                },
+                generationDefaults: holder.generationDefaults
             )
         }.sorted { lhs, rhs in
             if lhs.isCurrent != rhs.isCurrent { return lhs.isCurrent }
@@ -4522,6 +4529,7 @@ public actor ModelRuntime {
             let holder = SessionHolder(
                 name: name,
                 container: container,
+                generationDefaults: LocalGenerationDefaults.load(fromDirectory: localURL),
                 weightsSizeBytes: loadFootprintBytes,
                 weightsFingerprint: Self.weightsFingerprint(for: localURL),
                 isVLM: isVLM,
@@ -5407,6 +5415,7 @@ public actor ModelRuntime {
         let cfg = await getConfig()
         await MLXBatchAdapter.recordPendingEffectiveGenerationSettings(
             modelName: modelName,
+            modelId: modelId,
             generation: parameters,
             runtimeDefaults: cfg.generation,
             maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
@@ -5487,6 +5496,7 @@ public actor ModelRuntime {
             prepared = try await MLXBatchAdapter.generate(
                 modelName: modelName,
                 container: holder.container,
+                modelDefaults: holder.generationDefaults,
                 buildChat: buildChat,
                 buildToolsSpec: buildTools,
                 buildRawPrompt: rawPromptBuilder,
