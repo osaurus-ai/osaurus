@@ -80,7 +80,8 @@ public enum AgentVerb: String, Sendable, Codable, CaseIterable {
 /// to a natural-language `describe` the `TargetResolver` matches. At least
 /// one is required for element-addressed verbs.
 public struct AgentTarget: Sendable, Equatable {
-    /// 1-based index into the current `AgentView.items`.
+    /// Opaque public mark from the current `AgentView`, resolved with
+    /// `item(mark:)` rather than positional indexing.
     public let mark: Int?
     /// Natural-language fallback (role + label), matched when `mark` is
     /// absent or has gone stale.
