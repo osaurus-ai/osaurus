@@ -412,7 +412,7 @@ public struct ToolsCreate {
                 }
                 
                 api.get_manifest = { ctxPtr in
-                    let manifest = \\"\\"\\"
+                    let manifest = \"\"\"
                     {
                       "plugin_id": "dev.example.\(name)",
                       "name": "\(displayName)",
@@ -443,7 +443,7 @@ public struct ToolsCreate {
                         ]
                       }
                     }
-                    \\"\\"\\"
+                    \"\"\"
                     return makeCString(manifest)
                 }
                 
