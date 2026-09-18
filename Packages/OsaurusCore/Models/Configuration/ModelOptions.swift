@@ -220,7 +220,6 @@ enum ModelProfileRegistry {
         Gemini31FlashImageProfile.self,
         GeminiProImageProfile.self,
         GeminiFlashImageProfile.self,
-        AutoThinkingProfile.self,
     ]
 
     /// Memoized `profile(for:)` results, keyed by model id.
@@ -228,10 +227,10 @@ enum ModelProfileRegistry {
     /// The lookup walks every registered profile and calls `matches`, and
     /// those matchers lowercase the id and run family regexes. SwiftUI reads
     /// this from composer and picker body getters on every evaluation, so the
-    /// scan showed up on the main thread in hang samples. The answer is a pure
-    /// function of the id (`profiles` is a compile-time list), so it can be
-    /// cached for the life of the process. A present key with a `nil` value is
-    /// a valid "no profile matches" hit.
+    /// scan showed up on the main thread in hang samples. Only the name-only
+    /// profiles above are stable for the life of the process. AutoThinkingProfile
+    /// depends on asynchronous, invalidatable bundle discovery and must NEVER
+    /// be memoized here (including its provisional cold miss).
     private static let profileMemoLock = NSLock()
     private nonisolated(unsafe) static var profileMemo: [String: (any ModelProfile.Type)?] = [:]
 
@@ -239,14 +238,17 @@ enum ModelProfileRegistry {
         profileMemoLock.lock()
         let cached = profileMemo[modelId]
         profileMemoLock.unlock()
-        // Outer optional: was the id cached. Inner: did anything match.
-        if let cached { return cached }
-
-        let resolved = profiles.first { $0.matches(modelId: modelId) }
-        profileMemoLock.lock()
-        profileMemo[modelId] = resolved
-        profileMemoLock.unlock()
-        return resolved
+        let named: (any ModelProfile.Type)?
+        if let cached {
+            named = cached
+        } else {
+            named = profiles.first { $0.matches(modelId: modelId) }
+            profileMemoLock.lock()
+            profileMemo.updateValue(named, forKey: modelId)
+            profileMemoLock.unlock()
+        }
+        if let named { return named }
+        return AutoThinkingProfile.matches(modelId: modelId) ? AutoThinkingProfile.self : nil
     }
 
     static func defaults(for modelId: String) -> [String: ModelOptionValue] {
@@ -276,7 +278,9 @@ enum ModelProfileRegistry {
         for modelId: String,
         values: [String: ModelOptionValue]
     ) -> String? {
-        if let explicit = values["reasoningEffort"]?.stringValue { return explicit }
+        if let explicit = normalizedOptions(for: modelId, persisted: values)["reasoningEffort"]?.stringValue {
+            return explicit
+        }
         return reasoningCapabilities(for: modelId)?.defaultLevelId
     }
 
@@ -292,7 +296,7 @@ enum ModelProfileRegistry {
     ) -> String? {
         if let capabilities = reasoningCapabilities(for: modelId), !capabilities.isEmpty {
             let effective =
-                values["reasoningEffort"]?.stringValue ?? capabilities.defaultLevelId
+                effectiveReasoningEffort(for: modelId, values: values) ?? capabilities.defaultLevelId
             return effective.map { ModelReasoningCapabilities.displayLabel(forEffort: $0) }
         }
         guard
@@ -329,7 +333,7 @@ enum ModelProfileRegistry {
         // Do not synthesize profile defaults into requests. Missing values mean
         // "let the model bundle/runtime decide"; only explicit UI/API choices
         // are allowed to reach modelOptions.
-        guard let persisted else { return [:] }
+        guard var persisted else { return [:] }
 
         let allowedIds = Set(definitions.map(\.id))
         // Segment ids allowed per option. A persisted segment value that is no
@@ -340,6 +344,17 @@ enum ModelProfileRegistry {
             if case .segmented(let segments) = def.kind {
                 acc[def.id] = Set(segments.map(\.id))
             }
+        }
+        // An explicit Off from the older toggle remains Off when asynchronous
+        // bundle discovery replaces it with an effort picker. Do not convert
+        // an absent choice into a default or invent an unsupported direct rail.
+        // The boolean took precedence in the adapter when both keys existed;
+        // retain that intent while migrating to the single offered control.
+        if !allowedIds.contains("disableThinking"),
+            persisted["disableThinking"]?.boolValue == true,
+            allowedSegmentValues["reasoningEffort"]?.contains("none") == true
+        {
+            persisted["reasoningEffort"] = .string("none")
         }
         return persisted.filter { key, value in
             guard allowedIds.contains(key) else { return false }

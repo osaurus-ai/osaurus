@@ -919,7 +919,11 @@ final class ChatSession: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in await self?.refreshPickerItems() }
+            Task { @MainActor in
+                guard let self else { return }
+                await self.refreshPickerItems()
+                self.loadActiveModelOptions(for: self.selectedModel)
+            }
         }
 
         localModelsObserver = NotificationCenter.default.addObserver(
@@ -927,7 +931,13 @@ final class ChatSession: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in await self?.refreshPickerItems() }
+            Task { @MainActor in
+                guard let self else { return }
+                await self.refreshPickerItems()
+                // Capability discovery can finish without changing the model
+                // list. Rehydrate explicit controls even in that case.
+                self.loadActiveModelOptions(for: self.selectedModel)
+            }
         }
 
         storageMutationObserver = NotificationCenter.default.addObserver(
@@ -1287,10 +1297,7 @@ final class ChatSession: ObservableObject {
         // per-model toggles do not leak into families whose option surface
         // changed. This runs for both user-picked and programmatic model
         // selection paths.
-        activeModelOptions = ModelProfileRegistry.normalizedOptions(
-            for: model,
-            persisted: ModelOptionsStore.shared.loadOptions(for: model)
-        )
+        activeModelOptions = ModelOptionsStore.shared.loadOptions(for: model) ?? [:]
     }
 
     /// Stable session id used as the AgentTodoStore key. Falls back to a
@@ -6257,8 +6264,10 @@ final class ChatSession: ObservableObject {
                 _ = await LocalReasoningCapability.resolveForDispatch(modelId: modelId)
             }
             guard self.isRunActive(runId) else { return }
-            if self.selectedModel == turnModelId,
-                self.activeModelOptions.isEmpty,
+            if let turnModelId,
+                self.selectedModel == turnModelId,
+                self.activeModelOptions == turnModelOptions,
+                ModelOptionsStore.shared.storedExplicitOptions(for: turnModelId) == storedTurnModelOptions,
                 let recovered = turnGenerationControls.modelOptions
             {
                 self.activeModelOptions = recovered
@@ -8462,6 +8471,9 @@ final class ChatSession: ObservableObject {
             await ChatExecutionContext.$currentEnableThinking.withValue(
                 turnGenerationControls.enableThinking
             ) { [self] () async -> Void in
+            await ChatExecutionContext.$currentReasoningEffort.withValue(
+                turnGenerationControls.reasoningEffort
+            ) { [self] () async -> Void in
             // Same flag `turnToMessage` uses to encode tool-turn images, so
             // `file_read` never stages an image the request would drop.
             await ChatExecutionContext.$toolResultImagesEnabled.withValue(
@@ -8469,6 +8481,7 @@ final class ChatSession: ObservableObject {
             ) { [self] () async -> Void in
                 await runTurn()
             }  // ChatExecutionContext.$toolResultImagesEnabled.withValue
+            }  // ChatExecutionContext.$currentReasoningEffort.withValue
             }  // ChatExecutionContext.$currentEnableThinking.withValue
             }  // ChatExecutionContext.$currentModelName.withValue
             }  // ChatExecutionContext.$currentUserRequest.withValue

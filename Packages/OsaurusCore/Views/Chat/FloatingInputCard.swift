@@ -2699,7 +2699,9 @@ extension FloatingInputCard {
         guard let model = selectedModel,
             !isRemoteAgentRun,
             inlineReasoningSuffix == nil,
-            ModelProfileRegistry.profile(for: model)?.thinkingOption != nil
+            let option = ModelProfileRegistry.profile(for: model)?.thinkingOption,
+            activeProfileOptions.contains(where: { $0.id == option.id }),
+            thinkingPresentationIsReady(for: model)
         else { return nil }
         return effectiveThinkingEnabled(for: model)
     }
@@ -2720,6 +2722,11 @@ extension FloatingInputCard {
             modelOptions: activeModelOptions,
             capability: LocalReasoningCapability.capability(forModelId: model)
         )
+    }
+
+    private func thinkingPresentationIsReady(for model: String) -> Bool {
+        ModelProfileRegistry.thinkingEnabled(for: model, values: activeModelOptions) != nil
+            || LocalReasoningCapability.capabilityForPresentation(forModelId: model) != nil
     }
 
     private var selectorRow: some View {
@@ -3263,7 +3270,7 @@ extension FloatingInputCard {
         // MTP lives in GLOBAL server settings, not the per-model option store,
         // because the depth is consumed when the model loads. Render it from
         // there so the row cannot disagree with what the engine will do.
-        var values = activeModelOptions
+        var values = ModelProfileRegistry.normalizedOptions(for: model, persisted: activeModelOptions)
         var displayDefaults = defaults
         if options.contains(where: { $0.id == Self.nativeMTPOptionID }) {
             let identity = Self.mtpIdentity(model)
@@ -3296,7 +3303,11 @@ extension FloatingInputCard {
                 // resizing the anchor during the popover's own update
                 // crashes NSPopover.
                 DispatchQueue.main.async {
+                    guard selectedModel == model else { return }
                     var updated = activeModelOptions
+                    if optionId == "reasoningEffort" {
+                        updated.removeValue(forKey: "disableThinking")
+                    }
                     if let newValue {
                         updated[optionId] = newValue
                     } else {
@@ -3323,7 +3334,9 @@ extension FloatingInputCard {
     /// server-side, so a local toggle wouldn't reach it.
     private func modelPickerThinkingControl(for model: String) -> ModelPickerThinkingControl? {
         guard !isRemoteAgentRun,
-            ModelProfileRegistry.profile(for: model)?.thinkingOption != nil
+            let option = ModelProfileRegistry.profile(for: model)?.thinkingOption,
+            activeProfileOptions.contains(where: { $0.id == option.id }),
+            thinkingPresentationIsReady(for: model)
         else { return nil }
         let explicitEnabled = ModelProfileRegistry.thinkingEnabled(
             for: model,
@@ -3349,6 +3362,7 @@ extension FloatingInputCard {
     /// the picker row. Inverted profiles such as `disableThinking` must never
     /// toggle their raw persisted boolean directly.
     private func persistThinkingOverride(_ enabled: Bool?, for model: String) {
+        guard selectedModel == model else { return }
         guard let thinkingOpt = ModelProfileRegistry.profile(for: model)?.thinkingOption else {
             return
         }

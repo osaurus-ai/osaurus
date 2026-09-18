@@ -332,7 +332,8 @@ final class AppleScriptKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
             dictionaryContext: knowledge.dictionary,
             recipeContext: knowledge.recipes,
             literals: literals,
-            enableThinking: scope.enableThinking(forDelegatedModel: resolved.name)
+            enableThinking: scope.enableThinking(forDelegatedModel: resolved.name),
+            reasoningEffort: scope.reasoningEffort(forDelegatedModel: resolved.name)
         )
         return try Self.mapOutcome(result, model: resolved.name, mode: mode)
     }

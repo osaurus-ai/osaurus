@@ -278,6 +278,7 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
                 vision: evalHarness.vision,
                 sessionId: scope.sessionId,
                 enableThinking: scope.enableThinking(forDelegatedModel: resolved.name),
+                reasoningEffort: scope.reasoningEffort(forDelegatedModel: resolved.name),
                 nextAction: evalHarness.scriptedActions.map {
                     ComputerUseLoop.scriptedProvider(rawArguments: $0)
                 }
@@ -326,7 +327,8 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
             policySummary: config.policySummary,
             vision: config.vision,
             sessionId: scope.sessionId,
-            enableThinking: scope.enableThinking(forDelegatedModel: resolved.name)
+            enableThinking: scope.enableThinking(forDelegatedModel: resolved.name),
+            reasoningEffort: scope.reasoningEffort(forDelegatedModel: resolved.name)
         )
 
         await MainActor.run {

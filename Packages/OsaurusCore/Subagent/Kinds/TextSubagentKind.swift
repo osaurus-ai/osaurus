@@ -1018,7 +1018,8 @@ final class TextSubagentKind:
                 sessionId: sessionId,
                 temperature: temperature,
                 enableThinking: scope.enableThinking(forDelegatedModel: resolved.name),
-                isInterrupted: { interrupt.isInterrupted },
+                    reasoningEffort: scope.reasoningEffort(forDelegatedModel: resolved.name),
+                    isInterrupted: { interrupt.isInterrupted },
                 toolset: toolset,
                 onProgress: { [feed] tokens, tokensPerSecond in
                     // Live "generating" row: coalesced in place by the feed, so

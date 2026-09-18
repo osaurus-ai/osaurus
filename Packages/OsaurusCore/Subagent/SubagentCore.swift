@@ -37,19 +37,22 @@ public struct SubagentScope: Sendable, Equatable {
     /// Explicit parent-turn Thinking choice. Nil preserves the nested model's
     /// own bundle default; true/false must survive every reconstructed step.
     public let enableThinking: Bool?
+    public let reasoningEffort: String?
 
     public init(
         sessionId: String,
         toolCallId: String,
         agentId: UUID,
         parentModelName: String? = nil,
-        enableThinking: Bool? = nil
+        enableThinking: Bool? = nil,
+        reasoningEffort: String? = nil
     ) {
         self.sessionId = sessionId
         self.toolCallId = toolCallId
         self.agentId = agentId
         self.parentModelName = parentModelName
         self.enableThinking = enableThinking
+        self.reasoningEffort = reasoningEffort
     }
 
     /// Resolve from the active chat execution context. Outside chat we fall
@@ -70,7 +73,8 @@ public struct SubagentScope: Sendable, Equatable {
             toolCallId: ChatExecutionContext.currentToolCallId ?? UUID().uuidString,
             agentId: ChatExecutionContext.currentAgentId ?? Agent.defaultId,
             parentModelName: ChatExecutionContext.currentModelName,
-            enableThinking: ChatExecutionContext.currentEnableThinking
+            enableThinking: ChatExecutionContext.currentEnableThinking,
+            reasoningEffort: ChatExecutionContext.currentReasoningEffort
         )
     }
 
@@ -90,6 +94,15 @@ public struct SubagentScope: Sendable, Equatable {
             model.caseInsensitiveCompare(parent) == .orderedSame
         else { return nil }
         return enableThinking
+    }
+
+    /// The same model scope applies to effort Off/Low/etc. A different child
+    /// must use its own choices, not the parent's possibly unsupported levels.
+    public func reasoningEffort(forDelegatedModel model: String?) -> String? {
+        guard let parent = parentModelName, let model,
+            model.caseInsensitiveCompare(parent) == .orderedSame
+        else { return nil }
+        return reasoningEffort
     }
 }
 

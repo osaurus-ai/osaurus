@@ -331,7 +331,8 @@ public enum AppleScriptLoop {
         requestAccessibility: (@Sendable () -> Void)? = nil,
         compileCheck: AppleScriptCompileCheck? = nil,
         samplingTemperature: Double? = nil,
-        enableThinking: Bool? = nil
+        enableThinking: Bool? = nil,
+        reasoningEffort: String? = nil
     ) async -> AppleScriptRunResult {
         let runStarted = Date()
         let deadline = runStarted.addingTimeInterval(limits.wallClockSeconds)
@@ -794,7 +795,8 @@ public enum AppleScriptLoop {
                     sessionId: sessionId,
                     messages: stepMessages,
                     samplingTemperature: samplingTemperature,
-                    enableThinking: enableThinking
+                    enableThinking: enableThinking,
+                    reasoningEffort: reasoningEffort
                 )
             }
 
@@ -2400,7 +2402,8 @@ public enum AppleScriptLoop {
         sessionId: String,
         messages: [ChatMessage],
         samplingTemperature: Double? = nil,
-        enableThinking: Bool?
+        enableThinking: Bool?,
+        reasoningEffort: String?
     ) async throws -> ModelStepResult {
         var req = ChatCompletionRequest(
             model: modelId,
@@ -2423,6 +2426,7 @@ public enum AppleScriptLoop {
         req.samplingParametersAreImplicit = samplingTemperature == nil
         req.isAgentRequest = true
         req.enable_thinking = enableThinking
+        req.reasoning_effort = reasoningEffort
         let generateStarted = Date()
         let response = try await engine.completeChat(request: req)
         AppleScriptTraceLog.record(

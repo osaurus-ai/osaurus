@@ -238,6 +238,7 @@ final class BrowserUseKind: SubagentKind, SubagentPostAdmissionResidencyPlanning
             deadline: deadline,
             sessionId: sessionId,
             enableThinking: scope.enableThinking(forDelegatedModel: resolved.name),
+            reasoningEffort: scope.reasoningEffort(forDelegatedModel: resolved.name),
             isInterrupted: { interrupt.isInterrupted },
             toolset: toolset,
             onProgress: { [feed] tokens, tokensPerSecond in

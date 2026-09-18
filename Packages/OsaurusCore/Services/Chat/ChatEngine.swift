@@ -42,7 +42,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         agentModelOptionsProvider:
             @escaping @Sendable (String) async ->
             [String: ModelOptionValue]? = { modelId in
-                await MainActor.run {
+                _ = await LocalReasoningCapability.resolveForDispatch(modelId: modelId)
+                return await MainActor.run {
                     ModelOptionsStore.shared.loadOptions(for: modelId)
                 }
             },

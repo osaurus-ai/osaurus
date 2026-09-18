@@ -1129,33 +1129,35 @@ public enum SubagentSession {
                 prepared.scope.sessionId
             ) {
                 try await ChatExecutionContext.$currentAgentId.withValue(prepared.scope.agentId) {
-                    try await ChatExecutionContext.$currentEnableThinking.withValue(
-                        prepared.scope.enableThinking
-                    ) {
-                        try await ChatExecutionContext.$currentToolCallId.withValue(
-                            prepared.scope.toolCallId
+                    try await ChatExecutionContext.$currentReasoningEffort.withValue(prepared.scope.reasoningEffort) {
+                        try await ChatExecutionContext.$currentEnableThinking.withValue(
+                            prepared.scope.enableThinking
                         ) {
-                            try await SubagentSession.$activeKindId.withValue(
-                                prepared.kind.capability.id
+                            try await ChatExecutionContext.$currentToolCallId.withValue(
+                                prepared.scope.toolCallId
                             ) {
-                                try await effectiveHandoff.around(
-                                    scope: prepared.scope,
-                                    resolved: prepared.resolved,
-                                    feed: feed
+                                try await SubagentSession.$activeKindId.withValue(
+                                    prepared.kind.capability.id
                                 ) {
-                                    let result = try await prepared.kind.run(
-                                        prepared.scope,
-                                        prepared.resolved,
-                                        feed: feed,
-                                        interrupt: interrupt
-                                    )
-                                    if captureProcessCacheSnapshot,
-                                        prepared.resolved.isLocal
-                                    {
-                                        cacheCapture.value =
-                                            await ModelRuntime.batchDiagnosticsSnapshot()
+                                    try await effectiveHandoff.around(
+                                        scope: prepared.scope,
+                                        resolved: prepared.resolved,
+                                        feed: feed
+                                    ) {
+                                        let result = try await prepared.kind.run(
+                                            prepared.scope,
+                                            prepared.resolved,
+                                            feed: feed,
+                                            interrupt: interrupt
+                                        )
+                                        if captureProcessCacheSnapshot,
+                                            prepared.resolved.isLocal
+                                        {
+                                            cacheCapture.value =
+                                                await ModelRuntime.batchDiagnosticsSnapshot()
+                                        }
+                                        return result
                                     }
-                                    return result
                                 }
                             }
                         }
