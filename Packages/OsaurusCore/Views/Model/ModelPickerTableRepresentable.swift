@@ -149,6 +149,7 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
         coordinator.setupHoverTracking(on: tableView)
         coordinator.setupScrollObservation(for: scrollView)
         coordinator.installKeyMonitor()
+        coordinator.installDebugMouseMonitor()
 
         coordinator.onSelectModel = onSelectModel
         coordinator.onSwitchTab = onSwitchTab
@@ -183,6 +184,7 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
 
     static func dismantleNSView(_ nsView: NSScrollView, coordinator: Coordinator) {
         coordinator.removeKeyMonitor()
+        coordinator.removeDebugMouseMonitor()
     }
 
     private static func makeTableView() -> HoverTrackingTableView {
@@ -366,6 +368,11 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
     private var onAccessory: (() -> Void)?
 
     private var accessoryKind: RowAccessoryKind = .none
+
+    /// Temporary: favourite-control state for the hover debug log.
+    var debugAccessoryState: String {
+        "kind=\(accessoryKind) hidden=\(accessoryButton.isHidden) frame=\(accessoryButton.frame) bounds=\(bounds)"
+    }
 
     // structural flags from the last configure, compared against incoming
     // values to skip relayout when nothing structural changed
@@ -969,6 +976,71 @@ extension ModelPickerTableRepresentable {
         private var keyMonitor: Any?
         private var isScrolling = false
 
+        // MARK: Debug (temporary)
+
+        private var debugMouseMonitor: Any?
+        private var debugLastRawSignature = ""
+
+        private func dbg(_ message: @autoclosure () -> String) {
+            #if DEBUG
+                ModelPickerDebugLog.log(message())
+            #endif
+        }
+
+        /// Geometry snapshot: a stale/short table frame shows up as
+        /// `lastRowMaxY > frameH`.
+        private func debugGeometry() -> String {
+            guard let tableView else { return "table=nil" }
+            let clip = tableView.enclosingScrollView?.contentView
+            let last = tableView.numberOfRows - 1
+            let lastRect = last >= 0 ? tableView.rect(ofRow: last) : .zero
+            let areas = tableView.trackingAreas.map { "\($0.rect)" }.joined(separator: ",")
+            return "rows=\(tableView.numberOfRows) ids=\(rowIds.count) frame=\(tableView.frame) "
+                + "visible=\(tableView.visibleRect) clipBounds=\(clip?.bounds ?? .zero) "
+                + "clipFrame=\(clip?.frame ?? .zero) scrollFrame=\(tableView.enclosingScrollView?.frame ?? .zero) "
+                + "lastRowRect=\(lastRect) tracking=[\(areas)] flipped=\(tableView.isFlipped) "
+                + "inLiveResize=\(tableView.inLiveResize) isScrolling=\(isScrolling)"
+        }
+
+        /// Raw pointer monitor, independent of the tracking area: shows where
+        /// the pointer is, which row it maps to, and which view hit-tests
+        /// there even when `mouseMoved` never reaches the table.
+        func installDebugMouseMonitor() {
+            #if DEBUG
+                dbg("=== picker open ===")
+                debugMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown]) {
+                    [weak self] event in
+                    MainActor.assumeIsolated { self?.debugLogRaw(event) }
+                    return event
+                }
+            #endif
+        }
+
+        func removeDebugMouseMonitor() {
+            if let monitor = debugMouseMonitor {
+                NSEvent.removeMonitor(monitor)
+                debugMouseMonitor = nil
+            }
+        }
+
+        private func debugLogRaw(_ event: NSEvent) {
+            guard let tableView, let window = tableView.window, event.window === window else { return }
+            let point = tableView.convert(event.locationInWindow, from: nil)
+            let row = tableView.row(at: point)
+            let hit = window.contentView?.hitTest(event.locationInWindow)
+            let hitName = hit.map { String(describing: type(of: $0)) } ?? "nil"
+            let isDown = event.type == .leftMouseDown
+            // One line per (row, hit view) change keeps the file readable.
+            let signature = "\(row)|\(hitName)|\(tableView.bounds.contains(point))"
+            guard isDown || signature != debugLastRawSignature else { return }
+            debugLastRawSignature = signature
+            dbg(
+                "raw \(isDown ? "DOWN" : "move") win=\(event.locationInWindow) pt=\(point) row=\(row) "
+                    + "inBounds=\(tableView.bounds.contains(point)) inVisible=\(tableView.visibleRect.contains(point)) "
+                    + "hit=\(hitName) hovered=\(hoveredRowId ?? "nil") | \(debugGeometry())"
+            )
+        }
+
         // MARK: Cached Theme Colors & Images
 
         private var colors = ThemeColorCache(theme: LightTheme())
@@ -1040,7 +1112,10 @@ extension ModelPickerTableRepresentable {
 
         func setupHoverTracking(on tableView: HoverTrackingTableView) {
             tableView.onMouseMoved = { [weak self] event in self?.handleMouseMoved(with: event) }
-            tableView.onMouseExited = { [weak self] in self?.setHoveredRow(nil) }
+            tableView.onMouseExited = { [weak self] in
+                self?.dbg("tracking mouseExited")
+                self?.setHoveredRow(nil)
+            }
         }
 
         func setupScrollObservation(for scrollView: NSScrollView) {
@@ -1059,8 +1134,15 @@ extension ModelPickerTableRepresentable {
             )
         }
 
-        @objc private func onScrollStart() { isScrolling = true; setHoveredRow(nil) }
-        @objc private func onScrollEnd() { isScrolling = false }
+        @objc private func onScrollStart() {
+            dbg("scroll START")
+            isScrolling = true
+            setHoveredRow(nil)
+        }
+        @objc private func onScrollEnd() {
+            isScrolling = false
+            dbg("scroll END | \(debugGeometry())")
+        }
 
         // MARK: Keyboard Navigation
 
@@ -1178,6 +1260,7 @@ extension ModelPickerTableRepresentable {
                     else { continue }
                     resized.insert(index)
                 }
+                dbg("applyRows same-ids count=\(newIds.count) resized=\(resized.count)")
                 rowLookup = newLookup
                 if !resized.isEmpty {
                     NSAnimationContext.runAnimationGroup { context in
@@ -1200,6 +1283,7 @@ extension ModelPickerTableRepresentable {
             snapshot.appendSections([.main])
             snapshot.appendItems(rowIds, toSection: .main)
             dataSource?.apply(snapshot, animatingDifferences: false)
+            dbg("applyRows snapshot count=\(rowIds.count) dupes=\(newIds.count - rowIds.count) | \(debugGeometry())")
         }
 
         private func rebuildIndexMaps() {
@@ -1303,9 +1387,15 @@ extension ModelPickerTableRepresentable {
         // MARK: Hover
 
         private func handleMouseMoved(with event: NSEvent) {
-            guard !isScrolling, let tableView else { return }
+            guard !isScrolling, let tableView else {
+                dbg("tracking moved DROPPED isScrolling=\(isScrolling)")
+                return
+            }
             let point = tableView.convert(event.locationInWindow, from: nil)
             let row = tableView.row(at: point)
+            if row < 0 || row >= rowIds.count || rowIds[row] != hoveredRowId {
+                dbg("tracking moved pt=\(point) row=\(row) ids=\(rowIds.count)")
+            }
             guard row >= 0, row < rowIds.count else { return setHoveredRow(nil) }
             setHoveredRow(rowIds[row])
         }
@@ -1316,8 +1406,19 @@ extension ModelPickerTableRepresentable {
             hoveredRowId = newRowId
 
             for targetId in [oldRowId, newRowId] {
-                guard let targetId, let idx = rowIdToIndex[targetId] else { continue }
+                guard let targetId, let idx = rowIdToIndex[targetId] else {
+                    if let targetId { dbg("hover NO INDEX for \(targetId)") }
+                    continue
+                }
                 reconfigureCell(at: idx)
+                let cell = tableView?.view(atColumn: 0, row: idx, makeIfNecessary: false)
+                dbg(
+                    "hover \(targetId == newRowId ? "ON" : "off") idx=\(idx)/\(rowIds.count) "
+                        + "cell=\(cell.map { String(describing: type(of: $0)) } ?? "NIL") cellFrame=\(cell?.frame ?? .zero) "
+                        + "rowRect=\(tableView?.rect(ofRow: idx) ?? .zero) inLookup=\(rowLookup[targetId] != nil) "
+                        + "fav=\(rowLookup[targetId]?.isFavorite ?? false) "
+                        + "accessory=[\((cell as? ModelRowCellView)?.debugAccessoryState ?? "-")]"
+                )
             }
         }
 
