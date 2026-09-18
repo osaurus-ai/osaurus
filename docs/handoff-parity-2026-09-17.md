@@ -1,9 +1,12 @@
 # Local subagent handoff parity
 
-NOW: Focused correction on merged main ebabfb72ad1fd9b1a37b542e1c276d2961e620f8.
+NOW: Main through97a3903804783b75f8f5d9e79188306a2cbe853c is consumed. Fresh
+combined-source native ON/OFF, same-model batch, custom-parent and idle rows
+are recorded below with their explicit limits; no release is involved.
 DO NOT: Claim full runtime proof, change global eviction policy, or unload unrelated owners.
 BATCH OWNER: Parent identity, post-admission residency and AppleScript warm ownership.
-NEXT: Run deterministic regressions, a fresh isolated development app, affected evals and exact-head CI before merge.
+NEXT: Complete applicable auxiliary/native rows and current-head CI; do not
+substitute the old helper quality failures with the new lifecycle evidence.
 
 ## Source defects and correction
 
@@ -87,3 +90,62 @@ Raw receipts: private implementation/run3-applescript-transcript.json,
 run3-applescript-details.ax.txt/png, run3-applescript-followup.ax.txt/png,
 run3-followup-health.json, run3.oslog and UI3 supervisor artifacts. These do not
 prove the subsequent keep-parent changes.
+
+## September18 current integration evidence
+
+App source `3ac01d845a93441648a7da1e39fbb3221701f5f1`, engine
+`6c4fee39fd10284dcefb8115d79b163ec7ca329c`; binarySHA256
+`50e35c5041d19e5725d9774cd348a135d2ee660af1ac75a3e1c28576a657051c`.
+This is a named integration build containing this patch, #2798, #2806 and the
+now-merged #2813 cancellation fix, not an individual-PR binary. Bundle-native
+samplers were preserved. Max2 local-model proof was explicitly authorized.
+
+Native Settings showed Strict (One Model), RAM checksON, idle30seconds:
+
+- SwapON Coordinator→Writer: real Gemma E2B8bit unload → real Qwen0.6B8bit
+  load/run → child unload → Gemma reload → parent final. Tool phase receipt
+  measured1.12s handoff/resampling and2.28s restoration. Parent naturalstop,
+  30tokens84.5tok/s. Child526tokens109.1tok/s wall-summary rate, but its cache
+  explanation contained factual errors/needs_input; lifecycle proof, not a
+  clean model-quality pass.
+- Actual global SwapOFF change, then Coordinator→Writer: health sampled both
+  models resident while Qwen was inflight, modecoexist/handofffalse. Child
+  cleanup unloaded only Qwen; Gemma continued without handoff reload. Parent
+  16tokens82.1tok/s, correct391 and naturalstop. Child576tokens166.7tok/s wall
+  summary; correct230+161 but unnecessary needs_input wrapper retained.
+- Custom SysAdmin→Writer with the same OFF setting also reported coexist,
+  no handoff/no RAM refusal, child348tokens127tok/s wall-summary and parent
+  21tokens89.7tok/s. Quality FAIL: child unnecessarily asked for input and
+  parent invented incorrect partial products. Raw thinking had correct399;
+  it was not substituted for the visible answer or used to mask the failure.
+- Native same-model two-child generation retained both calls and returned
+  FIRST_CHILD_OK/SECOND_CHILD_OK. The model selected SysAdmin+VL DevToolsProof
+  when Writer was absent from that run's curated model root: routing deviation
+  retained. Child engine decode92.3/91.3tok/s; parent86.3tok/s. A subsequent
+  turn recalled both markers at86.1tok/s. No RAM refusal.
+- Native Stop during prefill and a separate actual child generation settled
+  the UI and drained leases; later turns completed. This is not still-cold
+  weight-load cancellation proof. Prefill-cancel row generated0tokens;
+  cancelled child's103.8tok/s is estimated, not authoritative STEP-STATS.
+- Keep Model Loaded OFF produced measured30.06–30.12s post-completion unloads.
+  ON/save stayed resident beyond30s, persisted checked on actual app relaunch;
+  OFF/save restored30s unloading after the handoff hold was released.
+- Agents→SysAdmin→Abilities→Subagents visibly points to global Settings→
+  Orchestrator for local swapping/memory checks, with no second toggles there.
+
+Raw receipt root `/Users/eric/vmlx-private-evidence/runtime-followup-2026-09-18`:
+`NATIVE-PROOF-3AC01.md`, run3/run4 OS logs, launch identities, physical-footprint
+samplers, and `live-captures/run4-{swap-off-result,custom-off-result}` transcripts.
+Actual native controls and expanded cards were visually inspected. Run3 normal
+quit: peak tracked2.78GiB, swap1.67GiB unchanged, zero owned survivors. Run4
+remained active at this checkpoint; its final resource summary is not assumed.
+
+PR428cd243 exact-head CI35331570107 passed all seven jobs. #2813 exact-head
+CI35339548291 passed all seven jobs, including prior failing cancellation suite;
+its source-extracted fixture propagated800/800 ordinary and2/2 gated cancellations
+while retaining4/4 normal two-call drains. After consuming merged97a39038 and
+this documentation update, new exact-head CI is still required. No fresh16GB
+emulation, Computer Use execution, image producer or compaction proof is claimed
+by the above rows. Existing independent-job protection and ownership boundaries
+remain explicit rather than promising all concurrent background work follows
+an unrelated foreground parent.
