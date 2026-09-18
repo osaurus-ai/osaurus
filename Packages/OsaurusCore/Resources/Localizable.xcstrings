@@ -271775,6 +271775,108 @@
           }
         }
       }
+    },
+    "%d-day free trial, then %@. Cancel anytime.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d Tage kostenlos testen, danach %@. Jederzeit kündbar."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d일 무료 체험 후 %@. 언제든지 해지할 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d дней бесплатного пробного периода, затем %@. Отмена в любое время."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d 天免费试用，之后 %@。可随时取消。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d 天免費試用，之後 %@。可隨時取消。"
+          }
+        }
+      }
+    },
+    "Start with a %d-day free trial. Cancel anytime.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Starte mit %d Tagen kostenloser Testphase. Jederzeit kündbar."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d일 무료 체험으로 시작하세요. 언제든지 해지할 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Начните с %d дней бесплатного пробного периода. Отмена в любое время."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "从 %d 天免费试用开始。可随时取消。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "從 %d 天免費試用開始。可隨時取消。"
+          }
+        }
+      }
+    },
+    "Create a workspace, share your agents, and invite teammates with a link. They chat with your agents from their own Osaurus.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Erstelle einen Workspace, teile deine Agenten und lade Teammitglieder per Link ein. Sie chatten mit deinen Agenten aus ihrem eigenen Osaurus."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "워크스페이스를 만들고 에이전트를 공유한 뒤 링크로 팀원을 초대하세요. 팀원은 자신의 Osaurus에서 당신의 에이전트와 대화합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Создайте пространство, поделитесь агентами и пригласите коллег по ссылке. Они общаются с вашими агентами из своего Osaurus."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "创建工作区，共享你的代理，并通过链接邀请队友。队友可在自己的 Osaurus 中与你的代理对话。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "建立工作區，共享你的代理，並透過連結邀請隊友。隊友可在自己的 Osaurus 中與你的代理對話。"
+          }
+        }
+      }
     }
   },
   "version": "1.1"

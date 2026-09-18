@@ -302,9 +302,11 @@ let package = Package(
         // and validates complete model-owned disk state before live restore.
         // vmlx-swift#479 retains Gemma image and tool history during explicit
         // tool selection, keeping rendered image slots aligned with pixels.
+        // Also preserves the Bonsai2 strict Hadamard/packed ternary loading,
+        // native Qwen template/schema handling and multimodal tool history.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "29e681dfc25e0afa114fcde4a886d77ecc244323"
+            revision: "87a686e929c4bbd9e99728126b30095339d0df5b"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
