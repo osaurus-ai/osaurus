@@ -146,7 +146,7 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
 
         coordinator.tableView = tableView
         coordinator.setupDataSource(for: tableView)
-        coordinator.setupHoverTracking(on: tableView)
+        coordinator.setupHoverTracking(on: scrollView)
         coordinator.setupScrollObservation(for: scrollView)
         coordinator.installKeyMonitor()
         coordinator.installDebugMouseMonitor()
@@ -208,8 +208,8 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
         return tv
     }
 
-    private static func makeScrollView(documentView: NSView) -> NSScrollView {
-        let sv = NSScrollView()
+    private static func makeScrollView(documentView: NSView) -> HoverTrackingScrollView {
+        let sv = HoverTrackingScrollView()
         sv.documentView = documentView
         sv.hasVerticalScroller = true
         sv.hasHorizontalScroller = false
@@ -222,6 +222,38 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
 }
 
 // MARK: - AppKit Helpers
+
+/// Scroll view that owns the picker's hover tracking area. The area lives here
+/// rather than on the table because the table is the scrolling document view:
+/// its frame grows and shrinks with the row count (tab switches, async model
+/// refresh), and an `.inVisibleRect` area on it kept the extent of the first,
+/// shorter list — rows below that line never received `mouseMoved`, so they
+/// never hovered and never showed the favourite heart. The scroll view's
+/// bounds are the viewport itself, so the area always covers every visible row.
+final class HoverTrackingScrollView: NSScrollView {
+    var onMouseMoved: ((NSEvent) -> Void)?
+    var onMouseExited: (() -> Void)?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas where area.owner === self {
+            removeTrackingArea(area)
+        }
+        addTrackingArea(
+            NSTrackingArea(
+                rect: .zero,
+                options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+                owner: self,
+                userInfo: nil
+            )
+        )
+    }
+
+    override func mouseMoved(with event: NSEvent) { onMouseMoved?(event) }
+    override func mouseEntered(with event: NSEvent) { onMouseMoved?(event) }
+    override func mouseExited(with event: NSEvent) { onMouseExited?() }
+}
+
 
 @MainActor
 private func makeLabel(lineBreakMode: NSLineBreakMode = .byTruncatingTail) -> NSTextField {
@@ -1110,9 +1142,9 @@ extension ModelPickerTableRepresentable {
             tableView.delegate = self
         }
 
-        func setupHoverTracking(on tableView: HoverTrackingTableView) {
-            tableView.onMouseMoved = { [weak self] event in self?.handleMouseMoved(with: event) }
-            tableView.onMouseExited = { [weak self] in
+        func setupHoverTracking(on scrollView: HoverTrackingScrollView) {
+            scrollView.onMouseMoved = { [weak self] event in self?.handleMouseMoved(with: event) }
+            scrollView.onMouseExited = { [weak self] in
                 self?.dbg("tracking mouseExited")
                 self?.setHoveredRow(nil)
             }
@@ -1141,6 +1173,7 @@ extension ModelPickerTableRepresentable {
         }
         @objc private func onScrollEnd() {
             isScrolling = false
+            refreshHoverAtPointer()
             dbg("scroll END | \(debugGeometry())")
         }
 
@@ -1398,6 +1431,16 @@ extension ModelPickerTableRepresentable {
             }
             guard row >= 0, row < rowIds.count else { return setHoveredRow(nil) }
             setHoveredRow(rowIds[row])
+        }
+
+        /// Re-resolve hover from the pointer's resting position: rows moved
+        /// under it during the scroll, and no `mouseMoved` arrives until the
+        /// pointer itself moves.
+        private func refreshHoverAtPointer() {
+            guard let tableView, let window = tableView.window else { return }
+            let point = tableView.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+            let row = tableView.visibleRect.contains(point) ? tableView.row(at: point) : -1
+            setHoveredRow(row >= 0 && row < rowIds.count ? rowIds[row] : nil)
         }
 
         private func setHoveredRow(_ newRowId: String?) {
