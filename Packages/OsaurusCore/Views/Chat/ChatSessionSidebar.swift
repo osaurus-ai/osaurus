@@ -2155,12 +2155,12 @@ private struct AgentSidebarRow: View {
     private func liveStatusLine(_ status: SessionActivityMonitor.Status) -> String {
         switch status {
         case .waitingForInput:
-            return L("Needs your input")
+            return LCached("Needs your input")
         case .working:
             if let step = activityStep?.trimmingCharacters(in: .whitespacesAndNewlines), !step.isEmpty {
-                return "\(L("Working")) · \(step)"
+                return "\(LCached("Working")) · \(step)"
             }
-            return L("Working…")
+            return LCached("Working…")
         }
     }
 }
