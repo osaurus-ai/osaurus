@@ -300,9 +300,11 @@ let package = Package(
         // f16 seed into bf16 streams; dequant math keeps exact f16 metadata).
         // vmlx-swift#475 corrects GLM media prefill and ordered image history,
         // and validates complete model-owned disk state before live restore.
+        // vmlx-swift#479 retains Gemma image and tool history during explicit
+        // tool selection, keeping rendered image slots aligned with pixels.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "8ba593aff16c13cf526211b8477c0a037f0122af"
+            revision: "29e681dfc25e0afa114fcde4a886d77ecc244323"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

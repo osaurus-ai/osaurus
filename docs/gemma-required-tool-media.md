@@ -13,7 +13,8 @@ required tool selection when the user explicitly names an available tool.
 This is separate from #2805's typed MCP tool-result attachment conversion.
 The correction preserves the earlier tool-selection wording, family gate,
 schema filtering, cache-selection policy and text-only behavior. It changes
-no sampler, template, RAM admission, engine pin or tool-execution policy.
+no sampler, template, RAM admission or tool-execution policy. A companion
+engine correction is pinned below for the separate history loss found live.
 
 The original message's ordered media/text parts, local audio sample alignment,
 tool-call fields, reasoning metadata and Responses carriers survive. The same
@@ -44,9 +45,37 @@ compiled and completed with four failing methods/eight parameterized cases,
 video/audio and opaque-field loss; the text/no-op cases passed. The unmodified
 production helper also mapped an image-only request to zero MLX images.
 
-## Remaining verification
+## App correction and separate engine history failure
 
-The correction is implemented but not yet qualified. Required before merge:
+At app `530c2f12e8afd815c8d578fceeb73460b5443bec`, binary
+`63699d39b89c09e671928fb177746f47efccdcff2f3950638798ab4fe990fecd`,
+202 tests in 15 suites completed without failures. All eight single-image
+complete/streamed auto/named/required API rows retained media and returned the
+observed shapes/word, 90.18–92.19 tok/s. Native first-image `file_write` and
+`file_read` continuation completed visibly.
+
+The subsequent native image turn failed before decode: the engine removed an
+earlier image message while preparing both images, leaving one placeholder
+for two images (maskedScatter 860160 values/430080 positions). Six paired
+history requests also isolated loss/mismatch to required/named tool selection.
+This originates in May 27 engine commits `2be648a3`/`447d2a07`, not #2805's MCP
+correction or this app's full-message preservation.
+
+Engine PR #479, pin `29e681dfc25e0afa114fcde4a886d77ecc244323`, removes those
+two destructive VLM/text adapters. Its regression-only baseline failed 18/33
+cases; the correction passed all 33 plus the selected parser/media/cache tests
+(82 Swift Testing tests, 12 XCTest cases), repeated. Both old scalar-system and
+structured tool-result handling remain. Four app pin sites and two pin tripwires
+are updated together; other dependencies are unchanged.
+
+Full baseline catalogs at `530c2f12`: AgentLoop 40 passed/10 failed/2 errored/
+4 skipped of 56; Frontier 23 passed/16 failed/3 errored of 42. Every nonpass and
+rubric was reviewed in `EVAL-REVIEW-530.md`; these are not corrected-head results
+and not an all-pass claim. The 128GB host is not 16GB RAM qualification.
+
+## Remaining verification — PARTIAL
+
+The combined correction is implemented but not yet live-qualified. Required before merge:
 current-source focused regressions (including the earlier file/MCP image and
 MLX adapter contracts), matched automatic/named/required image API requests in
 complete and streaming modes, actual native image/tool/history UI and follow-up,
