@@ -10,6 +10,23 @@ enum LocalVisionEvidence {
         let hasVision: Bool
         let reason: String
         let tensorNames: Set<String>
+        /// Derived once here because `Result` is memoized per directory while
+        /// the composer reads capabilities from several SwiftUI getters per
+        /// body pass. Re-running substring matches over every tensor name of a
+        /// large checkpoint on each of those reads stalled the main thread.
+        let hasAudioTensors: Bool
+
+        init(modelType: String, hasVision: Bool, reason: String, tensorNames: Set<String>) {
+            self.modelType = modelType
+            self.hasVision = hasVision
+            self.reason = reason
+            self.tensorNames = tensorNames
+            hasAudioTensors = tensorNames.contains {
+                $0.contains("embed_audio.embedding_projection.") && $0.hasSuffix(".weight")
+            } || (modelType.lowercased().contains("omni") && tensorNames.contains {
+                $0.contains("sound_projection.") && $0.hasSuffix(".weight")
+            })
+        }
     }
 
     private static let lock = NSLock()

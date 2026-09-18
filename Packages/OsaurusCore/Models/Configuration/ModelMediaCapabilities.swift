@@ -195,15 +195,10 @@ public enum ModelMediaCapabilities {
 
     private static func capabilities(_ evidence: LocalVisionEvidence.Result) -> Capabilities {
         let type = evidence.modelType.lowercased()
-        let audio = evidence.tensorNames.contains {
-            $0.contains("embed_audio.embedding_projection.") && $0.hasSuffix(".weight")
-        } || (type.contains("omni") && evidence.tensorNames.contains {
-            $0.contains("sound_projection.") && $0.hasSuffix(".weight")
-        })
         return Capabilities(
             supportsImage: evidence.hasVision,
             supportsVideo: evidence.hasVision && videoCapableModelTypes.contains(type),
-            supportsAudio: audio
+            supportsAudio: evidence.hasAudioTensors
         )
     }
 
