@@ -1,0 +1,72 @@
+{
+  "domains" : [
+    "agent_loop"
+  ],
+  "generatedAt" : "2026-08-31T01:30:15.481Z",
+  "models" : [
+    {
+      "actionCompletionCoverage" : 0.9541284403669725,
+      "chatModelPassed" : 83,
+      "chatModelScored" : 107,
+      "correctFileDeliveryRate" : 0.7666666666666667,
+      "environment" : {
+        "caseCount" : 19,
+        "catalogHash" : "2e766b2b52f4cf37",
+        "chip" : "Apple M5 Max",
+        "commit" : "49e2faa",
+        "contributor" : "jax-0n-git",
+        "cpuCores" : 18,
+        "harness" : "osaurus",
+        "judge" : "self-judge",
+        "lowPowerMode" : false,
+        "osVersion" : "26.6.2",
+        "powerSource" : "AC",
+        "runModel" : "OsaurusAI/Ling-2.6-flash-MXFP4",
+        "thermalState" : "nominal",
+        "totalRamMb" : 131072
+      },
+      "flakyCases" : 0,
+      "harness" : "osaurus",
+      "loopFreeRate" : 0.8532110091743119,
+      "meanAgentLoopWallTimeMs" : 314167.6270493837,
+      "meanCpuPercent" : 96.0741518691647,
+      "meanDecodeTokensPerSecond" : 1.6876033989266546,
+      "meanFirstActionMs" : 61687.50583208524,
+      "meanFirstStepContextTokens" : 3598.811320754717,
+      "meanFrictionCalls" : 0.828125,
+      "meanPromptTokensPerTask" : 27896.943396226416,
+      "meanTotalTokensPerTask" : 27970.056603773584,
+      "meanTtftMs" : 6892.921443255443,
+      "medianModelSteps" : 4,
+      "modelId" : "OsaurusAI/Ling-2.6-flash-MXFP4",
+      "peakCpuPercent" : 423.9902917613607,
+      "peakPhysFootprintMb" : 34559.77219390869,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 2,
+          "passed" : 83,
+          "scored" : 107,
+          "skipReasons" : {
+            "other: no AppleScript model installed; applescript/mac_query delegation tools withheld — case skipped" : 3,
+            "priorCaseTimeout: blocked: not run — process hung on prior case 'agent_loop.substantial-single-file-app' (watchdog timeout); suite terminated to free the matrix driver." : 6,
+            "priorCaseTimeout: blocked: not run — process hung on prior case 'frontier.live-data-no-rejection' (watchdog timeout); suite terminated to free the matrix driver." : 10
+          },
+          "skipped" : 19
+        }
+      },
+      "startedAt" : "2026-08-30T14:20:49Z",
+      "subsystemPassed" : 0,
+      "subsystemScored" : 0,
+      "topContextContributors" : [
+        "§pluginCreator=714",
+        "tool:redact_file=491",
+        "§enabledManifest=432",
+        "tool:search_and_extract=371",
+        "tool:detect_pii=353",
+        "tool:file_read=279"
+      ],
+      "totalPassed" : 83,
+      "totalScored" : 107
+    }
+  ]
+}
