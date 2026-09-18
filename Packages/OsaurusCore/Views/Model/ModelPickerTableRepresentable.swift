@@ -223,16 +223,28 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
 
 // MARK: - AppKit Helpers
 
-/// Scroll view that owns the picker's hover tracking area. The area lives here
-/// rather than on the table because the table is the scrolling document view:
-/// its frame grows and shrinks with the row count (tab switches, async model
-/// refresh), and an `.inVisibleRect` area on it kept the extent of the first,
-/// shorter list — rows below that line never received `mouseMoved`, so they
-/// never hovered and never showed the favourite heart. The scroll view's
-/// bounds are the viewport itself, so the area always covers every visible row.
+/// Scroll view that owns the picker's enter/exit tracking area. Row hover
+/// itself is driven by the coordinator's mouse-moved monitor, not by this area:
+/// the popover opens short and grows as models load, and AppKit leaves a
+/// tracking area inside the SwiftUI host at its first, shorter extent — the
+/// bottom rows of the viewport then never received `mouseMoved`, so they never
+/// hovered and never showed the favourite heart. The area is rebuilt on every
+/// resize as well, so exit detection tracks the real viewport.
 final class HoverTrackingScrollView: NSScrollView {
     var onMouseMoved: ((NSEvent) -> Void)?
     var onMouseExited: (() -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // The hover monitor needs mouse-moved events across the whole popover,
+        // not only where a tracking area happens to request them.
+        window?.acceptsMouseMovedEvents = true
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        updateTrackingAreas()
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -241,8 +253,8 @@ final class HoverTrackingScrollView: NSScrollView {
         }
         addTrackingArea(
             NSTrackingArea(
-                rect: .zero,
-                options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+                rect: bounds,
+                options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp],
                 owner: self,
                 userInfo: nil
             )
@@ -1006,6 +1018,7 @@ extension ModelPickerTableRepresentable {
         private var hoveredRowId: String?
         private var highlightedIndex: Int?
         private var keyMonitor: Any?
+        private var hoverMonitor: Any?
         private var isScrolling = false
 
         // MARK: Debug (temporary)
@@ -1146,7 +1159,9 @@ extension ModelPickerTableRepresentable {
             scrollView.onMouseMoved = { [weak self] event in self?.handleMouseMoved(with: event) }
             scrollView.onMouseExited = { [weak self] in
                 self?.dbg("tracking mouseExited")
-                self?.setHoveredRow(nil)
+                // Re-resolve rather than clear: an exit from a stale area
+                // can fire while the pointer is still over a row.
+                self?.refreshHoverAtPointer()
             }
         }
 
@@ -1183,12 +1198,22 @@ extension ModelPickerTableRepresentable {
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
                 self?.handleKeyDown(event) ?? event
             }
+            // Row hover rides on a monitor instead of the tracking area, whose
+            // extent AppKit leaves at the popover's first (shorter) size.
+            hoverMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
+                self?.handleMonitoredMouseMoved(event)
+                return event
+            }
         }
 
         func removeKeyMonitor() {
             if let monitor = keyMonitor {
                 NSEvent.removeMonitor(monitor)
                 keyMonitor = nil
+            }
+            if let monitor = hoverMonitor {
+                NSEvent.removeMonitor(monitor)
+                hoverMonitor = nil
             }
         }
 
@@ -1418,6 +1443,16 @@ extension ModelPickerTableRepresentable {
         }
 
         // MARK: Hover
+
+        private func handleMonitoredMouseMoved(_ event: NSEvent) {
+            guard let tableView, let window = tableView.window, event.window === window else { return }
+            let point = tableView.convert(event.locationInWindow, from: nil)
+            guard tableView.visibleRect.contains(point) else {
+                if hoveredRowId != nil, !isScrolling { setHoveredRow(nil) }
+                return
+            }
+            handleMouseMoved(with: event)
+        }
 
         private func handleMouseMoved(with event: NSEvent) {
             guard !isScrolling, let tableView else {
