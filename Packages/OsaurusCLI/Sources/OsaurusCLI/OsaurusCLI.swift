@@ -143,6 +143,10 @@ struct OsaurusCLI {
               osaurus bench [--model <id>] [--prompt-tokens 1024,8192] [--runs 3] [--json <path>]
                                       Benchmark TTFT / prefill / decode against the
                                       running server; emits JSON tagged with hardware info
+              osaurus bench --gauntlet [--model <id>] [--json <path>]
+                                      Run the onboarding verification suite (measured
+                                      probes against the running server) and record
+                                      per-model results in the capability ledger
               osaurus ui              Show the Osaurus menu popover in the menu bar
               osaurus tools list      List installed tools
               osaurus tools install <plugin_id|url-or-path>
