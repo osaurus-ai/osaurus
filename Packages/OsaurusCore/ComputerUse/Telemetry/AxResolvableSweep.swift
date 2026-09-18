@@ -31,12 +31,14 @@ public struct AxProbe: Sendable {
 public struct AxSweepResult: Sendable, Equatable {
     public let total: Int
     public let resolved: Int
+    public let ambiguous: Int
     public let reobserve: Int
     public let deadEnd: Int
 
-    public init(total: Int, resolved: Int, reobserve: Int, deadEnd: Int) {
+    public init(total: Int, resolved: Int, ambiguous: Int = 0, reobserve: Int, deadEnd: Int) {
         self.total = total
         self.resolved = resolved
+        self.ambiguous = ambiguous
         self.reobserve = reobserve
         self.deadEnd = deadEnd
     }
@@ -54,6 +56,7 @@ public enum AxResolvableSweep {
     /// against that view.
     public static func run(driver: MacDriver, probes: [AxProbe]) async -> AxSweepResult {
         var resolved = 0
+        var ambiguous = 0
         var reobserve = 0
         var deadEnd = 0
         var total = 0
@@ -65,6 +68,7 @@ public enum AxResolvableSweep {
                 total += 1
                 switch TargetResolver.resolve(target, view: view, snapshot: snapshot) {
                 case .resolved: resolved += 1
+                case .ambiguous: ambiguous += 1
                 case .reobserve: reobserve += 1
                 case .deadEnd: deadEnd += 1
                 }
@@ -74,6 +78,7 @@ public enum AxResolvableSweep {
         return AxSweepResult(
             total: total,
             resolved: resolved,
+            ambiguous: ambiguous,
             reobserve: reobserve,
             deadEnd: deadEnd
         )
