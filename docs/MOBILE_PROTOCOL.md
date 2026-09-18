@@ -489,7 +489,7 @@ InnerRequest = {"method":"POST","path":"/agents/<address>/run",
 Responses are frames `{"seq":<n>,"ct":"…","fin":true|absent}`:
 
 ```
-respKey(reqSeq) = HKDF-SHA256(s2c, salt = SHA256(transcript), info = "osaurus-sc1:resp:<reqSeq>", 32)
+respKey(reqSeq) = HKDF-SHA256(s2c, salt = <empty>, info = "osaurus-sc1:respkey:<reqSeq>", 32)
 AAD(resp)       = utf8("osaurus-sc1:resp:<sid>:<reqSeq>:<seq>:<fin ? 1 : 0>")
 ```
 
@@ -516,9 +516,13 @@ AAD(resp)       = utf8("osaurus-sc1:resp:<sid>:<reqSeq>:<seq>:<fin ? 1 : 0>")
   client conversation.
 - `workspace_context` (optional) is only for workspace-billed runs with a
   workspace-minted key; omit it for owner-redeemed keys.
-- Response is standard OpenAI-style SSE `data: {…}` chunks with text deltas;
-  tool calls execute on the host and are never forwarded. Ends with
-  `data: [DONE]`.
+- Response is standard OpenAI-style SSE `data: {…}` chunks with text and
+  `reasoning_content` deltas. Tool calls execute on the host; their
+  arguments and results are never forwarded, but progress is, as
+  extension chunks with empty `choices`: `osaurus_agent_tool`
+  (`{phase: "started"|"completed", name, call_id, is_error?, end_run?}`),
+  `osaurus_prefill` (`{stage, completedUnitCount, totalUnitCount}`) and
+  `osaurus_artifacts`. Ends with `data: [DONE]`.
 
 `GET /agents/<address>` (inside the channel, same bearer) returns agent
 metadata for the roster.
