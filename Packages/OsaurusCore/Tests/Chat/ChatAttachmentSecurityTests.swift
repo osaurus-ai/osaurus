@@ -97,7 +97,7 @@ struct ChatAttachmentSecurityTests {
             let inline = Attachment.structuredDocument(document)
             let spilled = AttachmentBlobStore.spillIfNeeded([inline])
             let restored = try JSONDecoder().decode(
-                [Attachment].self,
+                [OsaurusCore.Attachment].self,
                 from: JSONEncoder().encode(spilled)
             )
             let attachment = try #require(restored.first)
