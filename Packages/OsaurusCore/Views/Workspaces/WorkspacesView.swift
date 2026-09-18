@@ -32,7 +32,6 @@ struct WorkspacesView: View {
     /// a code from a chat message).
     @State private var showManualJoinSheet = false
     @State private var showCreateSheet = false
-    @ObservedObject private var managementState = ManagementStateManager.shared
     /// Non-nil shows the detail pane for that workspace in place of the list.
     @State private var openWorkspace: OsaurusRouterWorkspaceSummary?
     /// Detail tab to land on when `openWorkspace` is set from a card menu.
@@ -53,16 +52,6 @@ struct WorkspacesView: View {
     /// explicitly discards it.
     @State private var showDeeplinkActivateSheet = false
     @State private var showDeeplinkJoinSheet = false
-
-    /// One-shot request from elsewhere in the app (the Workspaces intro
-    /// dialog's CTA) to land straight in the New Workspace sheet. Waits for
-    /// the same gates as a deep link so the sheet never opens on a tab that
-    /// cannot make a wallet-signed call yet.
-    private func presentPendingCreateIfReady() {
-        guard managementState.pendingCreateWorkspace, canUseWorkspaces else { return }
-        managementState.pendingCreateWorkspace = false
-        showCreateSheet = true
-    }
 
     private func presentDeeplinkSheetsIfReady() {
         guard canUseWorkspaces else { return }
@@ -126,13 +115,6 @@ struct WorkspacesView: View {
                 hasAppeared = true
             }
             presentDeeplinkSheetsIfReady()
-            presentPendingCreateIfReady()
-        }
-        .onReceive(managementState.$pendingCreateWorkspace) { pending in
-            // Fires before the property stores the new value, so act on the
-            // delivered one and consume it on the next turn of the loop.
-            guard pending else { return }
-            Task { @MainActor in presentPendingCreateIfReady() }
         }
         .onChange(of: service.pendingActivation) { _, pending in
             if pending == nil {
@@ -153,7 +135,6 @@ struct WorkspacesView: View {
             // was waiting: pick up where it left off.
             if ready {
                 presentDeeplinkSheetsIfReady()
-                presentPendingCreateIfReady()
             }
         }
         .onReceive(service.$selectedWorkspaceId) { selected in
@@ -330,7 +311,10 @@ struct WorkspacesView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     banners
 
-                    if service.isLoadingWorkspaces && service.workspaces.isEmpty {
+                    // Skeletons stand in only until the first list arrives.
+                    // A later refresh of an empty account must not flash
+                    // them over the empty state.
+                    if service.isLoadingWorkspaces && !service.hasLoadedWorkspaces {
                         loadingGrid
                     } else if service.workspaces.isEmpty {
                         emptyState
@@ -476,26 +460,37 @@ struct WorkspacesView: View {
         .gridDiffAnimation(token: service.workspaces.map(\.id).joined(separator: ","))
     }
 
-    /// "14-day free trial, then $20/month or $200/year per workspace." from
-    /// the public plan/prices; falls back to a priceless line when the router
-    /// hasn't answered yet.
+    /// "14-day free trial, then $20/month or $200/year per workspace. Cancel
+    /// anytime." from the public plan/prices; falls back to a priceless line
+    /// when the router hasn't answered yet. Shown as the footnote beneath the
+    /// empty state's buttons, so it reads as the fine print of the call to
+    /// action rather than as part of the pitch.
     private var pricingLine: String {
         let prices = service.prices
+        // A price label like "$20/month" breaks after the slash under
+        // SwiftUI's line breaking, orphaning "month" on the next line. A
+        // word joiner after the slash keeps each price on one line.
+        func unbreakable(_ label: String) -> String {
+            label.replacingOccurrences(of: "/", with: "/\u{2060}")
+        }
         let priceText: String? = {
             switch (prices?.monthly?.displayLabel, prices?.yearly?.displayLabel) {
-            case (let m?, let y?): return String(format: L("%@ or %@ per workspace"), m, y)
-            case (let m?, nil): return String(format: L("%@ per workspace"), m)
-            case (nil, let y?): return String(format: L("%@ per workspace"), y)
+            case (let m?, let y?):
+                return String(format: L("%@ or %@ per workspace"), unbreakable(m), unbreakable(y))
+            case (let m?, nil): return String(format: L("%@ per workspace"), unbreakable(m))
+            case (nil, let y?): return String(format: L("%@ per workspace"), unbreakable(y))
             default: return nil
             }
         }()
         if service.trialEligible, let days = service.trialDays, days > 0 {
             if let priceText {
-                return String(format: L("%d-day free trial, then %@."), days, priceText)
+                return String(format: L("%d-day free trial, then %@. Cancel anytime."), days, priceText)
             }
-            return String(format: L("Start with a %d-day free trial."), days)
+            return String(format: L("Start with a %d-day free trial. Cancel anytime."), days)
         }
-        if let priceText { return String(format: L("%@, with a shared monthly credit pool."), priceText) }
+        if let priceText {
+            return String(format: L("%@, with a shared monthly credit pool."), priceText)
+        }
         return L("Every workspace comes with a shared monthly credit pool.")
     }
 
@@ -504,25 +499,9 @@ struct WorkspacesView: View {
             icon: "rectangle.3.group.fill",
             title: L("Bring your team in"),
             subtitle: L(
-                "Create a workspace, invite people with a link, and share your agents. Teammates chat with them from their own Osaurus."
-            ) + " " + pricingLine,
-            examples: [
-                .init(
-                    icon: "link.badge.plus",
-                    title: L("Invite with a link"),
-                    description: L("Teammates join in one click")
-                ),
-                .init(
-                    icon: "person.2.fill",
-                    title: L("Share agents"),
-                    description: L("They run on your Mac")
-                ),
-                .init(
-                    icon: "creditcard.fill",
-                    title: L("Shared credit pool"),
-                    description: L("Refills every month")
-                ),
-            ],
+                "Create a workspace, share your agents, and invite teammates with a link. They chat with your agents from their own Osaurus."
+            ),
+            examples: [],
             primaryAction: .init(
                 title: service.trialEligible ? L("Start free trial") : L("New workspace"),
                 icon: "plus",
@@ -533,9 +512,14 @@ struct WorkspacesView: View {
                 icon: "person.badge.plus",
                 handler: { showManualJoinSheet = true }
             ),
-            hasAppeared: hasAppeared
+            hasAppeared: hasAppeared,
+            // The interactive five-stage explainer (agents grouped, set up
+            // once, handed out, your rules, one bill) stands in for the
+            // example cards; it scales to the pane's width.
+            content: AnyView(WorkspacesIntroExplainer()),
+            compact: true,
+            footnote: pricingLine
         )
-        .frame(minHeight: 420)
     }
 
     private var loadingGrid: some View {
