@@ -302,6 +302,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         // actually on screen, and still fires on a later launch if the user
         // quit before the post-onboarding window opened.
         FeatureTelemetry.firstTimeChatShown()
+        SparkleChatGate.markChatVisible()
     }
 
     /// Hide a window by ID
@@ -852,6 +853,12 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         }
 
         print("[ChatWindowManager] Focused all \(windows.count) windows")
+        // `windows` can be non-empty while `nsWindows` is empty (stale
+        // info, no NSWindow on screen). Only arm the Sparkle chat gate
+        // when a real chat window was brought forward.
+        if !nsWindows.isEmpty {
+            SparkleChatGate.markChatVisible()
+        }
     }
 
     // MARK: - Background Task Window Support
@@ -1404,9 +1411,9 @@ private struct ChatFullScreenHeaderView: View {
     var body: some View {
         HStack(spacing: 8) {
             ChatToolbarSidebarView(windowState: windowState)
-            // Leading-aligned like Chrome: tabs grow left to right.
+            // Leading-aligned like Chrome: tabs grow left to right, filling the
+            // row up to the trailing buttons like the toolbar item does.
             ChatTabStripView(windowState: windowState, leadingChromeWidth: 76)
-            Spacer()
             ChatToolbarActionView(windowState: windowState)
             ChatToolbarTrailingView(windowState: windowState)
         }
@@ -1504,9 +1511,10 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     // (project page). Named `pin` for backward identity continuity.
     fileprivate static let pinItem = NSToolbarItem.Identifier("ChatToolbar.pin")
 
-    /// Layout: sidebar on the leading edge, agent pill centered (via the
-    /// toolbar's `centeredItemIdentifier`), action + pin on the trailing edge.
-    /// The flexible spaces let the trailing items hug the right edge.
+    /// Layout: sidebar on the leading edge, the tab strip filling the middle,
+    /// action + pin on the trailing edge. The strip item is flexible (see
+    /// `makeTabStripItem`), so it doubles as the space that pushes the
+    /// trailing items to the right edge.
     /// Any stale identifiers AppKit may have persisted in user defaults
     /// fall through to `default: nil` in `itemForItemIdentifier`, which
     /// renders them as no-ops rather than crashing.
@@ -1516,7 +1524,7 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     // item that AppKit still reserved spacing for, so every chat had a dead
     // gap at the toolbar's right edge.
     private static let itemIdentifiers: [NSToolbarItem.Identifier] = [
-        sidebarItem, tabsItem, .flexibleSpace, actionItem, pinItem,
+        sidebarItem, tabsItem, actionItem, pinItem,
     ]
 
     private weak var windowState: ChatWindowState?
@@ -1550,10 +1558,9 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
             )
 
         case Self.tabsItem:
-            return makeHostingItem(
+            return makeTabStripItem(
                 identifier: itemIdentifier,
-                rootView:
-                    ChatTabStripView(windowState: windowState)
+                rootView: ChatTabStripView(windowState: windowState)
             )
 
         case Self.actionItem:
@@ -1592,6 +1599,38 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
         if #available(macOS 13.0, *) {
             item.isBordered = false
         }
+        return item
+    }
+
+    /// The tab strip's item takes whatever width the toolbar has left, like
+    /// a flexible space. AppKit sizes it in the same layout pass as the window
+    /// resize, so the strip never waits on a measurement of its own: sizing it
+    /// from its content made the whole toolbar squeeze, jump and draw tabs
+    /// over the sidebar on a fast resize.
+    private func makeTabStripItem<Content: View>(
+        identifier: NSToolbarItem.Identifier,
+        rootView: Content
+    ) -> NSToolbarItem {
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        let hostingView = NSHostingView(rootView: rootView)
+        hostingView.sizingOptions = []
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        // A min/max RANGE is what makes a toolbar item flexible: AppKit
+        // stretches it into the free space. Do not pin a large preferred
+        // width instead: the toolbar measures the item's fitting size, reads
+        // that width as the space it needs, and hides the item as too wide.
+        NSLayoutConstraint.activate([
+            hostingView.widthAnchor.constraint(
+                greaterThanOrEqualToConstant: ChatTabStripView.minimumItemWidth),
+            hostingView.widthAnchor.constraint(lessThanOrEqualToConstant: 10_000),
+            hostingView.heightAnchor.constraint(equalToConstant: ChatTabStripView.stripHeight),
+        ])
+        hostingView.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
+        hostingView.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
+        item.view = hostingView
+        item.isBordered = false
+        // Fold the action and pin into the overflow menu before the tabs.
+        item.visibilityPriority = .high
         return item
     }
 }
@@ -1791,16 +1830,6 @@ private final class ChatWindowDelegate: NSObject, NSWindowDelegate {
 
     func windowDidBecomeKey(_ notification: Notification) {
         manager?.windowDidBecomeKey(id: windowId)
-    }
-
-    /// Push the live content width into the window state on every resize so
-    /// the tab strip re-sizes even while its toolbar item is folded into the
-    /// overflow menu (see `ChatWindowState.windowContentWidth`).
-    func windowDidResize(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow,
-            let contentView = window.contentView
-        else { return }
-        manager?.windowState(id: windowId)?.updateWindowContentWidth(contentView.bounds.width)
     }
 
     /// Dragged onto another display: re-clamp the minimum size to that

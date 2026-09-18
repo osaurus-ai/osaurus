@@ -25,26 +25,48 @@ enum ToolResultMediaBridge {
     /// Marker text appended when an image has been collapsed out of the
     /// live window, so the model knows the picture existed.
     static let collapsedImageNote =
-        "[image attachment from this tool result is no longer in context; call file_read again if you need to see it]"
+        "[image attachment from this tool result is no longer in context; run the source tool again if you need to see it]"
 
     /// Resolve `image_ref` entries in a tool-result envelope into
     /// attachments. Returns `[]` for anything that is not an image envelope
     /// or whose blob is missing (the text envelope still stands on its own).
     static func attachments(toolName: String, result: String) -> [Attachment] {
-        guard imageProducingTools.contains(toolName) else { return [] }
+        guard imageProducingTools.contains(toolName) || isMCPImageEnvelope(result) else { return [] }
         return attachments(result: result)
     }
 
     static func attachments(result: String) -> [Attachment] {
-        guard let payload = ToolEnvelope.successPayload(result) as? [String: Any],
-            payload["kind"] as? String == "image",
-            let ref = payload["image_ref"] as? [String: Any],
-            let hash = ref["hash"] as? String,
-            !hash.isEmpty
+        guard let payload = ToolEnvelope.successPayload(result) as? [String: Any] else { return [] }
+        if payload["kind"] as? String == "mcp_content",
+            let content = payload["content"] as? [[String: Any]]
+        {
+            return content.compactMap { part in
+                guard part["type"] as? String == "image", let ref = part["image_ref"] as? [String: Any]
+                else { return nil }
+                return attachment(reference: ref)
+            }
+        }
+        guard payload["kind"] as? String == "image", let ref = payload["image_ref"] as? [String: Any]
         else { return [] }
-        guard AttachmentBlobStore.exists(hash) else { return [] }
+        return attachment(reference: ref).map { [$0] } ?? []
+    }
+
+    private static func attachment(reference ref: [String: Any]) -> Attachment? {
+        // References are data hashes, never server-supplied paths. Validate
+        // before any disk lookup, including the legacy file_read envelope.
+        guard let hash = ref["hash"] as? String, hash.utf8.count == 64,
+            hash.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
+            AttachmentBlobStore.exists(hash)
+        else { return nil }
         let byteCount = (ref["byte_count"] as? Int) ?? 0
-        return [Attachment(kind: .imageRef(hash: hash, byteCount: byteCount))]
+        return Attachment(kind: .imageRef(hash: hash, byteCount: byteCount))
+    }
+
+    static func isMCPImageEnvelope(_ result: String) -> Bool {
+        guard let payload = ToolEnvelope.successPayload(result) as? [String: Any],
+            payload["kind"] as? String == "mcp_content", let content = payload["content"] as? [[String: Any]]
+        else { return false }
+        return content.contains { $0["type"] as? String == "image" && $0["image_ref"] != nil }
     }
 
     /// Whether this envelope is an image result (used by UI grounding

@@ -37,8 +37,8 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
 
     /// Opens the Sparkle update UI to check and install updates.
     ///
-    /// if a background update session is already in flight (which happens
-    /// when the settings window has just been opened), `SPUUpdater` reports
+    /// if a background update session is already in flight (the launch
+    /// Task's delayed `checkForUpdatesInBackground`), `SPUUpdater` reports
     /// `canCheckForUpdates == false` and silently drops user initiated
     /// checks. wait briefly for the in-flight session to settle so the
     /// click reliably surfaces the Sparkle dialog on the first try

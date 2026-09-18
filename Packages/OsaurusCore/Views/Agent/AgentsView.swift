@@ -8059,6 +8059,7 @@ private struct AgentEditorSheet: View {
     @State private var selectedModel: String?
     @State private var pickerItems: [ModelPickerItem] = []
     @State private var showModelPicker: Bool = false
+    @State private var showAddModelWarning: Bool = false
     @State private var hasAppeared: Bool = false
 
     /// When true, the form column is replaced in place by an embedded
@@ -8138,6 +8139,47 @@ private struct AgentEditorSheet: View {
             }
         }
         .onReceive(ModelPickerItemCache.shared.$items) { pickerItems = $0 }
+        .themedAlert(
+            L("Leave without creating this agent?"),
+            isPresented: $showAddModelWarning,
+            message: L(
+                "Adding a model switches to the Models tab and closes this window. Create the agent first to keep what you entered."
+            ),
+            buttons: [
+                .cancel(L("Keep Editing")),
+                .destructive(L("Discard and Add Model")) { openModelsTab() },
+            ],
+            width: 380,
+            presentationStyle: .contained
+        )
+    }
+
+    /// True once the user has put anything into the form that closing the
+    /// sheet would throw away.
+    private var hasUnsavedDraft: Bool {
+        nameUserEdited
+            || !systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || selectedTemplate != .blank
+            || selectedAvatar != nil
+    }
+
+    /// "Add Model" in the picker switches the Management window to the Models
+    /// tab, which tears down `AgentsView` and this sheet with it. Warn first
+    /// when there is a draft to lose.
+    private func handleAddModel() {
+        showModelPicker = false
+        Task { @MainActor in
+            try? await Task.sleepForPopoverDismiss()
+            if hasUnsavedDraft {
+                showAddModelWarning = true
+            } else {
+                openModelsTab()
+            }
+        }
+    }
+
+    private func openModelsTab() {
+        AppDelegate.shared?.showManagementWindow(initialTab: .models)
     }
 
     /// Embedded picker pane shown when the user clicks "Customize…". Operates
@@ -8327,7 +8369,8 @@ private struct AgentEditorSheet: View {
                     options: pickerItems,
                     selectedModel: $selectedModel,
                     agentId: nil,
-                    onDismiss: { showModelPicker = false }
+                    onDismiss: { showModelPicker = false },
+                    onAddModel: handleAddModel
                 )
             }
         }

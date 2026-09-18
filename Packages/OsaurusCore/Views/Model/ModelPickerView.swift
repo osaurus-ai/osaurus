@@ -125,6 +125,10 @@ struct ModelPickerView: View {
     let agentId: UUID?
     var optionsControl: ModelPickerOptionsControl? = nil
     let onDismiss: () -> Void
+    /// Replaces the default "Add Model" action (dismiss + jump to the Models
+    /// tab). Hosts that would lose unsaved state on that tab switch use this
+    /// to confirm with the user before navigating.
+    var onAddModel: (() -> Void)? = nil
 
     @State private var searchText = ""
     /// Tracks IME composition so the placeholder hides while composing.
@@ -540,6 +544,10 @@ struct ModelPickerView: View {
             }
 
             Button(action: {
+                if let onAddModel {
+                    onAddModel()
+                    return
+                }
                 onDismiss()
                 Task { @MainActor in
                     try? await Task.sleepForPopoverDismiss()

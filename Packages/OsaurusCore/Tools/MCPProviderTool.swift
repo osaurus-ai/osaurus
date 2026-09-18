@@ -6,7 +6,9 @@
 //
 
 import Foundation
+import ImageIO
 import MCP
+import UniformTypeIdentifiers
 
 /// A tool provided by a remote MCP server
 final class MCPProviderTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
@@ -123,7 +125,8 @@ final class MCPProviderTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
         return try await MCPProviderManager.shared.executeTool(
             providerId: providerId,
             toolName: mcpToolName,
-            argumentsJSON: argumentsJSON
+            argumentsJSON: argumentsJSON,
+            exposedToolName: name
         )
     }
 
@@ -282,20 +285,38 @@ extension MCPProviderTool {
 // MARK: - MCP Content to String Conversion
 
 extension MCPProviderTool {
-    /// Convert MCP tool call result content to string response
-    static func convertMCPContent(_ content: [MCP.Tool.Content]) -> String {
+    /// Stage media off MainActor, forwarding cancellation before publishing a
+    /// result. The SDK response already owns its encoded bytes; do not expand
+    /// and serialize those bytes again on the provider manager's UI actor.
+    static func prepareMCPContent(_ content: [MCP.Tool.Content], toolName: String? = nil) async throws -> String {
+        try Task.checkCancellation()
+        let conversion = Task.detached(priority: .userInitiated) {
+            try convertMCPContent(content, toolName: toolName)
+        }
+        return try await withTaskCancellationHandler {
+            let result = try await conversion.value
+            try Task.checkCancellation()
+            return result
+        } onCancel: {
+            conversion.cancel()
+        }
+    }
+
+    /// Keep typed MCP images out of the text tokenizer and universal TEXT
+    /// output cap. References use the same content-addressed attachment store
+    /// as file_read and persisted chat, not a second media/cache store.
+    static func convertMCPContent(_ content: [MCP.Tool.Content], toolName: String? = nil) throws -> String {
         var results: [[String: Any]] = []
+        var hasImages = false
 
         for item in content {
+            try Task.checkCancellation()
             switch item {
             case .text(let text, _, _):
                 results.append(["type": "text", "content": text])
             case .image(let data, let mimeType, _, _):
-                results.append([
-                    "type": "image",
-                    "data": data,
-                    "mimeType": mimeType,
-                ])
+                results.append(try stagedImage(data, mimeType: mimeType))
+                hasImages = true
             case .audio(let data, let mimeType, _, _):
                 results.append([
                     "type": "audio",
@@ -303,6 +324,15 @@ extension MCPProviderTool {
                     "mimeType": mimeType,
                 ])
             case .resource(let resource, _, _):
+                if let mimeType = resource.mimeType, mimeType.hasPrefix("image/"),
+                    let blob = resource.blob
+                {
+                    var image = try stagedImage(blob, mimeType: mimeType)
+                    image["uri"] = resource.uri
+                    results.append(image)
+                    hasImages = true
+                    continue
+                }
                 var result: [String: Any] = [
                     "type": "resource",
                     "uri": resource.uri,
@@ -319,18 +349,79 @@ extension MCPProviderTool {
             }
         }
 
-        // If single text result, return just the text
+        try Task.checkCancellation()
+        if hasImages {
+            return try imageEnvelope(results, toolName: toolName)
+        }
+
+        // Wrap even single text at this typed boundary: server-supplied prose
+        // resembling our media envelope must never acquire blob privileges.
         if results.count == 1, let content = results[0]["content"] as? String {
-            return content
+            return ToolEnvelope.success(tool: toolName, text: content)
         }
 
         // Otherwise return JSON array
         if let jsonData = try? JSONSerialization.data(withJSONObject: results, options: .osaurusCanonical),
             let jsonString = String(data: jsonData, encoding: .utf8)
         {
-            return jsonString
+            return ToolEnvelope.success(tool: toolName, text: jsonString)
         }
 
-        return "[]"
+        return ToolEnvelope.success(tool: toolName, text: "[]")
+    }
+
+    /// Apply the existing universal text cap without cutting an image ref in
+    /// half. Oversized captions are explicitly truncated; the typed content
+    /// array and image order stay intact. This also runs off the UI actor.
+    private static func imageEnvelope(_ parts: [[String: Any]], toolName: String?) throws -> String {
+        let cap = ToolOutputCaps.universalResult
+        var output = ToolEnvelope.success(tool: toolName, result: ["kind": "mcp_content", "content": parts])
+        guard output.utf8.count > cap else { return output }
+        let warning = "MCP text exceeded the per-call output cap and was truncated; image references were preserved."
+        var fraction = min(1, Double(cap) / Double(output.utf8.count))
+        for attempt in 0..<12 {
+            try Task.checkCancellation()
+            let bounded = parts.map { part -> [String: Any] in
+                var part = part
+                let key: String
+                switch part["type"] as? String {
+                case "text": key = "content"
+                case "resource": key = "text"
+                default: return part
+                }
+                guard let text = part[key] as? String else { return part }
+                part[key] = attempt == 11
+                    ? "[MCP text omitted: per-call output cap]"
+                    : HeadTailTruncation.applyByteExact(text, byteCap: Int(Double(text.utf8.count) * fraction), headFraction: 2.0 / 3.0)
+                return part
+            }
+            output = ToolEnvelope.success(
+                tool: toolName, result: ["kind": "mcp_content", "content": bounded], warnings: [warning]
+            )
+            if output.utf8.count <= cap { return output }
+            fraction *= min(0.9, Double(cap) / Double(output.utf8.count))
+        }
+        throw MCPProviderError.toolExecutionFailed(
+            "MCP result metadata exceeds the per-call output cap even without its text. Request fewer items."
+        )
+    }
+
+    private static func stagedImage(_ encoded: String, mimeType: String) throws -> [String: Any] {
+        guard mimeType.hasPrefix("image/"), let data = Data(base64Encoded: encoded), !data.isEmpty,
+            let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+            let width = properties[kCGImagePropertyPixelWidth] as? Int, width > 0,
+            let height = properties[kCGImagePropertyPixelHeight] as? Int, height > 0
+        else {
+            throw MCPProviderError.toolExecutionFailed("MCP tool returned invalid image data (\(mimeType)).")
+        }
+        try Task.checkCancellation()
+        let hash = try AttachmentBlobStore.write(data)
+        let actualMime = (CGImageSourceGetType(source) as String?).flatMap { UTType($0)?.preferredMIMEType } ?? mimeType
+        return [
+            "type": "image", "mimeType": actualMime,
+            "image_ref": ["hash": hash, "byte_count": data.count],
+            "width": width, "height": height,
+        ]
     }
 }

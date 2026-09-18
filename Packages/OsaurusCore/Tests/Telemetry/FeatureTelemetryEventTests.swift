@@ -539,7 +539,7 @@ struct FeatureTelemetryEventTests {
         service.setEnabled(false)  // declined → drop
 
         FeatureTelemetry.serverStarted(service: service)
-        FeatureTelemetry.agentCreated(service: service)
+        FeatureTelemetry.agentCreated(numberOfAgents: 3, service: service)
         FeatureTelemetry.modelDownloaded(
             model: "mlx-community/Qwen2.5-7B-4bit",
             parameterCount: "7B",
@@ -591,6 +591,18 @@ struct FeatureTelemetryEventTests {
 
         #expect(rec.events[2].name == "agent_run")
         #expect(rec.events[2].props["source"] as? String == "dispatch")
+    }
+
+    @Test func agentCreated_carries_only_agent_count() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        FeatureTelemetry.agentCreated(numberOfAgents: 4, service: service)
+
+        let event = rec.events[0]
+        #expect(event.name == "agent_created")
+        #expect(event.props["number_of_agents"] as? Int == 4)
+        #expect(business(event.props).count == 1)
     }
 
     // MARK: - Product Hunt launch dialog

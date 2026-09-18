@@ -11,11 +11,24 @@ import AppKit
 import SwiftUI
 
 enum ChatHistoryDialog {
-    /// Present the history dialog scoped to `windowState`'s window.
+    /// Request id of the history dialog each window last presented. The
+    /// dialog hosts nested alerts, so presenting it again while it is open
+    /// would push a second copy on top instead of replacing it. A stale id
+    /// is harmless: the alert stack is checked before trusting it.
+    @MainActor private static var openRequestIds: [ThemedAlertScope: UUID] = [:]
+
+    /// Present the history dialog scoped to `windowState`'s window. A no-op
+    /// while that window already shows it (including under a nested alert).
     @MainActor
     static func present(for windowState: ChatWindowState) {
         let scope = ThemedAlertScope.chat(windowState.windowId)
+        if let openId = openRequestIds[scope],
+            ThemedAlertCenter.shared.stack(for: scope).contains(where: { $0.id == openId })
+        {
+            return
+        }
         let requestId = UUID()
+        openRequestIds[scope] = requestId
         let dismiss = { ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId) }
         let content = ChatHistoryDialogContent(
             windowState: windowState,

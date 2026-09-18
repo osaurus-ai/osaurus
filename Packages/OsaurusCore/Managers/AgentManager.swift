@@ -464,10 +464,12 @@ public final class AgentManager: ObservableObject {
         AgentStore.save(agent)
         refresh()
         registerInDefaultSpawnPool(agent)
-        // KPI: a user-created agent. Count only — no name or configuration.
-        // Built-in agents are seeded by the app, not created by the user.
+        // KPI: a user-created agent, plus how many agents the install now
+        // has (`refresh()` above already picked up the new record). No name
+        // or configuration. Built-in agents are seeded by the app, not
+        // created by the user.
         if !agent.isBuiltIn {
-            FeatureTelemetry.agentCreated()
+            FeatureTelemetry.agentCreated(numberOfAgents: agents.count)
         }
         assignAddressInBackground(to: agent)
         // Notify subscribers (e.g. PluginManager) so plugins get an

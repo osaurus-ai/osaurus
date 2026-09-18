@@ -4457,11 +4457,14 @@ extension FloatingInputCard {
                 }
                 .disabled(ssdClearInProgress || isStreaming)
                 if ssdClearInProgress { ProgressView().controlSize(.small) }
-                bannerTextButton(String(localized: "Dismiss", bundle: .module)) {
+                bannerTextButton(String(localized: "Don't show this again", bundle: .module)) {
+                    DiskCacheQuotaNoticeSuppression.suppress()
                     ssdWarningSnapshot = nil
                     ssdClearResult = nil
                 }
                 .disabled(ssdClearInProgress)
+                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity)
             }
             .padding(14)
             .background(RAMBannerShape(pointerCenterX: 28).fill(.regularMaterial))
