@@ -30,7 +30,8 @@ persistence. Those separate gates are not waived. No release/install/publish.
 
 Engine retained evidence and the active cross-repo TODO are in
 `/Users/eric/vmlx-private-evidence/bonsai2-swift-2026-09-17/STATUS.md`.
-Full Bonsai model proof on Max2 still awaits the explicit named-run answer.
+Eric explicitly authorized both Bonsai2 bundles on Max2, sequentially with one
+loaded at a time. No release or installation is authorized or planned.
 # App fixture compilation follow-up
 
 The first app compile at10cd02984 stopped at Bonsai2AppTokenizerTests:62:
@@ -38,3 +39,13 @@ The first app compile at10cd02984 stopped at Bonsai2AppTokenizerTests:62:
 The fixture now qualifies the MLX history/JSON types; runtime code is unchanged.
 Guard receipt21:13:01: exit65, zero owned survivors, peak8.48GiB,
 unchanged swap1.81GiB. Exact log and xcresult are in APP-RUN.md's attempt2.
+
+## App bridge execution at a72bb0340
+
+Attempt3 executed163 tests:162passed,1failed,0skipped; exact xcresult summary
+and log in APP-RUN.md. Bonsai2AppTokenizerTests passed for both actual bundles
+and all default/Off/low/medium/xhigh rows. No weights opened or token/s measured.
+The single failure is an older Gemma tokenizer fixture expecting osaurus_status.
+Main commit8d7c3dd42 (#2485) already replaced it with osaurus_inspect; the actual
+rendered prompt contains the new declaration. Update only that stale assertion,
+including absence of the retired declaration. No Gemma runtime change.
