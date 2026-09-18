@@ -59,10 +59,10 @@ struct Bonsai2AppTokenizerTests {
         return context
     }
 
-    private func toolJSON(_ rendered: String) throws -> JSONValue {
+    private func toolJSON(_ rendered: String) throws -> MLXLMCommon.JSONValue {
         let open = try #require(rendered.range(of: "<tools>"))
         let close = try #require(rendered.range(of: "</tools>", range: open.upperBound ..< rendered.endIndex))
-        return try JSONDecoder().decode(JSONValue.self, from: Data(rendered[open.upperBound ..< close.lowerBound].utf8))
+        return try JSONDecoder().decode(MLXLMCommon.JSONValue.self, from: Data(rendered[open.upperBound ..< close.lowerBound].utf8))
     }
 
     @Test(arguments: Self.bundles)
@@ -83,16 +83,16 @@ struct Bonsai2AppTokenizerTests {
                 content: "",
                 reasoningContent: "Check the saved value.",
                 toolCalls: [
-                    ToolCall(
+                    MLXLMCommon.ToolCall(
                         id: "call-007",
-                        function: .init(name: "read_note", arguments: ["path": JSONValue.string("note.md")])
+                        function: .init(name: "read_note", arguments: ["path": MLXLMCommon.JSONValue.string("note.md")])
                     )
                 ]
             ),
             .tool("NOTE_CODE=007", toolCallId: "call-007"), .user("What code was read?"),
         ]
         let expected = try JSONDecoder().decode(
-            JSONValue.self,
+            MLXLMCommon.JSONValue.self,
             from: JSONSerialization.data(withJSONObject: Self.tools[0])
         )
         for effort: String? in [nil, "none", "low", "medium", "xhigh"] {

@@ -31,3 +31,10 @@ persistence. Those separate gates are not waived. No release/install/publish.
 Engine retained evidence and the active cross-repo TODO are in
 `/Users/eric/vmlx-private-evidence/bonsai2-swift-2026-09-17/STATUS.md`.
 Full Bonsai model proof on Max2 still awaits the explicit named-run answer.
+# App fixture compilation follow-up
+
+The first app compile at10cd02984 stopped at Bonsai2AppTokenizerTests:62:
+`JSONValue` is exported by both OsaurusCore and MLXLMCommon. No test executed.
+The fixture now qualifies the MLX history/JSON types; runtime code is unchanged.
+Guard receipt21:13:01: exit65, zero owned survivors, peak8.48GiB,
+unchanged swap1.81GiB. Exact log and xcresult are in APP-RUN.md's attempt2.
