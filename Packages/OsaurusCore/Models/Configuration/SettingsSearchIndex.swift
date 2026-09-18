@@ -298,6 +298,30 @@ public enum SettingsSearchIndex {
             keywords: ["sleep", "awake", "caffeinate", "idle sleep", "power", "keep awake"]
         ),
         .init(
+            id: "settings.connect.pairing",
+            tab: .connect,
+            section: "Pair an iPhone",
+            title: "Generate Pairing Code",
+            keywords: [
+                "iphone", "ios", "ipad", "mobile", "phone", "pair", "pairing code", "6 digit",
+                "iosaurus", "remote", "osaurus connect",
+            ]
+        ),
+        .init(
+            id: "settings.connect.pairedDevice",
+            tab: .connect,
+            section: "Paired iPhone",
+            title: "Paired iPhone",
+            keywords: ["unpair", "revoke phone", "paired device", "remove iphone", "mobile access"]
+        ),
+        .init(
+            id: "settings.connect.keepAwake",
+            tab: .connect,
+            section: "Availability",
+            title: "Keep Mac Awake for Paired iPhone",
+            keywords: ["sleep", "awake", "reachable", "phone", "remote", "idle sleep"]
+        ),
+        .init(
             id: "settings.chat.compactionModel",
             tab: .chat,
             section: "Chat",

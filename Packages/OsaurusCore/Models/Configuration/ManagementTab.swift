@@ -38,7 +38,7 @@ public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
     public var tabs: [ManagementTab] {
         switch self {
         case .general:
-            [.settings, .chat, .voice, .themes, .credits, .workspaces, .identity, .permissions, .privacy]
+            [.settings, .chat, .voice, .themes, .credits, .workspaces, .connect, .identity, .permissions, .privacy]
         case .models: [.models, .providers, .imageGeneration]
         case .agents: [.orchestrator, .agents, .agentChannels]
         case .capabilities: [.search, .knowledge, .memory, .tools, .skills, .commands]
@@ -79,6 +79,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case identity
     case credits
     case workspaces
+    case connect
     case insights
 
     public var id: String { rawValue }
@@ -91,7 +92,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     /// The sidebar section this tab belongs to.
     public var section: ManagementSection {
         switch self {
-        case .settings, .chat, .voice, .themes, .credits, .workspaces, .identity, .permissions, .privacy:
+        case .settings, .chat, .voice, .themes, .credits, .workspaces, .connect, .identity, .permissions, .privacy:
             .general
         case .models, .providers, .imageGeneration: .models
         case .orchestrator, .agents, .agentChannels: .agents
@@ -119,6 +120,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .credits: "creditcard.fill"
         case .workspaces: "rectangle.3.group.fill"
+        case .connect: "iphone.radiowaves.left.and.right"
         case .models: "cube.box.fill"
         case .providers: "cloud.fill"
         case .agents: "person.2.fill"
@@ -152,6 +154,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .credits: L("Credits")
         case .workspaces: L("Workspaces")
+        case .connect: L("Osaurus Connect")
         case .models: L("Local Models")
         case .providers: L("Providers")
         case .agents: L("Agents")

@@ -186,6 +186,8 @@ private extension ManagementView {
             CreditsView()
         case .workspaces:
             WorkspacesView()
+        case .connect:
+            OsaurusConnectView()
         case .models:
             ModelDownloadView(
                 deeplinkModelId: deeplinkModelId,
