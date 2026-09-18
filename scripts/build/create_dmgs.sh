@@ -34,5 +34,3 @@ codesign --force --sign "${CODE_SIGN_IDENTITY_VALUE}" \
   "build_output/Osaurus-${VERSION}.dmg"
 
 cp "build_output/Osaurus-${VERSION}.dmg" "build_output/Osaurus.dmg"
-
-
