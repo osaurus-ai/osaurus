@@ -417,10 +417,12 @@ enum FeatureTelemetry {
         service.track("mcp_provider_added", ["transport": transport])
     }
 
-    /// A user-created agent was added. Count only — no name, prompt, or
-    /// configuration.
-    static func agentCreated(service: TelemetryService = .shared) {
-        service.track("agent_created")
+    /// A user-created agent was added. `numberOfAgents` is the total number
+    /// of agents on the install after this one was added (built-in included),
+    /// so the dashboard can derive how many agents users typically keep. No
+    /// name, prompt, or configuration.
+    static func agentCreated(numberOfAgents: Int, service: TelemetryService = .shared) {
+        service.track("agent_created", ["number_of_agents": numberOfAgents])
     }
 
     // MARK: - Settings engagement
