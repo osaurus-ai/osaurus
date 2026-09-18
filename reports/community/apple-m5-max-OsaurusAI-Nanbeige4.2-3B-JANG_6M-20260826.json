@@ -1,0 +1,145 @@
+{
+  "domains" : [
+    "agent_loop",
+    "cache_proof",
+    "capability_claims",
+    "computer_use_loop",
+    "default_agent",
+    "http_api",
+    "memory",
+    "micro_perf",
+    "reasoning_channel",
+    "subagent"
+  ],
+  "generatedAt" : "2026-08-26T17:01:34.453Z",
+  "models" : [
+    {
+      "actionCompletionCoverage" : 0.9915254237288136,
+      "chatModelPassed" : 228,
+      "chatModelScored" : 282,
+      "correctFileDeliveryRate" : 0.7666666666666667,
+      "environment" : {
+        "caseCount" : 19,
+        "catalogHash" : "2e766b2b52f4cf37",
+        "chip" : "Apple M5 Max",
+        "commit" : "cc19e77",
+        "contributor" : "jax-0n-git",
+        "cpuCores" : 18,
+        "harness" : "osaurus",
+        "judge" : "self-judge",
+        "lowPowerMode" : false,
+        "osVersion" : "26.6.2",
+        "powerSource" : "AC",
+        "runModel" : "OsaurusAI/Nanbeige4.2-3B-JANG_6M",
+        "thermalState" : "fair",
+        "totalRamMb" : 131072
+      },
+      "flakyCases" : 1,
+      "harness" : "osaurus",
+      "loopFreeRate" : 0.8813559322033898,
+      "meanAgentLoopWallTimeMs" : 32998.38592238345,
+      "meanCpuPercent" : 90.72434628602328,
+      "meanDecodeTokensPerSecond" : 52.100447872340425,
+      "meanFirstActionMs" : 2462.7444866376045,
+      "meanFirstStepContextTokens" : 2447.923076923077,
+      "meanFrictionCalls" : 1.1,
+      "meanPromptTokensPerTask" : 18495.13529411765,
+      "meanTotalTokensPerTask" : 18828.6,
+      "meanTtftMs" : 126.22710069020589,
+      "medianModelSteps" : 5,
+      "modelId" : "OsaurusAI/Nanbeige4.2-3B-JANG_6M",
+      "peakCpuPercent" : 634.2534858733128,
+      "peakPhysFootprintMb" : 35052.96090698242,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 92,
+          "scored" : 118,
+          "skipReasons" : {
+            "other: no AppleScript model installed; applescript/mac_query delegation tools withheld — case skipped" : 3,
+            "vmnetContention: sandbox unavailable (vmnetOwnedByOtherProcess): Sandbox VM is already owned by PID 34363 (osaurus) at /Applications/osaurus.app/Contents/MacOS/osaurus. Stop that Osaurus app or eval process before starting another vmnet sandbox." : 19
+          },
+          "skipped" : 22
+        },
+        "cache_proof" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 8,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 22,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 25,
+          "scored" : 42,
+          "skipped" : 0
+        },
+        "http_api" : {
+          "errored" : 0,
+          "passed" : 10,
+          "scored" : 15,
+          "skipReasons" : {
+            "other: scenario: multimodal_image · port 51092" : 1,
+            "other: scenario: multimodal_video · port 51092" : 1
+          },
+          "skipped" : 2
+        },
+        "memory" : {
+          "errored" : 0,
+          "passed" : 6,
+          "scored" : 8,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 6,
+          "scored" : 6,
+          "skipped" : 0
+        },
+        "reasoning_channel" : {
+          "errored" : 0,
+          "passed" : 13,
+          "scored" : 13,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 1,
+          "passed" : 35,
+          "scored" : 35,
+          "skipReasons" : {
+            "missingDependency: live spawn_model_residency lane unavailable on this host: residency lane unavailable: orchestrator 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is not installed locally" : 8,
+            "other: live image lane unavailable on this host: Image edit is not enabled for this agent." : 1,
+            "other: live image lane unavailable on this host: Image generation is not enabled for this agent." : 1,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is neither installed locally nor routable via a connected provider" : 2,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'xai/grok-4.3' is neither installed locally nor routable via a connected provider" : 2
+          },
+          "skipped" : 14
+        }
+      },
+      "startedAt" : "2026-08-26T15:02:21Z",
+      "subsystemPassed" : 0,
+      "subsystemScored" : 0,
+      "topContextContributors" : [
+        "tool:search_and_extract=371",
+        "tool:file_read=280",
+        "tool:render_chart=275",
+        "tool:spawn_batch=266",
+        "tool:share_artifact=266",
+        "tool:db_create_table=225"
+      ],
+      "totalPassed" : 228,
+      "totalScored" : 282
+    }
+  ]
+}
