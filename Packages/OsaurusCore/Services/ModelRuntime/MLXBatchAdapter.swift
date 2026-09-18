@@ -876,6 +876,7 @@ struct MLXBatchAdapter {
     static func warmupNativeMTPAtLoad(
         modelName: String,
         container: ModelContainer,
+        modelDefaults: LocalGenerationDefaults.Defaults,
         draftStrategy: MLXLMCommon.DraftStrategy?,
         runtime: RuntimeConfig,
         maxBatchSize: Int
@@ -890,6 +891,7 @@ struct MLXBatchAdapter {
                 let prepared = try await generate(
                     modelName: modelName,
                     container: container,
+                    modelDefaults: modelDefaults,
                     buildChat: {
                         [MLXLMCommon.Chat.Message(role: .user, content: nativeMTPLoadWarmupPrompt)]
                     },

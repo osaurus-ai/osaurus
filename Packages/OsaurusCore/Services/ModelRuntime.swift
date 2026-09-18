@@ -1937,6 +1937,7 @@ public actor ModelRuntime {
         await MLXBatchAdapter.warmupNativeMTPAtLoad(
             modelName: name,
             container: holder.container,
+            modelDefaults: holder.generationDefaults,
             draftStrategy: warmupStrategy,
             runtime: warmupRuntime,
             maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize

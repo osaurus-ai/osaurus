@@ -23,6 +23,8 @@ Both admin readouts repeated the short-name lookup and showed null defaults.
   status reads the resident holder's snapshot. Neither readout re-resolves
   an ambiguous catalog alias. Pending-preload diagnostics use the full ID.
 - Keep ambiguous-alias refusal and existing model/cache identity behavior.
+- Pass the same loaded snapshot through the existing MTP load warmup, rather
+  than giving that internal generation a separate defaults lookup.
 
 ## Verification status
 
@@ -32,6 +34,10 @@ Regression cases exercise two orgs with different defaults, full-ID selection,
 ambiguous short-name refusal, snapshot lifetime and explicit request precedence.
 Existing LocalGenerationDefaults and MLXBatchAdapter suites cover JANG/HF merge,
 user-setting precedence and do_sample behavior.
+
+The first integration build (34b8a746b) failed because the MTP warmup also calls
+the now-explicit generation entrypoint. That consumer is now wired from the
+same holder; the failed build is retained, not counted as a test pass.
 
 Failure artifacts: private runtime-followup-2026-09-18/BONSAI-RUN5.md,
 run5-launch.json/run5.oslog/run5.measurements.jsonl and
