@@ -73,14 +73,57 @@ Full baseline catalogs at `530c2f12`: AgentLoop 40 passed/10 failed/2 errored/
 rubric was reviewed in `EVAL-REVIEW-530.md`; these are not corrected-head results
 and not an all-pass claim. The 128GB host is not 16GB RAM qualification.
 
-## Remaining verification — PARTIAL
+## Combined live checkpoint — scope and limits
 
-The combined correction is implemented but not yet live-qualified. Required before merge:
-current-source focused regressions (including the earlier file/MCP image and
-MLX adapter contracts), matched automatic/named/required image API requests in
-complete and streaming modes, actual native image/tool/history UI and follow-up,
-full AgentLoop/AgentLoopFrontier with every non-pass attributed, and exact-head
-CI. Audio/video metadata tests do not prove Gemma audio/video processing.
+Tested app source `6267660b2811b7e8bdc13573ef88039d3501e61e`, engine
+`29e681dfc25e0afa114fcde4a886d77ecc244323`; development app binary SHA256
+`3f7f49e4b2e980c506c56b8553ccff772062477ce210416c2f96b306e65a31e8`.
+The same E2B8bit bundle/defaults above were used; MTP/thinking off. Focused
+app tests completed 314 tests in 17 suites with zero failures. Engine paired
+82 Swift Testing and 12 XCTest results are documented in #479.
+
+Native UI17 executed first-image file_write, file_read grounded in its result,
+a second image followed by another required write, reopened-history read,
+actual Chrome DevTools new_page/screenshot, then required file_write grounded
+in that returned screenshot. All 13 generations had normal stops, settled
+tool cards, unlocked input, correct saved sentences and 80.95–87.90 tok/s.
+Image counts/slots were 1/280, 2/560 and 3/840. Four automatic continuations
+explicitly accepted disk checkpoints; required-tool turns retained the existing
+fresh-cache guard. Effective fp16 KV, 3 full plus 12 rotating layers, paged RAM
+off and TurboQuant KV layer count zero. Store logs are not fsync durability.
+
+Fourteen paired API rows (complete/stream auto/named/required and earlier or
+two-image history) returned valid tool calls at 89.61–92.08 tok/s. Eleven
+captions were correct; three duplicate-image rows invented a black square,
+also observed in baseline automatic mode. Those three are not visual-fidelity
+passes, and API-returned test tools were not executed.
+
+Full corrected-head catalogs: AgentLoop **41 passed /10 failed /1 errored /
+4 skipped of56**, Frontier **16 passed /22 failed /4 errored of42**. All
+nonpasses and rubrics reviewed in private `EVAL-REVIEW-626.md`. Retained
+failures include empty final after executed tools, malformed arguments,
+copying file-display line numbers, unfinished work and failed generated tests;
+some deterministic/rubric misses are format/judge limitations. Frontier's
+lower aggregate versus baseline is retained, not explained away or claimed as
+a causal regression. Unseeded scores do not establish model-wide quality.
+
+Proof receipts: `RUN17-REVIEW.md`, `run17-gemma-history-native-evidence/`,
+`run17-required-media-matrix/`, `run17-media-history-probe/`, both
+`eval-6267660b2811b7e8bdc13573ef88039d3501e61e-*` catalog sets,
+`run17-measurements.jsonl`, `run18-measurements.jsonl` and the original
+`SWIFTTEST_GemmaHistory*` guards.
+UI18 normal quit/zero survivors at20:13:12; isolated settings restored.
+Kernel lifetime peak was 3,257,338,616 bytes for native UI17 and
+4,584,770,488 bytes for full Frontier UI18; swap stayed1.81GiB. This128GB
+machine does not qualify16GB behavior, video/audio or the reporter's freeze.
+
+All seven app CI checks completed at6267660b (CLI retry after dependency-fetch
+I/O failure). Engine #479 macOS/CUDA jobs were still queued at this checkpoint;
+four Linux builds passed and the pre-existing advisory full-tree formatter
+failed. CI is not described as universally green. Further model-quality,
+RAM/SSD, swallowed-prefill-error and discovery issues remain separate TODOs.
+This docs-only checkpoint records acceptance evidence, not a release or a
+claim that every Gemma workflow is fixed.
 
 Private evidence root:
 `/Users/eric/vmlx-private-evidence/handoff-parity-2026-09-16/implementation`.
