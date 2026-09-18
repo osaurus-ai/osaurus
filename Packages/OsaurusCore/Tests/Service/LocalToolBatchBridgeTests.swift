@@ -141,6 +141,30 @@ struct LocalToolBatchBridgeTests {
         #expect(await observed.calls.isEmpty)
     }
 
+    @Test(arguments: [false, true], [0, 1, 8, 128])
+    func cancellationWhileEventsAreBufferedReachesUpstream(_ complete: Bool, _ buffered: Int) async throws {
+        // Repeat the real scheduling race without adding a production test hook.
+        // Existing tests cover cancellation while next() is already suspended.
+        for attempt in 0 ..< 100 {
+            let (upstream, producer) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
+            let observed = Observation()
+            producer.onTermination = { termination in
+                if case .cancelled = termination { Task { await observed.cancelUpstream() } }
+            }
+            let consumer = consume(upstream, complete: complete, observed: observed)
+            defer { producer.finish(); consumer.cancel() }
+            for _ in 0 ..< buffered { producer.yield(first) }
+            consumer.cancel()
+            await consumer.value
+            // Observe cancellation before explicitly finishing the fixture.
+            // Keep upstream alive: deinitialization must not mask a lost cancel.
+            let cancelled = try await waitFor { await observed.upstreamCancelled }
+            withExtendedLifetime(upstream) {}
+            try #require(cancelled, "Lost upstream cancellation at attempt \(attempt), buffered=\(buffered), complete=\(complete)")
+            #expect(await observed.calls.isEmpty)
+        }
+    }
+
     @Test func nativeCompletionDoesNotCancelOrWaitForTheTail() async throws {
         let (upstream, producer) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
         let observed = Observation()

@@ -5948,7 +5948,10 @@ public actor ModelRuntime {
                 for try await ev in events {
                     if Task.isCancelled {
                         continuation.finish()
-                        return
+                        // A buffered next() may finish just before cancellation.
+                        // Reach next() again so the upstream stream receives it;
+                        // returning here can skip its onTermination cleanup.
+                        continue
                     }
                     // Only logical completion closes the batch. Any wrapper
                     // cleanup after it still owns its generation/cache lease.
