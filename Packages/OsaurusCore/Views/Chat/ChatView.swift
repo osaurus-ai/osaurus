@@ -10085,7 +10085,6 @@ struct ChatView: View {
                             if !NSApp.windows.contains(where: { $0.attachedSheet != nil }) { break }
                         }
                         AppDelegate.shared?.presentProductHuntLaunchDialogIfEligible()
-                        AppDelegate.shared?.presentWorkspacesIntroDialogIfEligible()
                     }
                 },
                 onAction: { action in

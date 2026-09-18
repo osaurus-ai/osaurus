@@ -3,6 +3,64 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.7</title>
+            <pubDate>Fri, 18 Sep 2026 09:12:40 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.7</sparkle:version>
+            <sparkle:shortVersionString>0.25.7</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.7/Osaurus-0.25.7.dmg" length="77655056" type="application/octet-stream" sparkle:edSignature="whcC383Sp6NdHM0NhQNje9/URytN0ZaPItIvuH85AkOeB8Ev9/wc62By/KH4aPXSdL/r+kZvRThW5wO21nTMDA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Embed the Workspaces explainer in the tab's empty state; drop the intro dialog (#2811) by @tpae
+- Support Bonsai2 runtime and preserve native Qwen tool templates (#2808) by @jjang-ai
+
+## 🚀 Features
+
+- added number\_of\_agents property to agent\_created telemetry event (#2807) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Preserve typed MCP image results in Chat and agent history (#2805) by @jjang-ai
+- fixed tab strip jumping and overlapping the sidebar on window resize (#2802) by @RaajeevChandran
+- added don't show this again to the ssd cache limit reached notice (#2801) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.6...0.25.7
+]]></description>
+        </item>
+        <item>
+            <title>0.25.6</title>
+            <pubDate>Thu, 17 Sep 2026 15:23:00 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.6</sparkle:version>
+            <sparkle:shortVersionString>0.25.6</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.6/Osaurus-0.25.6.dmg" length="77629349" type="application/octet-stream" sparkle:edSignature="7C6IvQ3tYjegTrsbpJLBTs/DMx6iOelK75QdR8Men1d7bBLTruH6sbFtJmIFp05ofgv4ClLtp5jsiJ6DcDcMBg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Gate Sparkle update checks on chat, not Settings (#2794) by @tpae
+- Unify file\_read/file\_write across document, image, and workbook formats (#2791) by @tpae
+
+## 🐛 Bug Fixes
+
+- warn before add model discards the agent creator draft (#2800) by @RaajeevChandran
+- fix history dialog stacking when the toolbar button is tapped repeatedly (#2799) by @RaajeevChandran
+- Show composer stuck chip only when a run is actually silent (#2795) by @tpae
+- fix computer use failing with the privacy filter on and losing its step log (#2797) by @RaajeevChandran
+- improved PII extraction flow (#2793) by @RaajeevChandran
+- Preserve complete native local tool-call batches (#2792) by @jjang-ai
+- fix: prevent Int overflow in CreditsTopUpSheet currentMicro (#2717) by @[sentry[bot]](https://github.com/apps/sentry)
+- Explain warning-pressure delegation refusal and qualify RAM opt-out (#2790) by @jjang-ai
+- Enforce model manifest compatibility and detect model updates (#2789) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.5...0.25.6
+]]></description>
+        </item>
+        <item>
             <title>0.25.5</title>
             <pubDate>Wed, 16 Sep 2026 21:37:04 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

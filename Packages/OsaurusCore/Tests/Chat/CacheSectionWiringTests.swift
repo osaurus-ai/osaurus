@@ -25,6 +25,7 @@ final class CacheSectionWiringTests: XCTestCase {
         XCTAssertTrue(src.contains(".task(id: ssdQuotaNoticePollContext)"))
         XCTAssertTrue(src.contains("session: inputHistoryKey,\n            eligible: canPresentSSDQuotaNotice"))
         XCTAssertTrue(src.contains("if canPresentSSDQuotaNotice, let snapshot = ssdWarningSnapshot"))
+        XCTAssertTrue(src.contains("DiskCacheQuotaNoticeSuppression.suppress()"))
     }
 
     func testMTPBannerPreservesIndividualButtonAccessibility() throws {

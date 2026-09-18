@@ -72,6 +72,16 @@ import Testing
         #expect(claimed12)
     }
 
+    @Test func dontShowAgainPersistsAcrossLaunches() throws {
+        let suite = "disk-cache-quota-notice-tests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        #expect(!DiskCacheQuotaNoticeSuppression.isSuppressed(defaults: defaults))
+        DiskCacheQuotaNoticeSuppression.suppress(defaults: defaults)
+        let relaunched = try #require(UserDefaults(suiteName: suite))
+        #expect(DiskCacheQuotaNoticeSuppression.isSuppressed(defaults: relaunched))
+    }
+
     @Test func aNewAppSessionCanRemindAgain() {
         var oldSession = DiskCacheQuotaNoticePolicy()
         var newSession = DiskCacheQuotaNoticePolicy()

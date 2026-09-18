@@ -212,7 +212,11 @@ Emitted when a user configures an MCP (tool) provider.
 ### `agent_created`
 
 Emitted when a user creates an agent. Built-in agents seeded by the app are
-excluded. No properties — count only, with no name or configuration.
+excluded. No name, prompt, or configuration is attached.
+
+| Property | Type | Values / meaning |
+|----------|------|------------------|
+| `number_of_agents` | int | Total agents on the install after this one was added (built-in included). Lets the dashboard derive the typical number of agents per user. |
 
 ### `settings_opened`
 
