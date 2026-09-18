@@ -271775,6 +271775,40 @@
           }
         }
       }
+    },
+    "From ~/.osaurus/container/startup-failures.json": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aus ~/.osaurus/container/startup-failures.json"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "~/.osaurus/container/startup-failures.json에서 가져옴"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Из ~/.osaurus/container/startup-failures.json"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "来自 ~/.osaurus/container/startup-failures.json"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "來自 ~/.osaurus/container/startup-failures.json"
+          }
+        }
+      }
     }
   },
   "version": "1.1"
