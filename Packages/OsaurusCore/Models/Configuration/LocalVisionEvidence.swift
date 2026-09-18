@@ -63,6 +63,47 @@ enum LocalVisionEvidence {
         return result
     }
 
+    /// Posted on the main queue when a background `cachedOrWarm` read lands, so
+    /// SwiftUI getters that saw `nil` re-evaluate against the cached result.
+    static let evidenceReady = Notification.Name("localVisionEvidenceReady")
+
+    private nonisolated(unsafe) static var inFlight: Set<String> = []
+    private static let warmQueue = DispatchQueue(
+        label: "ai.osaurus.local-vision-evidence", qos: .utility)
+
+    /// Non-blocking variant for SwiftUI getters. A miss used to run `read` on
+    /// the main thread (config JSON plus every safetensors header of the
+    /// bundle), which hung the composer on first selection of a model and
+    /// again after each `.localModelsChanged` invalidation. Returns the cached
+    /// result or nil; on nil a single background read per directory fills the
+    /// cache through `inspect`, which keeps the generation check, then posts
+    /// `evidenceReady`. Send and load paths keep calling `inspect`, so the
+    /// authoritative gate never sees a pending nil.
+    static func cachedOrWarm(_ directory: URL) -> Result? {
+        _ = observer
+        let key = directory.standardizedFileURL.path
+        let processorVersion = VLMProcessorTypeRegistry.shared.registrationVersion
+        lock.lock()
+        if let cached = cache[key], cached.processorVersion == processorVersion {
+            lock.unlock()
+            return cached.result
+        }
+        let shouldStart = inFlight.insert(key).inserted
+        lock.unlock()
+        if shouldStart {
+            warmQueue.async {
+                _ = inspect(directory)
+                lock.lock()
+                inFlight.remove(key)
+                lock.unlock()
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(name: evidenceReady, object: nil)
+                }
+            }
+        }
+        return nil
+    }
+
     private static func object(_ url: URL) -> [String: Any]? {
         guard let data = try? Data(contentsOf: url),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]

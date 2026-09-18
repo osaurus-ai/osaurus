@@ -193,6 +193,12 @@ public enum ModelMediaCapabilities {
         return capabilities(evidence)
     }
 
+    /// Cache-only counterpart of `from(directory:modelId:)` for view getters.
+    /// nil means the bundle read is still pending off-main.
+    public static func cachedFrom(directory: URL) -> Capabilities? {
+        LocalVisionEvidence.cachedOrWarm(directory).map(capabilities)
+    }
+
     private static func capabilities(_ evidence: LocalVisionEvidence.Result) -> Capabilities {
         let type = evidence.modelType.lowercased()
         return Capabilities(
