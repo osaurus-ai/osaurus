@@ -1165,7 +1165,26 @@ extension ModelPickerTableRepresentable {
                 // Same id sequence: only row contents (e.g. description) may
                 // have changed. Refresh the lookup and reconfigure visible
                 // cells without rebuilding the snapshot.
+                // A content change can move a row between height classes
+                // (metadata arriving after the on-open refresh). The table
+                // only re-measures its frame when told, so without this the
+                // rows re-tile taller while the frame stays short: the last
+                // row then draws past the table's bounds, where the tracking
+                // area and hit-testing no longer reach it.
+                var resized = IndexSet()
+                for (index, id) in rowIds.enumerated() {
+                    guard let old = rowLookup[id], let new = newLookup[id],
+                        Self.rowHeight(for: old) != Self.rowHeight(for: new)
+                    else { continue }
+                    resized.insert(index)
+                }
                 rowLookup = newLookup
+                if !resized.isEmpty {
+                    NSAnimationContext.runAnimationGroup { context in
+                        context.duration = 0
+                        tableView?.noteHeightOfRows(withIndexesChanged: resized)
+                    }
+                }
                 reconfigureVisibleCells()
                 return
             }
