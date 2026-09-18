@@ -300,11 +300,16 @@ let package = Package(
         // f16 seed into bf16 streams; dequant math keeps exact f16 metadata).
         // vmlx-swift#475 corrects GLM media prefill and ordered image history,
         // and validates complete model-owned disk state before live restore.
-        // Bonsai2 development pin: strict Hadamard/packed ternary loading,
+        // vmlx-swift#479 retains Gemma image and tool history during explicit
+        // tool selection, keeping rendered image slots aligned with pixels.
+        // Also preserves the Bonsai2 strict Hadamard/packed ternary loading,
         // native Qwen template/schema handling and multimodal tool history.
+        // vmlx-swift#481 fuses exact packed-ternary expansion on Metal;
+        // #482 bounds Qwen3.5/Bonsai2 media language prefill while retaining
+        // full-prompt M-RoPE positions and complete KV/GDN companion state.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "cfc6af29f97afc437da09004af26a6b6f32cea0f"
+            revision: "125f961272908697f87a983f972ccf50e0810a05"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

@@ -1,176 +1,204 @@
-//
-//  AppleScriptWarmResidency.swift
-//  OsaurusCore — Subagent framework
-//
-//  Keep-warm residency for the AppleScript subagent. The AppleScript bundle is
-//  ALWAYS a different model than the resident chat model, so a run must unload
-//  chat → load AppleScript → run → reload chat (single-GPU residency, via
-//  `ResidencyHandoff`). Back-to-back `applescript` / `mac_query` calls pay that
-//  whole round-trip each time.
-//
-//  Under `AppleScriptLoadPolicy.keepWarmAfterJob`, this middleware instead keeps
-//  the AppleScript model resident for a short window after a run and DEFERS the
-//  chat reload. A follow-up AppleScript call within the window adopts the still-
-//  unloaded lease (the chat models the previous run freed) and reuses the
-//  resident AppleScript model — skipping the unload/reload entirely. When the
-//  window elapses with no follow-up, the deferred restore reloads the chat
-//  model.
-//
-//  Single-residency envelope preserved: during the warm window exactly ONE
-//  model (the AppleScript bundle) is resident and NOTHING is generating, so it
-//  stays inside the one-resident-model invariant. If a chat turn starts during
-//  the window it reloads the chat model through the normal on-demand path
-//  (evicting the AppleScript model under strict eviction, or coexisting under
-//  the flexible policy the coexistence gate already governs); the deferred
-//  restore is idempotent (`restoreBestEffort` verifies residency) so it never
-//  double-loads. The run itself still holds the GPU exclusively via the kind's
-//  admission class.
-//
+// Keep-warm is an optional delay of an already-authorized swap's restore leg.
+// It must not enable swapping, transfer a lease to another parent/session, or
+// discard the ownership needed to release the child and restore the parent.
 
 import Foundation
+import os
 
-/// Process-wide owner of the deferred chat-model restore for the AppleScript
-/// keep-warm window. Holds at most one warm lease (the chat models a prior run
-/// unloaded) plus the AppleScript model kept resident for it, and a single
-/// scheduled restore task guarded by a monotonic token so a stale timer can
-/// never restore after a newer run took over.
+struct AppleScriptWarmResidencyOwner: Sendable, Equatable {
+    let sessionId: String
+    let agentId: UUID
+    let parentModelName: String?
+
+    init(scope: SubagentScope) {
+        sessionId = scope.sessionId
+        agentId = scope.agentId
+        parentModelName = scope.parentModelName.map {
+            (ModelManager.findInstalledModel(named: $0)?.name ?? $0).lowercased()
+        }
+    }
+}
+
 actor AppleScriptWarmResidencyCoordinator {
     static let shared = AppleScriptWarmResidencyCoordinator()
+    private static let logger = Logger(subsystem: "com.dinoki.osaurus", category: "AppleScriptWarmResidency")
 
-    /// Chat models unloaded for the currently-warm AppleScript model, pending a
-    /// deferred restore. `nil` when nothing is held warm.
-    private var heldLease: ChatResidencyLease?
-    /// The AppleScript model currently held resident (so a run for a DIFFERENT
-    /// model releases the hold instead of adopting it). Compared case-insensitively.
-    private var heldModel: String?
-    /// The scheduled deferred restore; cancelled when a run adopts the hold or a
-    /// newer hold replaces it.
-    private var restoreTask: Task<Void, Never>?
-    /// Monotonic guard: a deferred restore only fires when its captured token
-    /// still matches, so a cancelled/replaced timer is a no-op even if it wakes.
-    private var token = 0
+    private struct Hold: Sendable {
+        let lease: ChatResidencyLease
+        let model: String
+        let owner: AppleScriptWarmResidencyOwner
+    }
 
-    /// Restore seam (injectable for tests). Production reloads the chat models
-    /// via `ChatResidencyHandoff` best-effort (logs, never throws).
-    private let restore: @Sendable (ChatResidencyLease) async -> Void
-    /// Sleep seam (injectable for tests) so the deferred-restore delay is
-    /// deterministic under test.
-    private let sleep: @Sendable (_ seconds: Int) async -> Void
+    private struct Restoration {
+        let id = UUID()
+        let task: Task<Void, Error>
+    }
+
+    private var hold: Hold?
+    private var timer: Task<Void, Never>?
+    private var timerGeneration = 0
+    /// Every waiter joins the same owned restore. Cancelling a run or timer
+    /// cannot cancel cleanup, and a reentrant waiter cannot start it twice.
+    private var restoration: Restoration?
+    private var restoreNeedsRetry = false
+    private let restore: @Sendable (ChatResidencyLease) async throws -> Void
+    private let canAdopt: @Sendable (ChatResidencyLease, String) async -> Bool
+    private let sleep: @Sendable (Int) async -> Void
 
     init(
-        restore: @escaping @Sendable (ChatResidencyLease) async -> Void = {
-            await ChatResidencyHandoff.restoreBestEffort($0)
+        restore: @escaping @Sendable (ChatResidencyLease) async throws -> Void = {
+            _ = try await ChatResidencyHandoff.restore($0)
         },
-        sleep: @escaping @Sendable (_ seconds: Int) async -> Void = { seconds in
-            try? await Task.sleep(nanoseconds: UInt64(max(0, seconds)) * 1_000_000_000)
+        canAdopt: @escaping @Sendable (ChatResidencyLease, String) async -> Bool = { lease, model in
+            let canonical = ModelManager.findInstalledModel(named: model)?.name ?? model
+            let owned = await ModelRuntime.shared.childOwnedResidentNames(by: lease.childOwnershipToken)
+            guard owned.contains(where: { $0.caseInsensitiveCompare(canonical) == .orderedSame }) else {
+                return false
+            }
+            let residents = await ModelRuntime.shared.cachedModelSummaries()
+            return !residents.contains { resident in
+                lease.restoreModelNames.contains { $0.caseInsensitiveCompare(resident.name) == .orderedSame }
+            }
+        },
+        sleep: @escaping @Sendable (Int) async -> Void = { seconds in
+            try? await Task.sleep(for: .seconds(max(0, seconds)))
         }
     ) {
         self.restore = restore
+        self.canAdopt = canAdopt
         self.sleep = sleep
     }
 
-    /// Begin an AppleScript run for `model`. If a warm hold exists for the SAME
-    /// model, adopt it: cancel the pending restore and return its lease so the
-    /// caller reuses the already-unloaded chat models (no unload). If a hold
-    /// exists for a DIFFERENT model, restore it now (that model is being
-    /// replaced) and return `nil`. `nil` means "no warm hold — unload normally".
-    func beginRun(model: String) async -> ChatResidencyLease? {
-        token += 1
-        restoreTask?.cancel()
-        restoreTask = nil
-        let previousLease = heldLease
-        let previousModel = heldModel
-        heldLease = nil
-        heldModel = nil
-
-        if let previousModel, previousModel.caseInsensitiveCompare(model) == .orderedSame,
-            let previousLease
+    /// Called under the kind's exclusive admission lease, before refreshing
+    /// residency. A changed toggle, parent/session, model or warm policy must
+    /// settle the previous restore first, then price the actual resident set.
+    func prepareForRun(model: String, owner: AppleScriptWarmResidencyOwner, allowAdoption: Bool) async throws {
+        if restoration != nil || restoreNeedsRetry { try await restoreHeld() }
+        guard let candidate = hold else { return }
+        if allowAdoption, candidate.owner == owner,
+            candidate.model.caseInsensitiveCompare(model) == .orderedSame,
+            await canAdopt(candidate.lease, model),
+            hold?.lease.childOwnershipToken == candidate.lease.childOwnershipToken,
+            restoration == nil
         {
-            return previousLease
-        }
-        // A hold for a different model is being replaced by this run — restore
-        // it before the run unloads for its own model.
-        if let previousLease, !previousLease.isEmpty {
-            await restore(previousLease)
-        }
-        return nil
-    }
-
-    /// End an AppleScript run. Under keep-warm (`keepWarmSeconds > 0`) with a
-    /// non-empty lease, hold `model` resident and schedule the chat restore for
-    /// `keepWarmSeconds` from now. Otherwise restore immediately.
-    func endRun(lease: ChatResidencyLease, model: String, keepWarmSeconds: Int) async {
-        guard keepWarmSeconds > 0, !lease.isEmpty else {
-            if !lease.isEmpty { await restore(lease) }
             return
         }
-        token += 1
-        let myToken = token
-        heldLease = lease
-        heldModel = model
-        restoreTask = Task { [weak self, sleep] in
+        try await flush()
+    }
+
+    func beginRun(
+        model: String,
+        owner: AppleScriptWarmResidencyOwner,
+        allowAdoption: Bool
+    ) async throws -> ChatResidencyLease? {
+        try await prepareForRun(model: model, owner: owner, allowAdoption: allowAdoption)
+        cancelTimer()
+        // prepareForRun only leaves a matching, owned hold. A timer that
+        // started restoring during its runtime checks has been joined above.
+        if restoration != nil { try await restoreHeld() }
+        guard let candidate = hold else { return nil }
+        hold = nil
+        return candidate.lease
+    }
+
+    func endRun(
+        lease: ChatResidencyLease,
+        model: String,
+        owner: AppleScriptWarmResidencyOwner,
+        keepWarmSeconds: Int
+    ) async throws {
+        // Never overwrite another pending or failed restore receipt.
+        try await flush()
+        guard !lease.isEmpty else { return }
+        hold = Hold(lease: lease, model: model, owner: owner)
+        guard keepWarmSeconds > 0 else {
+            try await restoreHeld()
+            return
+        }
+        let generation = timerGeneration
+        timer = Task { [weak self, sleep] in
             await sleep(keepWarmSeconds)
-            await self?.fireDeferredRestore(myToken)
+            await self?.fireDeferredRestore(generation)
         }
     }
 
-    /// Fire the deferred restore iff it's still the current hold (`myToken`
-    /// unchanged). A superseded timer is a no-op.
-    private func fireDeferredRestore(_ myToken: Int) async {
-        guard myToken == token, let lease = heldLease else { return }
-        heldLease = nil
-        heldModel = nil
-        restoreTask = nil
-        await restore(lease)
+    private func fireDeferredRestore(_ generation: Int) async {
+        guard generation == timerGeneration else { return }
+        timer = nil
+        do {
+            try await restoreHeld()
+        } catch {
+            // Retain the lease for an explicit flush/next-run retry. A log is
+            // not a successful restore and must not erase the repair handle.
+            Self.logger.error(
+                "Deferred AppleScript parent restore failed: \(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
-    /// Flush any warm hold NOW (restore the chat model immediately). Used before
-    /// a different local model must load, or to reclaim the hold on teardown.
-    func flush() async {
-        token += 1
-        restoreTask?.cancel()
-        restoreTask = nil
-        guard let lease = heldLease else { return }
-        heldLease = nil
-        heldModel = nil
-        if !lease.isEmpty { await restore(lease) }
+    private func cancelTimer() {
+        timerGeneration += 1
+        timer?.cancel()
+        timer = nil
     }
 
-    /// Test-only view of the current hold (model name, or nil when none).
-    func heldModelForTesting() -> String? { heldModel }
+    func flush() async throws {
+        cancelTimer()
+        try await restoreHeld()
+    }
+
+    private func restoreHeld() async throws {
+        guard let candidate = hold else { return }
+        let operation: Restoration
+        if let restoration {
+            operation = restoration
+        } else {
+            operation = Restoration(
+                task: Task.detached(priority: .userInitiated) { [restore] in
+                    try await restore(candidate.lease)
+                }
+            )
+            restoration = operation
+        }
+        do {
+            try await operation.task.value
+            if restoration?.id == operation.id {
+                hold = nil
+                restoration = nil
+                restoreNeedsRetry = false
+            }
+        } catch {
+            if restoration?.id == operation.id {
+                restoration = nil
+                restoreNeedsRetry = true
+            }
+            throw error
+        }
+    }
+
+    func heldModelForTesting() -> String? { hold?.model }
 }
 
-/// Keep-warm residency middleware for the AppleScript kind. Wraps the standard
-/// unload→run→reload flow (`ResidencyHandoff`) but routes the chat restore
-/// through `AppleScriptWarmResidencyCoordinator` so it can be deferred and a
-/// follow-up run can adopt it. Falls back to an immediate restore on the
-/// failure path (a failed run should not strand chat unloaded on a warm timer).
+/// Uses the same cold-path preflight, exact-parent unload, child ownership and
+/// cancellation-independent restore as ordinary text delegation. Only the
+/// successful restore leg is allowed to be deferred by the keep-warm policy.
 struct AppleScriptWarmResidencyHandoff: SubagentHandoff {
     let plan: ResidencyPlan
     let model: String
     let keepWarmSeconds: Int
     let coordinator: AppleScriptWarmResidencyCoordinator
+    let preflight: ResidencyHandoff.Preflight
+    let unload: ResidencyHandoff.Unload
+    var postUnloadPreflight: ResidencyHandoff.Preflight? = nil
 
-    /// Refuse-before-evict preflight (injectable; production → `ChatResidencyHandoff`).
-    let preflight:
-        @Sendable (_ requiredBytes: Int64, _ enabled: Bool, _ onPhase: (String, String) -> Void)
-            async throws -> Void
-    /// Unload resident chat models, returning the lease (injectable).
-    let unload:
-        @Sendable (_ maxElapsedSeconds: Int, _ onPhase: (String, String) -> Void) async throws ->
-            ChatResidencyLease
-    var postUnloadPreflight: (@Sendable () async throws -> Void)? = nil
-    /// Immediate restore for the failure path (injectable).
-    let restoreNow: @Sendable (_ lease: ChatResidencyLease, _ onPhase: (String, String) -> Void) async -> Void
-
-    /// Production wiring against `ChatResidencyHandoff`.
     static func production(
         plan: ResidencyPlan,
         model: String,
         keepWarmSeconds: Int,
         coordinator: AppleScriptWarmResidencyCoordinator = .shared
     ) -> AppleScriptWarmResidencyHandoff {
-        AppleScriptWarmResidencyHandoff(
+        let standard = ResidencyHandoff.production(plan: { _ in plan })
+        return AppleScriptWarmResidencyHandoff(
             plan: plan,
             model: model,
             keepWarmSeconds: keepWarmSeconds,
@@ -183,23 +211,8 @@ struct AppleScriptWarmResidencyHandoff: SubagentHandoff {
                     onPhase: onPhase
                 )
             },
-            unload: { maxElapsedSeconds, onPhase in
-                try await ChatResidencyHandoff.unloadResidentChatModels(
-                    maxElapsedSeconds: maxElapsedSeconds,
-                    onPhase: onPhase
-                )
-            },
-            postUnloadPreflight: {
-                guard plan.ramSafetyEnabled else { return }
-                _ = await ModelRuntime.shared.reclaimMemoryForSubagentAdmission()
-                try await Task.sleep(for: .milliseconds(1_100))
-                try await ChatResidencyHandoff.memoryPreflight(
-                    requiredBytes: plan.requiredBytes, enabled: true
-                )
-            },
-            restoreNow: { lease, onPhase in
-                _ = await ChatResidencyHandoff.restoreBestEffort(lease, onPhase: onPhase)
-            }
+            unload: standard.unload,
+            postUnloadPreflight: standard.postUnloadPreflight
         )
     }
 
@@ -209,45 +222,63 @@ struct AppleScriptWarmResidencyHandoff: SubagentHandoff {
         feed: SubagentFeed,
         run body: () async throws -> SubagentResult
     ) async throws -> SubagentResult {
+        let owner = AppleScriptWarmResidencyOwner(scope: scope)
+        let adopted = try await coordinator.beginRun(
+            model: model,
+            owner: owner,
+            allowAdoption: plan.shouldUnload && keepWarmSeconds > 0
+        )
+        guard plan.shouldUnload else {
+            if !plan.coexists {
+                try await preflight(plan.requiredBytes, plan.ramSafetyEnabled) { phase, detail in
+                    feed.emitPhase(phase, detail: detail.isEmpty ? nil : detail)
+                }
+            }
+            return try await SubagentResidency.handoff(for: plan).around(
+                scope: scope,
+                resolved: resolved,
+                feed: feed,
+                run: body
+            )
+        }
+        if adopted != nil { feed.emitPhase("reusing_applescript_model", detail: model) }
         let emit: (String, String) -> Void = { phase, detail in
             feed.emitPhase(phase, detail: detail.isEmpty ? nil : detail)
         }
-
-        // A warm hold for THIS model means chat is already unloaded and the
-        // AppleScript model resident — adopt the lease and skip the swap.
-        if let adopted = await coordinator.beginRun(model: model) {
-            emit("reusing_applescript_model", model)
-            do {
-                let result = try await body()
-                await coordinator.endRun(
-                    lease: adopted,
-                    model: model,
-                    keepWarmSeconds: keepWarmSeconds
-                )
-                return result
-            } catch {
-                await restoreNow(adopted, emit)
-                throw error
-            }
+        if adopted == nil { try await preflight(plan.requiredBytes, plan.ramSafetyEnabled, emit) }
+        let lease: ChatResidencyLease
+        if let adopted {
+            lease = adopted
+        } else {
+            lease = try await unload(scope.parentModelName, plan.maxElapsedSeconds, emit)
         }
-
-        // Cold path: refuse-before-evict, then unload chat for this run.
-        try await preflight(plan.requiredBytes, plan.ramSafetyEnabled, emit)
-        guard plan.shouldUnload else {
-            // Nothing resident to unload (cloud orchestrator / already ours), so
-            // there's nothing to keep warm either.
-            return try await body()
-        }
-        let lease = try await unload(plan.maxElapsedSeconds, emit)
+        let result: SubagentResult
         do {
-            try await postUnloadPreflight?()
-            let result = try await body()
-            // Keep the AppleScript model warm: defer the chat restore.
-            await coordinator.endRun(lease: lease, model: model, keepWarmSeconds: keepWarmSeconds)
-            return result
+            if adopted == nil {
+                try await postUnloadPreflight?(plan.requiredBytes, plan.ramSafetyEnabled, emit)
+            }
+            try Task.checkCancellation()
+            result = try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(lease.childOwnershipToken)
+            {
+                try await body()
+            }
         } catch {
-            await restoreNow(lease, emit)
+            do {
+                try await coordinator.endRun(lease: lease, model: model, owner: owner, keepWarmSeconds: 0)
+            } catch let restoreError {
+                throw ResidencyHandoffFailure.bodyAndRestoreFailed(
+                    body: error.localizedDescription,
+                    restore: restoreError.localizedDescription
+                )
+            }
             throw error
         }
+        try await coordinator.endRun(
+            lease: lease,
+            model: model,
+            owner: owner,
+            keepWarmSeconds: Task.isCancelled ? 0 : keepWarmSeconds
+        )
+        return result
     }
 }

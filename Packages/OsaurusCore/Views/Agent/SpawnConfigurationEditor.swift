@@ -686,7 +686,7 @@ struct SpawnConfigurationEditor: View {
                     .font(.system(size: 11))
                     .foregroundColor(theme.warningColor)
                 Text(
-                    "\"Swap local models for subagents\" is off. A local subagent with a different model runs WITHOUT the unload chat model → load subagent model → run → unload → reload sequence, so the server eviction policy decides whether the chat model stays loaded. Turn it on in Settings → Orchestrator to enforce the sequence for every agent.",
+                    "\"Swap local models for subagents\" is off. The invoking model stays loaded while a different local subagent runs, including under Server Strict. This uses more memory; memory checks can still refuse the child without evicting the parent. Change the shared setting in Settings → Orchestrator.",
                     bundle: .module
                 )
                 .font(.system(size: 11))

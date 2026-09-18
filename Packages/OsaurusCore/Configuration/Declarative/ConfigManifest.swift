@@ -284,7 +284,7 @@ public enum ConfigManifest {
                     comment: "false skips the RAM preflight (HIGH RISK)"),
                 ConfigKeySpec(
                     "coexistence_enabled", .scalar(.boolean, example: "false"),
-                    comment: "spawn model may load beside the chat model"),
+                    comment: "legacy compatibility key; no effect (local_text_enabled=false keeps parent loaded)"),
             ])),
 
         ConfigSectionSpec(

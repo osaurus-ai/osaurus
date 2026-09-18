@@ -259,6 +259,8 @@ final class ContextCompactionService {
         turns: [ChatTurn],
         existingSummary: ConversationSummary?,
         sessionId: UUID?,
+        invocation: ModelJobInvocation,
+        agentId: UUID,
         onPhase: @MainActor (ContextCompactionPhase) -> Void
     ) async throws -> ConversationSummary {
         onPhase(.preparing)
@@ -307,10 +309,10 @@ final class ContextCompactionService {
             temperature: Float(Self.summaryTemperature),
             maxTokens: Self.summaryMaxTokens,
             sessionId: sessionId?.uuidString,
-            requestSource: .chatUI,
-            // The user is actively waiting on compaction (button click or
-            // pre-send auto-trigger), so it has the right to load/evict.
-            loadIntent: .interactive
+            requestSource: invocation.source?.inferenceSource ?? .chatUI,
+            // The scoped handoff, not a general interactive eviction, owns
+            // any parent swap. Unrelated residents remain protected.
+            loadIntent: .background
         )
 
         onPhase(.summarizing)
@@ -321,11 +323,19 @@ final class ContextCompactionService {
                 seconds: Self.timeoutSeconds,
                 operationName: "context compaction"
             ) {
-                try await service.generateOneShot(
-                    messages: messages,
-                    parameters: params,
-                    requestedModel: modelId
-                )
+                try await AuxiliaryModelHandoff.run(
+                    targetModelName: modelId,
+                    invocation: invocation,
+                    sessionID: sessionId,
+                    agentID: agentId,
+                    operationName: "context_compaction"
+                ) {
+                    try await service.generateOneShot(
+                        messages: messages,
+                        parameters: params,
+                        requestedModel: modelId
+                    )
+                }
             }
         } catch is DeadlineExceededError {
             Self.logToInsights(

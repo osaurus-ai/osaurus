@@ -1073,7 +1073,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 row["native_mtp_status"] = summary.nativeMTPStatus ?? NSNull()
                 row["native_mtp_reason"] = summary.nativeMTPReason ?? NSNull()
                 row["generation_defaults"] = Self.generationDefaultsJSONObject(
-                    LocalGenerationDefaults.defaults(forModelId: summary.name)
+                    summary.generationDefaults
                 )
                 if let effective = lastEffectiveGenerationSettings[summary.name] {
                     row["last_effective_generation"] = Self.effectiveGenerationSettingsJSONObject(effective)
@@ -1338,10 +1338,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             var defaultsByModel: [String: Any] = [:]
             var effectiveByModel: [String: Any] = [:]
             for modelName in lastEffectiveGenerationSettings.keys.sorted() {
-                defaultsByModel[modelName] = Self.generationDefaultsJSONObject(
-                    LocalGenerationDefaults.defaults(forModelId: modelName)
-                )
                 if let effective = lastEffectiveGenerationSettings[modelName] {
+                    defaultsByModel[modelName] = Self.generationDefaultsJSONObject(effective.modelDefaults)
                     effectiveByModel[modelName] = Self.effectiveGenerationSettingsJSONObject(effective)
                 }
             }

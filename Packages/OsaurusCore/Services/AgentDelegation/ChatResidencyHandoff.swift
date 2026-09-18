@@ -30,17 +30,22 @@ struct ChatResidencyLease: Sendable, Equatable {
     var unloadedModelNames: [String]
     var restoreModelNames: [String]
     var unloadedParentIdentity: ModelResidencyIdentity?
+    /// Detached cleanup must not turn a schedule/API/plugin parent into a
+    /// legacy chat-owned preload before its next generation resumes.
+    var parentSource: RequestSource?
     let childOwnershipToken: ModelResidencyOwnershipToken
 
     init(
         unloadedModelNames: [String],
         restoreModelNames: [String]? = nil,
         unloadedParentIdentity: ModelResidencyIdentity? = nil,
+        parentSource: RequestSource? = nil,
         childOwnershipToken: ModelResidencyOwnershipToken = ModelResidencyOwnershipToken()
     ) {
         self.unloadedModelNames = unloadedModelNames
         self.restoreModelNames = restoreModelNames ?? unloadedModelNames
         self.unloadedParentIdentity = unloadedParentIdentity
+        self.parentSource = parentSource
         self.childOwnershipToken = childOwnershipToken
     }
 
@@ -194,6 +199,8 @@ enum ChatResidencyHandoff {
     /// so a too-large job never leaves the user with the orchestrator evicted
     /// and nothing loaded. `requiredBytes <= 0` or `enabled == false` skips the
     /// check. Throws `.insufficientMemory` when it won't fit.
+    static let headroomBytes: Int64 = 3 * 1024 * 1024 * 1024
+
     static func memoryPreflight(
         requiredBytes: Int64,
         enabled: Bool,
@@ -204,8 +211,7 @@ enum ChatResidencyHandoff {
         // Models occupy more resident RAM than their on-disk weights (KV +
         // activations + framework overhead); inflate the on-disk estimate.
         let inflation = 1.3
-        let headroom: Int64 = 3 * 1024 * 1024 * 1024  // keep 3 GB for the OS/app
-        let needed = Int64(Double(requiredBytes) * inflation) + headroom
+        let needed = Int64(Double(requiredBytes) * inflation) + headroomBytes
         // Disk shard sizes are not resident/releasable bytes. The host sample
         // already includes reclaimable file-backed pages, and a handoff may
         // release only its exact parent. Never add all chat-owned shard sizes.
@@ -251,17 +257,16 @@ enum ChatResidencyHandoff {
         return total
     }
 
-    /// Wait for chat generation to go idle, then unload every resident chat model
-    /// so the subagent/task model is the single resident GPU producer. Returns the
-    /// lease of unloaded names (empty when nothing was resident — e.g. a cloud
-    /// orchestrator).
+    /// Wait for chat generation to go idle, then unload only the exact owned
+    /// invoking parent. Other resident models are never reclamation authority.
+    /// Returns its restore lease (empty for a cloud/unknown parent).
     ///
     /// `restoreParentWhenNotResident` is the delegation sequence's parity leg:
     /// when the invoking parent is an INSTALLED local model that is simply not
     /// loaded right now, return a restore-only lease (nothing unloaded, parent
     /// queued for reload) instead of refusing, so the sequence ends with the
     /// chat model loaded back whether or not it was loaded at the start.
-    /// Image jobs keep the default (`false`) and their historical behaviour.
+    /// Shared delegation and image jobs opt into this restore-only leg.
     static func unloadResidentChatModels(
         parentModelName: String? = nil,
         maxElapsedSeconds: Int,
@@ -314,6 +319,7 @@ enum ChatResidencyHandoff {
                 unloadedModelNames: [],
                 restoreModelNames: [installed.name],
                 unloadedParentIdentity: nil,
+                parentSource: currentInferenceSource,
                 childOwnershipToken: ModelResidencyOwnershipToken()
             )
         }
@@ -333,6 +339,7 @@ enum ChatResidencyHandoff {
         return ChatResidencyLease(
             unloadedModelNames: [identity.modelName],
             unloadedParentIdentity: identity,
+            parentSource: currentInferenceSource,
             childOwnershipToken: token
         )
     }
@@ -413,7 +420,7 @@ enum ChatResidencyHandoff {
         var failures: [String] = []
         for name in lease.restoreModelNames {
             do {
-                try await reloadAndVerify(name, ownershipToken: lease.childOwnershipToken)
+                try await reloadAndVerify(name, ownershipToken: lease.childOwnershipToken, source: lease.parentSource)
                 restored.append(name)
                 continue
             } catch let error as ModelRuntime.HandoffRestoreBlockedError {
@@ -432,7 +439,7 @@ enum ChatResidencyHandoff {
             // resident model and only a log to show for it.
             onPhase("restoring_chat_models_retry", name)
             do {
-                try await reloadAndVerify(name, ownershipToken: lease.childOwnershipToken)
+                try await reloadAndVerify(name, ownershipToken: lease.childOwnershipToken, source: lease.parentSource)
                 restored.append(name)
             } catch let error as ModelRuntime.HandoffRestoreBlockedError {
                 throw HandoffError.restoreBlocked(
@@ -458,7 +465,8 @@ enum ChatResidencyHandoff {
     /// after the load. Never throws: callers branch on the Bool and retry.
     private static func reloadAndVerify(
         _ name: String,
-        ownershipToken: ModelResidencyOwnershipToken
+        ownershipToken: ModelResidencyOwnershipToken,
+        source: RequestSource?
     ) async throws {
         try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(nil) {
             // This decision must be made atomically inside ModelRuntime.
@@ -469,7 +477,8 @@ enum ChatResidencyHandoff {
             try await ModelRuntime.shared.preload(
                 name: name,
                 intent: .handoffRestore,
-                restoreOwnershipToken: ownershipToken
+                restoreOwnershipToken: ownershipToken,
+                restoreSource: source
             )
         }
         let resident = await ModelRuntime.shared.cachedModelSummaries().map(\.name)

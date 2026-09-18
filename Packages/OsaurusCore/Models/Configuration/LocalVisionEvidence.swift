@@ -10,6 +10,23 @@ enum LocalVisionEvidence {
         let hasVision: Bool
         let reason: String
         let tensorNames: Set<String>
+        /// Derived once here because `Result` is memoized per directory while
+        /// the composer reads capabilities from several SwiftUI getters per
+        /// body pass. Re-running substring matches over every tensor name of a
+        /// large checkpoint on each of those reads stalled the main thread.
+        let hasAudioTensors: Bool
+
+        init(modelType: String, hasVision: Bool, reason: String, tensorNames: Set<String>) {
+            self.modelType = modelType
+            self.hasVision = hasVision
+            self.reason = reason
+            self.tensorNames = tensorNames
+            hasAudioTensors = tensorNames.contains {
+                $0.contains("embed_audio.embedding_projection.") && $0.hasSuffix(".weight")
+            } || (modelType.lowercased().contains("omni") && tensorNames.contains {
+                $0.contains("sound_projection.") && $0.hasSuffix(".weight")
+            })
+        }
     }
 
     private static let lock = NSLock()
@@ -44,6 +61,47 @@ enum LocalVisionEvidence {
         }
         lock.unlock()
         return result
+    }
+
+    /// Posted on the main queue when a background `cachedOrWarm` read lands, so
+    /// SwiftUI getters that saw `nil` re-evaluate against the cached result.
+    static let evidenceReady = Notification.Name("localVisionEvidenceReady")
+
+    private nonisolated(unsafe) static var inFlight: Set<String> = []
+    private static let warmQueue = DispatchQueue(
+        label: "ai.osaurus.local-vision-evidence", qos: .utility)
+
+    /// Non-blocking variant for SwiftUI getters. A miss used to run `read` on
+    /// the main thread (config JSON plus every safetensors header of the
+    /// bundle), which hung the composer on first selection of a model and
+    /// again after each `.localModelsChanged` invalidation. Returns the cached
+    /// result or nil; on nil a single background read per directory fills the
+    /// cache through `inspect`, which keeps the generation check, then posts
+    /// `evidenceReady`. Send and load paths keep calling `inspect`, so the
+    /// authoritative gate never sees a pending nil.
+    static func cachedOrWarm(_ directory: URL) -> Result? {
+        _ = observer
+        let key = directory.standardizedFileURL.path
+        let processorVersion = VLMProcessorTypeRegistry.shared.registrationVersion
+        lock.lock()
+        if let cached = cache[key], cached.processorVersion == processorVersion {
+            lock.unlock()
+            return cached.result
+        }
+        let shouldStart = inFlight.insert(key).inserted
+        lock.unlock()
+        if shouldStart {
+            warmQueue.async {
+                _ = inspect(directory)
+                lock.lock()
+                inFlight.remove(key)
+                lock.unlock()
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(name: evidenceReady, object: nil)
+                }
+            }
+        }
+        return nil
     }
 
     private static func object(_ url: URL) -> [String: Any]? {

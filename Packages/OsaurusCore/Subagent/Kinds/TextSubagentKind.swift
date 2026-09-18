@@ -247,31 +247,13 @@ final class TextSubagentKind:
         // local row never reaches this branch with a model override.
         if modelOverride != nil { return residencyPlan }
 
-        let lookup = resolved.id ?? resolved.name
-        guard
-            let installed =
-                ModelManager.findInstalledModel(named: lookup)
-                ?? ModelManager.findInstalledModel(named: resolved.name)
-        else {
-            throw SubagentError.unavailable(
-                "Local model '\(resolved.name)' is no longer installed."
-            )
-        }
-
-        let decision = try await SubagentResidency.resolve(
-            modelName: installed.id,
-            config: SubagentConfigurationStore.snapshot(),
+        residencyPlan = try await SubagentResidency.refreshedPlan(
+            for: resolved,
+            invokingParentModelName: invokingParentModelName,
             idleWaitSeconds: budgets.normalized.maxElapsedSeconds,
-            deniedMessage: residencyDeniedMessage,
-            invokingParentModelName: invokingParentModelName
+            deniedMessage: residencyDeniedMessage
         )
-        guard decision.isLocal else {
-            throw SubagentError.unavailable(
-                "Local model '\(resolved.name)' became unavailable while the run was waiting."
-            )
-        }
-        residencyPlan = decision.plan
-        return decision.plan
+        return residencyPlan
     }
 
     /// `spawn_agent` entry point (agent context). The optional `modelOverride`

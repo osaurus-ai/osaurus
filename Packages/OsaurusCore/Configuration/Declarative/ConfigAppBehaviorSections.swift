@@ -60,6 +60,7 @@ public struct DelegationSection: Codable, Equatable, Sendable {
     public var budgetMaxRemoteParallelSpawns: Int?
     /// HIGH RISK when disabled: spawn jobs skip the RAM preflight.
     public var ramSafetyPreflight: Bool?
+    /// Legacy round-trip key; the shared swap switch now determines parent retention.
     public var coexistenceEnabled: Bool?
 
     // MARK: Removed keys (decode-only, for migration hints)

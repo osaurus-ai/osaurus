@@ -238,10 +238,10 @@ private struct ImageGenerationSettingsTab: View {
 
                         controlRow(
                             "Load policy",
-                            hint: "Controls GPU residency after an image job runs."
+                            hint: "Controls image-model cleanup after a job. The shared Swap local models for subagents setting controls whether the invoking chat model unloads. Restoring that parent always unloads the image model first."
                         ) {
                             SettingsMenuDropdown(
-                                options: SubagentImageLoadPolicy.allCases.map { value in
+                                options: SubagentImageLoadPolicy.visibleCases.map { value in
                                     SettingsMenuDropdown<SubagentImageLoadPolicy>.Option(
                                         tag: value,
                                         label: Text(
@@ -250,7 +250,7 @@ private struct ImageGenerationSettingsTab: View {
                                         )
                                     )
                                 },
-                                selection: $configuration.imageJobLoadPolicy
+                                selection: imageCleanupSelection
                             )
                         }
                     }
@@ -537,6 +537,13 @@ private struct ImageGenerationSettingsTab: View {
         Binding(
             get: { configuration[keyPath: keyPath] ?? "" },
             set: { configuration[keyPath: keyPath] = normalized($0) }
+        )
+    }
+
+    private var imageCleanupSelection: Binding<SubagentImageLoadPolicy> {
+        Binding(
+            get: { configuration.imageJobLoadPolicy.effectiveCleanupPolicy },
+            set: { configuration.imageJobLoadPolicy = $0 }
         )
     }
 

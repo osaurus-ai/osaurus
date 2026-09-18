@@ -143,6 +143,9 @@ struct MLXBatchAdapter {
         /// making a requested depth appear active when the engine runs AR.
         let mtpFallbackReason: String?
         let compiledBatchDecode: Bool
+        /// The bundle snapshot used for this request. Readouts must not try to
+        /// rediscover it by the short serving name after resolution or unload.
+        var modelDefaults: LocalGenerationDefaults.Defaults = .empty
         /// Retained API diagnostic fields. Native MTP no longer substitutes
         /// a sampler, so both remain false for this resolver.
         var mtpGreedyEnforced: Bool = false
@@ -222,13 +225,15 @@ struct MLXBatchAdapter {
                     modelName: modelName,
                     maxBatchSize: maxBatchSize,
                     cacheTopology: cacheTopology
-                )
+                ),
+            modelDefaults: modelDefaults
         )
         return resolved
     }
 
     static func recordPendingEffectiveGenerationSettings(
         modelName: String,
+        modelId: String,
         generation: GenerationParameters,
         runtimeDefaults: VMLXServerGenerationDefaults,
         maxBatchSize: Int
@@ -239,7 +244,7 @@ struct MLXBatchAdapter {
         // the row makes the admin endpoint describe the warm-up instead of
         // the generation the user just observed.
         guard shouldRecordAsLastEffectiveGeneration(generation) else { return }
-        let modelDefaults = LocalGenerationDefaults.defaults(forModelId: modelName)
+        let modelDefaults = LocalGenerationDefaults.defaults(forModelId: modelId)
         let effective = Self.effectiveGenerationSettings(
             modelName: modelName,
             generation: generation,
@@ -871,6 +876,7 @@ struct MLXBatchAdapter {
     static func warmupNativeMTPAtLoad(
         modelName: String,
         container: ModelContainer,
+        modelDefaults: LocalGenerationDefaults.Defaults,
         draftStrategy: MLXLMCommon.DraftStrategy?,
         runtime: RuntimeConfig,
         maxBatchSize: Int
@@ -885,6 +891,7 @@ struct MLXBatchAdapter {
                 let prepared = try await generate(
                     modelName: modelName,
                     container: container,
+                    modelDefaults: modelDefaults,
                     buildChat: {
                         [MLXLMCommon.Chat.Message(role: .user, content: nativeMTPLoadWarmupPrompt)]
                     },
@@ -1346,6 +1353,7 @@ struct MLXBatchAdapter {
     static func generate(
         modelName: String,
         container: ModelContainer,
+        modelDefaults: LocalGenerationDefaults.Defaults,
         buildChat: @Sendable () -> [MLXLMCommon.Chat.Message],
         buildToolsSpec: @Sendable () -> [[String: any Sendable]]?,
         buildRawPrompt: (@Sendable () -> String)? = nil,
@@ -1466,7 +1474,9 @@ struct MLXBatchAdapter {
         // request omits a field. This mirrors vmlx's direct-engine
         // `GenerateParameters(generationConfig:fallback:)` behavior for the
         // local app path instead of inventing osaurus-specific defaults.
-        let modelDefaults = LocalGenerationDefaults.defaults(forModelId: modelName)
+        // This snapshot was read from the exact directory used to load the
+        // container. A short-name lookup here loses defaults when two orgs
+        // install the same repo name, despite full-ID loading being valid.
         let nativeMTPColdWarmup = await Registry.shared.consumeNativeMTPColdWarmup(
             modelName: modelName,
             requested: draftStrategy?.usesNativeMTP == true

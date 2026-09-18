@@ -65,7 +65,7 @@ public struct ComputerUseEvalHarness: @unchecked Sendable {
     }
 }
 
-final class ComputerUseKind: SubagentKind, @unchecked Sendable {
+final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlanning, @unchecked Sendable {
     let capability = SubagentCapabilityRegistry.computerUse
 
     private let goal: String
@@ -88,6 +88,7 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
     /// `makeHandoff()`. `.none` when no swap is needed (parent model, a remote
     /// override, or the same local model already resident).
     private var residencyPlan: ResidencyPlan = .none
+    private var invokingParentModelName: String?
 
     /// Funnel attribution for `ComputerUseTool`. `loopStarted` flips the
     /// moment `run` hands control to `ComputerUseLoop` (from then on the run
@@ -112,6 +113,7 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
     var feedTitle: String { goal }
 
     func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel {
+        invokingParentModelName = scope.parentModelName
         // Eval seam: the harness supplies the model directly, so the headless
         // run never depends on a live agent / policy store. Same-model kind, so
         // `isLocal` is irrelevant (no residency handoff).
@@ -125,16 +127,7 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
         // Each refusal names its own gate: one shared "not enabled" string
         // sent users to the per-agent toggle when the real fix was switching
         // off the Default agent or turning Tools back on.
-        let refusal: String? = await MainActor.run {
-            Self.authorizationRefusal(
-                agentId: agentId,
-                agent: AgentManager.shared.agent(for: agentId)
-            )
-        }
-        if let refusal {
-            refusalStage = .agentAuth
-            throw SubagentError.denied(refusal)
-        }
+        try await validateAuthority(scope)
         // One shared path for precedence (per-agent `computer_use` override →
         // the parent agent's model), the availability fallback, and the live
         // residency decision (reject-before-evict; a remote override / the
@@ -148,6 +141,7 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
                 capabilityId: capability.id,
                 agentId: agentId,
                 evalModel: nil,
+                invokingParentModelName: scope.parentModelName,
                 idleWaitSeconds: Self.residencyIdleWaitSeconds,
                 deniedMessage:
                     "Running Computer Use on a different local model requires \"Local Orchestrator "
@@ -155,7 +149,7 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
                     + "make room).",
                 unavailableMessage:
                     "No model is selected for this agent, so Computer Use can't run. Pick a model first.",
-                defaultModel: { AgentManager.shared.effectiveModel(for: agentId) }
+                defaultModel: { scope.parentModelName ?? AgentManager.shared.effectiveModel(for: agentId) }
             )
         } catch SubagentError.denied(let message) {
             refusalStage = .handoffDenied
@@ -191,7 +185,17 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
             )
         )
         self.residencyPlan = resolved.decision.plan
-        return ResolvedModel(name: modelId, id: nil, isLocal: resolved.decision.isLocal)
+        return ResolvedModel(name: modelId, id: resolved.installedModelID, isLocal: resolved.decision.isLocal)
+    }
+
+    func refreshedResidencyPlanAfterAdmission(for resolved: ResolvedModel) async throws -> ResidencyPlan {
+        residencyPlan = try await SubagentResidency.refreshedPlan(
+            for: resolved,
+            invokingParentModelName: invokingParentModelName,
+            idleWaitSeconds: Self.residencyIdleWaitSeconds,
+            deniedMessage: "Computer Use could not safely hand off the invoking model."
+        )
+        return residencyPlan
     }
 
     /// The stage-specific refusal for a direct/stale invocation, or `nil` when
@@ -220,6 +224,23 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
 
     func makeHandoff() -> SubagentHandoff {
         SubagentResidency.handoff(for: residencyPlan)
+    }
+
+    func validateExecutionAuthority(_ scope: SubagentScope, resolved: ResolvedModel) async throws {
+        try await validateAuthority(scope)
+    }
+
+    private func validateAuthority(_ scope: SubagentScope) async throws {
+        guard evalHarness == nil else { return }
+        let refusal = await MainActor.run {
+            Self.authorizationRefusal(
+                agentId: scope.agentId, agent: AgentManager.shared.agent(for: scope.agentId)
+            )
+        }
+        if let refusal {
+            refusalStage = .agentAuth
+            throw SubagentError.denied(refusal)
+        }
     }
 
     func admissionClass(_ resolved: ResolvedModel) -> SubagentAdmissionClass {

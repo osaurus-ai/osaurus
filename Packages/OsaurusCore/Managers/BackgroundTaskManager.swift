@@ -1006,7 +1006,8 @@ public final class BackgroundTaskManager: ObservableObject {
             // (remote teammate) target never gets a local folder.
             let folder = workspacePrepared == nil ? Self.resolveDispatchFolder(for: request) : nil
             context = ExecutionContext(
-                reattaching: existing,
+                reattaching: existing.data,
+                reusing: existing.live,
                 folderBookmark: folder?.bookmark,
                 folderPath: folder?.path,
                 workspace: workspacePrepared,
@@ -1027,49 +1028,6 @@ public final class BackgroundTaskManager: ObservableObject {
         } else {
             context = createContext(for: request)
         }
-        await context.prepare()
-
-        // A reattached session's accumulated loaded-tools set can hold
-        // plugin tools whose grant was revoked between dispatches; the store
-        // only accumulates, so without this reconcile a revoked tool stayed
-        // in the schema until the session died. Drop revoked plugin tools
-        // BEFORE appending this dispatch's names, so the current request's
-        // own (host-validated) picks always survive. Scoped to plugin tool
-        // names — built-ins loaded via `capabilities_load` are governed by
-        // their own per-agent gates, not the grant list. `nil` grant means
-        // the agent runs on the global registry: every registered plugin
-        // tool remains allowed, and unregistered ones already drop out at
-        // spec resolution. Workspace runs expose no local tools at all.
-        if reattach != nil, workspacePrepared == nil,
-            let granted = AgentManager.shared.effectiveEnabledToolNames(for: context.agentId)
-        {
-            let revoked = await SessionToolStateStore.shared.retainLoadedTools(
-                context.id.uuidString,
-                allowed: Set(granted),
-                among: ToolRegistry.shared.registeredPluginToolNames
-            )
-            if !revoked.isEmpty {
-                debugLog(
-                    "[Dispatch] revoked plugin tools dropped on reattach: \(revoked.sorted().joined(separator: ", "))"
-                )
-            }
-        }
-
-        // Plugin-supplied tool whitelist (already host-validated in
-        // `planDispatch`) lands in the same `additionalToolNames`
-        // channel `capabilities_load` uses, so the dispatched
-        // `ChatSession.send -> composeChatContext` picks it up on
-        // turn 1. Reattach reuses `existing.id` as `context.id`, so
-        // successive dispatches into the same conversation accumulate
-        // via the store's underlying `Set`.
-        if !request.requestedToolNames.isEmpty, workspacePrepared == nil {
-            await SessionToolStateStore.shared.appendLoadedTools(
-                context.id.uuidString,
-                names: request.requestedToolNames,
-                fallbackAlwaysLoadedNames: nil
-            )
-        }
-
         // Admission: capacity available → start immediately; saturated →
         // register as `.queued` and defer the start until `pumpQueue()`
         // promotes it (FIFO). Either way the request is registered before
@@ -1131,8 +1089,42 @@ public final class BackgroundTaskManager: ObservableObject {
         // that marks a run as "started" (the `agent_runs` row, the
         // task-local bindings, `context.start`) lives here so a queued
         // request has no execution side effects until promoted.
+        // A queued closure runs in pumpQueue's task, not the invoker's task.
+        // Capture residency authority now; otherwise a delayed child loses its
+        // keep-parent hold/cleanup ownership, or borrows another job's token.
+        let residencyContext = DelegationResidencyContext.capture(source: request.source)
         let startWork: @MainActor () async -> Void = { [weak state] in
-            guard let state else { return }
+            guard let state, state.status.isActive else { return }
+            // Register the single conversation owner BEFORE the first await.
+            // Reopening a tab during picker preparation must attach to it,
+            // and another grouped dispatch must see an active reservation.
+            await context.prepare()
+            guard state.status.isActive else { return }
+
+            // Reconcile revoked plugin grants before appending the current
+            // host-validated whitelist. Workspace runs expose no local tools.
+            if reattach != nil, workspacePrepared == nil,
+                let granted = AgentManager.shared.effectiveEnabledToolNames(for: context.agentId)
+            {
+                let revoked = await SessionToolStateStore.shared.retainLoadedTools(
+                    context.id.uuidString,
+                    allowed: Set(granted),
+                    among: ToolRegistry.shared.registeredPluginToolNames
+                )
+                if !revoked.isEmpty {
+                    debugLog(
+                        "[Dispatch] revoked plugin tools dropped on reattach: \(revoked.sorted().joined(separator: ", "))"
+                    )
+                }
+            }
+            if !request.requestedToolNames.isEmpty, workspacePrepared == nil {
+                await SessionToolStateStore.shared.appendLoadedTools(
+                    context.id.uuidString,
+                    names: request.requestedToolNames,
+                    fallbackAlwaysLoadedNames: nil
+                )
+            }
+            guard state.status.isActive else { return }
 
             // Agent DB run logging (spec §1.4 + §8). Only DB-enabled agents
             // get an `agent_runs` row + a bound `currentRunId`; for the
@@ -1201,7 +1193,9 @@ public final class BackgroundTaskManager: ObservableObject {
                         await ChatExecutionContext.$currentRunId.withValue(boundRunId) {
                             await ChatExecutionContext.$currentRunActor.withValue(boundActor) {
                                 await ChatExecutionContext.$currentBackgroundId.withValue(context.id) {
-                                    await context.start(prompt: request.prompt)
+                                    await residencyContext.run {
+                                        await context.start(prompt: request.prompt)
+                                    }
                                 }
                             }
                         }
@@ -1230,7 +1224,7 @@ public final class BackgroundTaskManager: ObservableObject {
     /// request opts into grouping via `external_session_key`. Skips reattach
     /// if a live in-memory task is already driving that session, to avoid
     /// double-stream into the same `ChatSession`.
-    private func lookupReattachableSession(for request: DispatchRequest) -> ChatSessionData? {
+    func lookupReattachableSession(for request: DispatchRequest) -> (data: ChatSessionData, live: ChatSession?)? {
         guard let key = request.externalSessionKey,
             !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return nil }
@@ -1280,8 +1274,19 @@ public final class BackgroundTaskManager: ObservableObject {
         } else if metadata.workspace != nil {
             return nil
         }
-        // findSession returns metadata only; hydrate turns for ChatSession.load.
-        return db.loadSession(id: metadata.id)
+        // Window ownership remains after a terminal task is dehydrated. Never
+        // create a second mutable copy merely because that task is no longer
+        // active. Also consult director/shared owners and retained headless runs.
+        let live = ChatWindowManager.shared.session(forSessionId: metadata.id)
+            ?? LiveChatSessionRegistry.shared.liveSession(for: metadata.id)
+            ?? backgroundTasks[metadata.id]?.chatSession
+        if let live {
+            guard live.isAvailableForDispatchReattachment else { return nil }
+        }
+        guard backgroundTasks[metadata.id]?.status.isActive != true,
+            let data = db.loadSession(id: metadata.id)
+        else { return nil }
+        return (data, live)
     }
 
     // MARK: - Completion Signaling
@@ -1390,6 +1395,12 @@ public final class BackgroundTaskManager: ObservableObject {
 
     /// Register a new task state and log an initial activity entry.
     private func registerTask(_ state: BackgroundTaskState) {
+        // A grouped dispatch reuses the task id, but not the previous run's
+        // completion observation or terminal cleanup timer. An initial false
+        // streaming publication must not complete the new run prematurely.
+        cancelAutoFinalize(state.id)
+        taskObservers.removeValue(forKey: state.id)?.forEach { $0.cancel() }
+        streamingObserved.remove(state.id)
         backgroundTasks[state.id] = state
         persistRetainedTabs()
         recomputeSortedToastTasks()

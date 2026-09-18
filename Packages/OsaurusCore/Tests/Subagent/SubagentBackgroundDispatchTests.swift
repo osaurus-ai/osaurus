@@ -162,8 +162,15 @@ struct SubagentBackgroundDispatchTests {
             _ = context
             let box = WeakChatSessionBox(session)
             let toolCallId = "bg-dispatch-\(UUID().uuidString)"
+            let workerID = UUID()
             let kind = ScriptedKind(body: { _, _, _, _ in
-                SubagentResult(payload: ["summary": "digest-report-123"], summary: "digest-report-123")
+                SubagentResult(
+                    payload: [
+                        "kind": "spawn_result", "summary": "digest-report-123",
+                        "session_id": workerID.uuidString,
+                    ],
+                    summary: "digest-report-123"
+                )
             })
 
             let envelope = await ChatExecutionContext.$currentToolCallId.withValue(toolCallId) {
@@ -179,10 +186,53 @@ struct SubagentBackgroundDispatchTests {
                         && $0.content.contains("[Helper report]")
                         && $0.content.contains("finished")
                         && $0.content.contains("digest-report-123")
+                        && $0.content.contains("Worker session_id (spawn_agent continue): \(workerID.uuidString)")
                 }
             }
             SubagentFeedRegistry.shared.removeNow(toolCallId: toolCallId)
         }
+    }
+
+    @Test("report-back never invents a resume handle from a summary or failed result")
+    func reportBackRejectsUnqualifiedHandles() {
+        let id = UUID().uuidString
+        let baseline = "[Helper report] Helper finished: summary \(id)"
+        let malformed = [
+            "not-json",
+            ToolEnvelope.success(tool: "browser_use", result: ["kind": "browser_result", "session_id": id]),
+            ToolEnvelope.success(tool: "spawn_agent", result: ["kind": "spawn_result", "session_id": "bad-id"]),
+            ToolEnvelope.success(tool: "spawn_agent", result: ["kind": "spawn_result"]),
+            ToolEnvelope.failure(kind: .executionError, message: id, tool: "spawn_agent"),
+        ]
+        for envelope in malformed {
+            #expect(
+                SubagentReportBack.message(
+                    title: "Helper",
+                    success: true,
+                    summary: "summary \(id)",
+                    completedEnvelope: envelope
+                ) == baseline
+            )
+        }
+        let completed = ToolEnvelope.success(
+            tool: "spawn_agent",
+            result: ["kind": "spawn_result", "session_id": id]
+        )
+        #expect(
+            SubagentReportBack.message(
+                title: "Helper",
+                success: false,
+                summary: "cancelled",
+                completedEnvelope: completed
+            ) == "[Helper report] Helper failed: cancelled"
+        )
+        #expect(
+            SubagentReportBack.message(
+                title: "Helper",
+                success: true,
+                summary: "summary \(id)"
+            ) == baseline
+        )
     }
 
     @Test("delivery waits out a streaming session and a pending clarify")

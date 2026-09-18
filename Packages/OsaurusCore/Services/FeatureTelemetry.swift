@@ -511,23 +511,6 @@ enum FeatureTelemetry {
         service.track("product_hunt_launch_dialog_clicked", ["action": action])
     }
 
-    // MARK: - Workspaces intro dialog (September 2026, one-shot)
-
-    /// The one-time Founding Workspaces introduction was presented. Count only.
-    static func workspacesIntroDialogShown(service: TelemetryService = .shared) {
-        service.track("workspaces_intro_dialog_shown")
-    }
-
-    /// The user dismissed the Workspaces introduction. `action` is a closed
-    /// two-value enum token: `start_trial` (opened the New Workspace sheet) or `later`
-    /// (Maybe later, corner X, Escape, or outside click).
-    static func workspacesIntroDialogClicked(
-        action: String,
-        service: TelemetryService = .shared
-    ) {
-        service.track("workspaces_intro_dialog_clicked", ["action": action])
-    }
-
     // MARK: - Import history prompt (post-onboarding, one-shot)
 
     /// The one-time post-onboarding import-history prompt was presented

@@ -1,16 +1,17 @@
 //
-//  WorkspacesIntroModal.swift
+//  WorkspacesIntroExplainer.swift
 //  osaurus
 //
-//  One-time "Founding Workspaces" introduction, presented as themed-alert
-//  custom content by `AppDelegate.presentWorkspacesIntroDialogIfEligible()`.
-//  The centrepiece is an interactive five-stage diagram that walks
-//  through what a Workspace is (agents grouped, set up once, handed out,
-//  your hardware and rules, one pooled bill). It advances on a timer that
-//  restarts whenever a stage is picked, and collapses to cuts under Reduce Motion.
+//  The Workspaces explainer shown in the Workspaces tab's empty state
+//  (`WorkspacesView.emptyState`). An interactive five-stage diagram that
+//  walks through what a Workspace is (agents grouped, set up once, handed
+//  out, your hardware and rules, one pooled bill). It advances on a timer
+//  that restarts whenever a stage is picked, and collapses to cuts under
+//  Reduce Motion. The diagram is drawn at a fixed design size and scaled
+//  as one piece to the width its host gives it.
 //
 //  Tone: an invitation to the community, never a paywall. Individual
-//  Osaurus stays free and MIT-licensed, and the dialog says so.
+//  Osaurus stays free and MIT-licensed, and the diagram says so.
 //
 
 import SwiftUI
@@ -64,94 +65,79 @@ enum WorkspacesIntroStage: Int, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - Modal
+// MARK: - Explainer
 
-struct WorkspacesIntroModal: View {
-    /// Invoked when the user taps the primary CTA. The caller dismisses
-    /// the alert and opens the Workspaces tab.
-    let onClaim: () -> Void
-    /// Invoked by the secondary "Maybe later" button. The caller dismisses.
-    let onLater: () -> Void
-
+struct WorkspacesIntroExplainer: View {
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var stage: WorkspacesIntroStage = .agents
 
-    /// Uniform shrink applied to the diagram when the host window cannot
-    /// fit the designed size; 1 on any normal display. See `scale(fitting:)`.
-    let scale: CGFloat
-
-    init(scale: CGFloat = 1, onClaim: @escaping () -> Void, onLater: @escaping () -> Void) {
-        self.scale = scale
-        self.onClaim = onClaim
-        self.onLater = onLater
-    }
+    /// Width the host has given us, measured on appearance and on resize.
+    /// Starts at the design width so the first frame is laid out at full
+    /// size rather than at the floor. Measured on a flexible placeholder
+    /// whose own width never depends on the diagram, so it cannot feed back.
+    @State private var availableWidth: CGFloat = WorkspacesIntroExplainer.canvasDesignSize.width
 
     // MARK: - Sizing
 
     /// The diagram is drawn in fixed coordinates at this size and scaled as
-    /// a whole, so a smaller window never reflows it.
+    /// a whole, so a narrower host never reflows it.
     static let canvasDesignSize = CGSize(width: 912, height: 312)
-    /// Horizontal padding the alert dialog adds around custom content.
-    static let dialogSidePadding: CGFloat = 24
-    /// Everything in the dialog except the canvas, top to bottom: dialog
-    /// padding, title, chips, description, buttons, and the gaps between.
-    static let chromeHeight: CGFloat = 250
-    /// Below this the diagram is unreadable; on such a window we would
+    /// Height of the stage chip row above the canvas.
+    static let chipRowHeight: CGFloat = 26
+    /// Height reserved for the one-line caption beneath the canvas.
+    static let captionHeight: CGFloat = 24
+    /// Vertical gap between chips, canvas, and caption.
+    static let rowSpacing: CGFloat = 16
+    /// Below this the diagram is unreadable; on such a pane we would
     /// rather clip than render it illegibly.
     static let minimumScale: CGFloat = 0.5
 
-    /// Dialog width for a given scale: the scaled canvas plus side padding.
-    static func dialogWidth(scale: CGFloat) -> CGFloat {
-        canvasDesignSize.width * scale + dialogSidePadding * 2
+    /// The largest scale (at most 1) at which the canvas fits `width`,
+    /// floored at `minimumScale`. Pure so it can be tested.
+    static func scale(fittingWidth width: CGFloat) -> CGFloat {
+        max(minimumScale, min(1, width / canvasDesignSize.width))
     }
 
-    /// The largest scale (at most 1) at which the whole dialog fits inside
-    /// `available` with `inset` of clear space around it, floored at
-    /// `minimumScale`. Pure so it can be tested against arbitrary sizes.
-    static func scale(fitting available: CGSize, inset: CGFloat = 48) -> CGFloat {
-        let widthRoom = available.width - inset - dialogSidePadding * 2
-        let heightRoom = available.height - inset - chromeHeight
-        let fit = min(widthRoom / canvasDesignSize.width, heightRoom / canvasDesignSize.height)
-        return max(minimumScale, min(1, fit))
+    /// Height of the scaled canvas for a host `width`: the only row whose
+    /// height moves with the pane. Pure so it can be tested.
+    static func canvasHeight(fittingWidth width: CGFloat) -> CGFloat {
+        canvasDesignSize.height * scale(fittingWidth: width)
     }
 
+    private var scale: CGFloat { Self.scale(fittingWidth: availableWidth) }
     private var contentWidth: CGFloat { Self.canvasDesignSize.width * scale }
-    private var canvasHeight: CGFloat { Self.canvasDesignSize.height * scale }
+    private var canvasHeight: CGFloat { Self.canvasHeight(fittingWidth: availableWidth) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: Self.rowSpacing) {
             stageChips
 
-            WorkspacesIntroCanvas(stage: stage, reduceMotion: reduceMotion)
-                // Drawn at design size, shrunk as one piece when the window is small.
-                .scaleEffect(scale, anchor: .topLeading)
-                // Top-leading so the scaled drawing stays anchored to the same
-                // corner the scale effect uses; centred, it would slide up-left.
-                .frame(width: contentWidth, height: canvasHeight, alignment: .topLeading)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.55 : 0.7))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(theme.primaryBorder.opacity(0.35), lineWidth: 1)
-                )
-                .contentShape(Rectangle())
-                .onTapGesture { select(stage.next) }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(Text(localized: "Workspaces explainer diagram"))
-                .accessibilityValue(Text(stage.chipLabel, bundle: .module))
-                .accessibilityAddTraits(.isButton)
-                .accessibilityHint(Text(localized: "Shows the next step"))
+            // The canvas is drawn at its design size and scaled as one
+            // piece, so it must never take part in layout: a fixed-width
+            // child would raise the scroll content's (and the window's)
+            // minimum width to 912pt and push the rest of the tab off
+            // screen. A flexible, zero-minimum placeholder claims the row
+            // and is what gets measured; the scaled drawing rides on top
+            // as an overlay, which has no say in its parent's size.
+            Color.clear
+                .frame(maxWidth: .infinity)
+                .frame(height: canvasHeight)
+                .onGeometryChange(for: CGFloat.self, of: \.size.width) { width in
+                    guard width > 0 else { return }
+                    availableWidth = width
+                }
+                .overlay { canvas }
 
             Text(stage.caption, bundle: .module)
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(theme.primaryText)
                 .lineSpacing(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(width: contentWidth, height: 24, alignment: .topLeading)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, minHeight: Self.captionHeight, alignment: .center)
                 .id(stage)
                 .transition(
                     .asymmetric(
@@ -159,51 +145,34 @@ struct WorkspacesIntroModal: View {
                         removal: .opacity
                     )
                 )
-
-            footer
         }
-        .frame(width: contentWidth)
+        .frame(maxWidth: .infinity)
         .task(id: stage) { await autoAdvance() }
     }
 
-    // MARK: - Footer
+    // MARK: - Canvas
 
-    private var footer: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 12) {
-                Spacer(minLength: 0)
-
-                Button(action: onLater) {
-                    Text(localized: "Maybe later")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(theme.primaryText)
-                        .padding(.horizontal, 14)
-                        .frame(height: 34)
-                        .background(
-                            Capsule()
-                                .fill(theme.secondaryBackground)
-                                .overlay(Capsule().stroke(theme.primaryBorder.opacity(0.4), lineWidth: 1))
-                        )
-                }
-                .buttonStyle(.plain)
-
-                Button(action: onClaim) {
-                    HStack(spacing: 6) {
-                        Text(localized: "Start Free Trial")
-                        Image(systemName: "arrow.right")
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.white)
-                    .padding(.horizontal, 16)
-                    .frame(height: 34)
-                    .background(Capsule().fill(theme.accentColor))
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    /// The diagram at design size, shrunk uniformly to `scale` and centred
+    /// in the row the placeholder above has claimed.
+    private var canvas: some View {
+        WorkspacesIntroCanvas(stage: stage, reduceMotion: reduceMotion)
+            .scaleEffect(scale)
+            .frame(width: contentWidth, height: canvasHeight)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.55 : 0.7))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(theme.primaryBorder.opacity(0.35), lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+            .onTapGesture { select(stage.next) }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text(localized: "Workspaces explainer diagram"))
+            .accessibilityValue(Text(stage.chipLabel, bundle: .module))
+            .accessibilityAddTraits(.isButton)
+            .accessibilityHint(Text(localized: "Shows the next step"))
     }
 
     // MARK: - Stage chips
@@ -230,7 +199,11 @@ struct WorkspacesIntroModal: View {
                             .minimumScaleFactor(0.8)
                     }
                     .padding(.horizontal, 10)
-                    .frame(maxWidth: .infinity, minHeight: 26, maxHeight: 26)
+                    .frame(
+                        maxWidth: .infinity,
+                        minHeight: WorkspacesIntroExplainer.chipRowHeight,
+                        maxHeight: WorkspacesIntroExplainer.chipRowHeight
+                    )
                     .background(
                         ZStack(alignment: .leading) {
                             Capsule().fill(selected ? theme.accentColor.opacity(0.10) : theme.secondaryBackground)
@@ -1121,9 +1094,15 @@ private struct Wire: Shape {
 }
 
 #if DEBUG
-    #Preview("Workspaces intro") {
-        WorkspacesIntroModal(onClaim: {}, onLater: {})
+    #Preview("Workspaces explainer") {
+        WorkspacesIntroExplainer()
             .padding(24)
-            .frame(width: WorkspacesIntroModal.dialogWidth(scale: 1))
+            .frame(width: WorkspacesIntroExplainer.canvasDesignSize.width + 48)
+    }
+
+    #Preview("Workspaces explainer, narrow") {
+        WorkspacesIntroExplainer()
+            .padding(24)
+            .frame(width: 760)
     }
 #endif

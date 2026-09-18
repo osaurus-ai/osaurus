@@ -314,6 +314,8 @@ struct FloatingInputCard: View {
     // MARK: - Slash Command State
 
     private var slashRegistry = SlashCommandRegistry.shared
+    /// Bumped when off-main bundle evidence lands so media gates re-evaluate.
+    @State private var mediaEvidenceGeneration = 0
     @State private var slashSelectedIndex: Int = 0
     /// Slash query the user dismissed with Escape. Suppresses the popup for
     /// that exact query so the typed text survives; cleared as soon as the
@@ -1092,6 +1094,9 @@ struct FloatingInputCard: View {
                     lastVoiceActivityTime = Date()
                     startVoiceInput()
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: LocalVisionEvidence.evidenceReady)) { _ in
+                mediaEvidenceGeneration &+= 1
             }
             .onReceive(NotificationCenter.default.publisher(for: .voiceConfigurationChanged)) { _ in
                 // Reload voice config when settings change
@@ -4897,12 +4902,19 @@ extension FloatingInputCard {
         // about audio, so the picker advertised "image supported" and greyed
         // out every .wav. `hasAudioTensors` is memoized for exactly this
         // getter's no-disk-IO rule.
+        //
+        // Bundle evidence comes from the cache-only snapshot; a pending read
+        // resolves as text-only until `evidenceReady` bumps the generation
+        // below and this getter re-runs. The audio bit comes from the same
+        // snapshot so no branch here can fall through to a synchronous read.
+        _ = mediaEvidenceGeneration
+        let snapshot = localModel?.mediaCapabilitiesSnapshot
         return ModelMediaCapabilities.composerDescriptor(
             modelId: selectedModel,
             fallbackSupportsImages: supportsImages,
             localModelType: localModel?.modelType,
-            localHasAudioTensors: localModel?.hasAudioTensors ?? false,
-            localCapabilities: localModel?.mediaCapabilities
+            localHasAudioTensors: snapshot?.supportsAudio ?? false,
+            localCapabilities: snapshot
         )
     }
 

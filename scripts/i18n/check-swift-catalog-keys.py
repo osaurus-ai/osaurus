@@ -14,6 +14,7 @@ from xcstrings_util import load_catalog  # noqa: E402
 
 MARKERS = [
     'L("',
+    'LCached("',
     'Text(localized: "',
     'Button(localized: "',
     'Label(localized: "',
