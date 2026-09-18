@@ -1,0 +1,186 @@
+{
+  "domains" : [
+    "agent_loop",
+    "apple_script",
+    "cache_proof",
+    "capability_claims",
+    "computer_use_loop",
+    "default_agent",
+    "http_api",
+    "memory",
+    "micro_perf",
+    "reasoning_channel",
+    "subagent"
+  ],
+  "generatedAt" : "2026-09-01T04:26:43.016Z",
+  "models" : [
+    {
+      "actionCompletionCoverage" : 0.9432624113475178,
+      "agentLoopDiagnostics" : {
+        "exitCounts" : {
+          "cancelled" : 4,
+          "finalResponse" : 128,
+          "incompleteReasoningExhausted" : 1,
+          "iterationCapReached" : 7,
+          "overBudget" : 1
+        },
+        "exitOriginCounts" : {
+          "ordinaryModelFinal" : 127,
+          "typedTerminal" : 7,
+          "unrecorded" : 7
+        },
+        "measuredRows" : 141,
+        "recoveryRetriesTotal" : 0,
+        "rowsWithExitTelemetry" : 141
+      },
+      "cacheTotals" : {
+        "diskL2Evictions" : 113,
+        "diskL2Hits" : 945,
+        "diskL2Misses" : 43989,
+        "diskL2Stores" : 2986,
+        "kvPrefixHits" : 0,
+        "kvPrefixMisses" : 0,
+        "pagedEvictions" : 0,
+        "ssmCompanionHits" : 0,
+        "ssmCompanionMisses" : 0,
+        "ssmCompanionReDerives" : 0
+      },
+      "chatModelPassed" : 284,
+      "chatModelScored" : 328,
+      "correctFileDeliveryRate" : 0.8082191780821918,
+      "environment" : {
+        "caseCount" : 19,
+        "catalogHash" : "2e766b2b52f4cf37",
+        "chip" : "Apple M5 Max",
+        "commit" : "1bbd959",
+        "contributor" : "jax-0n-git",
+        "cpuCores" : 18,
+        "harness" : "osaurus",
+        "judge" : "self-judge",
+        "lowPowerMode" : false,
+        "osVersion" : "26.6.2",
+        "powerSource" : "AC",
+        "runModel" : "OsaurusAI/Laguna-S-2.1-JANG_4M",
+        "thermalState" : "nominal",
+        "totalRamMb" : 131072
+      },
+      "flakyCases" : 2,
+      "harness" : "osaurus",
+      "loopFreeRate" : 0.900709219858156,
+      "meanAgentLoopWallTimeMs" : 69201.7960641401,
+      "meanCpuPercent" : 90.95542818244535,
+      "meanDecodeTokensPerSecond" : 35.53007509623442,
+      "meanFirstActionMs" : 9384.677832287953,
+      "meanFirstStepContextTokens" : 3281.6714285714284,
+      "meanFrictionCalls" : 0.5416666666666666,
+      "meanPromptTokensPerTask" : 21702.6,
+      "meanTotalTokensPerTask" : 20503.333333333332,
+      "meanTtftMs" : 314.6742549661088,
+      "medianModelSteps" : 4,
+      "modelId" : "OsaurusAI/Laguna-S-2.1-JANG_4M",
+      "peakCpuPercent" : 318.87322685576777,
+      "peakPhysFootprintMb" : 20397.95891571045,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 114,
+          "scored" : 141,
+          "skipReasons" : {
+            "other: no AppleScript model installed; applescript/mac_query delegation tools withheld — case skipped" : 3
+          },
+          "skipped" : 3
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 27,
+          "scored" : 32,
+          "skipReasons" : {
+            "other: liveProof environment not ready — Automation permission is denied for this process (error -1743). Grant Osaurus access to the target app under System Settings → Privacy & Security → Automation, then re-run locally." : 3
+          },
+          "skipped" : 3
+        },
+        "cache_proof" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 22,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 47,
+          "scored" : 49,
+          "skipped" : 0
+        },
+        "http_api" : {
+          "errored" : 0,
+          "passed" : 12,
+          "scored" : 15,
+          "skipReasons" : {
+            "other: scenario: multimodal_image · port 57966" : 1,
+            "other: scenario: multimodal_video · port 57966" : 1
+          },
+          "skipped" : 2
+        },
+        "memory" : {
+          "errored" : 0,
+          "passed" : 1,
+          "scored" : 8,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 6,
+          "scored" : 6,
+          "skipped" : 0
+        },
+        "reasoning_channel" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 13,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errorCategories" : {
+            "runtime_other" : 1
+          },
+          "errored" : 1,
+          "passed" : 35,
+          "scored" : 35,
+          "skipReasons" : {
+            "missingDependency: live spawn_model_residency lane unavailable on this host: residency lane unavailable: orchestrator 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is not installed locally" : 8,
+            "other: live image lane unavailable on this host: Image edit is not enabled for this agent." : 1,
+            "other: live image lane unavailable on this host: Image generation is not enabled for this agent." : 1,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is neither installed locally nor routable via a connected provider" : 2,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'xai/grok-4.3' is neither installed locally nor routable via a connected provider" : 2
+          },
+          "skipped" : 14
+        }
+      },
+      "startedAt" : "2026-09-01T00:53:54Z",
+      "subsystemPassed" : 13,
+      "subsystemScored" : 16,
+      "topContextContributors" : [
+        "tool:redact_file=491",
+        "tool:search_and_extract=371",
+        "tool:detect_pii=353",
+        "tool:file_read=279",
+        "tool:render_chart=275",
+        "tool:share_artifact=266"
+      ],
+      "totalPassed" : 297,
+      "totalScored" : 344
+    }
+  ]
+}
