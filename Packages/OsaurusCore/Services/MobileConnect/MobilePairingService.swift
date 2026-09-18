@@ -33,6 +33,8 @@ struct MobilePairRequest: Decodable, Sendable {
     let deviceName: String
     /// Phone's ephemeral X25519 public key (base64url) the response is sealed to.
     let encPub: String
+    /// Set by iOSaurus when running in the iOS Simulator (shown as a badge).
+    var isSimulator: Bool? = nil
 }
 
 struct MobilePairResponse: Codable, Sendable {
@@ -63,6 +65,7 @@ struct PairedMobileDevice: Codable, Sendable, Equatable {
     let keyId: UUID
     let pairedAt: Date
     let keyExpiresAt: Date?
+    var isSimulator: Bool? = nil
 }
 
 // MARK: - Service
@@ -218,7 +221,8 @@ final class MobilePairingService: ObservableObject {
                 name: deviceName,
                 keyId: pending.info.id,
                 pairedAt: now,
-                keyExpiresAt: pending.info.expiresAt
+                keyExpiresAt: pending.info.expiresAt,
+                isSimulator: request.isSimulator == true ? true : nil
             )
         )
         return .paired(MobilePairResponse(v: Self.wireVersion, sealed: sealed), deviceName: deviceName)

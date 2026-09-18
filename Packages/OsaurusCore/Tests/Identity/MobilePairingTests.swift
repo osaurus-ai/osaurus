@@ -131,6 +131,29 @@ struct MobilePairingServiceTests {
         #expect(service.redeem(request(code: "123456", encPub: pub)) == .invalidCode)
     }
 
+    @Test func simulatorFlagIsRecordedOnTheDevice() {
+        let service = makeService()
+        service.installPendingCodeForTesting(
+            PairingCode(code: "123456", issuedAt: Date()),
+            fullKey: "osk-v1.secret",
+            info: keyInfo()
+        )
+        let (_, pub) = PairingKeyEnvelope.generateRecipientKey()
+        var req = request(code: "123456", encPub: pub)
+        req.isSimulator = true
+        guard case .paired = service.redeem(req) else {
+            Issue.record("expected pairing to succeed")
+            return
+        }
+        #expect(service.pairedDevice?.isSimulator == true)
+    }
+
+    @Test func pairedDeviceWithoutSimulatorFieldDecodes() throws {
+        let json = #"{"deviceId":"d","name":"n","keyId":"6F9619FF-8B86-D011-B42D-00C04FC964FF","pairedAt":0}"#
+        let device = try JSONDecoder().decode(PairedMobileDevice.self, from: Data(json.utf8))
+        #expect(device.isSimulator == nil)
+    }
+
     @Test func envelopeIsBoundToDevice() throws {
         let service = makeService()
         service.installPendingCodeForTesting(

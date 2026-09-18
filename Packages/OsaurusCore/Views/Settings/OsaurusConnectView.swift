@@ -154,9 +154,14 @@ struct OsaurusConnectView: View {
                         .font(.system(size: 22))
                         .foregroundColor(theme.accentColor)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(device.name)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
+                        HStack(spacing: 6) {
+                            Text(device.name)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(theme.primaryText)
+                            if device.isSimulator == true {
+                                simulatorBadge
+                            }
+                        }
                         Text(Self.pairedSubtitle(device))
                             .font(.system(size: 11))
                             .foregroundColor(theme.secondaryText)
@@ -176,6 +181,17 @@ struct OsaurusConnectView: View {
             }
         }
         .settingsLandingAnchor("settings.connect.pairedDevice")
+    }
+
+    private var simulatorBadge: some View {
+        Text("Simulator", bundle: .module)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(theme.secondaryText)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(theme.tertiaryBackground))
+            .overlay(Capsule().stroke(theme.primaryBorder, lineWidth: 0.5))
+            .help(Text("Paired from the iOS Simulator", bundle: .module))
     }
 
     // MARK: Power

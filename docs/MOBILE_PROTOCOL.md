@@ -732,7 +732,8 @@ guesses from any source; an unused code's key is deleted.
 ```
 POST /pair/code            (unauthenticated, LAN only, rate-limited per IP)
 {"v":1,"code":"123456","deviceId":"<stable per-install id>",
- "deviceName":"My iPhone","encPub":"<base64url X25519 pub>"}
+ "deviceName":"My iPhone","encPub":"<base64url X25519 pub>",
+ "isSimulator":true}   // optional; omit on real devices
 
 → 200 {"v":1,"sealed":{"enc":"<base64url>","ct":"<base64url>"}}
 
@@ -748,6 +749,9 @@ plaintext = {"apiKey":"osk-v1.…","keyExpiresAt":<unix s>|null,
 | `401` | `invalid_code` | Wrong, expired, locked out, or no active code — deliberately indistinguishable |
 | `403` | `lan_only` | Arrived through the relay |
 | `429` | — | Per-IP rate limit (shared with `/pair`) |
+
+`isSimulator` (optional) only drives a "Simulator" badge next to the paired
+device in Settings → Osaurus Connect.
 
 The phone pins every returned `address` against its agent `id` and uses the
 key as the Bearer inside the Secure Channel. `GET /agents` and
