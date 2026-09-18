@@ -11,8 +11,9 @@
 //  Why not persist the result: every field is re-derivable in microseconds
 //  from sysctl/IOKit/Metal at launch, and a cached file would go stale when a
 //  Time Machine / Migration Assistant restore moves the install to different
-//  hardware. Persistence becomes worthwhile only for *measured* values
-//  (micro-benchmarked bandwidth/FLOPS), which are out of scope here.
+//  hardware. The one exception is a *measured* value — the micro-benchmarked
+//  memory bandwidth — which `ChipProfileCalibration` persists with the brand
+//  string as its invalidation key; `detect()` merely reads it back.
 //
 
 import Foundation
@@ -50,6 +51,13 @@ struct ChipProfile: Sendable, Equatable {
     /// answer to "how much GPU-visible memory may I comfortably use" and is
     /// the anchor for any future wired-memory policy.
     let recommendedMaxWorkingSetBytes: UInt64?
+    /// STREAM-copy memory bandwidth measured on THIS machine by
+    /// `osaurus bench --calibrate`, read back from
+    /// `ChipProfileCalibration` at `detect()` time. nil when the user never
+    /// calibrated or the stored record's chip no longer matches the live
+    /// brand string (Migration Assistant restore onto different hardware).
+    /// Defaults to nil so the memberwise init stays source-compatible.
+    var measuredBandwidthGBps: Double?
     /// The M5 family embeds matrix units ("Neural Accelerators") in each GPU
     /// core, which shifts the prefill/decode balance materially. Derived
     /// from `generation`, not probed — Metal exposes no direct capability
@@ -81,7 +89,10 @@ struct ChipProfile: Sendable, Equatable {
             physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory,
             gpuCoreCount: detectGPUCoreCount(),
             recommendedMaxWorkingSetBytes: MTLCreateSystemDefaultDevice()
-                .map { UInt64($0.recommendedMaxWorkingSetSize) }
+                .map { UInt64($0.recommendedMaxWorkingSetSize) },
+            // Read-only here: the probe itself is explicit-CLI-verb only
+            // (`osaurus bench --calibrate`); detect() never measures.
+            measuredBandwidthGBps: ChipProfileCalibration.measuredBandwidthGBps(forChip: brand)
         )
     }
 

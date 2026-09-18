@@ -41,12 +41,19 @@ public struct BenchCommand: Command {
         var port: Int
         var tunePrefill: Bool = false
         var tuneCandidates: [Int] = BenchCommand.defaultTuneCandidates
+        var calibrate: Bool = false
     }
 
     public static func execute(args: [String]) async {
         guard var options = parseOptions(args) else {
             printUsage()
             exit(EXIT_FAILURE)
+        }
+
+        if options.calibrate {
+            // Before the health check on purpose: bandwidth is a property of
+            // the machine, not the server, so no server is required.
+            calibrate()
         }
 
         let base = URL(string: "http://127.0.0.1:\(options.port)")!
@@ -111,22 +118,13 @@ public struct BenchCommand: Command {
             exit(EXIT_FAILURE)
         }
 
-        let report: [String: Any] = [
-            "schema": "osaurus-bench/1",
-            "timestamp": ISO8601DateFormatter().string(from: Date()),
-            "model": model,
-            "max_tokens": options.maxTokens,
-            "runs": options.runs,
-            "hardware": (health["hardware"] as? [String: Any]) ?? NSNull(),
-            "scenarios": scenarios,
-            "methodology": [
-                "sampling": "temperature 0 (greedy)",
-                "token_counts": "server usage via stream_options.include_usage",
-                "ttft": "request start → first non-empty content delta",
-                "decode_tps": "(completion_tokens - 1) / (last delta - first delta)",
-                "prefill_tps": "prompt_tokens / uncached TTFT (includes template + tokenize)",
-            ],
-        ]
+        let report = makeReport(
+            model: model,
+            maxTokens: options.maxTokens,
+            runs: options.runs,
+            health: health,
+            scenarios: scenarios
+        )
 
         let data: Data
         do {
@@ -150,6 +148,87 @@ public struct BenchCommand: Command {
         } else {
             print(String(bytes: data, encoding: .utf8) ?? "{}")
         }
+        exit(EXIT_SUCCESS)
+    }
+
+    /// Single report contract for the normal benchmark lane. Calibration and
+    /// prefill tuning persist their own state but do not fork this schema.
+    static func makeReport(
+        model: String,
+        maxTokens: Int,
+        runs: Int,
+        health: [String: Any],
+        scenarios: [[String: Any]],
+        timestamp: String = ISO8601DateFormatter().string(from: Date())
+    ) -> [String: Any] {
+        [
+            "schema": "osaurus-bench/1",
+            "timestamp": timestamp,
+            "model": model,
+            "max_tokens": maxTokens,
+            "runs": runs,
+            "hardware": (health["hardware"] as? [String: Any]) ?? NSNull(),
+            "scenarios": scenarios,
+            "methodology": [
+                "sampling": "temperature 0 (greedy)",
+                "token_counts": "server usage via stream_options.include_usage",
+                "ttft": "request start → first non-empty content delta",
+                "decode_tps": "(completion_tokens - 1) / (last delta - first delta)",
+                "prefill_tps": "prompt_tokens / uncached TTFT (includes template + tokenize)",
+            ],
+        ]
+    }
+
+    // MARK: - Memory-bandwidth calibration (`--calibrate`)
+
+    /// Runs the parallel aggregate STREAM-copy bandwidth probe IN THIS
+    /// PROCESS (bandwidth is a machine property — measuring it in the CLI is
+    /// equivalent to measuring it in the server) and persists the result to
+    /// `~/.osaurus/config/chip-profile.json`, which `osaurus show` reads on
+    /// its next run and OsaurusCore can validate through
+    /// `ChipProfileCalibration`. The probe allocates two large buffers and
+    /// hammers memory for ~2.4 s; it only ever runs from this explicit verb.
+    static func calibrate() -> Never {
+        let chip = MemoryBandwidthCalibration.chipBrandString()
+        let bufferBytes = MemoryBandwidthCalibration.defaultBufferBytes()
+        let threads = MemoryBandwidthCalibration.defaultThreadCount()
+        fputs(
+            "Calibrating memory bandwidth on \(chip) "
+                + "(STREAM copy: 2 × \(ByteCountFormatter.string(fromByteCount: Int64(bufferBytes), countStyle: .memory)) buffers, "
+                + "\(threads) threads, 3 trials × ~0.8 s)…\n",
+            stderr)
+
+        let gbps = MemoryBandwidthCalibration.measureBandwidthGBps(
+            bufferBytes: bufferBytes, threads: threads)
+        guard gbps > 0, gbps.isFinite else {
+            fputs("Calibration returned an invalid bandwidth measurement; result was not saved.\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+        print(String(
+            format: "Measured memory bandwidth: %.1f GB/s (aggregate over %d threads)",
+            gbps, threads))
+        if let spec = MemoryBandwidthCalibration.specBandwidthGBps(brandString: chip) {
+            print(String(
+                format: "Spec bandwidth: %.0f GB/s → efficiency %.0f%%", spec, gbps / spec * 100))
+        }
+
+        let record = MemoryBandwidthCalibration.Record(
+            measuredBandwidthGBps: gbps,
+            chip: chip,
+            measuredAt: ISO8601DateFormatter().string(from: Date()),
+            osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            probeThreads: threads
+        )
+        do {
+            try MemoryBandwidthCalibration.save(record)
+        } catch {
+            fputs("Cannot persist result: \(error.localizedDescription)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+        fputs(
+            "Persisted to \(MemoryBandwidthCalibration.fileURL().path) — "
+                + "`osaurus show` picks it up on its next run.\n",
+            stderr)
         exit(EXIT_SUCCESS)
     }
 
@@ -486,7 +565,9 @@ public struct BenchCommand: Command {
         Double(to.uptimeNanoseconds - from.uptimeNanoseconds) / 1_000_000
     }
 
-    private static func fetchJSON(_ url: URL) async -> [String: Any]? {
+    /// Internal (not private): `ShowCommand` reuses this ~2 s-timeout fetch
+    /// to read the server's `/health` scan root for its decode estimate.
+    static func fetchJSON(_ url: URL) async -> [String: Any]? {
         var request = URLRequest(url: url)
         request.timeoutInterval = 2
         guard let (data, response) = try? await URLSession.shared.data(for: request),
@@ -536,6 +617,8 @@ public struct BenchCommand: Command {
                 options.port = n
             case "--tune-prefill":
                 options.tunePrefill = true
+            case "--calibrate":
+                options.calibrate = true
             case "--candidates":
                 guard let v = value() else { return nil }
                 let parsed = v.split(separator: ",").compactMap { Int($0) }.filter { $0 > 0 }
@@ -557,6 +640,7 @@ public struct BenchCommand: Command {
                                  [--max-tokens 128] [--runs 3] [--json <path>] [--port N]
                    osaurus bench --tune-prefill [--model <id>] [--candidates 512,1024,2048,4096]
                                  [--prompt-tokens 8192] [--runs 3]
+                   osaurus bench --calibrate
 
             Requires a running server (`osaurus serve`). Reports uncached/cached
             TTFT, prefill tok/s, and decode tok/s per prompt size as JSON.
@@ -564,6 +648,10 @@ public struct BenchCommand: Command {
             --tune-prefill measures the model's TTFT at each candidate prefill
             step size and persists the per-model winner (the optimum is
             model-architecture-dependent); the server applies it immediately.
+
+            --calibrate measures this machine's memory bandwidth (STREAM copy,
+            ~2 GiB transient allocation, a few seconds) and persists it for
+            decode-speed estimates (`osaurus show`). No server needed.
 
             """, stderr)
     }
