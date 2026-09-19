@@ -131,6 +131,17 @@ struct ModelReasoningCapabilities: Sendable, Equatable, Hashable {
         defaultLevelId: "medium"
     )
 
+    /// Documented reasoning contract for GPT-6 Astra (`gpt-6-astra`) on the
+    /// official `api.openai.com` API-key route: `low` through `max`,
+    /// defaulting to `medium`. Unlike GPT-5.6, Astra does NOT accept `none`
+    /// (developers.openai.com/api/docs/models/gpt-6-astra, audited 2026-09);
+    /// offering it would 400 the request. Same host scoping as the 5.6
+    /// profile — never applied to custom OpenAI-compatible providers.
+    static let officialOpenAIGPT6Astra = ModelReasoningCapabilities(
+        levels: ["low", "medium", "high", "xhigh", "max"].map { Level(id: $0) },
+        defaultLevelId: "medium"
+    )
+
     init(levels: [Level], defaultLevelId: String?) {
         self.levels = levels
         self.defaultLevelId = defaultLevelId
@@ -205,6 +216,7 @@ enum ModelProfileRegistry {
         OpenAIOSeriesReasoningProfile.self,
         OpenAIGPT51ReasoningProfile.self,
         OpenAIGPT52PlusReasoningProfile.self,
+        OpenAIGPT6ReasoningProfile.self,
         OpenAIReasoningProfile.self,
         MistralReasoningProfile.self,
         ZaiGlmReasoningProfile.self,
@@ -508,10 +520,25 @@ struct MuseGlimmerReasoningProfile: ModelProfile {
 ///   .officialOpenAIGPT56`) and the live Codex catalog; on custom
 ///   OpenAI-compatible hosts it falls through to the 5.2+ static set, which
 ///   is never assumed to include `max`.
+/// - gpt-6 (Astra): `low` through `max`, no `none` — carried by
+///   `ModelReasoningCapabilities.officialOpenAIGPT6Astra` on the official
+///   route and the live Codex catalog; the static `OpenAIGPT6ReasoningProfile`
+///   offers `low` through `xhigh` on custom hosts.
 private enum OpenAIModelVersion {
     static func bare(_ modelId: String) -> String {
         modelId.lowercased().split(separator: "/").last.map(String.init)
             ?? modelId.lowercased()
+    }
+
+    /// Whether the id names a GPT-6 family model (`gpt-6-astra`, dated
+    /// snapshots, future `gpt-6.x` minors).
+    static func isGPT6(_ modelId: String) -> Bool {
+        let bare = Self.bare(modelId)
+        guard bare.hasPrefix("gpt-6") else { return false }
+        // Reject fused suffixes like a hypothetical "gpt-60"; accept the
+        // bare family, a dash codename, or a dotted minor.
+        let rest = bare.dropFirst("gpt-6".count)
+        return rest.isEmpty || rest.hasPrefix("-") || rest.hasPrefix(".")
     }
 
     /// The minor version N for a "gpt-5.N…" id; nil for the original gpt-5
@@ -614,12 +641,44 @@ struct OpenAIGPT52PlusReasoningProfile: ModelProfile {
     ]
 }
 
+/// GPT-6 family (Astra) on hosts without a documented/live capability
+/// profile — `low` through `xhigh`, defaulting to `medium`. Astra rejects
+/// `none` outright, so it is not offered; `max` is never offered statically
+/// (same policy as 5.6: it requires the documented official-route profile or
+/// the live Codex catalog).
+struct OpenAIGPT6ReasoningProfile: ModelProfile {
+    static let displayName = "Reasoning"
+
+    static func matches(modelId: String) -> Bool {
+        OpenAIModelVersion.isGPT6(modelId)
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "reasoningEffort",
+            label: L("Reasoning Effort"),
+            icon: "brain",
+            kind: .segmented([
+                ModelOptionSegment(id: "low", label: L("Low")),
+                ModelOptionSegment(id: "medium", label: L("Medium")),
+                ModelOptionSegment(id: "high", label: L("High")),
+                ModelOptionSegment(id: "xhigh", label: L("Extra High")),
+            ])
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "reasoningEffort": .string("medium")
+    ]
+}
+
 /// Generic OpenAI reasoning fallback. Registered after the version-specific
 /// profiles above, so in practice it resolves only for the original gpt-5
 /// family (gpt-5, -mini, -nano, -codex), which accepts `minimal` through
-/// `high`. Its broad `matches` (any o1/o3/o4/gpt-5* id) is intentionally
-/// kept: `RemoteProviderService` uses it as the "OpenAI reasoning model"
-/// wire predicate (max_completion_tokens, temperature/top_p stripping).
+/// `high`. Its broad `matches` (any o1/o3/o4/gpt-5*/gpt-6* id) is
+/// intentionally kept: `RemoteProviderService` uses it as the "OpenAI
+/// reasoning model" wire predicate (max_completion_tokens, temperature/top_p
+/// stripping) — GPT-6 Astra rejects `temperature`/`top_p` like the rest.
 struct OpenAIReasoningProfile: ModelProfile {
     static let displayName = "Reasoning"
 
@@ -628,6 +687,7 @@ struct OpenAIReasoningProfile: ModelProfile {
     static func matches(modelId: String) -> Bool {
         let bare = OpenAIModelVersion.bare(modelId)
         return reasoningModelPrefixes.contains { bare.hasPrefix($0) }
+            || OpenAIModelVersion.isGPT6(modelId)
     }
 
     static let options: [ModelOptionDefinition] = [

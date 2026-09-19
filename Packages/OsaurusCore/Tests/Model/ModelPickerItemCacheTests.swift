@@ -264,13 +264,13 @@ struct ModelPickerItemCacheTests {
                 name: "OpenAI",
                 type: .openResponses,
                 host: "api.openai.com",
-                models: ["openai/gpt-5.6-sol", "openai/gpt-4.1"]
+                models: ["openai/gpt-5.6-sol", "openai/gpt-6-astra", "openai/gpt-4.1"]
             ),
             Self.providerEntry(
                 name: "Proxy",
                 type: .openResponses,
                 host: "my-proxy.example.com",
-                models: ["proxy/gpt-5.6-sol"]
+                models: ["proxy/gpt-5.6-sol", "proxy/gpt-6-astra"]
             ),
         ]
 
@@ -310,23 +310,37 @@ struct ModelPickerItemCacheTests {
         // to the documented per-family table instead of the generic default.
         #expect(sol.contextLength == 1_050_000)
 
-        // Official route, non-GPT-5.6 id: no documented profile.
+        // Official API key route, GPT-6 Astra: documented `low`…`max` set
+        // (no `none` — Astra rejects it), 1.05M window from the family table.
+        let astra = try #require(byId["openai/gpt-6-astra"])
+        #expect(astra.displayName == "gpt-6-astra")
+        #expect(astra.reasoningCapabilities == .officialOpenAIGPT6Astra)
+        #expect(
+            astra.reasoningCapabilities?.levels.map(\.id) == ["low", "medium", "high", "xhigh", "max"]
+        )
+        #expect(astra.reasoningCapabilities?.defaultLevelId == "medium")
+        #expect(astra.contextLength == 1_050_000)
+
+        // Official route, non-GPT-5.6/6 id: no documented profile.
         let gpt41 = try #require(byId["openai/gpt-4.1"])
         #expect(gpt41.reasoningCapabilities == nil)
 
         // Custom OpenAI-compatible provider: never assumed to support the
-        // official contract, even for a GPT-5.6 slug.
+        // official contract, even for a GPT-5.6 / GPT-6 slug.
         let proxySol = try #require(byId["proxy/gpt-5.6-sol"])
         #expect(proxySol.reasoningCapabilities == nil)
         #expect(proxySol.chatEndpointCapability == .supported)
         // The static window table is scoped to api.openai.com only — a proxy
         // claiming an OpenAI slug must not inherit OpenAI's real window.
         #expect(proxySol.contextLength == nil)
+        let proxyAstra = try #require(byId["proxy/gpt-6-astra"])
+        #expect(proxyAstra.reasoningCapabilities == nil)
+        #expect(proxyAstra.contextLength == nil)
 
         // Capability map holds exactly the enriched full ids.
         #expect(
             Set(result.reasoningCapabilities.keys)
-                == ["openai-chatgpt/gpt-5.6-terra", "openai/gpt-5.6-sol"]
+                == ["openai-chatgpt/gpt-5.6-terra", "openai/gpt-5.6-sol", "openai/gpt-6-astra"]
         )
     }
 
@@ -338,6 +352,7 @@ struct ModelPickerItemCacheTests {
     /// nil (never a guessed number) so resolution defers to the configured
     /// fallback instead of asserting a wrong window.
     @Test func officialOpenAIContextWindow_resolvesByLongestPrefixMatch() {
+        #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-6-astra") == 1_050_000)
         #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-5.6-luna") == 1_050_000)
         #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-5.5-2026-01-01") == 1_050_000)
         // "gpt-5.2" must not fall through to the shorter "gpt-5" entry.

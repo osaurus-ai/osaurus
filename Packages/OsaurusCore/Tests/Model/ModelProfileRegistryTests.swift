@@ -810,9 +810,45 @@ struct ModelProfileRegistryTests {
 
         // The umbrella predicate (wire behavior: max_completion_tokens,
         // temperature stripping) still spans every OpenAI reasoning id.
-        for id in ["o3-mini", "gpt-5", "gpt-5.1", "gpt-5.5", "gpt-5.6-sol"] {
+        for id in ["o3-mini", "gpt-5", "gpt-5.1", "gpt-5.5", "gpt-5.6-sol", "gpt-6-astra"] {
             #expect(OpenAIReasoningProfile.matches(modelId: id), "umbrella must match \(id)")
         }
+    }
+
+    /// GPT-6 Astra (`gpt-6-astra`) rejects `none` and, off the official
+    /// route, `max` is never assumed — the static profile offers `low`
+    /// through `xhigh` (default `medium`). It must not fall through to the
+    /// original gpt-5 `minimal` set or the 5.2+ `none` set.
+    @Test func openAIGPT6_matchesDocumentedEffortSet() {
+        for id in ["gpt-6-astra", "openai/gpt-6-astra", "proxy/gpt-6-astra", "gpt-6-astra-2026-09-03", "gpt-6"] {
+            #expect(reasoningSegmentIds(for: id) == ["low", "medium", "high", "xhigh"], "id: \(id)")
+            #expect(
+                ModelProfileRegistry.defaults(for: id)["reasoningEffort"]?.stringValue == "medium",
+                "id: \(id)"
+            )
+        }
+
+        let staleNone = ModelProfileRegistry.normalizedOptions(
+            for: "gpt-6-astra",
+            persisted: ["reasoningEffort": .string("none")]
+        )
+        #expect(staleNone["reasoningEffort"] == nil)
+        let validXhigh = ModelProfileRegistry.normalizedOptions(
+            for: "gpt-6-astra",
+            persisted: ["reasoningEffort": .string("xhigh")]
+        )
+        #expect(validXhigh["reasoningEffort"]?.stringValue == "xhigh")
+
+        // The documented official-route profile adds `max` and still no `none`.
+        #expect(
+            ModelReasoningCapabilities.officialOpenAIGPT6Astra.levels.map(\.id)
+                == ["low", "medium", "high", "xhigh", "max"]
+        )
+        #expect(ModelReasoningCapabilities.officialOpenAIGPT6Astra.defaultLevelId == "medium")
+
+        // A fused suffix is not the GPT-6 family.
+        #expect(!OpenAIGPT6ReasoningProfile.matches(modelId: "gpt-60-turbo"))
+        #expect(!OpenAIReasoningProfile.matches(modelId: "gpt-60-turbo"))
     }
 
     /// Adjustable reasoning exists only on mistral-small-* and

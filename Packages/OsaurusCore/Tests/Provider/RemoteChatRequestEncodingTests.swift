@@ -52,6 +52,39 @@ struct RemoteChatRequestEncodingTests {
         #expect(payload["max_tokens"] == nil)
     }
 
+    /// GPT-6 Astra has no dotted minor (`gpt-6-astra`) but is a reasoning
+    /// model like the rest of the gpt-5+ line: it must take the
+    /// `max_completion_tokens` key and the request must not carry the
+    /// sampler knobs Astra rejects.
+    @Test func encode_gpt6Astra_usesMaxCompletionTokens() throws {
+        let request = Self.makeRequest(model: "gpt-6-astra", maxTokens: 4096)
+        let payload = try Self.encodeAsDictionary(request)
+
+        #expect(payload["max_completion_tokens"] as? Int == 4096)
+        #expect(payload["max_tokens"] == nil)
+
+        // Official API-key route accepts every documented Astra effort.
+        for effort in ["low", "medium", "high", "xhigh", "max"] {
+            let (accepted, thinking) = RemoteProviderService.remoteChatReasoningControls(
+                providerType: .openResponses,
+                host: "api.openai.com",
+                model: "gpt-6-astra",
+                effort: effort
+            )
+            #expect(accepted == effort, "official API must accept \(effort)")
+            #expect(thinking == nil)
+        }
+        // `none` is a GPT-5.6-only wire value; Astra rejects it, so the
+        // direct-rail alias stays stripped even on the official host.
+        let (none, _) = RemoteProviderService.remoteChatReasoningControls(
+            providerType: .openResponses,
+            host: "api.openai.com",
+            model: "gpt-6-astra",
+            effort: "none"
+        )
+        #expect(none == nil)
+    }
+
     @Test func encode_nilMaxTokens_omitsBothKeys() throws {
         let request = Self.makeRequest(model: "mistral-small-latest", maxTokens: nil)
         let payload = try Self.encodeAsDictionary(request)
@@ -262,6 +295,21 @@ struct RemoteChatRequestEncodingTests {
                 parameters: params
             ) == 16_384
         )
+    }
+
+    /// Adaptive-thinking Claude generations return HTTP 400 "`temperature` is
+    /// deprecated for this model." — the encoder must omit the sampler knobs
+    /// for them (opus-5 included) while older dated snapshots keep them.
+    @Test func anthropicRequest_omitsSamplerKnobsForAdaptiveThinkingModels() throws {
+        for model in ["claude-opus-5", "claude-sonnet-5", "claude-fable-5-1", "anthropic/claude-opus-5"] {
+            let anthropic = Self.makeRequest(model: model, maxTokens: 1024).toAnthropicRequest()
+            #expect(anthropic.temperature == nil, "\(model) must not carry temperature")
+            #expect(anthropic.top_p == nil, "\(model) must not carry top_p")
+        }
+        let legacy = Self.makeRequest(model: "claude-haiku-4-5", maxTokens: 1024).toAnthropicRequest()
+        // Float(0.7) widened to Double — compare with tolerance.
+        let legacyTemperature = try #require(legacy.temperature)
+        #expect(abs(legacyTemperature - 0.7) < 0.0001)
     }
 
     @Test func anthropicStreamingToolsEnableEagerInputStreaming() throws {
