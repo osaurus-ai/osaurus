@@ -263,6 +263,17 @@ final class MobilePairingService: ObservableObject {
 
     // MARK: Paired device
 
+    /// `POST /pair/unpair`: the paired phone unpairs itself. Only the key
+    /// minted for the current paired device may do this.
+    func unpairIfCaller(keyNonce: String) -> Bool {
+        guard let device = pairedDevice,
+            let info = APIKeyManager.shared.listKeys().first(where: { $0.id == device.keyId }),
+            PairingCode.constantTimeEquals(info.nonce, keyNonce)
+        else { return false }
+        revokeDevice()
+        return true
+    }
+
     func revokeDevice() {
         guard let device = pairedDevice else { return }
         APIKeyManager.shared.revoke(id: device.keyId)

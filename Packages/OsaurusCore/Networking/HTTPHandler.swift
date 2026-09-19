@@ -860,6 +860,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handlePairEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/pair/code" {
                 handlePairCodeEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/pair/unpair" {
+                handlePairUnpairEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/pair-invite" {
                 handlePairInviteEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/secure/session" {
@@ -4468,6 +4470,56 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     userAgent: userAgent,
                     requestBody: "<redacted>",
                     responseBody: logBody ?? body,
+                    responseStatus: Int(status.code),
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// POST /pair/unpair — the paired phone unpairs itself (revokes its own
+    /// key and clears Settings → Osaurus Connect). Authenticated by the auth
+    /// gate; only the key minted for the current paired device is accepted.
+    private func handlePairUnpairEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let path = "/pair/unpair"
+        let cors = stateRef.value.corsHeaders
+        let keyNonce = inboundConnectionInfo()?.accessKeyId
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let unpaired: Bool
+            if let keyNonce {
+                unpaired = await MainActor.run { MobilePairingService.shared.unpairIfCaller(keyNonce: keyNonce) }
+            } else {
+                unpaired = false
+            }
+            let status: HTTPResponseStatus = unpaired ? .ok : .forbidden
+            let body =
+                unpaired
+                ? #"{"ok":true}"#
+                : #"{"error":"not_paired_device","message":"Only the paired phone can unpair itself."}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: status,
+                    headers: headers,
+                    body: body
+                )
+                self.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: body,
                     responseStatus: Int(status.code),
                     startTime: startTime
                 )

@@ -764,6 +764,11 @@ already-pinned agent so the new addresses are authenticated.
 
 - Keys last 90 days; re-pair to renew. Unpair on the Mac revokes the key
   immediately (inner `401` for the phone, which should return to pairing).
+- The phone unpairs itself with `POST /pair/unpair` (no body, inside the
+  Secure Channel with its Bearer): `200 {"ok":true}` revokes its key and
+  clears the Mac's "Paired iPhone"; `403 not_paired_device` for any other
+  key. If the Mac is unreachable the phone forgets the pairing anyway and
+  the stale entry stays on the Mac until removed there.
 - "Keep Mac Awake for Paired iPhone" (default on) holds an idle-system-sleep
   assertion while a phone is paired.
 

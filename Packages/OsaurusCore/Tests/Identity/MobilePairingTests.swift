@@ -191,6 +191,10 @@ struct MobilePairingServiceTests {
         #expect(service.activeCode != nil)
     }
 
+    @Test func unpairIsRefusedWhenNothingIsPaired() {
+        #expect(!makeService().unpairIfCaller(keyNonce: "any-nonce"))
+    }
+
     @Test func missingDeviceNameIsBadRequest() {
         let service = makeService()
         let (_, pub) = PairingKeyEnvelope.generateRecipientKey()
