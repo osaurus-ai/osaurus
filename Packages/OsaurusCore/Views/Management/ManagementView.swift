@@ -335,6 +335,7 @@ private extension ManagementView {
             case .server: stateManager.serverSectionRequest = subTab
             case .imageGeneration: stateManager.imageGenerationSubTabRequest = subTab
             case .memory: stateManager.memorySubTabRequest = subTab
+            case .computerUse: stateManager.computerUseSubTabRequest = subTab
             default: break
             }
         }

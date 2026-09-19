@@ -122,6 +122,13 @@ build and live proof to this correction rather than the stale UI source.
 
 ## Live UI finding and expanded context request (18 September)
 
+CI at `adf3a545` caught four Forms catalog destinations with an unhandled
+Computer Use sub-tab. The view already consumed `computerUseSubTabRequest`, but
+Management search did not set it. The search dispatcher now forwards that
+request, and the destination-enum regression covers Computer Use plus a Forms
+profile-search case. Live search-to-Forms navigation remains to be checked in
+the rebuilt app; a catalog match alone is not proof of navigation.
+
 At `adf3a545`, the optimized isolated app imported the synthetic contact PDF,
 displayed the extracted candidates, let the user remove the document heading
 candidate, and saved the three reviewed fields in its isolated profile. The
