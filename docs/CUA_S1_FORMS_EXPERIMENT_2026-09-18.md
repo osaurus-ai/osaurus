@@ -124,7 +124,71 @@ failed on a missing diagnostics switch case and missing inner `try` in new
 test macros; both failure logs are retained. Fresh integrated-app UI,
 delegation, actual footprint and full AgentLoop/Frontier evidence remain open.
 
-### Current live browser checkpoint (source `8cbc5ba9`)
+### Nested live checkpoint (source `d1ec09c1`)
+
+**Still experimental; keep this PR open/draft.** Exact optimized isolated app
+binary SHA256
+`2a6d34f46905cac3f7b6d7ba6dd640ceeba416dfcbc772b178741fdffefd16e6`, engine
+`6026359408f02c5867643d84300b0ca2225a2e88`. Local focused run
+`Tests-nested-s1-queued.xcresult`: **72 XCTest + 238 Swift Testing = 310**
+cases, zero failures. The build also completed successfully. These are not
+the full evaluation or mixed-model handoff matrix.
+
+Source trace: `SubagentAdmissionLease.swift`, `SubagentSession.runPrepared`,
+and `DelegationResidencyContext.capture/run` preserve actual parent admission
+ownership across a delegated chat, its nested local tools, and queued starts.
+Only the parent's own shared slots are released before exclusive upgrade;
+normal child authority, RAM and residency checks still run. Children drain
+before restoration and owner release. Stop during an upgrade may wait for
+already-admitted peers to drain; those peers are not killed or bypassed.
+
+Real app UI, same Gemma snapshot/defaults as the prior checkpoint below:
+
+- Orchestrator → Helper → Browser completed at engine capacity **one**, with
+  active high-water one, without the former parent-slot self-wait. Parent and
+  child histories and actual website visits are retained.
+- Continued same Helper session: real CPU S1 receipt
+  `B1C4307A-C798-44A0-BB48-AF9BE1327BED`, **2 fields scored / 2 applied**,
+  one batch in **3.900667 ms**, separately approved and independently observed
+  in the website's input/change events; no submission. Browser planner
+  last-step **84.7248 tok/s**, 233 completion tokens, 5 steps. Child L2
+  hits/misses/stores **21/323/55**, prefix **0/0**. Parent resumed with the
+  correct two-item / $24 cart answer: 53 tokens, **83.7 tok/s**, .4954s TTFT,
+  normal stop. S1 is the scorer; Gemma remains the actual planner.
+- Actual main-chat Stop while nested Browser Use awaited approval removed
+  the modal and cancelled both histories. A subsequent delegated browser
+  read completed normally; health had active/pending/chat_active all zero,
+  capacity/available one. Existing generic cancellation UI says Failed and
+  tool envelopes say `execution_error`, despite terminal reason `cancelled`.
+- **Accuracy failures retained:** first run selected the wrong first public
+  book and omitted a duplicated cart line; first form follow-up incorrectly
+  opened a sign-in window and then claimed scorer execution without a scorer
+  receipt; post-Stop follow-up again miscounted cart units. Explicit normal
+  navigation clarification was needed for the successful S1 follow-up.
+  This is not evidence of reliable autonomous browsing or a general task
+  success rate. Exact causal attribution of count errors remains open because
+  the raw inner reader result is not persisted in these chat receipts.
+- Two 300-sample windows peaked at **2.84 / 2.81 GiB app phys_footprint**;
+  WebKit subprocesses and whole-system memory are excluded. No near-zero-RAM
+  claim, no memory-safety bypass, no second planner model loaded.
+- The initial isolated app stalled in external-volume model discovery;
+  sampling traced main-thread Foundation `getxattr` through external-model
+  size enumeration. Only this test profile was narrowed to the unchanged
+  existing Gemma snapshot. General model discovery is excluded, not fixed.
+- Final app Settings reports **Accessibility: Not Granted**. Native desktop
+  S1 effects remain blocked on the user's grant; a real delegated
+  `computer_use` call returned `unavailable` / Required: Accessibility
+  (receipt `D1EACAFE-A976-4A3C-94BD-BF457951E5BD`) and the independent fixture
+  stayed empty, submit count zero. Mock AX tests do not close this gap.
+
+Private receipts under `vmlx-private-evidence/cua-s1-forms-2026-09-18`:
+`LIVE-NESTED-d1.md`, `app-identity.json`, `s1-d1-nested-receipt.sqlite`,
+`browser-demo-events.jsonl`, `memory-nested-d1{,-followup}.jsonl`,
+`live-d1-s1-retry-complete.png`, `live-d1-stopped.png`,
+`live-d1-post-stop-followup.png`, and `sample-d1-settings.txt`.
+No screenshots or private profile values are committed.
+
+### Earlier live browser checkpoint (source `8cbc5ba9`)
 
 Exact optimized isolated app binary SHA256:
 `38ae6d8ae4903fe8828c6b976e6915293b0c320940147d013c8b03e6803ceefc`.
