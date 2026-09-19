@@ -13,9 +13,11 @@ struct OsaurusConnectView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var pairing = MobilePairingService.shared
     @ObservedObject private var highlightCoordinator = SettingsHighlightCoordinator.shared
+    @ObservedObject private var relay = RelayTunnelManager.shared
     @EnvironmentObject private var server: ServerController
 
     @AppStorage(MobilePairingService.keepAwakeDefaultsKey) private var keepMacAwake: Bool = true
+    @AppStorage(MobilePairingService.reachAnywhereDefaultsKey) private var reachFromAnywhere: Bool = true
     @State private var hasAppeared = false
     @State private var isEnablingNetwork = false
     @State private var showRevokeConfirm = false
@@ -49,6 +51,7 @@ struct OsaurusConnectView: View {
             withAnimation(.easeOut(duration: 0.25)) { hasAppeared = true }
         }
         .onChange(of: keepMacAwake) { _, _ in pairing.refreshKeepAwake() }
+        .onChange(of: reachFromAnywhere) { _, _ in pairing.syncRelay() }
         .alert(L("Unpair this iPhone?"), isPresented: $showRevokeConfirm) {
             Button(L("Unpair"), role: .destructive) { pairing.revokeDevice() }
             Button(L("Cancel"), role: .cancel) {}
@@ -198,15 +201,67 @@ struct OsaurusConnectView: View {
 
     @ViewBuilder private var powerSection: some View {
         SettingsSection(title: L("Availability"), icon: "bolt.horizontal.circle.fill") {
-            SettingsToggle(
-                title: L("Keep Mac Awake for Paired iPhone"),
-                description: L(
-                    "Prevent idle system sleep while an iPhone is paired so your agents stay reachable. The display may still sleep, and closing a MacBook lid or choosing Sleep always takes priority."
-                ),
-                isOn: $keepMacAwake
-            )
-            .settingsLandingAnchor("settings.connect.keepAwake")
+            VStack(alignment: .leading, spacing: 14) {
+                SettingsToggle(
+                    title: L("Reach From Anywhere"),
+                    description: L(
+                        "Use your agents from your iPhone away from this network, through the Osaurus relay. Traffic stays end-to-end encrypted between your iPhone and this Mac."
+                    ),
+                    isOn: $reachFromAnywhere
+                )
+                .settingsLandingAnchor("settings.connect.reachAnywhere")
+
+                if reachFromAnywhere, pairing.pairedDevice != nil {
+                    relayStatusRow
+                }
+
+                SettingsToggle(
+                    title: L("Keep Mac Awake for Paired iPhone"),
+                    description: L(
+                        "Prevent idle system sleep while an iPhone is paired so your agents stay reachable. The display may still sleep, and closing a MacBook lid or choosing Sleep always takes priority."
+                    ),
+                    isOn: $keepMacAwake
+                )
+                .settingsLandingAnchor("settings.connect.keepAwake")
+            }
         }
+    }
+
+    /// Summarises the relay tunnels of the agents the phone can use.
+    private var relayStatusRow: some View {
+        let summary = relaySummary
+        return HStack(spacing: 8) {
+            Image(systemName: summary.icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(summary.color)
+            Text(summary.text)
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+        }
+    }
+
+    private var relaySummary: (text: String, icon: String, color: Color) {
+        let ids = MobilePairingService.remoteAgents().compactMap { UUID(uuidString: $0.id) }
+        guard !ids.isEmpty else {
+            return (L("Create an agent to use it from your iPhone."), "info.circle", theme.secondaryText)
+        }
+        let statuses = ids.map { relay.agentStatuses[$0] ?? .disconnected }
+        let connected = statuses.filter { if case .connected = $0 { return true } else { return false } }.count
+        if let error = statuses.lazy.compactMap({ status -> String? in
+            if case .error(let message) = status { return message } else { return nil }
+        }).first {
+            return (L("Relay error: \(error)"), "exclamationmark.triangle.fill", theme.warningColor)
+        }
+        if statuses.contains(.servedElsewhere) {
+            return (
+                L("Another Mac with the same identity is serving some agents over the relay."),
+                "exclamationmark.triangle.fill", theme.warningColor
+            )
+        }
+        if connected == ids.count {
+            return (L("Reachable from anywhere (\(connected) agents)"), "checkmark.circle.fill", theme.successColor)
+        }
+        return (L("Connecting to the relay… (\(connected) of \(ids.count) agents)"), "arrow.triangle.2.circlepath", theme.secondaryText)
     }
 
     // MARK: Helpers

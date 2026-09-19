@@ -315,6 +315,13 @@ public enum SettingsSearchIndex {
             keywords: ["unpair", "revoke phone", "paired device", "remove iphone", "mobile access"]
         ),
         .init(
+            id: "settings.connect.reachAnywhere",
+            tab: .connect,
+            section: "Availability",
+            title: "Reach From Anywhere",
+            keywords: ["relay", "remote access", "away from home", "cellular", "tunnel", "outside network"]
+        ),
+        .init(
             id: "settings.connect.keepAwake",
             tab: .connect,
             section: "Availability",

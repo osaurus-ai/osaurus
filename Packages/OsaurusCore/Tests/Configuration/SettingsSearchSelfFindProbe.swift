@@ -95,6 +95,7 @@ struct SettingsSearchSelfFindProbe {
             ("iphone", "settings.connect.pairing"),
             ("unpair", "settings.connect.pairedDevice"),
             ("keep mac awake for paired iphone", "settings.connect.keepAwake"),
+            ("reach from anywhere", "settings.connect.reachAnywhere"),
             ("group thinking", "settings.chat.activityRollup"),
             ("hide dock icon", "settings.general.dock"),
             ("max visible toasts", "settings.notifications.maxVisible"),
