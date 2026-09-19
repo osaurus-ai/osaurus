@@ -375,6 +375,61 @@ struct AgentChannelWebhookIngressTests {
         }
     }
 
+    /// The operator typed the allowlists ahead of time and guessed the
+    /// conversation wrong while the sender matched. The first run must still
+    /// become a pending request, and re-saving the sheet with that same
+    /// hand-typed preset (which runs `reconcile`) must keep it: only an
+    /// identity that is now fully allowlisted is dropped.
+    @Test func presetMismatchedConversationWithMatchingSenderIsPendingAndSurvivesReconcile() async throws {
+        let preset = Self.connection(senders: ["workflow"], conversations: ["slack-lounge"])
+        try await withHarness(connections: [preset]) { harness in
+            let response = await harness.ingress.handleInbound(
+                Self.request(
+                    body: Self.envelope(eventId: "n8n:38", conversationId: "slack-multiplayer", senderId: "workflow")
+                )
+            )
+            #expect(response.status == 202)
+            #expect(Self.json(response)["reason"] as? String == "pending_approval")
+            #expect(harness.relay.all.isEmpty)
+
+            var pending = await harness.pending.pending(connectionId: Self.connectionId)
+            #expect(pending.count == 1)
+            #expect(pending.first?.conversationId == "slack-multiplayer")
+            #expect(pending.first?.senderId == "workflow")
+            #expect(pending.first?.lastEventId == "n8n:38")
+
+            // Save with the unchanged preset: the request stays pending.
+            await harness.pending.reconcile(
+                connectionId: Self.connectionId,
+                roomAllowlist: preset.inboundAuthorization.roomAllowlist,
+                senderAllowlist: preset.inboundAuthorization.senderAllowlist
+            )
+            pending = await harness.pending.pending(connectionId: Self.connectionId)
+            #expect(pending.count == 1)
+            let counts = await harness.pending.pendingCounts()
+            #expect(counts[Self.connectionId] == 1)
+
+            // Removing the wrong hand-typed id must not change the pending set
+            // either; the card belongs to the identity, not the allowlists.
+            await harness.pending.reconcile(
+                connectionId: Self.connectionId,
+                roomAllowlist: [],
+                senderAllowlist: preset.inboundAuthorization.senderAllowlist
+            )
+            pending = await harness.pending.pending(connectionId: Self.connectionId)
+            #expect(pending.count == 1)
+
+            // Only the real approval clears it.
+            await harness.pending.reconcile(
+                connectionId: Self.connectionId,
+                roomAllowlist: ["slack-lounge", "slack-multiplayer"],
+                senderAllowlist: ["workflow"]
+            )
+            pending = await harness.pending.pending(connectionId: Self.connectionId)
+            #expect(pending.isEmpty)
+        }
+    }
+
     @Test func pendingContactsCoalesceRepeatsAndAreNotRecordedForBadSecrets() async throws {
         try await withHarness(connections: [Self.connection()]) { harness in
             for index in 1...3 {
