@@ -398,7 +398,8 @@ struct CUAFormsSettingsView: View {
                             )
                             Text(actionDescription(decision)).font(.caption).textSelection(.enabled)
                             if let old = decision.element.value, !old.isEmpty {
-                                Text("Current: \(old)").font(.caption).foregroundStyle(.secondary)
+                                Text(String(format: L("Current: %@"), old))
+                                    .font(.caption).foregroundStyle(.secondary)
                             }
                         }
                     }

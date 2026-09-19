@@ -110,3 +110,12 @@ and `Tests-second.xcresult`. The initial generic filters for two existing
 policy/driver test files did not name their actual XCTest classes, so those
 classes did **not** run in the 39-case result; a corrected-filter rerun is next.
 Native dev-app import, persistence and actual form mutation remain unproven.
+
+Follow-up `Tests-third.xcresult` on implementation commit `e1caaf584` passed
+**31 Swift Testing + 29 XCTest = 60 cases**, including the corrected
+`ComputerUseGateTests`, `AutonomyPolicyTests` and four driver-contract classes.
+Native parity remained 58/58 with max error 1.1920929e-6. Draft PR #2823 is open.
+Its first CI run stopped at localization lint, before compilation, on one
+unwrapped `Current:` label. That label is now localized; no gate was weakened.
+The first optimized build was explicitly interrupted to bind the following
+build and live proof to this correction rather than the stale UI source.
