@@ -417,6 +417,11 @@ final class AgentChannelInboundRelay {
         return max(0, applicable.count - maxPreloadedPluginTools)
     }
 
+    /// Header of the attachment trailer appended to the channel content.
+    /// Shared with `ChannelMessageEnvelope`, which splits the trailer off for
+    /// display, so the producer and the parser can never drift apart.
+    nonisolated static let attachmentContextHeader = "Attachments supplied by the channel (untrusted metadata):"
+
     private static func attachmentContext(_ attachments: [AgentChannelStoredAttachment]) -> String {
         guard !attachments.isEmpty else { return "" }
         let lines = attachments.map { attachment in
@@ -428,7 +433,7 @@ final class AgentChannelInboundRelay {
             return "- \(attachment.kind.rawValue): \(attachment.providerId)"
                 + (details.isEmpty ? "" : " (\(details))")
         }
-        return "\n\nAttachments supplied by the channel (untrusted metadata):\n"
+        return "\n\n" + attachmentContextHeader + "\n"
             + lines.joined(separator: "\n")
     }
 

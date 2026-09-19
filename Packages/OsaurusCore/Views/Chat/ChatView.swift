@@ -1957,7 +1957,8 @@ final class ChatSession: ObservableObject {
                 into: blockMemoizer.blocks(
                     from: effectiveTurns,
                     streamingTurnId: streamingTurnId,
-                    agentName: displayName
+                    agentName: displayName,
+                    sessionSource: source
                 )
             )
         )
@@ -3386,7 +3387,7 @@ final class ChatSession: ObservableObject {
         // Auto-generate title from first user message if still default
         if title == "New Chat" {
             let turnData = turns.map { ChatTurnData(from: $0) }
-            title = ChatSessionData.generateTitle(from: turnData)
+            title = ChatSessionData.generateTitle(from: turnData, source: source)
         }
 
         let data = toSessionData()
@@ -3680,6 +3681,10 @@ final class ChatSession: ObservableObject {
     func editAndRegenerate(turnId: UUID, newContent: String) {
         guard let index = turns.firstIndex(where: { $0.id == turnId }) else { return }
         guard turns[index].role == .user else { return }
+        // Enveloped dispatch turns (channel / delegated / scheduled / watcher)
+        // hide Edit in the UI; refuse here too so the wire envelope can never
+        // be swapped for hand-edited text through any other path.
+        guard turns[index].dispatchEnvelope(sessionSource: source) == nil else { return }
 
         turnsRollbackOnCancel = snapshotTurnsForCancelRollback()
 
@@ -10968,8 +10973,8 @@ extension ChatView {
         var markers: [ChatMinimap.Marker] = []
         markers.reserveCapacity(8)
         for block in blocks {
-            if case let .userMessage(text, _, _, _) = block.kind {
-                markers.append(ChatMinimap.Marker(id: block.turnId, preview: text))
+            if case let .userMessage(text, _, _, _, envelope) = block.kind {
+                markers.append(ChatMinimap.Marker(id: block.turnId, preview: envelope?.displayText ?? text))
             }
         }
         return markers
@@ -10996,7 +11001,13 @@ extension ChatView {
         }
         if !turn.contentIsBlank {
             if !textToCopy.isEmpty { textToCopy += "\n\n" }
-            textToCopy += turn.visibleContent
+            // A user turn copies what the bubble shows: an enveloped dispatch
+            // (channel / delegated / scheduled / watcher) yields the message,
+            // not the machine wrapper around it.
+            textToCopy +=
+                turn.role == .user
+                ? turn.displayContent(sessionSource: session.source)
+                : turn.visibleContent
         }
         guard !textToCopy.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         NSPasteboard.general.clearContents()
@@ -11217,9 +11228,10 @@ extension ChatView {
         // Snapshot on the main thread (O(turn count) — strings are CoW),
         // scan off it: the scan is O(total conversation text) and must
         // never block the main thread (Sentry app-hang).
-        let snapshot = session.turns.map {
-            ChatFindTurnSnapshot(id: $0.id, role: $0.role, content: $0.content)
-        }
+        // User turns snapshot their DISPLAYED text (envelope stripped), so
+        // the match total agrees with the block-level offsets and paint.
+        let source = session.source
+        let snapshot = session.turns.map { ChatFindTurnSnapshot(turn: $0, sessionSource: source) }
         let previous = ChatFindState(matches: findMatches, matchIndex: findMatchIndex)
         findComputeTask = Task { @MainActor in
             let (state, jumpTo) = await ChatFindMatcher.recomputeDetached(

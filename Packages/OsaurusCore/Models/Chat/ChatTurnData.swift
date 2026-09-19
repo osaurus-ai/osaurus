@@ -226,6 +226,19 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     }
 }
 
+// MARK: - Display content
+
+extension ChatTurnData {
+    /// The text the chat presents for this turn — the human-authored text
+    /// inside a dispatch envelope when one wraps the content, else the raw
+    /// content. Unmemoized mirror of `ChatTurn.displayContent(sessionSource:)`
+    /// for the rare persistence-side callers (title derivation).
+    public func displayContent(sessionSource: SessionSource) -> String {
+        guard role == .user, !content.isEmpty else { return content }
+        return DispatchEnvelope.parse(content, sessionSource: sessionSource)?.displayText ?? content
+    }
+}
+
 // MARK: - Conversion Extensions
 
 extension ChatTurnData {

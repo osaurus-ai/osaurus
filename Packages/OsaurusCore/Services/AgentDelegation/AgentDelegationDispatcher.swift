@@ -165,10 +165,18 @@ enum AgentDelegationDispatcher {
         return input + "\n\n" + contract
     }
 
+    /// Envelope markers around the delivery contracts. Shared with
+    /// `DispatchEnvelope`, which strips the contract for display, so the
+    /// producer and the parser can never drift apart.
+    static let delegatedTaskOpen = "[Delegated task]"
+    static let delegatedTaskClose = "[/Delegated task]"
+    static let delegatedFollowUpOpen = "[Delegated follow-up]"
+    static let delegatedFollowUpClose = "[/Delegated follow-up]"
+
     /// Shared framing every local contract opens with: the requester sees
     /// only the final message, and questions go back as `NEEDS INPUT:`.
     static let requesterFraming: String =
-        "[Delegated task]\n"
+        delegatedTaskOpen + "\n"
         + "You are running as a delegated subtask for another agent. The requester "
         + "sees ONLY your final message, returned as a compact size-capped digest — "
         + "intermediate commentary is lost, so finish with a message that stands "
@@ -197,7 +205,7 @@ enum AgentDelegationDispatcher {
             + "the task asks for a file to be returned to the requester rather than saved "
             + "in the working folder. Never write outside the working folder or invent a "
             + "different location.\n"
-            + "[/Delegated task]"
+            + delegatedTaskClose
     }
 
     /// Contract for a workspace (Mode 2) child: the host runs its own agent
@@ -206,7 +214,7 @@ enum AgentDelegationDispatcher {
     /// attaches small artifacts to the final envelope, which the requester's
     /// Osaurus promotes to artifact cards.
     static let remoteDeliveryContract: String =
-        "[Delegated task]\n"
+        delegatedTaskOpen + "\n"
         + "You are running as a delegated subtask for another agent on a teammate's "
         + "Osaurus. The requester sees ONLY your final message, returned as a compact "
         + "size-capped digest — intermediate commentary is lost, so finish with a "
@@ -218,7 +226,7 @@ enum AgentDelegationDispatcher {
         + "If you cannot proceed without an answer from the requester, end your turn "
         + "with a message that starts with `\(needsInputMarker)` followed by the exact "
         + "question.\n"
-        + "[/Delegated task]"
+        + delegatedTaskClose
 
     /// Appended to every delegated child prompt that has no working folder
     /// (see `delegatedPrompt`).
@@ -231,16 +239,16 @@ enum AgentDelegationDispatcher {
         + "final message a short summary that names the shared file(s); do NOT "
         + "paste their content again. Only when `share_artifact` is unavailable, "
         + "include the complete deliverable in your final message.\n"
-        + "[/Delegated task]"
+        + delegatedTaskClose
 
     /// Short reminder appended to a `continue` follow-up: the session
     /// already carries the full contract in its first turn.
     static let followUpContract: String =
-        "[Delegated follow-up]\n"
+        delegatedFollowUpOpen + "\n"
         + "Same rules as before: the requester sees only your final message; write "
         + "deliverables to your working folder (or `share_artifact`) and name them; "
         + "start with `\(needsInputMarker)` if you are blocked on a question.\n"
-        + "[/Delegated follow-up]"
+        + delegatedFollowUpClose
 
     /// Compact one-line child session title derived from the spawn input.
     static func sessionTitle(for input: String) -> String {

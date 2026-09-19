@@ -54,7 +54,18 @@ enum ContentBlockKind: Equatable {
     /// first assistant turn that follows it), used by the overflow menu's
     /// "Inspect response" to open that reply's request/response log. Nil when the
     /// message has no assistant reply yet.
-    case userMessage(text: String, attachments: [Attachment], timestamp: Date, responseTurnId: UUID?)
+    /// `envelope` is set when `text` is a machine-generated dispatch envelope
+    /// (channel wrapper, delegation contract, …): the cell then renders
+    /// `envelope.displayText` under a provenance badge row and hides Edit.
+    /// `text` stays the raw stored content so equality and the edit fallback
+    /// keep working on the real turn bytes.
+    case userMessage(
+        text: String,
+        attachments: [Attachment],
+        timestamp: Date,
+        responseTurnId: UUID?,
+        envelope: DispatchEnvelope?
+    )
     case sharedArtifact(artifact: SharedArtifact)
     case pendingToolCall(toolName: String, argPreview: String?, argSize: Int)
     /// Generation benchmarks footer for a completed assistant turn.
@@ -134,13 +145,13 @@ enum ContentBlockKind: Equatable {
             return lText == rText
 
         case let (
-            .userMessage(lText, lAttach, lTime, lResp),
-            .userMessage(rText, rAttach, rTime, rResp)
+            .userMessage(lText, lAttach, lTime, lResp, lEnv),
+            .userMessage(rText, rAttach, rTime, rResp, rEnv)
         ):
             guard lTime == rTime && lResp == rResp else { return false }
             guard lText.count == rText.count else { return false }
             guard lAttach.count == rAttach.count else { return false }
-            return lText == rText && lAttach == rAttach
+            return lText == rText && lAttach == rAttach && lEnv == rEnv
 
         case let (.sharedArtifact(lArt), .sharedArtifact(rArt)):
             return lArt == rArt
@@ -244,8 +255,10 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         switch kind {
         case let .paragraph(_, text, _, role) where role == .user || role == .assistant:
             return text
-        case let .userMessage(text, _, _, _):
-            return text
+        case let .userMessage(text, _, _, _, envelope):
+            // The displayed text, not the raw envelope, so find-bar
+            // occurrence indices line up with what the bubble paints.
+            return envelope?.displayText ?? text
         default:
             return nil
         }
@@ -370,6 +383,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         attachments: [Attachment],
         timestamp: Date,
         responseTurnId: UUID?,
+        envelope: DispatchEnvelope? = nil,
         position: BlockPosition
     ) -> ContentBlock {
         ContentBlock(
@@ -379,7 +393,8 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
                 text: text,
                 attachments: attachments,
                 timestamp: timestamp,
-                responseTurnId: responseTurnId
+                responseTurnId: responseTurnId,
+                envelope: envelope
             ),
             position: position
         )
@@ -535,6 +550,9 @@ extension ContentBlock {
         streamingTurnId: UUID?,
         agentName: String,
         previousTurn: ChatTurn? = nil,
+        // Gates the marker-less watcher envelope parse (see `DispatchEnvelope`).
+        // `.chat` for callers that never render dispatched sessions.
+        sessionSource: SessionSource = .chat,
         // callId → occurrence ordinal for the "×N" repeat badge, computed by
         // `BlockMemoizer` over the FULL transcript (this function may only be
         // given a suffix of it on the incremental paths). Nil (tests, other
@@ -584,6 +602,8 @@ extension ContentBlock {
                         attachments: turn.attachments,
                         timestamp: turn.createdAt,
                         responseTurnId: responseTurnId,
+                        // Memoized on the turn: one parse per turn, not per tick.
+                        envelope: turn.dispatchEnvelope(sessionSource: sessionSource),
                         position: .only
                     )
                 )

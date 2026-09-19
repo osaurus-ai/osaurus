@@ -287,14 +287,7 @@ public final class ExecutionContext: ObservableObject {
             print(
                 "[ExecutionContext] Dispatch folder could not be restored: \(path) — run proceeds with an explicit folder-unreadable preamble"
             )
-            return
-                "IMPORTANT — the configured folder for this task, '\(path)', could not "
-                + "be read (it is missing, not a directory, or macOS denied access). "
-                + "Do NOT inspect other directories in its place and do NOT report the "
-                + "folder as empty. Report this access problem as the outcome and stop; "
-                + "the user can restore access by re-picking the folder where it was "
-                + "set — the Watcher or Schedule that owns it, or the agent's Working "
-                + "Folder (chat folder chip / agent editor)."
+            return Self.folderUnreadablePreamble(path: path)
         }
         // This folder came from a background dispatch (Watcher / schedule /
         // plugin), not an interactive UI pick. Mark it so
@@ -303,6 +296,26 @@ public final class ExecutionContext: ObservableObject {
         // folder (the Voice Memo Watcher "empty folder" bug).
         await MainActor.run { chatSession.folderContextFromDispatchBookmark = true }
         return nil
+    }
+
+    /// Fixed fragments of the folder-unreadable preamble. Shared with
+    /// `DispatchEnvelope`, which strips the preamble for display, so the
+    /// producer and the parser can never drift apart. Byte-for-byte the
+    /// historical text.
+    nonisolated static let folderUnreadablePreamblePrefix = "IMPORTANT — the configured folder for this task, '"
+    nonisolated static let folderUnreadablePreambleSuffix =
+        "', could not "
+        + "be read (it is missing, not a directory, or macOS denied access). "
+        + "Do NOT inspect other directories in its place and do NOT report the "
+        + "folder as empty. Report this access problem as the outcome and stop; "
+        + "the user can restore access by re-picking the folder where it was "
+        + "set — the Watcher or Schedule that owns it, or the agent's Working "
+        + "Folder (chat folder chip / agent editor)."
+
+    /// The preamble prepended to a dispatched prompt when its named folder
+    /// could not be restored (see `activateFolderContextIfNeeded`).
+    nonisolated static func folderUnreadablePreamble(path: String) -> String {
+        folderUnreadablePreamblePrefix + path + folderUnreadablePreambleSuffix
     }
 
     /// Poll until execution completes or the task is cancelled.

@@ -50,6 +50,9 @@ final class BlockMemoizer {
     /// from a local agent to a remote one) must force a full rebuild so stale
     /// "Osaurus" headers aren't kept by the fast / incremental paths.
     private var lastAgentName: String?
+    /// The session source baked into cached user-message blocks (it gates the
+    /// marker-less watcher envelope parse). A change forces a full rebuild.
+    private var lastSessionSource: SessionSource?
     /// Must match `streamingTurnId` for the fast path — `generateBlocks` depends on it for typing / prefill UI.
     private var lastStreamingTurnId: UUID?
     private let streamingMaxBlocks = 80
@@ -73,6 +76,7 @@ final class BlockMemoizer {
         from turns: [ChatTurn],
         streamingTurnId: UUID?,
         agentName: String,
+        sessionSource: SessionSource = .chat,
         version: Int = 0
     ) -> [ContentBlock] {
         let count = turns.count
@@ -85,7 +89,7 @@ final class BlockMemoizer {
         let remoteToolTick = turns.last?.remoteToolActivityTick ?? 0
         // The header name is baked into cached blocks; a change must invalidate
         // the fast / incremental / append paths so headers re-render with it.
-        let agentNameChanged = agentName != lastAgentName
+        let agentNameChanged = agentName != lastAgentName || sessionSource != lastSessionSource
 
         // Fast path: nothing changed (including which turn is streaming — drives typing indicator / placeholders).
         if !agentNameChanged
@@ -134,7 +138,8 @@ final class BlockMemoizer {
                 at: count - 1,
                 in: turns,
                 streamingTurnId: streamingTurnId,
-                agentName: agentName
+                agentName: agentName,
+                sessionSource: sessionSource
             )
             wasIncremental = true
         } else if canAppend {
@@ -144,7 +149,8 @@ final class BlockMemoizer {
                 at: lastCount - 1,
                 in: turns,
                 streamingTurnId: streamingTurnId,
-                agentName: agentName
+                agentName: agentName,
+                sessionSource: sessionSource
             )
             wasIncremental = false
         } else {
@@ -153,6 +159,7 @@ final class BlockMemoizer {
                 from: turns,
                 streamingTurnId: streamingTurnId,
                 agentName: agentName,
+                sessionSource: sessionSource,
                 repeatCounts: cachedRepeatCounts
             )
             wasIncremental = false
@@ -171,6 +178,7 @@ final class BlockMemoizer {
         lastVersion = version
         lastStreamingTurnId = streamingTurnId
         lastAgentName = agentName
+        lastSessionSource = sessionSource
 
         // incremental path: only rebuild the suffix portion of the map; preserve stable prefix
         if wasIncremental, let prefixEnd = blocks.firstIndex(where: { $0.turnId == turns[count - 1].id }) {
@@ -194,7 +202,8 @@ final class BlockMemoizer {
         at turnIndex: Int,
         in turns: [ChatTurn],
         streamingTurnId: UUID?,
-        agentName: String
+        agentName: String,
+        sessionSource: SessionSource
     ) -> [ContentBlock] {
         let turnId = turns[turnIndex].id
 
@@ -205,6 +214,7 @@ final class BlockMemoizer {
                 from: turns,
                 streamingTurnId: streamingTurnId,
                 agentName: agentName,
+                sessionSource: sessionSource,
                 repeatCounts: cachedRepeatCounts
             )
         }
@@ -224,6 +234,7 @@ final class BlockMemoizer {
             streamingTurnId: streamingTurnId,
             agentName: agentName,
             previousTurn: previousTurn,
+            sessionSource: sessionSource,
             repeatCounts: cachedRepeatCounts
         )
 
@@ -268,6 +279,7 @@ final class BlockMemoizer {
         lastVersion = -1
         lastStreamingTurnId = nil
         lastAgentName = nil
+        lastSessionSource = nil
         cachedRepeatCounts = [:]
         lastRepeatCallTotal = -1
     }
