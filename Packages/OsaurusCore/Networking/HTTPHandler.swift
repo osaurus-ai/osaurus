@@ -803,6 +803,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     isLoopback: isPhysicalLoopbackConnection(context),
                     operation: .apply
                 )
+            } else if head.method == .GET, path == "/models/picker" {
+                handleModelPickerEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/models" {
                 handleModelsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/tags" {
@@ -866,6 +868,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handlePairInviteEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/secure/session" {
                 handleSecureSessionEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .PUT, path.hasPrefix("/agents/"), path.hasSuffix("/model") {
+                handleSetAgentModelEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .GET, path == "/agents" {
                 handleListAgents(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path.hasPrefix("/agents/") {
@@ -4521,6 +4531,201 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     requestBody: nil,
                     responseBody: body,
                     responseStatus: Int(status.code),
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    // MARK: - Owner model picker (Osaurus Connect)
+
+    /// One chat model as the Mac's composer picker shows it.
+    private struct PickerModelDTO: Encodable {
+        let id: String
+        let name: String
+        /// Tab / section title: "Local", "Apple Foundation", or the provider name.
+        let provider: String
+        /// `foundation | local | remote | claude-code`
+        let source: String
+        let vision: Bool
+        let thinking: Bool
+        let params: String?
+        let quantization: String?
+        /// False for local bundles the picker greys out (non-MLX format).
+        let available: Bool
+        let description: String?
+    }
+
+    private struct PickerModelsResponse: Encodable {
+        let models: [PickerModelDTO]
+    }
+
+    /// Whether the caller owns this Mac: loopback, or a master-scoped key
+    /// (e.g. the Osaurus Connect phone). Agent-scoped / workspace keys don't.
+    private func callerOwnsThisMac(_ context: ChannelHandlerContext) -> Bool {
+        isLoopbackConnection(context) || stateRef.value.authedScopeIsMaster
+    }
+
+    private func sendOwnerOnlyForbidden(head: HTTPRequestHead, context: ChannelHandlerContext, path: String, startTime: Date, userAgent: String?) {
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: stateRef.value.corsHeaders)
+        let body = #"{"error":"owner_only","message":"Only this Mac's owner can do that."}"#
+        sendResponse(context: context, version: head.version, status: .forbidden, headers: headers, body: body)
+        logRequest(
+            method: head.method.rawValue,
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: body,
+            responseStatus: 403,
+            startTime: startTime
+        )
+    }
+
+    /// GET /models/picker — the chat models the Mac's composer picker lists,
+    /// with display names and capability flags (docs/MOBILE_PROTOCOL.md §12).
+    private func handleModelPickerEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: "/models/picker", startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let items = await ModelPickerItemCache.shared.buildModelPickerItems().chatModelCandidates
+            let models = items.map { item -> PickerModelDTO in
+                let source: String
+                switch item.source {
+                case .foundation: source = "foundation"
+                case .local: source = "local"
+                case .claudeCode: source = "claude-code"
+                case .remote: source = "remote"
+                case .imageGeneration: source = "image"
+                }
+                return PickerModelDTO(
+                    id: item.id,
+                    name: item.displayName,
+                    provider: item.source.displayName,
+                    source: source,
+                    vision: item.isVLM,
+                    thinking: ModelProfileRegistry.profile(for: item.id)?.thinkingOption != nil,
+                    params: item.parameterCount,
+                    quantization: item.quantization,
+                    available: source != "local" || item.isMLXFormat,
+                    description: item.description
+                )
+            }
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(PickerModelsResponse(models: models)))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"models":[]}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET",
+                    path: "/models/picker",
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "{\"models\":[\(models.count) items]}",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    private struct SetAgentModelRequest: Decodable {
+        /// Model id from `/models/picker`; null/empty resets to the default.
+        let model: String?
+    }
+
+    /// PUT /agents/{id}/model — set an agent's default model, exactly what
+    /// picking a model in the Mac composer does (`updateDefaultModel`).
+    private func handleSetAgentModelEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        func reply(_ status: HTTPResponseStatus, _ body: String) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            logRequest(
+                method: "PUT",
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        let components = path.split(separator: "/")
+        guard components.count == 3, components[0] == "agents",
+            let agentId = UUID(uuidString: String(components[1]))
+                ?? AgentIdentityRegistry.shared.agentId(forAddress: String(components[1]))
+        else {
+            reply(.badRequest, #"{"error":"invalid_agent_id"}"#)
+            return
+        }
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(SetAgentModelRequest.self, from: data) else {
+            reply(.badRequest, #"{"error":"bad_request","message":"Expected {\"model\": \"…\"}"}"#)
+            return
+        }
+        let model = request.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = (model?.isEmpty ?? true) ? nil : model
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let outcome: (HTTPResponseStatus, String) = await MainActor.run {
+                guard let agent = AgentManager.shared.agent(for: agentId), !agent.isBuiltIn else {
+                    return (.notFound, #"{"error":"agent_not_found"}"#)
+                }
+                AgentManager.shared.updateDefaultModel(for: agentId, model: normalized)
+                let effective = AgentManager.shared.effectiveModel(for: agentId) ?? ""
+                let escaped = effective.replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
+                return (.ok, #"{"ok":true,"effective_model":"\#(escaped)"}"#)
+            }
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: outcome.0,
+                    headers: headers,
+                    body: outcome.1
+                )
+                self.logRequest(
+                    method: "PUT",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: outcome.1,
+                    responseStatus: Int(outcome.0.code),
                     startTime: startTime
                 )
             }

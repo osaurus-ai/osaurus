@@ -28,6 +28,7 @@ Related: [`IDENTITY.md`](IDENTITY.md) (identity model, key derivation),
 9. [Compatibility contract](#9-compatibility-contract)
 10. [Sequence diagrams](#10-sequence-diagrams)
 11. [Osaurus Connect pairing (6-digit code)](#11-osaurus-connect-pairing-6-digit-code)
+12. [Choosing a model](#12-choosing-a-model)
 
 ---
 
@@ -807,3 +808,34 @@ created later are added automatically.
 - Relay failures surface as the outer errors in §7.1 (`502 agent_offline`
   when the Mac is asleep, offline, or the tunnel is off).
 - `/pair/code` still refuses relay traffic (§11.3); pairing is LAN only.
+
+---
+
+## 12. Choosing a model
+
+Owner-only (loopback or a master-scoped key such as the §11 phone; others
+get `403 owner_only`). Send inside the Secure Channel like any other call.
+
+### 12.1 `GET /models/picker`
+
+The chat models the Mac composer's picker lists
+(`ModelPickerItemCache.chatModelCandidates`):
+
+```json
+{"models":[{"id":"mlx-community/Qwen3-8B-4bit","name":"Qwen3 8B","provider":"Local",
+            "source":"local","vision":false,"thinking":true,"params":"8B",
+            "quantization":"4bit","available":true,"description":null}]}
+```
+
+`source` is `foundation | local | remote | claude-code`; `provider` is the
+tab title (e.g. "Local" or the remote provider's name). `available: false`
+marks rows the Mac greys out.
+
+### 12.2 `PUT /agents/{id}/model`
+
+`{"model":"<id from 12.1>"}` (or `null` to reset) sets the agent's default
+model — exactly what picking a model in the Mac composer does — and returns
+`{"ok":true,"effective_model":"…"}`. `404 agent_not_found` for unknown or
+built-in agents. Per-chat choice is simply the `model` field of `/run`
+(§6.3); shared workspace agents still refuse overrides
+(`workspace_model_locked`).
