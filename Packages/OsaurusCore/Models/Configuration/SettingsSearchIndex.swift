@@ -156,6 +156,7 @@ public enum SettingsSearchIndex {
         "computerUse.forms.model",
         "computerUse.forms.context",
         "computerUse.forms.preview",
+        "computerUse.forms.agents",
         "themes.appearance",
         "memory.settings",
         "workspaces.overview",
@@ -787,6 +788,16 @@ public enum SettingsSearchIndex {
             keywords: [
                 "context profile", "profile name", "new profile", "delete profile", "field label", "field value",
                 "add field", "remove field", "import PDF or text", "save form context", "label value",
+            ],
+            subTab: "Forms (Experimental)"
+        ),
+        .init(
+            id: "computerUse.forms.agents",
+            tab: .computerUse,
+            section: "Forms (Experimental)",
+            title: "Agent form access",
+            keywords: [
+                "no form access", "grant", "revoke", "share profile", "browser form", "delegated forms", "cua s1",
             ],
             subTab: "Forms (Experimental)"
         ),

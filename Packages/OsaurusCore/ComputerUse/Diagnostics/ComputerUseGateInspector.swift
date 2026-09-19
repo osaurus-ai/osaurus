@@ -174,7 +174,7 @@ enum ComputerUseGateInspector {
         switch verb {
         case .observe, .wait, .find, .done, .giveUp:
             return false
-        case .click, .doubleClick, .rightClick, .drag, .type, .setValue, .clear, .pressKey, .scroll, .open:
+        case .click, .doubleClick, .rightClick, .drag, .type, .setValue, .clear, .pressKey, .scroll, .open, .fillForm:
             return true
         }
     }
@@ -226,6 +226,8 @@ enum ComputerUseGateInspector {
             return AgentAction(verb: .scroll, target: target, direction: .down, amount: 3, note: note)
         case .open:
             return AgentAction(verb: .open, app: nonEmpty(input.appName), note: note)
+        case .fillForm:
+            return AgentAction(verb: .fillForm, note: note)
         case .done:
             return AgentAction(verb: .done, note: note, reason: note)
         case .giveUp:

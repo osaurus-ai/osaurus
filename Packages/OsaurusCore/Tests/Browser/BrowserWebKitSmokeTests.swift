@@ -146,6 +146,9 @@ struct BrowserWebKitSmokeTests {
     private func withSmokeExecutor(
         agentId: UUID = UUID(),
         policy: AutonomyPolicy = .defaultPolicy,
+        forms: CUAFormsAgentRun? = nil,
+        feed: SubagentFeed? = nil,
+        isInterrupted: @escaping @Sendable () -> Bool = { false },
         confirm: @escaping @MainActor (ActionPreview) async -> Bool = { _ in true },
         _ body: (BrowserToolExecutor, _ fixtures: URL) async throws -> Void
     ) async rethrows {
@@ -163,6 +166,9 @@ struct BrowserWebKitSmokeTests {
             agentId: agentId,
             toolCallId: "smoke-\(UUID().uuidString)",
             gate: BrowserGate(policy: policy),
+            forms: forms,
+            feed: feed,
+            isInterrupted: isInterrupted,
             confirm: confirm
         )
         defer {
@@ -652,6 +658,107 @@ struct BrowserWebKitSmokeTests {
                 "return [window.submissions, window.edits];"
             )
             #expect(state.result as? [Int] == [0, 0])
+        }
+    }
+
+    @Test func browserFormAdapterBindsValuesAndExcludesUnsupportedControls() async throws {
+        let agentId = UUID()
+        try await withSmokeExecutor(agentId: agentId) { executor, fixtures in
+            let url = try SmokeFixtures.write(SmokeFixtures.loginForm, to: fixtures, name: "form-fields")
+            _ = await executor.execute(
+                name: "browser_navigate",
+                argumentsJSON: ##"{"url":"\##(url)","detail":"none"}"##
+            )
+            let session = BrowserSessionManager.shared.session(for: agentId)
+            let captured = try await session.captureFormFields()
+            #expect(captured.fields.count == 1, "Password, checkbox and button are not S1 text-fill targets")
+            let field = try #require(captured.fields.first)
+            try await session.fillFormField(field, value: "a@example.test")
+            let state = await session.executeScript(
+                "return [document.querySelector('#email').value, document.querySelector('#password').value];"
+            )
+            #expect(state.result as? [String] == ["a@example.test", ""])
+            await #expect(throws: CUAFormsError.self) { try await session.fillFormField(field, value: "overwritten") }
+        }
+    }
+
+    @Test(
+        .enabled(if: ProcessInfo.processInfo.environment["CUA_FORMS_REFERENCE_DIR"] != nil),
+        arguments: ["apply", "revoke", "interrupt", "decline", "partialRevoke"]
+    )
+    func nativeS1BrowserFillUsesGrantedProfileAndHonorsRevocation(mode: String) async throws {
+        let root = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["CUA_FORMS_REFERENCE_DIR"]))
+        let agentId = UUID()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("s1-grant-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let profile = CUAFormProfile(
+            name: "Synthetic",
+            entities: [
+                CUAFormEntity(label: "Name", value: "Avery Stone"),
+                CUAFormEntity(label: "Email", value: "a@example.test"),
+            ]
+        )
+        let config = CUAFormsConfiguration(
+            enabled: true,
+            modelDirectory: root.appendingPathComponent("scorer").path,
+            profiles: [profile],
+            agentGrants: [CUAFormAgentGrant(agentID: agentId, profileID: profile.id)]
+        )
+        let store = CUAFormContextStore(directory: directory)
+        try await store.save(config)
+        let context = try #require(try CUAFormsRunContext.resolve(configuration: config, agentID: agentId))
+        let run = CUAFormsAgentRun(context: context, store: store)
+        let interrupt = InterruptToken()
+        var confirmations = 0
+        try await withSmokeExecutor(
+            agentId: agentId,
+            forms: run,
+            isInterrupted: { interrupt.isInterrupted },
+            confirm: { _ in
+                confirmations += 1
+                if mode == "revoke" || (mode == "partialRevoke" && confirmations == 2) {
+                    var denied = config; denied.agentGrants = []; try? await store.save(denied)
+                }
+                if mode == "interrupt" { interrupt.interrupt() }
+                return mode != "decline"
+            }
+        ) { executor, fixtures in
+            let url = try SmokeFixtures.write(
+                """
+                <html><head><title>Contact form</title></head><body>
+                <form onsubmit="event.preventDefault(); window.submissions++">
+                  <label>Full name<input id="name"></label><label>Email address<input id="email" type="email"></label>
+                  <button>Create account</button>
+                </form><script>window.submissions=0;</script></body></html>
+                """,
+                to: fixtures,
+                name: "native-s1"
+            )
+            _ = await executor.execute(
+                name: "browser_navigate",
+                argumentsJSON: ##"{"url":"\##(url)","detail":"none"}"##
+            )
+            let result = await executor.execute(name: "browser_fill_form", argumentsJSON: "{}")
+            #expect(ToolEnvelope.isSuccess(result) == (mode == "apply"))
+            let receipt = try #require(await run.receipt())
+            #expect(receipt.batches == 1 && receipt.scoredFields == 2)
+            let count = mode == "apply" ? 2 : (mode == "partialRevoke" ? 1 : 0)
+            #expect(receipt.appliedFields == count)
+            #expect(confirmations == (["apply", "partialRevoke"].contains(mode) ? 2 : 1))
+            let state = await BrowserSessionManager.shared.session(for: agentId).executeScript(
+                "return [document.querySelector('#name').value, document.querySelector('#email').value, String(window.submissions)];"
+            )
+            #expect(
+                state.result as? [String] == [count > 0 ? "Avery Stone" : "", count == 2 ? "a@example.test" : "", "0"]
+            )
+        }
+    }
+
+    @Test func formsToolCannotRunWithoutAGrant() async throws {
+        await withSmokeExecutor { executor, _ in
+            let result = await executor.execute(name: "browser_fill_form", argumentsJSON: "{}")
+            #expect(!ToolEnvelope.isSuccess(result))
+            #expect(result.contains("No form profile"))
         }
     }
 

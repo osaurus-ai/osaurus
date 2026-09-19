@@ -30,7 +30,7 @@ Ask the assistant to change declarative settings in chat (`osaurus_config`); eac
 - Computer Use / Browser / Sandbox: autonomy presets, app allowlists, resources.
 - Computer Use → Forms (Experimental): opt-in CUA S1 field matching, local form
   context profiles, scorer folder, and reviewed preview/fill. This draft helper
-  does not expose personal profiles to chat or agents and never submits forms.
+  never submits forms. Agent access is off unless explicitly granted.
 
 ### Experimental local form filling
 
@@ -46,6 +46,15 @@ candidates from PDF, UTF-8 text, or Word files through the existing document
 extractors. It does not OCR scans or infer missing values. Resolve duplicate
 labels and choose **Save form context**. Profiles are local unencrypted files
 in `~/.osaurus/form-contexts/`; do not store credentials or payment information.
+
+**Agent form access** grants one named profile to each selected custom agent.
+The default is **No form access**. Save form context after granting or revoking.
+Values filled by an agent may appear on websites, in chat/tool history and in
+local or cloud models participating in delegation. Grant only data you intend
+to share. Browser Use or Computer Use must also be enabled for that agent.
+A delegated agent uses its own grant; neither a parent grant nor the manual
+profile picker grants access to children. Changing a granted profile or
+revoking access invalidates in-flight form operations before their next edit.
 There is no implicit global/agent sharing. **Delete profile**, followed by save,
 removes that profile, not its source documents.
 

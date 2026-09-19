@@ -54,12 +54,21 @@ struct CUAFormProfile: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// A user-created grant belongs to the executing agent, not its parent or
+/// sibling. Creating it explicitly permits values in page/chat/model context.
+struct CUAFormAgentGrant: Codable, Equatable, Sendable {
+    let agentID: UUID
+    var profileID: UUID
+}
+
 struct CUAFormsConfiguration: Codable, Equatable, Sendable {
     var version = 1
     var enabled = false
     var modelDirectory: String?
     var selectedProfileID: UUID?
     var profiles: [CUAFormProfile] = []
+    // Optional for backwards-compatible decoding of manual-only profiles.
+    var agentGrants: [CUAFormAgentGrant]?
 
     func validate() throws {
         guard version == 1, profiles.count <= 16,
@@ -68,11 +77,15 @@ struct CUAFormsConfiguration: Codable, Equatable, Sendable {
             selectedProfileID.map({ id in profiles.contains { $0.id == id } }) ?? true
         else { throw CUAFormsError.invalid("Invalid form-context configuration.") }
         for profile in profiles { _ = try profile.validatedEntities() }
+        let grants = agentGrants ?? []
+        guard grants.count <= 128, Set(grants.map(\.agentID)).count == grants.count,
+            grants.allSatisfy({ grant in profiles.contains { $0.id == grant.profileID } })
+        else { throw CUAFormsError.invalid("Form profile grants must name unique agents and existing profiles.") }
     }
 }
 
-/// Owns only this experimental feature's explicit local data. Never injects
-/// profiles into Chat, an agent prompt, telemetry, or general memory.
+/// Owns this feature's explicit local data. A saved profile alone never grants
+/// an agent access. No profile is injected into prompts or general memory.
 actor CUAFormContextStore {
     private let directory: URL
 
@@ -103,6 +116,30 @@ actor CUAFormContextStore {
         // Directory permissions protect even the atomic writer's temporary file.
         try data.write(to: file, options: .atomic)
         try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    }
+}
+
+/// Immutable, run-owned authority. Re-reading settings may revoke this grant,
+/// but must never substitute another profile or silently widen its scope.
+struct CUAFormsRunContext: Equatable, Sendable {
+    let agentID: UUID
+    let profile: CUAFormProfile
+    let modelDirectory: String
+
+    static func resolve(configuration: CUAFormsConfiguration, agentID: UUID) throws -> Self? {
+        try configuration.validate()
+        guard configuration.enabled,
+            let grant = configuration.agentGrants?.first(where: { $0.agentID == agentID }),
+            let profile = configuration.profiles.first(where: { $0.id == grant.profileID }),
+            let directory = configuration.modelDirectory, !directory.isEmpty
+        else { return nil }
+        return Self(agentID: agentID, profile: profile, modelDirectory: directory)
+    }
+
+    func validateCurrent(_ configuration: CUAFormsConfiguration) throws {
+        guard try Self.resolve(configuration: configuration, agentID: agentID) == self else {
+            throw CUAFormsError.invalid("Form access or context changed. Start a new run after reviewing settings.")
+        }
     }
 }
 

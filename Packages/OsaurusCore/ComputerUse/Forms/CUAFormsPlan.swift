@@ -117,18 +117,37 @@ enum CUAFormsPlanner {
         driver: any MacDriver,
         scorer: any CUAFormsScoring
     ) async throws -> CUAFormPlan {
-        let entities = try profile.validatedEntities()
         let snapshot = try await capture(target: target, driver: driver)
         let elements = snapshot.elements.filter {
             $0.windowId == target.window.windowId && role($0.role) != nil && !CUSecureFieldRole.contains($0.role)
         }
+        let scored = try await score(
+            profile: profile,
+            elements: elements,
+            title: target.window.title ?? "",
+            scorer: scorer
+        )
+        return CUAFormPlan(
+            target: target,
+            profileName: profile.name,
+            decisions: scored.decisions,
+            scoringSeconds: scored.seconds
+        )
+    }
+
+    /// Shared native inference contract for AX and DOM targets. The caller owns
+    /// permission, target binding and execution; this method only scores data.
+    static func score(profile: CUAFormProfile, elements: [CUElement], title: String, scorer: any CUAFormsScoring)
+        async throws -> (decisions: [CUAFormDecision], seconds: Double)
+    {
+        let entities = try profile.validatedEntities()
         guard (1 ... 64).contains(elements.count) else {
-            throw CUAFormsError.invalid("Choose a window with 1–64 accessible form elements.")
+            throw CUAFormsError.invalid("Choose a form with 1–64 accessible elements.")
         }
         let options = entities.map(\.option) + ["check", "click", "skip"]
         let start = ContinuousClock.now
         let rows = try await scorer.probabilities(
-            contexts: elements.map { context(for: $0, title: target.window.title ?? "") },
+            contexts: elements.map { context(for: $0, title: title) },
             options: options
         )
         let duration = start.duration(to: .now).components
@@ -146,12 +165,7 @@ enum CUAFormsPlanner {
             }
             return CUAFormDecision(id: UUID(), element: element, action: action, probability: row[index])
         }
-        return CUAFormPlan(
-            target: target,
-            profileName: profile.name,
-            decisions: decisions,
-            scoringSeconds: Double(duration.seconds) + Double(duration.attoseconds) / 1e18
-        )
+        return (decisions, Double(duration.seconds) + Double(duration.attoseconds) / 1e18)
     }
 
     static func matching(_ original: CUElement, in snapshot: CUSnapshot) throws -> CUElement {

@@ -42,7 +42,7 @@ final class CUAFormsSettingsModel: ObservableObject {
             configuration = config
             loading = false
             dirty = false
-            status = L("Profiles stay local and are not shared with agents. Nothing is submitted automatically.")
+            status = L("Only explicitly granted agents can use a form profile. Nothing is submitted automatically.")
         } catch { status = error.localizedDescription }
     }
 
@@ -69,6 +69,8 @@ final class CUAFormsSettingsModel: ObservableObject {
 
     func deleteProfile() {
         guard let index = profileIndex else { return }
+        let deletedID = configuration.profiles[index].id
+        configuration.agentGrants?.removeAll { $0.profileID == deletedID }
         configuration.profiles.remove(at: index)
         configuration.selectedProfileID = configuration.profiles.first?.id
     }
@@ -198,6 +200,7 @@ struct CUAFormsSettingsView: View {
     private enum ImportKind { case scorer, document }
 
     @StateObject private var model = CUAFormsSettingsModel()
+    @ObservedObject private var agentManager = AgentManager.shared
     @State private var importing = false
     @State private var importKind = ImportKind.scorer
     @State private var confirmFill = false
@@ -208,6 +211,7 @@ struct CUAFormsSettingsView: View {
             VStack(alignment: .leading, spacing: 20) {
                 intro
                 contextEditor
+                agentAccess
                 targetPicker
                 if let plan = model.plan { preview(plan) }
                 HStack {
@@ -270,7 +274,7 @@ struct CUAFormsSettingsView: View {
                 .font(.callout).foregroundStyle(.secondary)
                 Text(
                     L(
-                        "Profiles are local, unencrypted files. They are not sent to agents or telemetry. Do not store passwords or payment credentials."
+                        "Profiles are local, unencrypted files. They are not shared unless you grant agent access below. Do not store passwords or payment credentials."
                     )
                 )
                 .font(.callout).foregroundStyle(.secondary)
@@ -353,6 +357,50 @@ struct CUAFormsSettingsView: View {
             Text(L("Form context profiles"))
         }
         .settingsLandingAnchor("computerUse.forms.context")
+    }
+
+    private var agentAccess: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(
+                    L(
+                        "Granting a profile lets that agent use CUA S1 Forms in browser and computer-use tasks, including delegated tasks. Filled values can appear on websites, in chat history, and in local or cloud models involved in delegation. Grant only profiles you intend to share."
+                    )
+                )
+                .font(.callout).foregroundStyle(.secondary)
+                ForEach(agentManager.agents.filter { !$0.isBuiltIn }) { agent in
+                    Picker(
+                        agent.name,
+                        selection: Binding<UUID?>(
+                            get: { model.configuration.agentGrants?.first { $0.agentID == agent.id }?.profileID },
+                            set: { selected in
+                                var grants = model.configuration.agentGrants ?? []
+                                grants.removeAll { $0.agentID == agent.id }
+                                if let selected {
+                                    grants.append(CUAFormAgentGrant(agentID: agent.id, profileID: selected))
+                                }
+                                model.configuration.agentGrants = grants
+                            }
+                        )
+                    ) {
+                        Text(L("No form access")).tag(UUID?.none)
+                        ForEach(model.configuration.profiles) { Text($0.name).tag(Optional($0.id)) }
+                    }
+                    .accessibilityIdentifier("forms.agent.\(agent.id.uuidString)")
+                }
+                Text(
+                    L(
+                        "Save form context to apply grants or revocations. Browser Use or Computer Use must also be enabled for the agent. A spawned agent uses its own grant, never its parent's profile."
+                    )
+                )
+                .font(.caption).foregroundStyle(.secondary)
+            }
+            .disabled(model.busy)
+            .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+        } label: {
+            Text(L("Agent form access"))
+        }
+        .settingsLandingAnchor("computerUse.forms.agents")
     }
 
     private var targetPicker: some View {

@@ -25,7 +25,7 @@ Reasoning PR #2822 is already merged and is not part of this feature.
   existing accessibility permission, paths, and Settings search. Do not create
   a second chat model loader, bypass autonomy policies, or auto-share profiles.
 
-## Bounded first prototype
+## Manual preview and explicit agent integration
 
 Computer Use → Forms (Experimental): off by default. Users create named local
 profiles of label/value fields, optionally import a document and review the
@@ -33,14 +33,38 @@ extracted candidates, select a converted scorer folder, then choose one app
 and exact window. A dry-run preview shows every prediction and value. Only
 explicitly selected, reviewed fills/checks can execute. Buttons, submission,
 password fields, and coordinate/keyboard fallbacks are not executable here.
-This first draft is a direct user-operated form helper, not a new autonomous
-agent tool or a hidden global source of personal data.
+The first draft was manual-only. The agent integration adds an explicit
+per-agent profile grant; saving a profile alone never grants agent access.
+The selected profile in the manual preview is independent of those grants.
 
-Profiles are stored locally in a private directory/file, not sent to chat or
+Profiles are stored locally in a private directory/file and not sent to
 telemetry. They are **not encrypted**; say so in the UI. Document source files
 remain unchanged. Saving is explicit, errors visible, and runs use an immutable
 profile snapshot. Disabling, editing, changing target/profile/model, navigating
 away, or cancelling invalidates the preview and/or cancels the run.
+
+An agent grant explicitly permits that agent to use the profile in browser
+and desktop form tasks. Filled values can enter websites, chat history and
+local/cloud models involved in delegation; Settings explains this before
+granting. No full profile is injected into the planner prompt. A spawned local
+agent resolves its own grant from its actual chat-session agent identity,
+never its parent's or sibling's profile. Remote agents do not receive local
+profile files. Mid-run revocation, disabling, edits or scorer-path changes stop
+further fills instead of silently switching profiles.
+
+The general LLM still plans the browser/desktop task. With a grant, the browser
+child exposes `browser_fill_form`; the desktop `agent_action` schema exposes
+`fill_form`. These call the real native CPU scorer over current DOM/AX fields,
+not an LLM approximation. Each text edit is separately gated, revalidated
+after approval and read back. They do not submit, select checkboxes, fill
+passwords or dropdowns. The existing independently gated browser/desktop
+actions remain responsible for any subsequent user-authorized action.
+
+The run feed names `CUA S1 Forms · local CPU` only after actual scoring. Results
+include a separate `form_scorer` receipt with scored/applied counts and scoring
+seconds, while `model` remains the true LLM planner. Enabling the feature alone
+must not claim S1 was used. This is not a claim that the entire browsing agent
+uses only the scorer's small memory footprint.
 
 The native scorer uses a scoped MLX CPU stream to avoid changing or unloading
 the chat model. Batch options may be encoded once because all element rows use
@@ -72,7 +96,9 @@ effect. Report completed count when a later action fails; no blanket success.
       synthetic local form preview/fill, follow-up no-op, no submission.
 - [ ] Record scorer latency and decisions/second (tokens/second is inapplicable),
       app SHA/engine pin/bundle hash, test denominators and all failed rows.
-- [ ] Open draft PR with proof and explicit experimental/unsupported boundaries.
+- [x] Draft PR #2823 opened with explicit experimental/unsupported boundaries.
+- [ ] Native scorer integration through real direct and delegated agent runs,
+      saved grant parity, revocation, stop and follow-up proof.
 
 ## Separate queued work
 
@@ -83,6 +109,18 @@ Python/Electron release lane, not Osaurus's `0.25.x` version. No release action
 is authorized by this planning note.
 
 ## Evidence
+
+Agent integration checkpoint: local `tests-forms-agent-integration-3.log` and
+`Tests-forms-agent-integration-3.xcresult` under the private campaign evidence
+directory: 72 XCTest + 129 Swift Testing cases, zero failures, exit 0.
+Includes five real native-S1/WebKit scenarios (apply, revoke, interrupt,
+decline, revoke after first field) and six real-S1/AX-driver scenarios (apply,
+revoke, interrupt, unverified value, read-only, agent permission revoked).
+Native AX scenarios use a mocked driver, not actual macOS permission proof.
+The existing pinned probability-parity rows ran without skips. First attempts
+failed on a missing diagnostics switch case and missing inner `try` in new
+test macros; both failure logs are retained. Fresh integrated-app UI,
+delegation, actual footprint and full AgentLoop/Frontier evidence remain open.
 
 Local artifact discovered (no download): `~/models/cua-ai/cua-s1-forms`.
 Original `.pt` SHA256:

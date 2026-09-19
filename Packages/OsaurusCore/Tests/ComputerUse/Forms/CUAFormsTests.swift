@@ -10,6 +10,73 @@ struct CUAFormContextTests {
         #expect(!config.enabled)
         #expect(config.profiles.isEmpty)
         #expect(config.modelDirectory == nil)
+        #expect(config.agentGrants == nil)
+    }
+
+    @Test func formActionIsOnlyAdvertisedWithAGrant() {
+        func verbs(_ tool: Tool) -> [JSONValue]? {
+            guard case .object(let root) = tool.function.parameters,
+                case .object(let properties) = root["properties"],
+                case .object(let verb) = properties["verb"],
+                case .array(let values) = verb["enum"]
+            else { return nil }
+            return values
+        }
+        #expect(verbs(AgentAction.toolSpec)?.contains(.string("fill_form")) == false)
+        #expect(verbs(AgentAction.toolSpec(formsEnabled: true))?.contains(.string("fill_form")) == true)
+        #expect(!BrowserChildTools.all.contains { $0.function.name == "browser_fill_form" })
+        #expect(BrowserChildTools.fillForm.function.name == "browser_fill_form")
+    }
+
+    @Test func oldConfigDoesNotGrantAgentAccess() throws {
+        let data = Data(#"{"version":1,"enabled":true,"profiles":[]}"#.utf8)
+        let config = try JSONDecoder().decode(CUAFormsConfiguration.self, from: data)
+        #expect(config.agentGrants == nil)
+        #expect(try CUAFormsRunContext.resolve(configuration: config, agentID: UUID()) == nil)
+    }
+
+    @Test func grantsArePerRecipientAndSnapshotsCannotChangeProfile() throws {
+        let parent = UUID(), child = UUID(), sibling = UUID()
+        let first = CUAFormProfile(name: "First", entities: [CUAFormEntity(label: "Name", value: "Avery")])
+        let second = CUAFormProfile(name: "Second", entities: [CUAFormEntity(label: "Name", value: "Blair")])
+        var config = CUAFormsConfiguration(
+            enabled: true,
+            modelDirectory: "/scorer",
+            profiles: [first, second],
+            agentGrants: [
+                CUAFormAgentGrant(agentID: child, profileID: first.id),
+                CUAFormAgentGrant(agentID: sibling, profileID: second.id),
+            ]
+        )
+        let run = try #require(try CUAFormsRunContext.resolve(configuration: config, agentID: child))
+        #expect(run.profile == first)
+        #expect(try CUAFormsRunContext.resolve(configuration: config, agentID: sibling)?.profile == second)
+        #expect(try CUAFormsRunContext.resolve(configuration: config, agentID: parent) == nil)
+        try run.validateCurrent(config)
+        config.agentGrants?[0].profileID = second.id
+        #expect(throws: CUAFormsError.self) { try run.validateCurrent(config) }
+        #expect(run.profile == first)
+    }
+
+    @Test func disableRevokeContentAndScorerChangesInvalidateRun() throws {
+        let agent = UUID()
+        let profile = CUAFormProfile(name: "Work", entities: [CUAFormEntity(label: "Name", value: "Avery")])
+        let config = CUAFormsConfiguration(
+            enabled: true,
+            modelDirectory: "/scorer",
+            profiles: [profile],
+            agentGrants: [CUAFormAgentGrant(agentID: agent, profileID: profile.id)]
+        )
+        let run = try #require(try CUAFormsRunContext.resolve(configuration: config, agentID: agent))
+        var disabled = config; disabled.enabled = false
+        var revoked = config; revoked.agentGrants = []
+        var edited = config; edited.profiles[0].entities[0].value = "Another person"
+        var repinned = config; repinned.modelDirectory = "/other-scorer"
+        for changed in [disabled, revoked, edited, repinned] {
+            #expect(throws: CUAFormsError.self) { try run.validateCurrent(changed) }
+        }
+        var duplicate = config; duplicate.agentGrants?.append(CUAFormAgentGrant(agentID: agent, profileID: profile.id))
+        #expect(throws: CUAFormsError.self) { try duplicate.validate() }
     }
 
     @Test func extractionIsReviewableExactPairsOnly() throws {
@@ -330,6 +397,60 @@ struct CUAFormsPlanTests {
             try await CUAFormsPlanner.capture(target: CUAFormTarget(app: app, window: window), driver: driver)
         }
         #expect(await driver.captureCount == 0)
+    }
+
+    @Test(
+        .enabled(if: ProcessInfo.processInfo.environment["CUA_FORMS_REFERENCE_DIR"] != nil),
+        arguments: ["apply", "revoke", "interrupt", "unverified", "readOnly", "permissionRevoked"]
+    )
+    func realS1DesktopRunUsesGateGrantAndVerifiedValue(mode: String) async throws {
+        let root = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["CUA_FORMS_REFERENCE_DIR"]))
+        let agent = UUID()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("s1-ax-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let profile = CUAFormProfile(name: "Synthetic", entities: [entity])
+        let config = CUAFormsConfiguration(
+            enabled: true,
+            modelDirectory: root.appendingPathComponent("scorer").path,
+            profiles: [profile],
+            agentGrants: [CUAFormAgentGrant(agentID: agent, profileID: profile.id)]
+        )
+        let store = CUAFormContextStore(directory: directory)
+        try await store.save(config)
+        let context = try #require(try CUAFormsRunContext.resolve(configuration: config, agentID: agent))
+        let interrupt = InterruptToken(), permissionRevoked = InterruptToken()
+        let run = CUAFormsAgentRun(
+            context: context,
+            store: store,
+            executionAllowed: { !permissionRevoked.isInterrupted }
+        )
+        let before = snapshot([field()])
+        let after = snapshot([field("fresh-id", value: mode == "unverified" ? "" : entity.value)])
+        let driver = driver([before, before, before, after])
+        let policy = mode == "readOnly" ? AutonomyPolicy(globalPreset: .readOnly) : .defaultPolicy
+        let report = await run.fill(
+            snapshot: before,
+            driver: driver,
+            gate: ComputerUseGate(policy: policy),
+            confirm: { _ in
+                if mode == "revoke" {
+                    var revoked = config; revoked.agentGrants = []
+                    try? await store.save(revoked)
+                }
+                if mode == "interrupt" { interrupt.interrupt() }
+                if mode == "permissionRevoked" { permissionRevoked.interrupt() }
+                return true
+            },
+            isInterrupted: { interrupt.isInterrupted },
+            feed: SubagentFeed(toolCallId: "s1-ax", kindId: "computer_use", title: "Test")
+        )
+        #expect(report.completed == (mode == "apply" ? 1 : 0))
+        #expect((report.stoppedReason == nil) == (mode == "apply"))
+        #expect(await driver.elementActions.count == (["apply", "unverified"].contains(mode) ? 1 : 0))
+        #expect(await driver.coordinateActions.isEmpty)
+        let receipt = try #require(await run.receipt())
+        #expect(receipt.scoredFields == 1)
+        #expect(receipt.appliedFields == report.completed)
     }
 
     @Test func unverifiedEffectAndDriverFailureNeverReportSuccess() async {

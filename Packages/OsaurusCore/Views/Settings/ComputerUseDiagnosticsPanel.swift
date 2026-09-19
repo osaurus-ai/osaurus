@@ -506,6 +506,7 @@ struct ComputerUseDiagnosticsPanel: View {
         case .observe: return L("Observe")
         case .wait: return L("Wait")
         case .find: return L("Find")
+        case .fillForm: return L("Fill form with CUA S1")
         case .click: return L("Click")
         case .doubleClick: return L("Double-click")
         case .rightClick: return L("Right-click")

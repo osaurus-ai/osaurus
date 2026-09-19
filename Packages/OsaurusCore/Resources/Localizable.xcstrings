@@ -1,6 +1,12 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Agent form access": {},
+    "Fill form with CUA S1": {},
+    "No form access": {},
+    "Granting a profile lets that agent use CUA S1 Forms in browser and computer-use tasks, including delegated tasks. Filled values can appear on websites, in chat history, and in local or cloud models involved in delegation. Grant only profiles you intend to share.": {},
+    "Only explicitly granted agents can use a form profile. Nothing is submitted automatically.": {},
+    "Save form context to apply grants or revocations. Browser Use or Computer Use must also be enabled for the agent. A spawned agent uses its own grant, never its parent's profile.": {},
     "Profiles stay local and are not shared with agents. Nothing is submitted automatically.": {},
     "Form context saved locally.": {},
     "At most 16 form-context profiles are supported.": {},

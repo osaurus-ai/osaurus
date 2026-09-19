@@ -60,6 +60,8 @@ struct SettingsSearchSelfFindProbe {
     func controlsFindableByOnScreenLabel() {
         let labels: [(query: String, entryID: String)] = [
             ("Enable experimental forms", "computerUse.forms.enabled"),
+            ("Agent form access", "computerUse.forms.agents"),
+            ("No form access", "computerUse.forms.agents"),
             ("Choose scorer folder", "computerUse.forms.model"),
             ("Form context profiles", "computerUse.forms.context"),
             ("Context profile", "computerUse.forms.context"),

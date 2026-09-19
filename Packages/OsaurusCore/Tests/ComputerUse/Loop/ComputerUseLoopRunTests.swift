@@ -63,7 +63,8 @@ final class ComputerUseLoopRunTests: XCTestCase {
         gate: ComputerUseGating = HardwiredGate(),
         confirm: @escaping @Sendable (ActionPreview) async -> Bool = { _ in true },
         interrupt: InterruptToken = InterruptToken(),
-        limits: RunLimits = RunLimits(wallClockSeconds: 30)
+        limits: RunLimits = RunLimits(wallClockSeconds: 30),
+        forms: (any ComputerUseFormFilling)? = nil
     ) async -> ComputerUseRunResult {
         await ComputerUseLoop.run(
             goal: "test goal",
@@ -75,11 +76,92 @@ final class ComputerUseLoopRunTests: XCTestCase {
             confirm: confirm,
             limits: limits,
             sessionId: "cu-test",
-            nextAction: provider
+            nextAction: provider,
+            forms: forms
         )
     }
 
     // MARK: - Terminal verbs
+
+    private actor RecordedFormRun: ComputerUseFormFilling {
+        var calls = 0
+        let interrupt: InterruptToken?
+        init(interrupt: InterruptToken? = nil) { self.interrupt = interrupt }
+
+        func fill(
+            snapshot: CUSnapshot,
+            driver: any MacDriver,
+            gate: any ComputerUseGating,
+            confirm: @escaping @Sendable (ActionPreview) async -> Bool,
+            isInterrupted: @escaping @Sendable () -> Bool,
+            feed: SubagentFeed
+        ) async -> ComputerUseFormFillResult {
+            calls += 1
+            interrupt?.interrupt()
+            return ComputerUseFormFillResult(
+                attempted: 1,
+                completed: isInterrupted() ? 0 : 1,
+                summary: "Fixture form result",
+                stoppedReason: isInterrupted() ? "Stopped" : nil
+            )
+        }
+    }
+
+    func testFormSpecialistResultFeedsContinuationAndCompletionEvidence() async {
+        let forms = RecordedFormRun()
+        let d = driver([el("name", "textfield", "Name")])
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .fillForm), AgentAction(verb: .done, reason: "Form filled without submitting"),
+            ]),
+            forms: forms
+        )
+        let calls = await forms.calls
+        XCTAssertEqual(calls, 1)
+        XCTAssertEqual(result.metrics.actsAttempted, 1)
+        XCTAssertEqual(result.metrics.verifyChanged, 1)
+        XCTAssertTrue(result.outcome.isSuccess)
+    }
+
+    func testFormSpecialistInterruptDoesNotBecomeSuccessOrContinue() async {
+        let interrupt = InterruptToken()
+        let forms = RecordedFormRun(interrupt: interrupt)
+        let d = driver([el("name", "textfield", "Name")])
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .fillForm), AgentAction(verb: .done, reason: "Must not continue"),
+            ]),
+            interrupt: interrupt,
+            forms: forms
+        )
+        guard case .interrupted = result.outcome else { return XCTFail("Expected interruption, got \(result.outcome)") }
+        XCTAssertEqual(result.metrics.verifyChanged, 0)
+    }
+
+    func testFormActionWithoutAttachmentIsReportedAndNeverMutates() async {
+        let recorder = ModelStepInputRecorder()
+        let d = driver([el("name", "textfield", "Name")])
+        let result = await run(
+            d,
+            provider: { input in
+                let calls = await recorder.record(input)
+                let action =
+                    calls == 1 ? AgentAction(verb: .fillForm) : AgentAction(verb: .giveUp, reason: "No profile grant")
+                return ModelActionCall(id: "form-\(calls)", arguments: action.argumentsJSON())
+            }
+        )
+        guard case .gaveUp = result.outcome else { return XCTFail("Expected give up") }
+        let inputs = await recorder.inputs
+        let actions = await d.elementActions
+        XCTAssertTrue(actions.isEmpty)
+        XCTAssertTrue(
+            inputs.flatMap { $0.transcript }.contains {
+                $0.role == "tool" && $0.text.contains("explicitly granted profile")
+            }
+        )
+    }
 
     func testClickThenDoneSucceeds() async {
         // The verify capture after the click shows a changed view (a sheet
