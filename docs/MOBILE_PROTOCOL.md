@@ -740,7 +740,8 @@ POST /pair/code            (unauthenticated, LAN only, rate-limited per IP)
 sealed = HPKE(X25519, HKDF-SHA256, ChaCha20-Poly1305) to encPub,
          info = utf8("osaurus-connect-pair-v1:<deviceId>")
 plaintext = {"apiKey":"osk-v1.…","keyExpiresAt":<unix s>|null,
-             "hostName":"…","agents":[{"id":"<uuid>","name":"…","address":"0x…"}]}
+             "hostName":"…","agents":[{"id":"<uuid>","name":"…","address":"0x…",
+                         "relayURL":"https://0x….agent.osaurus.ai"|null}]}
 ```
 
 | Status | Body `error` | Meaning |
@@ -755,7 +756,7 @@ device in Settings → Osaurus Connect.
 
 The phone pins every returned `address` against its agent `id` and uses the
 key as the Bearer inside the Secure Channel. `GET /agents` and
-`GET /agents/{id}` include an additive `address` field so agents created after
+`GET /agents/{id}` include additive `address` and `relay_url` fields so agents created after
 pairing can be learned; fetch the roster **inside** the Secure Channel of an
 already-pinned agent so the new addresses are authenticated.
 
@@ -776,3 +777,20 @@ then shows the attacker's device name under "Paired iPhone", and the real
 phone's redemption fails. The residual risk is accepted for v1 (LAN-only,
 short-lived, user-initiated); a PAKE (e.g. SPAKE2 over the code) would remove
 it.
+
+### 11.6 Reaching the Mac away from the LAN
+
+"Reach From Anywhere" (Settings → Osaurus Connect, default on) turns on the
+relay tunnel (§6.1) for every remote agent while a phone is paired, and off
+again — only for tunnels it turned on — when disabled or unpaired. Agents
+created later are added automatically.
+
+- The pairing payload carries `relayURL` per agent, and `GET /agents`
+  carries `relay_url` for agents whose tunnel is on (`null` = LAN only).
+  Both equal `https://<address_lower>.agent.osaurus.ai`.
+- The phone keeps both routes and sends the same Secure Channel envelopes
+  (§6.2) to either base URL; nothing else changes. Prefer the LAN address
+  when it answers `/health` quickly, otherwise use the relay URL.
+- Relay failures surface as the outer errors in §7.1 (`502 agent_offline`
+  when the Mac is asleep, offline, or the tunnel is off).
+- `/pair/code` still refuses relay traffic (§11.3); pairing is LAN only.
