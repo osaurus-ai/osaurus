@@ -29,7 +29,7 @@ public enum SearchProviderCatalog {
     // MARK: - API providers (declarative)
 
     public static let apiProviders: [SearchProviderDefinition] = [
-        tavily, exa, braveAPI, serper, parallel, googleCSE, kagi, you,
+        tavily, exa, braveAPI, serper, serply, parallel, googleCSE, kagi, you,
     ]
 
     static let tavily = SearchProviderDefinition(
@@ -332,6 +332,70 @@ public enum SearchProviderCatalog {
                         publishedDate: "date",
                         sourceDomain: "source"
                     )
+            )
+        )
+    }
+
+    static let serply = SearchProviderDefinition(
+        id: "serply",
+        name: "Serply",
+        summary: L("Google results via API, including Google News."),
+        pricingNote: L("Free: 2,500 queries to start"),
+        instructions: [
+            L("Sign up at serply.io (free, no credit card)."),
+            L("Copy your API key from the dashboard."),
+            L("Paste it below."),
+        ],
+        signupURL: "https://serply.io",
+        homepage: "https://serply.io/docs",
+        secrets: [
+            SearchSecretField(id: "api_key", label: "Serply API key", url: "https://serply.io")
+        ],
+        endpoints: [
+            SearchCategory.web: serplyEndpoint(),
+            // Google News comes off the same endpoint: Serply selects the
+            // vertical with Google's own `tbm` parameter, so there is no
+            // separate news path to point at.
+            SearchCategory.news: serplyEndpoint(tbm: "nws"),
+        ]
+    )
+
+    private static func serplyEndpoint(tbm: String? = nil) -> SearchEndpoint {
+        var query: [SearchRequestParam] = [
+            SearchRequestParam(name: "q", value: "{{query}}"),
+            // A page tops out at 10 hits however high `num` goes.
+            SearchRequestParam(name: "num", value: "{{max_results}}", clampMax: 10),
+            // Google's own `start`, so it is 0-based like {{offset}} and unlike
+            // Google CSE's 1-based one: start=1 would skip the top hit.
+            SearchRequestParam(name: "start", value: "{{offset}}"),
+            SearchRequestParam(
+                name: "tbs",
+                value: "{{time_range}}",
+                omitIfEmpty: true,
+                map: ["d": "qdr:d", "w": "qdr:w", "m": "qdr:m", "y": "qdr:y"]
+            ),
+        ]
+        if let tbm {
+            query.append(SearchRequestParam(name: "tbm", value: tbm))
+        }
+        return SearchEndpoint(
+            url: "https://api.serply.io/v1/search",
+            headers: [
+                "X-Api-Key": "{{secret.api_key}}",
+                "Accept": "application/json",
+            ],
+            query: query,
+            response: SearchResponseMapping(
+                resultsPath: "results",
+                item: SearchHitFieldPaths(
+                    title: "title",
+                    url: "link",
+                    snippet: "description",
+                    // No dedicated date field: `metadata.attributes` holds a
+                    // date for web hits but a relative age for news ones, so
+                    // publishedDate stays unmapped rather than sometimes wrong.
+                    sourceDomain: "metadata.display_url"
+                )
             )
         )
     }

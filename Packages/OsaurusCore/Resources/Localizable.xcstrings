@@ -95341,6 +95341,40 @@
         }
       }
     },
+    "Google results via API, including Google News.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Google results via API, including Google News."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Google results via API, including Google News."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Google results via API, including Google News."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通过 API 获取 Google 结果，包含 Google 新闻。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "透過 API 取得 Google 結果，包含 Google 新聞。"
+          }
+        }
+      }
+    },
     "Google results via API — fast and cheap.": {
       "localizations": {
         "de": {
@@ -196937,6 +196971,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "在 serper.dev 註冊。"
+          }
+        }
+      }
+    },
+    "Sign up at serply.io (free, no credit card).": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Sign up at serply.io (free, no credit card)."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Sign up at serply.io (free, no credit card)."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Sign up at serply.io (free, no credit card)."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在 serply.io 注册（免费，无需信用卡）。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在 serply.io 註冊（免費，無需信用卡）。"
           }
         }
       }

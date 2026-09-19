@@ -8,9 +8,9 @@
 //  JSON document that describes any REST search API (auth, endpoints per
 //  category, request parameter templates, and response key-path mappings).
 //  The bundled catalog (`SearchProviderCatalog`) ships Tavily, Exa, Brave,
-//  Serper, Parallel, Google CSE, Kagi, and You.com in this exact format; users
-//  can add any other API as a custom definition without an app update. Free
-//  scrapers (Brave HTML / Bing HTML / DuckDuckGo) are `runtime: native`
+//  Serper, Serply, Parallel, Google CSE, Kagi, and You.com in this exact
+//  format; users can add any other API as a custom definition without an app
+//  update. Free scrapers (Brave HTML / Bing HTML / DuckDuckGo) are `runtime: native`
 //  definitions whose implementation lives in `NativeSearchBackends`.
 //
 

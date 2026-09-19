@@ -109,6 +109,36 @@ struct DeclarativeSearchBackendTests {
         #expect(built.url.contains("start=11"), "start is 1-based offset")
     }
 
+    @Test func serplyClampsNumAndSendsKeyInHeader() throws {
+        let request = SearchRequest(query: "swift", maxResults: 25, offset: 10, timeRange: "m")
+        let built = try DeclarativeSearchBackend.buildRequest(
+            endpoint: Self.webEndpoint("serply"),
+            request: request,
+            secrets: ["api_key": "serply-key"],
+            providerName: "Serply"
+        )
+        #expect(built.headers["X-Api-Key"] == "serply-key")
+        #expect(built.url.hasPrefix("https://api.serply.io/v1/search?"))
+        #expect(built.url.contains("q=swift"))
+        #expect(built.url.contains("num=10"), "Serply caps a page at 10 hits")
+        #expect(built.url.contains("start=10"), "Serply's start is 0-based, unlike Google CSE's")
+        #expect(built.url.contains("tbs=qdr:m"))
+        #expect(!built.url.contains("tbm="), "web is the default vertical")
+        #expect(built.body == nil)
+    }
+
+    @Test func serplyNewsSelectsTheVerticalWithTBM() throws {
+        let built = try DeclarativeSearchBackend.buildRequest(
+            endpoint: Self.newsEndpoint("serply"),
+            request: SearchRequest(query: "swift"),
+            secrets: ["api_key": "serply-key"],
+            providerName: "Serply"
+        )
+        #expect(built.url.hasPrefix("https://api.serply.io/v1/search?"))
+        #expect(built.url.contains("tbm=nws"), "news is the same endpoint plus tbm")
+        #expect(!built.url.contains("tbs="), "no recency filter was asked for")
+    }
+
     @Test func kagiBuildsV1POSTWithBearerAuth() throws {
         let built = try DeclarativeSearchBackend.buildRequest(
             endpoint: Self.webEndpoint("kagi"),
@@ -369,6 +399,37 @@ struct DeclarativeSearchBackendTests {
         #expect(hits[0].url == "https://news.example/story")
         #expect(hits[0].sourceDomain == "Example News")
         #expect(hits[0].publishedDate == "2 hours ago")
+    }
+
+    @Test func serplyResponseReadsTheNestedSourceDomain() throws {
+        let fixture: [String: Any] = [
+            "results": [
+                [
+                    "title": "Swift concurrency",
+                    "link": "https://docs.example/swift",
+                    "description": "Structured concurrency in Swift.",
+                    "metadata": ["display_url": "docs.example", "attributes": ["2025/04/24"]],
+                ]
+            ],
+            // The envelope carries sibling buckets (ads, answers,
+            // knowledge_graph, ...); only `results` holds organic hits.
+            "ads": [["title": "Sponsored", "link": "https://ad.example"]],
+        ]
+        let hits = DeclarativeSearchBackend.mapResponse(
+            fixture,
+            mapping: Self.webEndpoint("serply").response,
+            engine: "serply",
+            maxResults: 10
+        )
+        #expect(hits.count == 1)
+        #expect(hits[0].title == "Swift concurrency")
+        #expect(hits[0].url == "https://docs.example/swift")
+        #expect(hits[0].snippet == "Structured concurrency in Swift.")
+        #expect(hits[0].sourceDomain == "docs.example", "dot path into metadata")
+        #expect(
+            hits[0].publishedDate == nil,
+            "metadata.attributes is a date on web hits but a relative age on news ones, so it stays unmapped"
+        )
     }
 
     @Test func serperImagesBuildsSameBodyAndMapsImageFields() throws {

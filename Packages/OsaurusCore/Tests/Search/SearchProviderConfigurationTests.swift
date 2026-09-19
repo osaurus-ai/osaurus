@@ -184,7 +184,10 @@ struct SearchProviderConfigurationTests {
 
     @Test func catalogProvidesTheDocumentedProviders() {
         let ids = Set(SearchProviderCatalog.bundled.map(\.id))
-        for expected in ["tavily", "exa", "brave_api", "serper", "parallel", "google_cse", "kagi", "you"] {
+        for expected in [
+            "tavily", "exa", "brave_api", "serper", "serply", "parallel", "google_cse", "kagi",
+            "you",
+        ] {
             #expect(ids.contains(expected), "missing bundled API provider \(expected)")
         }
         for free in SearchProviderCatalog.freeProviderIds {

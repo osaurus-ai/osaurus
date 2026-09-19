@@ -1358,8 +1358,8 @@ public enum SettingsSearchIndex {
             tab: .search,
             title: "Search Providers",
             keywords: [
-                "web search", "search engine", "tavily", "exa", "brave", "serper", "parallel",
-                "google", "kagi", "duckduckgo", "bing", "api key", "internet",
+                "web search", "search engine", "tavily", "exa", "brave", "serper", "serply",
+                "parallel", "google", "kagi", "duckduckgo", "bing", "api key", "internet",
             ]
         ),
         .init(
