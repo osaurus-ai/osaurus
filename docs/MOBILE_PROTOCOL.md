@@ -524,6 +524,14 @@ AAD(resp)       = utf8("osaurus-sc1:resp:<sid>:<reqSeq>:<seq>:<fin ? 1 : 0>")
   (`{phase: "started"|"completed", name, call_id, is_error?, end_run?}`),
   `osaurus_prefill` (`{stage, completedUnitCount, totalUnitCount}`) and
   `osaurus_artifacts`. Ends with `data: [DONE]`.
+- Callers that own the Mac (loopback, or a master-scoped key such as the
+  Osaurus Connect phone, §11) also get, on `osaurus_agent_tool`: `label`
+  (the Mac UI's own running / done / failed text), `category`
+  (`file|search|terminal|network|database|code|general`), `icon` (SF
+  Symbol), `arguments` on "started" (secret-scrubbed JSON, ≤ 8 000 chars),
+  and `result` (≤ 16 000 chars, `result_truncated: true` when cut) plus
+  `duration_ms` on "completed". Agent-scoped and workspace-minted callers
+  never receive these fields.
 
 `GET /agents/<address>` (inside the channel, same bearer) returns agent
 metadata for the roster.

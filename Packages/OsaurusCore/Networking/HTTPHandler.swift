@@ -6197,6 +6197,41 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // cases — and it lets a remote observer watch a file being written, not
         // just the final prose.
         let emitAgentToolTrace = true
+        // Full tool detail (arguments, results, the Mac's own labels and icons)
+        // goes only to callers that own this Mac: loopback, or a master-scoped
+        // key such as the paired phone. Agent-scoped and workspace-minted
+        // callers keep the sanitized trace above.
+        let includeToolDetail = isLoopbackConnection(context) || stateRef.value.authedScopeIsMaster
+        let toolTimer = AgentToolTraceTimer()
+        @Sendable func startedDetail(_ invocation: ServiceToolInvocation, callId: String) -> AgentToolTraceDetail? {
+            guard includeToolDetail else { return nil }
+            toolTimer.start(callId)
+            return .started(
+                toolName: invocation.toolName,
+                arguments: SecretArgumentScrubber.recordedArguments(
+                    toolName: invocation.toolName,
+                    argumentsJSON: invocation.jsonArguments
+                )
+            )
+        }
+        @Sendable func completedDetail(
+            _ invocation: ServiceToolInvocation,
+            callId: String,
+            result: String,
+            isError: Bool
+        ) -> AgentToolTraceDetail? {
+            guard includeToolDetail else { return nil }
+            return .completed(
+                toolName: invocation.toolName,
+                arguments: SecretArgumentScrubber.recordedArguments(
+                    toolName: invocation.toolName,
+                    argumentsJSON: invocation.jsonArguments
+                ),
+                result: result,
+                isError: isError,
+                duration: toolTimer.finish(callId)
+            )
+        }
         // Host file tools are mounted only for an AUTHENTICATED REMOTE caller
         // (Secure Channel, agent-scoped — enforced by the gates above). A
         // loopback caller is unauthenticated under the no-auth-loopback model,
@@ -7032,6 +7067,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                             phase: "started",
                                             toolName: call.invocation.toolName,
                                             callId: call.callId,
+                                            detail: startedDetail(call.invocation, callId: call.callId),
                                             model: model,
                                             responseId: responseId,
                                             created: created,
@@ -7058,6 +7094,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                             callId: call.callId,
                                             isError: execution.isError,
                                             endRun: execution.endRun,
+                                            detail: completedDetail(
+                                                call.invocation,
+                                                callId: call.callId,
+                                                result: execution.result,
+                                                isError: execution.isError
+                                            ),
                                             model: model,
                                             responseId: responseId,
                                             created: created,
@@ -7091,6 +7133,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                         phase: "started",
                                         toolName: call.invocation.toolName,
                                         callId: call.callId,
+                                        detail: startedDetail(call.invocation, callId: call.callId),
                                         model: model,
                                         responseId: responseId,
                                         created: created,
@@ -7140,6 +7183,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                     callId: outcome.callId,
                                     isError: outcome.wasError,
                                     endRun: false,
+                                    detail: completedDetail(
+                                        outcome.invocation,
+                                        callId: outcome.callId,
+                                        result: outcome.result,
+                                        isError: outcome.wasError
+                                    ),
                                     model: model,
                                     responseId: responseId,
                                     created: created,
