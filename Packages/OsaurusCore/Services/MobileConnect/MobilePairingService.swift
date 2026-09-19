@@ -312,7 +312,7 @@ extension MobilePairingService {
 
     /// Agent ids whose tunnel this service enabled (see `relayManagedAgentsKey`).
     var relayManagedAgentIds: Set<UUID> {
-        Set((defaults.stringArray(forKey: Self.relayManagedAgentsKey) ?? []).compactMap(UUID.init))
+        Set((defaults.stringArray(forKey: Self.relayManagedAgentsKey) ?? []).compactMap { UUID(uuidString: $0) })
     }
 
     /// Keeps the relay tunnel on for every remote agent while a phone is
