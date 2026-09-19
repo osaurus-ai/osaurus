@@ -581,7 +581,7 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
     // MARK: - Page text
 
     /// Readability-style main-content extraction: the layout-aware text of
-    /// `<main>` / `<article>` (falling back to `<body>`), full length — the
+    /// `<main>` / `[role="main"]` (falling back to `<body>`), full length — the
     /// executor paginates. Snapshots only show interactive elements; this is
     /// how the child actually READS a page.
     func readPageText() async -> (text: String?, error: String?) {
@@ -594,7 +594,12 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
                     if (!document || !document.body) {
                         return {error: 'Page not ready - document.body is null.'};
                     }
-                    const root = document.querySelector('main, article, [role="main"]') || document.body;
+                    // An article can be just one product or cart item. Keep
+                    // sibling items and totals, and prefer main explicitly
+                    // rather than whichever selector matches first in DOM order.
+                    const root = document.querySelector('main')
+                        || document.querySelector('[role="main"]')
+                        || document.body;
                     // innerText is layout-aware: skips display:none content and
                     // preserves visual line structure.
                     const text = (root.innerText || root.textContent || '')

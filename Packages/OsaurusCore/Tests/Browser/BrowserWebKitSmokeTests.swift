@@ -348,6 +348,51 @@ struct BrowserWebKitSmokeTests {
         }
     }
 
+    @Test func readPageKeepsAllCartArticlesAndTotal() async throws {
+        try await withSmokeExecutor { executor, fixtures in
+            let html = """
+                <!DOCTYPE html><html><head><title>Cart</title></head><body>
+                <h1>Your cart</h1>
+                <article>Blue Notebook — $12</article>
+                <article>Black Pen — $3</article>
+                <p>2 items — Total: $15</p>
+                </body></html>
+                """
+            let url = try SmokeFixtures.write(html, to: fixtures, name: "cart")
+            _ = await executor.execute(
+                name: "browser_navigate", argumentsJSON: ##"{"url": "\##(url)", "detail": "none"}"##)
+            let result = await executor.execute(name: "browser_read_page", argumentsJSON: "{}")
+            #expect(ToolEnvelope.isSuccess(result))
+            #expect(result.contains("Blue Notebook"))
+            #expect(result.contains("Black Pen"))
+            #expect(result.contains("2 items"))
+            #expect(result.contains("Total: $15"))
+        }
+    }
+
+    @Test(arguments: ["main", "div role=\"main\""])
+    func readPagePrefersMainLandmarkOverEarlierArticle(landmark: String) async throws {
+        try await withSmokeExecutor { executor, fixtures in
+            let closingTag = landmark == "main" ? "main" : "div"
+            let html = """
+                <!DOCTYPE html><html><head><title>Landmark</title></head><body>
+                <article>Unrelated teaser</article>
+                <\(landmark)><h1>Actual page content</h1><p>Complete total: $24</p></\(closingTag)>
+                <footer>Footer junk</footer>
+                </body></html>
+                """
+            let url = try SmokeFixtures.write(html, to: fixtures, name: "landmark")
+            _ = await executor.execute(
+                name: "browser_navigate", argumentsJSON: ##"{"url": "\##(url)", "detail": "none"}"##)
+            let result = await executor.execute(name: "browser_read_page", argumentsJSON: "{}")
+            #expect(ToolEnvelope.isSuccess(result))
+            #expect(result.contains("Actual page content"))
+            #expect(result.contains("Complete total: $24"))
+            #expect(!result.contains("Unrelated teaser"))
+            #expect(!result.contains("Footer junk"))
+        }
+    }
+
     @Test func navigateBackReturnsToThePreviousPage() async throws {
         try await withSmokeExecutor { executor, fixtures in
             let first = try SmokeFixtures.write(SmokeFixtures.interactive, to: fixtures, name: "interactive")
