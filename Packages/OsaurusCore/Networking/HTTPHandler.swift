@@ -4281,6 +4281,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// Crypto address the Secure Channel handshake is signed with. Remote
         /// clients pin it; nil when the agent has no derived identity yet.
         let address: String?
+        /// Relay base URL (docs/MOBILE_PROTOCOL.md §6.1) when the agent's
+        /// relay tunnel is enabled; nil = reachable on the LAN only.
+        let relay_url: String?
     }
 
     private struct AgentListResponse: Codable {
@@ -5712,6 +5715,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     uniquingKeysWith: { first, _ in first }
                 )
             }
+            let relayEnabled = await MainActor.run {
+                Set(agents.map(\.id).filter { RelayTunnelManager.shared.isTunnelEnabled(for: $0) })
+            }
             let items = agents.map { agent in
                 let modelId = effectiveModels[agent.id] ?? agent.defaultModel
                 let supportsVision = modelId.map { VLMDetection.isVLM(modelId: $0) } ?? false
@@ -5731,7 +5737,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     memory_entry_count: memoryCounts[agent.id.uuidString] ?? 0,
                     created_at: formatter.string(from: agent.createdAt),
                     updated_at: formatter.string(from: agent.updatedAt),
-                    address: agent.agentAddress?.lowercased()
+                    address: agent.agentAddress?.lowercased(),
+                    relay_url: relayEnabled.contains(agent.id)
+                        ? agent.agentAddress.map(RelayTunnelManager.publicURL(forAddress:)) : nil
                 )
             }
 
@@ -5850,6 +5858,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
 
+            let relayOn = await MainActor.run { RelayTunnelManager.shared.isTunnelEnabled(for: agent.id) }
             let formatter = ISO8601DateFormatter()
             let effectiveModelId =
                 await MainActor.run {
@@ -5881,7 +5890,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 memory_entry_count: memoryEntryCount,
                 created_at: formatter.string(from: agent.createdAt),
                 updated_at: formatter.string(from: agent.updatedAt),
-                address: agent.agentAddress?.lowercased()
+                address: agent.agentAddress?.lowercased(),
+                relay_url: relayOn ? agent.agentAddress.map(RelayTunnelManager.publicURL(forAddress:)) : nil
             )
             let json =
                 (try? JSONEncoder.osaurusCanonical().encode(item)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"

@@ -49,6 +49,8 @@ struct MobilePairPayload: Codable, Sendable, Equatable {
         let id: String
         let name: String
         let address: String
+        /// Relay base URL (§6.1) when "Reach From Anywhere" is on; nil = LAN only.
+        var relayURL: String? = nil
     }
 
     /// Master-scoped `osk-v1` access key covering every agent on this Mac.
@@ -75,6 +77,10 @@ final class MobilePairingService: ObservableObject {
     static let shared = MobilePairingService()
 
     static let keepAwakeDefaultsKey = "mobileConnectKeepMacAwake"
+    static let reachAnywhereDefaultsKey = "mobileConnectReachFromAnywhere"
+    /// Agents whose relay tunnel THIS service turned on, so turning the
+    /// feature off (or unpairing) never disables a tunnel the user enabled.
+    private static let relayManagedAgentsKey = "mobileConnectRelayManagedAgents"
     static let wireVersion = 1
     private static let pairedDeviceDefaultsKey = "mobileConnectPairedDevice"
     private static let keyLabel = "Osaurus Connect"
@@ -105,6 +111,7 @@ final class MobilePairingService: ObservableObject {
     private var expiryTask: Task<Void, Never>?
     private var keepAwakeToken: NSObjectProtocol?
     private let defaults: UserDefaults
+    private var agentsCancellable: AnyCancellable?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -112,6 +119,12 @@ final class MobilePairingService: ObservableObject {
             pairedDevice = try? JSONDecoder().decode(PairedMobileDevice.self, from: data)
         }
         refreshKeepAwake()
+        // Agents created while a phone is paired get the relay too.
+        agentsCancellable = AgentManager.shared.$agents
+            .dropFirst()
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.syncRelay() }
+            }
     }
 
     // MARK: Code lifecycle
@@ -194,7 +207,7 @@ final class MobilePairingService: ObservableObject {
             apiKey: pending.fullKey,
             keyExpiresAt: pending.info.expiresAt.map { Int($0.timeIntervalSince1970) },
             hostName: Host.current().localizedName ?? "Mac",
-            agents: Self.remoteAgents()
+            agents: Self.remoteAgents(includeRelay: Self.isReachAnywhereEnabled(in: defaults))
         )
         guard let plaintext = try? JSONEncoder().encode(payload),
             let sealed = try? PairingKeyEnvelope.seal(
@@ -236,10 +249,15 @@ final class MobilePairingService: ObservableObject {
 
     /// Agents a paired phone can talk to: custom agents with a derived
     /// address. The built-in Default agent is never reachable remotely.
-    static func remoteAgents() -> [MobilePairPayload.AgentEntry] {
+    static func remoteAgents(includeRelay: Bool = false) -> [MobilePairPayload.AgentEntry] {
         AgentManager.shared.agents.compactMap { agent in
             guard !agent.isBuiltIn, let address = agent.agentAddress, !address.isEmpty else { return nil }
-            return .init(id: agent.id.uuidString, name: agent.name, address: address.lowercased())
+            return .init(
+                id: agent.id.uuidString,
+                name: agent.name,
+                address: address.lowercased(),
+                relayURL: includeRelay ? RelayTunnelManager.publicURL(forAddress: address) : nil
+            )
         }
     }
 
@@ -259,6 +277,7 @@ final class MobilePairingService: ObservableObject {
             defaults.removeObject(forKey: Self.pairedDeviceDefaultsKey)
         }
         refreshKeepAwake()
+        syncRelay()
     }
 
     // MARK: Keep awake
@@ -281,5 +300,43 @@ final class MobilePairingService: ObservableObject {
             ProcessInfo.processInfo.endActivity(token)
             keepAwakeToken = nil
         }
+    }
+}
+
+// MARK: - Reach From Anywhere (relay)
+
+extension MobilePairingService {
+    static func isReachAnywhereEnabled(in defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: reachAnywhereDefaultsKey) as? Bool ?? true
+    }
+
+    /// Agent ids whose tunnel this service enabled (see `relayManagedAgentsKey`).
+    var relayManagedAgentIds: Set<UUID> {
+        Set((defaults.stringArray(forKey: Self.relayManagedAgentsKey) ?? []).compactMap(UUID.init))
+    }
+
+    /// Keeps the relay tunnel on for every remote agent while a phone is
+    /// paired and "Reach From Anywhere" is on; otherwise turns off exactly
+    /// the tunnels this service turned on.
+    func syncRelay() {
+        let relay = RelayTunnelManager.shared
+        var managed = relayManagedAgentIds
+        let shouldReach = pairedDevice != nil && Self.isReachAnywhereEnabled(in: defaults)
+
+        if shouldReach {
+            let remoteIds = Set(Self.remoteAgents().compactMap { UUID(uuidString: $0.id) })
+            for agentId in remoteIds where !relay.isTunnelEnabled(for: agentId) {
+                relay.setTunnelEnabled(true, for: agentId)
+                managed.insert(agentId)
+            }
+            // Forget agents that were deleted.
+            managed.formIntersection(remoteIds)
+        } else {
+            for agentId in managed where relay.isTunnelEnabled(for: agentId) {
+                relay.setTunnelEnabled(false, for: agentId)
+            }
+            managed.removeAll()
+        }
+        defaults.set(managed.map(\.uuidString).sorted(), forKey: Self.relayManagedAgentsKey)
     }
 }

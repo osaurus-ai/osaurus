@@ -53,9 +53,12 @@ struct PairingCodeTests {
 
 @MainActor
 struct MobilePairingServiceTests {
-    private func makeService() -> MobilePairingService {
-        let defaults = UserDefaults(suiteName: "MobilePairingTests.\(UUID().uuidString)")!
+    /// Keep-awake and relay are off so tests never hold power assertions or
+    /// open real relay tunnels.
+    private func makeService(defaults: UserDefaults? = nil) -> MobilePairingService {
+        let defaults = defaults ?? UserDefaults(suiteName: "MobilePairingTests.\(UUID().uuidString)")!
         defaults.set(false, forKey: MobilePairingService.keepAwakeDefaultsKey)
+        defaults.set(false, forKey: MobilePairingService.reachAnywhereDefaultsKey)
         return MobilePairingService(defaults: defaults)
     }
 
@@ -122,6 +125,8 @@ struct MobilePairingServiceTests {
         let payload = try JSONDecoder().decode(MobilePairPayload.self, from: Data(plaintext.utf8))
         #expect(payload.apiKey == "osk-v1.secret")
         #expect(payload.agents.allSatisfy { $0.address.hasPrefix("0x") })
+        // Reach From Anywhere is off in tests, so no relay URLs are offered.
+        #expect(payload.agents.allSatisfy { $0.relayURL == nil })
 
         #expect(service.activeCode == nil)
         #expect(service.pairedDevice?.deviceId == "device-1")
@@ -191,5 +196,27 @@ struct MobilePairingServiceTests {
         let (_, pub) = PairingKeyEnvelope.generateRecipientKey()
         let req = MobilePairRequest(v: 1, code: "123456", deviceId: "d", deviceName: "  ", encPub: pub)
         #expect(service.redeem(req) == .badRequest("Missing device id or name"))
+    }
+}
+
+struct MobileConnectRelayTests {
+    @Test func relayURLFollowsTheDocumentedFormat() {
+        #expect(
+            RelayTunnelManager.publicURL(forAddress: "0xABCdef0000000000000000000000000000000001")
+                == "https://0xabcdef0000000000000000000000000000000001.agent.osaurus.ai"
+        )
+    }
+
+    @Test func reachFromAnywhereDefaultsOn() {
+        let defaults = UserDefaults(suiteName: "MobileConnectRelayTests.\(UUID().uuidString)")!
+        #expect(MobilePairingService.isReachAnywhereEnabled(in: defaults))
+        defaults.set(false, forKey: MobilePairingService.reachAnywhereDefaultsKey)
+        #expect(!MobilePairingService.isReachAnywhereEnabled(in: defaults))
+    }
+
+    @Test func agentEntryWithoutRelayURLDecodes() throws {
+        let json = #"{"id":"a","name":"n","address":"0x1"}"#
+        let entry = try JSONDecoder().decode(MobilePairPayload.AgentEntry.self, from: Data(json.utf8))
+        #expect(entry.relayURL == nil)
     }
 }

@@ -202,6 +202,12 @@ public final class RelayTunnelManager: ObservableObject {
 
     private static let relayURL = URL(string: "wss://agent.osaurus.ai/tunnel/connect")!
 
+    /// Public HTTPS base URL the relay serves an agent address at
+    /// (docs/MOBILE_PROTOCOL.md §6.1).
+    nonisolated public static func publicURL(forAddress address: String) -> String {
+        "https://\(address.lowercased()).agent.osaurus.ai"
+    }
+
     // MARK: - Published State
 
     @Published public private(set) var agentStatuses: [UUID: AgentRelayStatus] = [:]
