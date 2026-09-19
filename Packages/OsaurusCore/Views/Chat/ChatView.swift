@@ -161,7 +161,25 @@ final class ChatSession: ObservableObject {
         .localModelsChanged,
     ]
 
-    @Published var turns: [ChatTurn] = []
+    @Published var turns: [ChatTurn] = [] {
+        didSet {
+            _cachedRouterSpendMicro = turns.reduce(0) { sum, turn in
+                guard let raw = turn.routerBilling?.costMicro else { return sum }
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                return sum + (Int(trimmed) ?? 0)
+            }
+            _cachedRouterCacheStats = turns.reduce((cachedInputTokens: 0, inputTokens: 0)) { acc, turn in
+                guard let billing = turn.routerBilling else { return acc }
+                return (
+                    acc.cachedInputTokens + max(0, billing.cachedInputTokens),
+                    acc.inputTokens + max(0, billing.inputTokens)
+                )
+            }
+        }
+    }
+
+    private var _cachedRouterSpendMicro: Int = 0
+    private var _cachedRouterCacheStats: (cachedInputTokens: Int, inputTokens: Int) = (0, 0)
 
     /// The model's OUTPUT for the in-flight run is complete (vmlx emitted its
     /// terminal info) even though the RUN has not ended: the adapter keeps the
@@ -1780,11 +1798,7 @@ final class ChatSession: ObservableObject {
     /// live run and a reloaded session. The on-device ledger remains the exact
     /// source of truth if a single turn ever carried more than one charge.
     var sessionRouterSpendMicro: Int {
-        turns.reduce(0) { sum, turn in
-            guard let raw = turn.routerBilling?.costMicro else { return sum }
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            return sum + (Int(trimmed) ?? 0)
-        }
+        _cachedRouterSpendMicro
     }
 
     /// Router prompt-cache telemetry for this session: total input tokens
@@ -1793,13 +1807,7 @@ final class ChatSession: ObservableObject {
     /// alongside `sessionRouterSpendMicro`. Both are `0` for sessions billed
     /// by a pre-cache router, which omits the split.
     var sessionRouterCacheStats: (cachedInputTokens: Int, inputTokens: Int) {
-        turns.reduce((cachedInputTokens: 0, inputTokens: 0)) { acc, turn in
-            guard let billing = turn.routerBilling else { return acc }
-            return (
-                acc.cachedInputTokens + max(0, billing.cachedInputTokens),
-                acc.inputTokens + max(0, billing.inputTokens)
-            )
-        }
+        _cachedRouterCacheStats
     }
 
     /// True when the selected model is a local model — the kind that runs on
