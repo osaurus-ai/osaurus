@@ -149,10 +149,13 @@ final class BrowserToolExecutor {
         host: String? = nil,
         targetLabel: String? = nil,
         typedText: String? = nil,
-        submit: Bool = false
+        submit: Bool = false,
+        resolvedEffect: EffectClass? = nil
     ) async -> String? {
-        let effect = BrowserEffectClassifier.classify(
-            action: action, target: targetLabel, submit: submit)
+        let effect =
+            resolvedEffect
+            ?? BrowserEffectClassifier.classify(
+                action: action, target: targetLabel, submit: submit)
         switch gate.evaluate(
             effect: effect,
             actionLabel: actionLabel,
@@ -340,14 +343,22 @@ final class BrowserToolExecutor {
     private func click(_ args: [String: Any]) async -> String {
         let ref = args["ref"] as? String
         let selector = args["selector"] as? String
-        let label = await session.elementLabel(ref: ref, selector: selector)
+        let preparation = await session.prepareClick(ref: ref, selector: selector)
+        guard let target = preparation.target else {
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: preparation.error ?? "Cannot resolve click target.",
+                tool: "browser_click"
+            )
+        }
         if let denial = await gateAction(
             "click", tool: "browser_click", actionLabel: "Click",
-            targetLabel: label ?? ref ?? selector)
-        {
+            targetLabel: target.label,
+            resolvedEffect: target.effect
+        ) {
             return denial
         }
-        let result = await session.clickElement(ref: ref, selector: selector)
+        let result = await session.clickElement(ref: ref, selector: selector, approvedTarget: target)
         guard result.success else {
             return ToolEnvelope.failure(
                 kind: .executionError, message: result.error ?? "Click failed.",
@@ -515,8 +526,21 @@ final class BrowserToolExecutor {
             // Gate EVERY sub-action individually — batching must not smuggle a
             // consequential step past the policy.
             let gateLabel: String?
+            var clickTarget: BrowserClickTarget?
             switch action {
-            case "click", "type":
+            case "click":
+                let preparation = await session.prepareClick(ref: ref, selector: selector)
+                guard let target = preparation.target else {
+                    return await batchFailure(
+                        index: index,
+                        action: action,
+                        error: preparation.error ?? "Cannot resolve click target.",
+                        detail: detail
+                    )
+                }
+                clickTarget = target
+                gateLabel = target.label
+            case "type":
                 gateLabel = await session.elementLabel(ref: ref, selector: selector) ?? ref ?? selector
             case "press_key":
                 gateLabel = item["key"] as? String
@@ -530,15 +554,24 @@ final class BrowserToolExecutor {
                 actionLabel: "\(action) (batch step \(index + 1)/\(actions.count))",
                 targetLabel: gateLabel,
                 typedText: action == "type" ? item["text"] as? String : nil,
-                submit: isSubmit)
-            {
+                submit: isSubmit,
+                resolvedEffect: clickTarget.map { isSubmit ? .consequential : $0.effect }
+            ) {
                 return denial
             }
 
             let result: (success: Bool, error: String?)
             switch action {
             case "click":
-                result = await session.clickElement(ref: ref, selector: selector)
+                guard let clickTarget else {
+                    return await batchFailure(
+                        index: index,
+                        action: action,
+                        error: "Click target was not prepared.",
+                        detail: detail
+                    )
+                }
+                result = await session.clickElement(ref: ref, selector: selector, approvedTarget: clickTarget)
             case "type":
                 guard let text = item["text"] as? String else {
                     return await batchFailure(index: index, action: action,
