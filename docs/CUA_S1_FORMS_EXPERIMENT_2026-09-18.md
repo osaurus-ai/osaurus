@@ -119,3 +119,67 @@ Its first CI run stopped at localization lint, before compilation, on one
 unwrapped `Current:` label. That label is now localized; no gate was weakened.
 The first optimized build was explicitly interrupted to bind the following
 build and live proof to this correction rather than the stale UI source.
+
+## Live UI finding and expanded context request (18 September)
+
+At `adf3a545`, the optimized isolated app imported the synthetic contact PDF,
+displayed the extracted candidates, let the user remove the document heading
+candidate, and saved the three reviewed fields in its isolated profile. The
+original UI driver crashes while traversing the Forms tab; an explicitly
+authorized AppleScript/Accessibility fallback exposed a separate app issue:
+the scorer-folder button did not open a picker, while the document button did.
+Both `fileImporter` modifiers were attached to the same view. They now share
+one presenter with an explicit import kind. Rebuild/retest both buttons; this
+source change alone is not live verification. Actual native preview, confirmed
+fill, no-submit and relaunch remain pending.
+
+The user has expanded the prototype's desired scope to reusable Computer Use
+context and parity across spawn/delegation. **The current implementation is
+manual-only and does not yet satisfy that expansion.** Keep #2823 a draft.
+
+### Context users should be able to provide
+
+| Use case | Explicit candidate values | Scope / review needed |
+| --- | --- | --- |
+| Personal/contact forms | Name, preferred name, email, phone, separate shipping/billing address | Selected person/profile; do not mix household members |
+| Company/vendor onboarding | Legal company name, department, role, public business contact, reference IDs | Selected organization; distinguish personal vs company data |
+| Job/event applications | Employment/education fields, experience dates, registration details | Reviewed facts from CV/application notes; no invented qualifications |
+| Travel/expense workflows | Trip dates, destination, cost center, receipt amounts/currency, expense category | Per-task data overrides only with explicit conflict review; no payments/bookings implied |
+| Support/service requests | Product/version, customer reference, issue title, explicit description | Separate reusable facts from the current request |
+
+Current label/value profiles can represent short explicit values; they do not
+provide general prose reasoning or OCR. Arbitrary notes, long answers, PDFs,
+images, dropdown categories and free-form instructions are different inputs:
+
+- Keep document candidates with visible provenance and review status; reject
+  conflicting duplicate labels rather than silently selecting a source.
+- Let users distinguish reusable profile data from task-only values and select
+  a single person/organization/context for the run. A later task must not
+  inherit stale trip/expense details automatically.
+- Preserve aliases and date/currency units explicitly. Any typed-field
+  conversion or dropdown classification needs separate evaluated behavior;
+  do not claim those are covered by the current field-value scorer.
+- Keep scorer feature/context construction faithful to its 224/96-byte
+  contract. Long notes cannot simply be appended and advertised as understood.
+- Do not treat document text, agreement text or the scorer's training TASK
+  string as authorization to submit, consent, purchase or disclose secrets.
+
+### Required integration / parity before broader agent claims
+
+- [ ] Trace the selected profile and explicit sharing grant from Computer Use
+      settings into `ComputerUseTool` → `ComputerUseKind` → `ComputerUseLoop`.
+- [ ] Use a run-owned, bounded snapshot/reference, not global mutable selection
+      read anew in every child. Do not inject all saved values into every LLM
+      prompt. Remote-model exposure must be explicit in the user-facing scope.
+- [ ] Trace `SubagentSession`, spawned text-agent tool dispatch, delegated
+      agent identity, batch siblings, background/watcher paths and model
+      residency handoff. Recipient authority must not increase on inheritance.
+- [ ] Test same-profile inheritance, unauthorized child denial, distinct
+      sibling profiles, selection edits during a run, cancellation, persistence,
+      and disabling/revoking before an action. No cross-run/context leakage.
+- [ ] Reuse Computer Use's action confirmation, target/window validation,
+      policy/allowlist and post-action effect checks; scorer output must not
+      become a second bypass around those controls.
+- [ ] Prove an actual direct run and a delegated/spawned run in the isolated
+      app, with source/artifact identity and observed target changes. Scripted
+      dependency-injection tests are useful but not native runtime proof.

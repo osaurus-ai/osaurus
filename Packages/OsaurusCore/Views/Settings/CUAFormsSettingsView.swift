@@ -195,9 +195,11 @@ final class CUAFormsSettingsModel: ObservableObject {
 }
 
 struct CUAFormsSettingsView: View {
+    private enum ImportKind { case scorer, document }
+
     @StateObject private var model = CUAFormsSettingsModel()
-    @State private var importingDocument = false
-    @State private var choosingModel = false
+    @State private var importing = false
+    @State private var importKind = ImportKind.scorer
     @State private var confirmFill = false
     @State private var confirmDelete = false
 
@@ -221,14 +223,20 @@ struct CUAFormsSettingsView: View {
         .task { await model.load() }
         .task(id: model.selectedPID) { await model.refreshWindows() }
         .onDisappear { model.cancel() }
-        .fileImporter(isPresented: $choosingModel, allowedContentTypes: [.folder]) { result in
-            if case .success(let url) = result { model.configuration.modelDirectory = url.path }
-        }
+        // One presenter for both choices. Two fileImporter modifiers on this
+        // same view leave only the last one active on macOS (the document
+        // picker opened, but Choose scorer folder did nothing in the live app).
         .fileImporter(
-            isPresented: $importingDocument,
-            allowedContentTypes: [.pdf, .plainText, UTType(filenameExtension: "docx") ?? .data]
+            isPresented: $importing,
+            allowedContentTypes: importKind == .scorer
+                ? [.folder] : [.pdf, .plainText, UTType(filenameExtension: "docx") ?? .data]
         ) { result in
-            if case .success(let url) = result { model.importDocument(url) }
+            if case .success(let url) = result {
+                switch importKind {
+                case .scorer: model.configuration.modelDirectory = url.path
+                case .document: model.importDocument(url)
+                }
+            }
         }
         .alert(L("Fill selected fields?"), isPresented: $confirmFill) {
             Button(L("Cancel"), role: .cancel) {}
@@ -267,7 +275,10 @@ struct CUAFormsSettingsView: View {
                 )
                 .font(.callout).foregroundStyle(.secondary)
                 HStack {
-                    Button(L("Choose scorer folder…")) { choosingModel = true }
+                    Button(L("Choose scorer folder…")) {
+                        importKind = .scorer
+                        importing = true
+                    }
                     Text(model.configuration.modelDirectory ?? L("No scorer selected"))
                         .font(.caption).lineLimit(2).textSelection(.enabled)
                 }
@@ -317,7 +328,10 @@ struct CUAFormsSettingsView: View {
                         Button(L("Add field")) {
                             model.configuration.profiles[index].entities.append(CUAFormEntity(label: "", value: ""))
                         }.disabled(model.configuration.profiles[index].entities.count >= 64)
-                        Button(L("Import PDF or text…")) { importingDocument = true }
+                        Button(L("Import PDF or text…")) {
+                            importKind = .document
+                            importing = true
+                        }
                     }
                     Text(
                         L(
