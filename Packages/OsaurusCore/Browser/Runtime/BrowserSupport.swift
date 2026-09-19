@@ -84,7 +84,7 @@ public enum BrowserEffectClassifier {
         case "press_key":
             return submit ? .consequential : .navigate
         case "click":
-            if targetLooksConsequential(target) { return .consequential }
+            if submit || targetLooksConsequential(target) { return .consequential }
             return .navigate
         case "clear_cookies", "reset_session", "open_login", "execute_script",
             "read_cookie_values":
@@ -100,6 +100,13 @@ public enum BrowserEffectClassifier {
     public static func targetLooksConsequential(_ target: String?) -> Bool {
         guard let target = target?.lowercased(), !target.isEmpty else { return false }
         return consequentialNeedles.contains { target.contains($0) }
+    }
+
+    /// A page's actual control semantics take precedence over its wording.
+    /// Labels alone cannot identify implicit/non-English form submission.
+    static func clickEffect(label: String?, kind: BrowserClickTarget.Kind) -> EffectClass {
+        if kind == .submit || targetLooksConsequential(label) { return .consequential }
+        return kind == .link ? .navigate : .edit
     }
 }
 
