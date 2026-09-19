@@ -22,11 +22,13 @@ import SwiftUI
 enum ComputerUseTab: String, CaseIterable, AnimatedTabItem {
     case setup = "Setup"
     case models = "Models"
+    case forms = "Forms (Experimental)"
 
     var title: String {
         switch self {
         case .setup: return L("Setup")
         case .models: return L("Models")
+        case .forms: return L("Forms (Experimental)")
         }
     }
 }
@@ -70,6 +72,8 @@ struct ComputerUseSettingsView: View {
                     setupTab
                 case .models:
                     AppleScriptModelsView()
+                case .forms:
+                    CUAFormsSettingsView()
                 }
             }
             .opacity(hasAppeared ? 1 : 0)
