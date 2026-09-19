@@ -58,12 +58,26 @@ struct SettingsSearchIndexTests {
                     MemoryTab(rawValue: subTab) != nil,
                     "\(entry.id): \(subTab) is not a MemoryTab raw value"
                 )
+            case .computerUse:
+                #expect(
+                    ComputerUseTab(rawValue: subTab) != nil,
+                    "\(entry.id): \(subTab) is not a ComputerUseTab raw value"
+                )
             default:
                 Issue.record(
                     "\(entry.id) declares subTab \(subTab) but \(entry.tab.rawValue) has no sub-tab routing in ManagementView.handleResultSelected"
                 )
             }
         }
+    }
+
+    @Test func formsSearchRoutesToExperimentalSubTab() {
+        let hits = SettingsSearchIndex.search("form context profiles")
+        #expect(hits.contains {
+            $0.id == "computerUse.forms.context"
+                && $0.tab == .computerUse
+                && $0.subTab == ComputerUseTab.forms.rawValue
+        })
     }
 
     @Test func breadcrumbCollapsesSectionMatchingTabLabel() {

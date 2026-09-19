@@ -68,6 +68,10 @@ final class BrowserToolExecutor {
     private let agentId: UUID
     private let toolCallId: String
     private let gate: BrowserGate
+    private let forms: CUAFormsAgentRun?
+    private let feed: SubagentFeed?
+    private let isInterrupted: @Sendable () -> Bool
+    private var fillingForm = false
     /// Confirm seam — production wires `ComputerUsePromptQueue`; tests inject.
     private let confirm: @MainActor (ActionPreview) async -> Bool
 
@@ -75,11 +79,17 @@ final class BrowserToolExecutor {
         agentId: UUID,
         toolCallId: String,
         gate: BrowserGate,
+        forms: CUAFormsAgentRun? = nil,
+        feed: SubagentFeed? = nil,
+        isInterrupted: @escaping @Sendable () -> Bool = { false },
         confirm: (@MainActor (ActionPreview) async -> Bool)? = nil
     ) {
         self.agentId = agentId
         self.toolCallId = toolCallId
         self.gate = gate
+        self.forms = forms
+        self.feed = feed
+        self.isInterrupted = isInterrupted
         let capturedToolCallId = toolCallId
         self.confirm =
             confirm
@@ -107,6 +117,7 @@ final class BrowserToolExecutor {
         case "browser_read_page": return await readPage(args)
         case "browser_snapshot": return await snapshot(args)
         case "browser_click": return await click(args)
+        case "browser_fill_form": return await fillForm()
         case "browser_type": return await type(args)
         case "browser_select": return await select(args)
         case "browser_hover": return await hover(args)
@@ -140,6 +151,99 @@ final class BrowserToolExecutor {
 
     // MARK: - Gating
 
+    private func fillForm() async -> String {
+        guard let forms else {
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message: "No form profile was granted to this agent for this run.",
+                tool: "browser_fill_form",
+                retryable: false
+            )
+        }
+        guard !fillingForm else {
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message: "A form fill is already running.",
+                tool: "browser_fill_form"
+            )
+        }
+        fillingForm = true
+        defer { fillingForm = false }
+        var completed = 0
+        do {
+            guard !isInterrupted() else { throw CancellationError() }
+            try await forms.validate()
+            let captured = try await session.captureFormFields()
+            let decisions = try await forms.score(
+                elements: captured.fields.map(\.element),
+                title: captured.title,
+                feed: feed
+            )
+            for decision in decisions {
+                guard decision.canApply, case .fill(let entity) = decision.action,
+                    decision.element.value != entity.value
+                else { continue }
+                guard !isInterrupted() else { throw CancellationError() }
+                try await forms.validate()
+                guard let target = captured.fields.first(where: { $0.element.id == decision.element.id }) else {
+                    throw CUAFormsError.invalid("The scored field is missing.")
+                }
+                switch gate.evaluate(
+                    effect: .edit,
+                    actionLabel: "CUA S1 Forms: fill field",
+                    host: currentHost,
+                    targetLabel: decision.element.label,
+                    typedText: entity.value
+                ) {
+                case .reject(let reason):
+                    return ToolEnvelope.failure(
+                        kind: .rejected,
+                        message: "Form fill stopped after \(completed) verified fields: \(reason)",
+                        tool: "browser_fill_form",
+                        retryable: false
+                    )
+                case .confirm(let preview):
+                    guard await confirm(preview) else {
+                        return ToolEnvelope.failure(
+                            kind: .userDenied,
+                            message: "The user declined form filling after \(completed) verified fields.",
+                            tool: "browser_fill_form",
+                            retryable: false
+                        )
+                    }
+                case .run: break
+                }
+                try await forms.validate()
+                guard !isInterrupted() else { throw CancellationError() }
+                try Task.checkCancellation()
+                try await session.fillFormField(target, value: entity.value)
+                completed += 1
+                await forms.recordApplied()
+                feed?.emit(
+                    SubagentActivityEvent(
+                        kind: .verify,
+                        title: "CUA S1 Forms: field verified",
+                        detail: decision.element.label,
+                        success: true
+                    )
+                )
+            }
+            return ToolEnvelope.success(
+                tool: "browser_fill_form",
+                text:
+                    "CUA S1 Forms scored \(captured.fields.count) fields and filled \(completed) with verified values. "
+                    + "No button, checkbox, dropdown or submit action was executed. Inspect remaining fields before continuing."
+            )
+        } catch {
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: "CUA S1 form fill stopped after \(completed) verified fields: \(error.localizedDescription)",
+                tool: "browser_fill_form",
+                retryable: false
+            )
+        }
+    }
+
     /// Gate one action; nil means "go ahead", otherwise the failure envelope
     /// to return verbatim.
     private func gateAction(
@@ -149,10 +253,13 @@ final class BrowserToolExecutor {
         host: String? = nil,
         targetLabel: String? = nil,
         typedText: String? = nil,
-        submit: Bool = false
+        submit: Bool = false,
+        resolvedEffect: EffectClass? = nil
     ) async -> String? {
-        let effect = BrowserEffectClassifier.classify(
-            action: action, target: targetLabel, submit: submit)
+        let effect =
+            resolvedEffect
+            ?? BrowserEffectClassifier.classify(
+                action: action, target: targetLabel, submit: submit)
         switch gate.evaluate(
             effect: effect,
             actionLabel: actionLabel,
@@ -340,14 +447,22 @@ final class BrowserToolExecutor {
     private func click(_ args: [String: Any]) async -> String {
         let ref = args["ref"] as? String
         let selector = args["selector"] as? String
-        let label = await session.elementLabel(ref: ref, selector: selector)
+        let preparation = await session.prepareClick(ref: ref, selector: selector)
+        guard let target = preparation.target else {
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: preparation.error ?? "Cannot resolve click target.",
+                tool: "browser_click"
+            )
+        }
         if let denial = await gateAction(
             "click", tool: "browser_click", actionLabel: "Click",
-            targetLabel: label ?? ref ?? selector)
-        {
+            targetLabel: target.label,
+            resolvedEffect: target.effect
+        ) {
             return denial
         }
-        let result = await session.clickElement(ref: ref, selector: selector)
+        let result = await session.clickElement(ref: ref, selector: selector, approvedTarget: target)
         guard result.success else {
             return ToolEnvelope.failure(
                 kind: .executionError, message: result.error ?? "Click failed.",
@@ -515,8 +630,21 @@ final class BrowserToolExecutor {
             // Gate EVERY sub-action individually — batching must not smuggle a
             // consequential step past the policy.
             let gateLabel: String?
+            var clickTarget: BrowserClickTarget?
             switch action {
-            case "click", "type":
+            case "click":
+                let preparation = await session.prepareClick(ref: ref, selector: selector)
+                guard let target = preparation.target else {
+                    return await batchFailure(
+                        index: index,
+                        action: action,
+                        error: preparation.error ?? "Cannot resolve click target.",
+                        detail: detail
+                    )
+                }
+                clickTarget = target
+                gateLabel = target.label
+            case "type":
                 gateLabel = await session.elementLabel(ref: ref, selector: selector) ?? ref ?? selector
             case "press_key":
                 gateLabel = item["key"] as? String
@@ -530,15 +658,24 @@ final class BrowserToolExecutor {
                 actionLabel: "\(action) (batch step \(index + 1)/\(actions.count))",
                 targetLabel: gateLabel,
                 typedText: action == "type" ? item["text"] as? String : nil,
-                submit: isSubmit)
-            {
+                submit: isSubmit,
+                resolvedEffect: clickTarget.map { isSubmit ? .consequential : $0.effect }
+            ) {
                 return denial
             }
 
             let result: (success: Bool, error: String?)
             switch action {
             case "click":
-                result = await session.clickElement(ref: ref, selector: selector)
+                guard let clickTarget else {
+                    return await batchFailure(
+                        index: index,
+                        action: action,
+                        error: "Click target was not prepared.",
+                        detail: detail
+                    )
+                }
+                result = await session.clickElement(ref: ref, selector: selector, approvedTarget: clickTarget)
             case "type":
                 guard let text = item["text"] as? String else {
                     return await batchFailure(index: index, action: action,

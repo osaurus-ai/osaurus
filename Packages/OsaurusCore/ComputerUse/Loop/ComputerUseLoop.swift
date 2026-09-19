@@ -223,7 +223,8 @@ public enum ComputerUseLoop {
         sessionId: String,
         enableThinking: Bool? = nil,
         reasoningEffort: String? = nil,
-        nextAction: AgentStepProvider? = nil
+        nextAction: AgentStepProvider? = nil,
+        forms: (any ComputerUseFormFilling)? = nil
     ) async -> ComputerUseRunResult {
         // The wall clock measures the RUN, not the user. Time spent inside a
         // confirm card or a cloud-vision consent prompt is credited back, so a
@@ -424,7 +425,8 @@ public enum ComputerUseLoop {
                         sessionId: sessionId,
                         messages: stepMessages,
                         enableThinking: enableThinking,
-                        reasoningEffort: reasoningEffort
+                        reasoningEffort: reasoningEffort,
+                        formsEnabled: forms != nil
                     )
                 }
             }
@@ -604,6 +606,42 @@ public enum ComputerUseLoop {
             var pendingFrameImage: CUImage? = nil
 
             switch action.verb {
+            case .fillForm:
+                guard let forms, let snapshot = lastSnapshot else {
+                    toolResult =
+                        "CUA S1 Forms is unavailable: this run needs an explicitly granted profile and a current AX form window."
+                    break
+                }
+                if let unavailable = await confirmUnavailable() {
+                    return terminate(.gaveUp(reason: "Cannot review form edits: \(unavailable)"))
+                }
+                let report = await forms.fill(
+                    snapshot: snapshot,
+                    driver: driver,
+                    gate: gate,
+                    confirm: timedConfirm,
+                    isInterrupted: { interrupt.isInterrupted },
+                    feed: feed
+                )
+                metrics.actsAttempted += report.attempted
+                metrics.verifyChanged += report.completed
+                if interrupt.isInterrupted || Task.isCancelled { return terminate(.interrupted) }
+                if let reason = report.stoppedReason { return terminate(.gaveUp(reason: reason)) }
+                let refreshed = await perceiveEscalatingEmptyAX(
+                    pid: currentPid,
+                    driver: driver,
+                    previous: lastView,
+                    availability: availability,
+                    currentTier: &currentTier,
+                    pendingFrameImage: &pendingFrameImage,
+                    metrics: &metrics,
+                    feed: feed,
+                    step: step + 1
+                )
+                lastView = refreshed.view
+                lastSnapshot = refreshed.snapshot
+                toolResult = report.summary + "\n" + refreshed.render
+
             case .observe:
                 let p = await perceiveEscalatingEmptyAX(
                     pid: currentPid,
@@ -1646,7 +1684,8 @@ public enum ComputerUseLoop {
         sessionId: String,
         messages: [ChatMessage],
         enableThinking: Bool?,
-        reasoningEffort: String?
+        reasoningEffort: String?,
+        formsEnabled: Bool
     ) async throws -> ModelStepResult {
         var req = ChatCompletionRequest(
             model: modelId,
@@ -1659,7 +1698,7 @@ public enum ComputerUseLoop {
             presence_penalty: nil,
             stop: nil,
             n: nil,
-            tools: [AgentAction.toolSpec],
+            tools: [AgentAction.toolSpec(formsEnabled: formsEnabled)],
             tool_choice: AgentAction.forcedToolChoice,
             session_id: sessionId
         )

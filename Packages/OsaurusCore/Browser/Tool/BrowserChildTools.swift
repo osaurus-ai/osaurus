@@ -12,6 +12,16 @@
 import Foundation
 
 enum BrowserChildTools {
+    static var fillForm: Tool {
+        tool(
+            "browser_fill_form",
+            "Use the local CUA S1 Forms scorer to match this agent's explicitly granted profile to the current page's visible text fields. "
+                + "No values need to be copied into arguments. Uses the configured action approvals and verifies each fill. "
+                + "Does not submit, click buttons, agree to terms, enter passwords or select dropdowns. Only use for the user's requested form task.",
+            properties: [:]
+        )
+    }
+
     static let detailProperty: JSONValue = .object([
         "type": .string("string"),
         "enum": .array([.string("none"), .string("compact"), .string("standard"), .string("full")]),
