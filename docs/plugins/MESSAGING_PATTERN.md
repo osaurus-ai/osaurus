@@ -449,5 +449,5 @@ If you find yourself wanting a host primitive that doesn't exist yet (the most c
 - [EXAMPLE_TELEGRAM.md](./EXAMPLE_TELEGRAM.md) — worked example following this pattern
 - [AUTHORING.md](./AUTHORING.md) — overall plugin mental model
 - [ROUTES_AND_WEB.md](./ROUTES_AND_WEB.md) — HTTP routes and tunnel exposure
-- [TOOL_CONTRACT.md](./TOOL_CONTRACT.md) — tool envelope schema
+- [TOOL_CONTRACT.md](../TOOL_CONTRACT.md) — tool envelope schema
 - [TESTING.md](./TESTING.md) — testing patterns
