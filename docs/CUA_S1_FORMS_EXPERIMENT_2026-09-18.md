@@ -128,11 +128,15 @@ delegation, actual footprint and full AgentLoop/Frontier evidence remain open.
 
 **Still experimental; keep this PR open/draft.** Exact optimized isolated app
 binary SHA256
-`2a6d34f46905cac3f7b6d7ba6dd640ceeba416dfcbc772b178741fdffefd16e6`, engine
+`5c5804cd9ed6ac581b1e82d4261f89b557707b9357659cfb6adcc82f1becd0f6`, engine
 `6026359408f02c5867643d84300b0ca2225a2e88`. Local focused run
 `Tests-nested-s1-queued.xcresult`: **72 XCTest + 238 Swift Testing = 310**
 cases, zero failures. The build also completed successfully. These are not
 the full evaluation or mixed-model handoff matrix.
+
+Final checksum was re-read after the test-only environment change and ad-hoc
+re-signing; it supersedes the intermediate staging checksum. Mach-O UUID
+`6DDF2164-094B-316F-AF8E-8410DECD6DC3` matches the exact d1 build product.
 
 Source trace: `SubagentAdmissionLease.swift`, `SubagentSession.runPrepared`,
 and `DelegationResidencyContext.capture/run` preserve actual parent admission
@@ -182,7 +186,7 @@ Real app UI, same Gemma snapshot/defaults as the prior checkpoint below:
   stayed empty, submit count zero. Mock AX tests do not close this gap.
 
 Private receipts under `vmlx-private-evidence/cua-s1-forms-2026-09-18`:
-`LIVE-NESTED-d1.md`, `app-identity.json`, `s1-d1-nested-receipt.sqlite`,
+`LIVE-NESTED-d1.md`, `app-identity.json`, `s1-d1-review-receipt.sqlite`,
 `browser-demo-events.jsonl`, `memory-nested-d1{,-followup}.jsonl`,
 `live-d1-s1-retry-complete.png`, `live-d1-stopped.png`,
 `live-d1-post-stop-followup.png`, and `sample-d1-settings.txt`.
