@@ -1,6 +1,8 @@
 # CUA S1 Forms: experimental native form filling
 
-Status: implementation in progress; not qualified for production. This is a
+Status: **experimental / partial; leave PR #2823 open for team review**.
+The user explicitly prohibited merging and auto-merge on 18 September.
+This is a
 separate draft feature branch based on Osaurus main `56b3eb5024747fe791955c7085217c7a6e89c738`.
 Do not merge or release this experiment without a separate adoption decision.
 Reasoning PR #2822 is already merged and is not part of this feature.
@@ -121,6 +123,48 @@ The existing pinned probability-parity rows ran without skips. First attempts
 failed on a missing diagnostics switch case and missing inner `try` in new
 test macros; both failure logs are retained. Fresh integrated-app UI,
 delegation, actual footprint and full AgentLoop/Frontier evidence remain open.
+
+### Current live browser checkpoint (source `8cbc5ba9`)
+
+Exact optimized isolated app binary SHA256:
+`38ae6d8ae4903fe8828c6b976e6915293b0c320940147d013c8b03e6803ceefc`.
+Engine pin: `6026359408f02c5867643d84300b0ca2225a2e88`.
+The planner was local Gemma 4 E2B it 8bit, HF snapshot
+`433003a1e3fbfd10819ad15179d5e3c4d02d7ea7`, bundle defaults temperature 1,
+top-p 0.95, top-k 64, EOS `[1,106,50]`; no sampler or prompt masking.
+
+- Real browser follow-up reached the public book detail page and returned
+  **A Light in the Attic / £51.77**, then read **two** local cart entries at
+  $12 each and the $24 total. Browser receipt
+  `E21C08E9-996B-4986-B5C7-9CB66D794618`: 6 steps, 295 completion tokens,
+  last-step 83.7329 tok/s. Main answer: 113 tokens, 85.8 tok/s,
+  0.3136 s TTFT, normal stop. L2 hits/misses/stores 13/129/29, prefix 0/0.
+- A subsequent real S1 call filled the two reviewed fictional contact fields;
+  independent website events record both edits, no new submission. Receipt
+  `4306981D-51BB-4ABF-9959-00F13B8A173E`: 2 scored / 2 applied, one CPU
+  batch in 0.002448625 s. Planner last-step 85.4723 tok/s; main answer
+  140 tokens at 85.5 tok/s, normal stop. L2 18/177/41, prefix 0/0.
+- The first reader replay is retained as a **failure**: it miscounted
+  duplicated cart articles and guessed a public URL which returned 404.
+  The later successful follow-up does not erase that row or establish a
+  general browser task success rate.
+- 300 process-memory samples peaked at 3,093,318,584 bytes (~2.88 GiB)
+  app `phys_footprint`. This excludes WebKit child processes and is not a
+  whole-system or near-zero-RAM claim.
+- Orchestrator → Helper → Browser remains **unproved** at this head:
+  an earlier real run self-waited on its parent's local admission slot.
+  The owned nested-admission correction is undergoing separate regression
+  tests; it is not in this app binary.
+- Actual Settings → Computer Use → Refresh permission status reports
+  **Accessibility: Not Granted** for this isolated app. Native desktop
+  execution remains blocked on a grant to the final rebuilt artifact;
+  mocked AX tests are not permission or native execution proof.
+
+Private receipts: `LIVE-BROWSER-8cbc.md`,
+`s1-8cbc-browser-receipt.sqlite`, `memory-reader-s1-replay.jsonl`, and
+`desktop-permission-refresh-8cbc.png` under the campaign evidence directory.
+No screenshots are committed. Current focused proof is not the full
+AgentLoop/Frontier or broad handoff matrix; no production-readiness claim.
 
 Local artifact discovered (no download): `~/models/cua-ai/cua-s1-forms`.
 Original `.pt` SHA256:
