@@ -30,6 +30,7 @@ Related: [`IDENTITY.md`](IDENTITY.md) (identity model, key derivation),
 11. [Osaurus Connect pairing (6-digit code)](#11-osaurus-connect-pairing-6-digit-code)
 12. [Choosing a model](#12-choosing-a-model)
 13. [Agent avatars](#13-agent-avatars)
+14. [Reading the Mac's chats](#14-reading-the-macs-chats)
 
 ---
 
@@ -854,3 +855,58 @@ their own image.
 `image/*` content type. Owner-only (`403 owner_only` otherwise), since the
 image is host content; `404 no_custom_avatar` when the agent has none. The
 mascot images themselves ship inside each client.
+
+---
+
+## 14. Reading the Mac's chats
+
+Owner-only (§12), inside the Secure Channel. These expose the user's own
+chat history from `~/.osaurus/chat-history/history.sqlite`.
+
+### 14.1 `GET /sessions[?agent_id=…&archived=true&limit=200]`
+
+Metadata only, newest first; archived chats are excluded unless asked for.
+
+```json
+{"sessions":[{"id":"<uuid>","title":"Bitcoin price","created_at":"…","updated_at":"…",
+              "agent_id":"<uuid>|null","selected_model":"qwen3","source":"chat",
+              "archived":false,"pinned":true}]}
+```
+
+`agent_id` is null for the built-in Default agent's chats. `source` is where
+the chat came from (`chat`, `http`, `channel`, `schedule`, …).
+
+### 14.2 `GET /sessions/{id}`
+
+The same fields plus `turns`, in the Mac's block shape:
+
+```json
+{"turns":[{"id":"<uuid>","role":"assistant","content":"…","thinking":"…",
+           "thinking_duration_ms":2500,
+           "tool_calls":[{"call_id":"…","name":"web_search","arguments":"{…}",
+                          "result":"…","duration_ms":1250}],
+           "attachment_count":0,"created_at":"…","completed_at":"…","token_count":42}]}
+```
+
+Tool-result turns are folded into the assistant turn that called them, so a
+client renders one timeline per turn. Attachments are counted, not inlined.
+`404 session_not_found` for an unknown id.
+
+### 14.3 `PATCH /sessions/{id}`
+
+`{"title"?: "…", "archived"?: bool, "pinned"?: bool}` → `{"ok":true}`. Each
+field is a targeted column update, so a rename can never drop the
+transcript.
+
+### 14.4 `GET /agents/{id}/tools`
+
+```json
+{"tools":[{"name":"web_search","description":"…","enabled":true,"policy":"auto",
+           "remote_safe":true,"blocked_by":null}]}
+```
+
+`policy` is the effective permission (`auto | ask | deny`). `remote_safe` is
+true only when running the tool raises no approval card on the Mac and the
+surface allows it — an `ask` tool would block on a card the phone can't
+answer yet (that arrives with remote approvals). `blocked_by` lists
+ungranted requirements or missing system permissions.

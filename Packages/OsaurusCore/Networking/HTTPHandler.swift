@@ -876,8 +876,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     userAgent: userAgent
                 )
+            } else if head.method == .GET, path == "/sessions" {
+                handleListSessionsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .GET || head.method == .PATCH, path.hasPrefix("/sessions/") {
+                handleSessionEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .GET, path == "/agents" {
                 handleListAgents(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .GET, path.hasPrefix("/agents/"), path.hasSuffix("/tools") {
+                handleAgentToolsEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .GET, path.hasPrefix("/agents/"), path.hasSuffix("/avatar") {
                 handleAgentAvatarEndpoint(
                     head: head,
@@ -4840,6 +4858,395 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         case "tiff", "tif": return "image/tiff"
         default: return "image/jpeg"
         }
+    }
+
+    /// One tool of `GET /agents/{id}/tools`.
+    struct AgentToolDTO: Encodable {
+        let name: String
+        let description: String
+        let enabled: Bool
+        /// `auto | ask | deny`
+        let policy: String
+        /// False when running it would raise an approval card on the Mac, or
+        /// the surface blocks it outright — a remote client can't answer that
+        /// card yet, so those tools are not safe to rely on from the phone.
+        let remote_safe: Bool
+        /// Ungranted requirements / missing system permissions, when any.
+        let blocked_by: [String]?
+    }
+
+    private struct AgentToolsResponse: Encodable {
+        let tools: [AgentToolDTO]
+    }
+
+    /// GET /agents/{id}/tools — the tools this Mac exposes, with the
+    /// permission state a remote client needs (docs/MOBILE_PROTOCOL.md §14.4).
+    private func handleAgentToolsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let tools: [AgentToolDTO] = await MainActor.run {
+                let registry = ToolRegistry.shared
+                return registry.listTools().map { entry in
+                    let info = registry.policyInfo(for: entry.name)
+                    let policy = info?.effectivePolicy ?? .auto
+                    let missingGrants = (info?.grantsByRequirement ?? [:])
+                        .filter { !$0.value }
+                        .map(\.key)
+                    let missingSystem = (info?.systemPermissionStates ?? [:])
+                        .filter { !$0.value }
+                        .map(\.key.rawValue)
+                    let blocked = (missingGrants + missingSystem).sorted()
+                    let deniedHere = ToolRegistry.isDeniedForCurrentSurface(entry.name)
+                    return AgentToolDTO(
+                        name: entry.name,
+                        description: entry.description,
+                        enabled: entry.enabled,
+                        policy: policy.rawValue,
+                        remote_safe: policy == .auto && blocked.isEmpty && !deniedHere,
+                        blocked_by: blocked.isEmpty ? nil : blocked
+                    )
+                }
+            }
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(AgentToolsResponse(tools: tools)))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"tools":[]}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "{\"tools\":[\(tools.count)]}",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    // MARK: - Chat sessions (Osaurus Connect)
+
+    /// One row of `GET /sessions`: everything the phone's history list needs
+    /// without loading turns.
+    struct SessionSummaryDTO: Encodable {
+        let id: String
+        let title: String
+        let created_at: String
+        let updated_at: String
+        let agent_id: String?
+        let selected_model: String?
+        let source: String
+        let archived: Bool
+        let pinned: Bool
+    }
+
+    private struct SessionsResponse: Encodable {
+        let sessions: [SessionSummaryDTO]
+    }
+
+    /// One turn of `GET /sessions/{id}`, shaped like the Mac's own chat
+    /// blocks so a client renders it identically.
+    struct SessionTurnDTO: Encodable {
+        struct ToolCallDTO: Encodable {
+            let call_id: String
+            let name: String
+            let arguments: String?
+            let result: String?
+            let duration_ms: Int?
+        }
+        let id: String
+        let role: String
+        let content: String
+        let thinking: String?
+        let thinking_duration_ms: Int?
+        let tool_calls: [ToolCallDTO]?
+        let attachment_count: Int
+        let created_at: String?
+        let completed_at: String?
+        let token_count: Int?
+    }
+
+    struct SessionDetailDTO: Encodable {
+        let id: String
+        let title: String
+        let created_at: String
+        let updated_at: String
+        let agent_id: String?
+        let selected_model: String?
+        let source: String
+        let archived: Bool
+        let pinned: Bool
+        let turns: [SessionTurnDTO]
+    }
+
+    private struct SessionPatchRequest: Decodable {
+        let title: String?
+        let archived: Bool?
+        let pinned: Bool?
+    }
+
+    private static let sessionDateFormatter = ISO8601DateFormatter()
+
+    /// GET /sessions[?agent_id=&limit=&archived=] — the Mac's chat history
+    /// (docs/MOBILE_PROTOCOL.md §14). Owner-only: these are the user's chats.
+    private func handleListSessionsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: "/sessions", startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let query = Self.queryItems(from: head.uri)
+        let agentFilter = query["agent_id"].flatMap { UUID(uuidString: $0) }
+        let includeArchived = query["archived"] == "true"
+        let limit = query["limit"].flatMap(Int.init).map { max(1, min($0, 500)) } ?? 200
+
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let sessions = await MainActor.run { ChatSessionStore.loadAll() }
+            let rows =
+                sessions
+                .filter { includeArchived || !$0.archived }
+                .filter { agentFilter == nil || $0.agentId == agentFilter }
+                .prefix(limit)
+                .map(Self.summary(for:))
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(SessionsResponse(sessions: Array(rows))))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"sessions":[]}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET",
+                    path: "/sessions",
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "{\"sessions\":[\(rows.count) rows]}",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// GET /sessions/{id} and PATCH /sessions/{id}.
+    private func handleSessionEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/")
+        guard components.count == 2, let sessionId = UUID(uuidString: String(components[1])) else {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: headers,
+                body: #"{"error":"invalid_session_id"}"#
+            )
+            return
+        }
+
+        var body = Data()
+        if var buffer = stateRef.value.requestBodyBuffer {
+            body = Data(buffer.readBytes(length: buffer.readableBytes) ?? [])
+        }
+        let isPatch = head.method == .PATCH
+        let patch = isPatch ? try? JSONDecoder().decode(SessionPatchRequest.self, from: body) : nil
+        if isPatch, patch == nil {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: headers,
+                body: #"{"error":"bad_request","message":"Expected {title?, archived?, pinned?}"}"#
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            if let patch {
+                // Targeted column updates: the in-memory sessions carry no
+                // turns, so a full save here would wipe the transcript.
+                let applied: Bool = await MainActor.run {
+                    guard ChatSessionsManager.shared.session(for: sessionId) != nil else { return false }
+                    if let title = patch.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+                        ChatSessionStore.renameTitleAsync(id: sessionId, title: String(title.prefix(200)))
+                    }
+                    if let archived = patch.archived {
+                        ChatSessionStore.setArchivedAsync(id: sessionId, archived: archived)
+                    }
+                    if let pinned = patch.pinned {
+                        ChatSessionStore.setPinnedAsync(id: sessionId, pinned: pinned)
+                    }
+                    return true
+                }
+                let status: HTTPResponseStatus = applied ? .ok : .notFound
+                let json = applied ? #"{"ok":true}"# : #"{"error":"session_not_found"}"#
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: status,
+                        headers: headers,
+                        body: json
+                    )
+                    self.logRequest(
+                        method: "PATCH",
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: json,
+                        responseStatus: Int(status.code),
+                        startTime: startTime
+                    )
+                }
+                return
+            }
+
+            guard let session = await ChatSessionStore.loadAsync(id: sessionId) else {
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .notFound,
+                        headers: headers,
+                        body: #"{"error":"session_not_found"}"#
+                    )
+                }
+                return
+            }
+            let detail = Self.detail(for: session)
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(detail))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"error":"encoding_failed"}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "{\"turns\":\(detail.turns.count)}",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    // MARK: Session DTO mapping
+
+    static func summary(for session: ChatSessionData) -> SessionSummaryDTO {
+        SessionSummaryDTO(
+            id: session.id.uuidString,
+            title: session.title,
+            created_at: sessionDateFormatter.string(from: session.createdAt),
+            updated_at: sessionDateFormatter.string(from: session.updatedAt),
+            agent_id: session.agentId?.uuidString,
+            selected_model: session.selectedModel,
+            source: session.source.rawValue,
+            archived: session.archived,
+            pinned: session.pinned
+        )
+    }
+
+    static func detail(for session: ChatSessionData) -> SessionDetailDTO {
+        SessionDetailDTO(
+            id: session.id.uuidString,
+            title: session.title,
+            created_at: sessionDateFormatter.string(from: session.createdAt),
+            updated_at: sessionDateFormatter.string(from: session.updatedAt),
+            agent_id: session.agentId?.uuidString,
+            selected_model: session.selectedModel,
+            source: session.source.rawValue,
+            archived: session.archived,
+            pinned: session.pinned,
+            turns: session.turns.compactMap(Self.turn(for:))
+        )
+    }
+
+    /// Maps one stored turn. Tool-result turns are folded into the assistant
+    /// turn that called them, so a client sees the Mac's block layout.
+    static func turn(for turn: ChatTurnData) -> SessionTurnDTO? {
+        guard turn.role != .tool else { return nil }
+        let calls: [SessionTurnDTO.ToolCallDTO]? = turn.toolCalls?.map { call in
+            SessionTurnDTO.ToolCallDTO(
+                call_id: call.id,
+                name: call.function.name,
+                arguments: call.function.arguments,
+                result: turn.toolResults[call.id],
+                duration_ms: turn.toolCallDurations[call.id].map { Int(($0 * 1000).rounded()) }
+            )
+        }
+        return SessionTurnDTO(
+            id: turn.id.uuidString,
+            role: turn.role.rawValue,
+            content: turn.content,
+            thinking: turn.thinking.isEmpty ? nil : turn.thinking,
+            thinking_duration_ms: turn.thinkingDuration.map { Int(($0 * 1000).rounded()) },
+            tool_calls: (calls?.isEmpty ?? true) ? nil : calls,
+            attachment_count: turn.attachments.count,
+            created_at: turn.createdAt.map(sessionDateFormatter.string(from:)),
+            completed_at: turn.completedAt.map(sessionDateFormatter.string(from:)),
+            token_count: turn.generationTokenCount
+        )
+    }
+
+    /// Parses `?a=b&c=d` from a request URI.
+    static func queryItems(from uri: String) -> [String: String] {
+        guard let range = uri.firstIndex(of: "?") else { return [:] }
+        var result: [String: String] = [:]
+        for pair in uri[uri.index(after: range)...].split(separator: "&") {
+            let parts = pair.split(separator: "=", maxSplits: 1)
+            guard let name = parts.first else { continue }
+            let value = parts.count > 1 ? String(parts[1]) : ""
+            result[String(name)] = value.removingPercentEncoding ?? value
+        }
+        return result
     }
 
     // MARK: - Secure Channel (E2E encryption)
