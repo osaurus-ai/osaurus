@@ -5030,6 +5030,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // `mac`, `ios`, or a SessionSource raw value (http, channel, …).
         let originFilter = query["origin"].flatMap { $0.isEmpty ? nil : $0 }
         let search = (query["q"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        // Multi-select AND, as on the Mac: a chat must have every capability asked for.
+        let requiredCapabilities: Set<SessionCapability> = Set(
+            (query["capabilities"] ?? "")
+                .split(separator: ",")
+                .compactMap { SessionCapability(rawValue: String($0)) }
+        )
         let limit = query["limit"].flatMap(Int.init).map { max(1, min($0, 500)) } ?? 200
 
         let cors = stateRef.value.corsHeaders
@@ -5063,6 +5069,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         ? "ios" : (session.source == .chat ? "mac" : session.source.rawValue)
                     return origin == originFilter
                 }
+                .filter { requiredCapabilities.isSubset(of: $0.capabilities) }
                 .filter { session in
                     guard !search.isEmpty else { return true }
                     return session.title.lowercased().contains(search) || contentMatches.contains(session.id)
