@@ -169,21 +169,35 @@ struct ParentResidencyRetentionTests {
     func deferredDispatch(source: SessionSource) async {
         var registry = ParentResidencyRetentions()
         let lease = registry.begin(targetModelName: "child", parentModelName: "parent", parentIdentity: parent)
+        let admission = SubagentAdmissionLease(
+            controller: SubagentAdmission(), admissionClass: .localInPlace,
+            modelKey: "parent", slots: 1, parentInterrupt: InterruptToken()
+        )
         let context = ParentResidencyRetentionContext.$current.withValue(lease) {
             ModelResidencyOwnershipContext.$childOwnershipToken.withValue(lease.childOwnershipToken) {
-                DelegationResidencyContext.capture(source: source)
+                SubagentSession.$inheritedAdmissionLease.withValue(admission) {
+                    DelegationResidencyContext.capture(source: source)
+                }
             }
         }
         // Run later under a different dispatcher task's authority. A closure
         // that only reads task locals at execution would borrow this token.
         let unrelated = ModelResidencyOwnershipToken()
+        let unrelatedAdmission = SubagentAdmissionLease(
+            controller: SubagentAdmission(), admissionClass: .localExclusive,
+            modelKey: "unrelated", slots: 0, parentInterrupt: InterruptToken()
+        )
         await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(unrelated) {
-            await context.run {
-                #expect(ParentResidencyRetentionContext.current == (source == .delegation ? lease : nil))
-                #expect(
-                    ModelResidencyOwnershipContext.childOwnershipToken
-                        == (source == .delegation ? lease.childOwnershipToken : nil)
-                )
+            await SubagentSession.$inheritedAdmissionLease.withValue(unrelatedAdmission) {
+                await context.run {
+                    #expect(ParentResidencyRetentionContext.current == (source == .delegation ? lease : nil))
+                    #expect(
+                        ModelResidencyOwnershipContext.childOwnershipToken
+                            == (source == .delegation ? lease.childOwnershipToken : nil)
+                    )
+                    #expect(SubagentSession.inheritedAdmissionLease === (source == .delegation ? admission : nil))
+                }
+                #expect(SubagentSession.inheritedAdmissionLease === unrelatedAdmission)
             }
             #expect(ModelResidencyOwnershipContext.childOwnershipToken == unrelated)
         }

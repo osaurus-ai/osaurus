@@ -29,6 +29,8 @@ public enum AgentVerb: String, Sendable, Codable, CaseIterable {
     case wait
     /// Server-side element query (filter by text/role) — a focused capture.
     case find
+    /// Ask an explicitly granted local form scorer to fill the current form.
+    case fillForm = "fill_form"
     /// Click an element (or its resolved center).
     case click
     /// Double-click an element (or its resolved center).
@@ -64,7 +66,7 @@ public enum AgentVerb: String, Sendable, Codable, CaseIterable {
             return .read
         case .click, .doubleClick, .rightClick, .scroll, .open:
             return .navigate
-        case .type, .setValue, .clear, .pressKey, .drag:
+        case .type, .setValue, .clear, .pressKey, .drag, .fillForm:
             return .edit
         }
     }
@@ -172,6 +174,7 @@ public struct AgentAction: Sendable, Equatable {
         case .observe: return "Observe"
         case .wait: return "Wait" + (seconds.map { " \($0)s" } ?? "")
         case .find: return "Find " + (query.map { "\"\($0)\"" } ?? "elements")
+        case .fillForm: return "Fill form with CUA S1"
         case .click: return "Click " + targetLabel
         case .doubleClick: return "Double-click " + targetLabel
         case .rightClick: return "Right-click " + targetLabel
@@ -385,14 +388,31 @@ extension AgentAction {
     /// The OpenAI-compatible tool spec for the request `tools[]`.
     /// Internal: `Tool` is a module-internal type.
     static var toolSpec: Tool {
-        Tool(
+        toolSpec(formsEnabled: false)
+    }
+
+    static func toolSpec(formsEnabled: Bool) -> Tool {
+        var parameters = schema
+        if !formsEnabled, case .object(var root) = parameters,
+            case .object(var properties) = root["properties"],
+            case .object(var verb) = properties["verb"]
+        {
+            verb["enum"] = .array(AgentVerb.allCases.filter { $0 != .fillForm }.map { .string($0.rawValue) })
+            properties["verb"] = .object(verb)
+            root["properties"] = .object(properties)
+            parameters = .object(root)
+        }
+        return Tool(
             type: "function",
             function: ToolFunction(
                 name: toolName,
                 description:
                     "Propose the single next computer-use action. Pick exactly one verb and fill only the "
-                    + "fields that verb needs. Address elements by the `mark` number shown in the view.",
-                parameters: schema
+                    + "fields that verb needs. Address elements by the `mark` number shown in the view."
+                    + (formsEnabled
+                        ? " fill_form uses local CUA S1 Forms with this agent's granted profile to fill the current AX form's text fields; it never submits or checks agreements."
+                        : ""),
+                parameters: parameters
             )
         )
     }
@@ -534,7 +554,7 @@ extension AgentAction {
     /// when something required for the chosen verb is missing.
     func semanticProblem() -> String? {
         switch verb {
-        case .observe, .wait:
+        case .observe, .wait, .fillForm:
             return nil
         case .find:
             if (query?.isEmpty ?? true) && roles.isEmpty {

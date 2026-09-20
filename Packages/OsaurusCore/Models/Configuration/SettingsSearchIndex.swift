@@ -152,6 +152,11 @@ public enum SettingsSearchIndex {
         "server.requestLimits",
         "server.peerInference",
         "computerUse.enable",
+        "computerUse.forms.enabled",
+        "computerUse.forms.model",
+        "computerUse.forms.context",
+        "computerUse.forms.preview",
+        "computerUse.forms.agents",
         "themes.appearance",
         "memory.settings",
         "workspaces.overview",
@@ -758,6 +763,54 @@ public enum SettingsSearchIndex {
             keywords: [
                 "browser", "web", "browse", "session", "sign in", "login", "cookies", "webkit",
             ]
+        ),
+        .init(
+            id: "computerUse.forms.enabled",
+            tab: .computerUse,
+            section: "Forms (Experimental)",
+            title: "Enable experimental forms",
+            keywords: ["cua s1", "form filling", "experimental forms", "local profiles"],
+            subTab: "Forms (Experimental)"
+        ),
+        .init(
+            id: "computerUse.forms.model",
+            tab: .computerUse,
+            section: "Forms (Experimental)",
+            title: "Choose scorer folder…",
+            keywords: ["scorer", "safetensors", "cua s1 forms model", "config.json"],
+            subTab: "Forms (Experimental)"
+        ),
+        .init(
+            id: "computerUse.forms.context",
+            tab: .computerUse,
+            section: "Forms (Experimental)",
+            title: "Form context profiles",
+            keywords: [
+                "context profile", "profile name", "new profile", "delete profile", "field label", "field value",
+                "add field", "remove field", "import PDF or text", "save form context", "label value",
+            ],
+            subTab: "Forms (Experimental)"
+        ),
+        .init(
+            id: "computerUse.forms.agents",
+            tab: .computerUse,
+            section: "Forms (Experimental)",
+            title: "Agent form access",
+            keywords: [
+                "no form access", "grant", "revoke", "share profile", "browser form", "delegated forms", "cua s1",
+            ],
+            subTab: "Forms (Experimental)"
+        ),
+        .init(
+            id: "computerUse.forms.preview",
+            tab: .computerUse,
+            section: "Forms (Experimental)",
+            title: "Form preview and fill",
+            keywords: [
+                "refresh apps", "target app", "target window", "preview form matches",
+                "review proposed changes", "fill selected fields", "fill without submitting",
+            ],
+            subTab: "Forms (Experimental)"
         ),
         .init(
             id: "browser.sessions",

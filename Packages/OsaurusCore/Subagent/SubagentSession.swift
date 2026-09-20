@@ -139,6 +139,10 @@ public enum SubagentSession {
     /// id for the message.
     @TaskLocal public static var activeKindId: String?
 
+    /// Real delegated chats inherit their parent's owned GPU boundary even
+    /// though the dispatcher clears the auxiliary-tool recursion guard.
+    @TaskLocal static var inheritedAdmissionLease: SubagentAdmissionLease?
+
     /// True when a subagent kind is currently running on this task tree.
     public static var isActive: Bool { activeKindId != nil }
 
@@ -587,6 +591,51 @@ public enum SubagentSession {
 
         var admissionClass = prepared.admissionClass
         let admissionModelKey = prepared.admissionModelKey
+
+        if !skipAdmission, prepared.resolved.isLocal, let owner = inheritedAdmissionLease {
+            do {
+                return try await owner.withNestedRun(
+                    interrupt: interrupt,
+                    onWait: { [feed] active in
+                        feed.emitPhase("waiting for delegated local GPU", detail: active)
+                    }
+                ) { childController in
+                    await $inheritedAdmissionLease.withValue(nil) {
+                        await runPrepared(
+                            prepared,
+                            presentation: SubagentRunPresentation(
+                                feed: feed, interrupt: interrupt,
+                                registerWithUI: false, finishFeed: presentation.finishFeed
+                            ),
+                            handoffOverride: handoffOverride,
+                            captureProcessCacheSnapshot: captureProcessCacheSnapshot,
+                            admissionController: childController,
+                            postAdmissionLocalCapacityOverride: postAdmissionLocalCapacityOverride
+                        )
+                    }
+                }
+            } catch {
+                let result: String
+                if error is CancellationError {
+                    result = ToolEnvelope.failure(
+                        kind: interrupt.isInterrupted ? .userDenied : .executionError,
+                        message: interrupt.isInterrupted
+                            ? "Run was stopped by the user."
+                            : "Run was cancelled.",
+                        tool: prepared.tool,
+                        retryable: false,
+                        metadata: ["cancelled": true]
+                    )
+                } else {
+                    result = envelope(for: error, tool: prepared.tool)
+                }
+                if presentation.finishFeed {
+                    feed.finish(success: false, summary: ToolEnvelope.failureMessage(result))
+                }
+                return result
+            }
+        }
+
         var admissionHeld = false
         var admissionHeldSlots = 0
         if !skipAdmission {
@@ -1120,6 +1169,20 @@ public enum SubagentSession {
         }
         let started = Date()
 
+        let executionLease: SubagentAdmissionLease?
+        if admissionHeld, prepared.resolved.isLocal {
+            executionLease = SubagentAdmissionLease(
+                controller: admissionController,
+                admissionClass: admissionClass,
+                modelKey: admissionModelKey,
+                slots: admissionHeldSlots,
+                parentInterrupt: interrupt
+            )
+            admissionHeld = false // ownership, including any upgrade, moves to the lease
+        } else {
+            executionLease = nil
+        }
+
         // Run under the recursion guard, wrapped by the optional handoff. Bind
         // the prepared child scope explicitly: batch children have distinct
         // tool-call ids even though one visible parent call owns the feed.
@@ -1144,12 +1207,21 @@ public enum SubagentSession {
                                         resolved: prepared.resolved,
                                         feed: feed
                                     ) {
-                                        let result = try await prepared.kind.run(
-                                            prepared.scope,
-                                            prepared.resolved,
-                                            feed: feed,
-                                            interrupt: interrupt
-                                        )
+                                        let result: SubagentResult
+                                        do {
+                                            result = try await $inheritedAdmissionLease.withValue(executionLease) {
+                                                try await prepared.kind.run(
+                                                    prepared.scope,
+                                                    prepared.resolved,
+                                                    feed: feed,
+                                                    interrupt: interrupt
+                                                )
+                                            }
+                                        } catch {
+                                            await executionLease?.drainChildren()
+                                            throw error
+                                        }
+                                        await executionLease?.drainChildren()
                                         if captureProcessCacheSnapshot,
                                             prepared.resolved.isLocal
                                         {
@@ -1164,6 +1236,7 @@ public enum SubagentSession {
                     }
                 }
             }
+            await executionLease?.close()
             if admissionHeld {
                 if admissionHeldSlots > 0 {
                     await admissionController.releaseLocalInPlace(
@@ -1227,6 +1300,7 @@ public enum SubagentSession {
             )
             return ToolEnvelope.success(tool: prepared.tool, result: payload)
         } catch {
+            await executionLease?.close()
             if admissionHeld {
                 if admissionHeldSlots > 0 {
                     await admissionController.releaseLocalInPlace(

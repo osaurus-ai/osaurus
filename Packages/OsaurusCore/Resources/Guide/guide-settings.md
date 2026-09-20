@@ -28,6 +28,49 @@ Ask the assistant to change declarative settings in chat (`osaurus_config`); eac
 - Voice: speech-to-text models, dictation, wake phrase, text-to-speech engine and voice.
 - Themes: theme gallery, custom theme editor, import/export.
 - Computer Use / Browser / Sandbox: autonomy presets, app allowlists, resources.
+- Computer Use → Forms (Experimental): opt-in CUA S1 field matching, local form
+  context profiles, scorer folder, and reviewed preview/fill. This draft helper
+  never submits forms. Agent access is off unless explicitly granted.
+
+### Experimental local form filling
+
+Under Computer Use → Forms (Experimental), enable **Enable experimental forms**
+and use **Choose scorer folder…** to select a converted CUA S1 safetensors folder
+containing `config.json` and `model.safetensors`. The app does not execute `.pt`
+checkpoints; conversion instructions are in `docs/CUA_S1_FORMS_EXPERIMENT_2026-09-18.md`.
+This is a small option scorer, not a model for the Chat model picker.
+
+In **Form context profiles**, choose **New profile**, name it, and add explicit
+field labels and values. **Import PDF or text…** adds reviewable `Label: value`
+candidates from PDF, UTF-8 text, or Word files through the existing document
+extractors. It does not OCR scans or infer missing values. Resolve duplicate
+labels and choose **Save form context**. Profiles are local unencrypted files
+in `~/.osaurus/form-contexts/`; do not store credentials or payment information.
+
+**Agent form access** grants one named profile to each selected custom agent.
+The default is **No form access**. Save form context after granting or revoking.
+Values filled by an agent may appear on websites, in chat/tool history and in
+local or cloud models participating in delegation. Grant only data you intend
+to share. Browser Use or Computer Use must also be enabled for that agent.
+A delegated agent uses its own grant; neither a parent grant nor the manual
+profile picker grants access to children. Changing a granted profile or
+revoking access invalidates in-flight form operations before their next edit.
+There is no implicit global/agent sharing. **Delete profile**, followed by save,
+removes that profile, not its source documents.
+
+In **Form preview and fill**, choose **Refresh apps**, a **Target app** and the
+exact **Target window**, then **Preview form matches**. Review proposed values
+and confidence. Uncheck unwanted fills; checkbox changes require explicit
+selection. **Fill selected fields…** asks for confirmation before applying only
+that selection. Computer Use allowlist/read-only restrictions still apply.
+The helper re-observes each change and stops if the target or its value changes,
+an action fails, or the expected effect cannot be confirmed. Confirmed changes
+are not rolled back when a later action fails or you choose Stop.
+
+Nothing is submitted: predicted button clicks, secure fields, dropdown choices,
+keyboard/coordinate fallbacks, and automatic agent invocation are unsupported
+in this prototype. Disabling the feature or editing/changing the context clears
+the preview. Save and preview again before applying new context.
 - Permissions: macOS TCC grants (Accessibility, Screen Recording, …). Tool Auto/Ask/Deny policies live on the Tools tab.
 - Identity, Storage (encryption/backup), Privacy, Channels credentials.
 - Secrets of any kind (API keys, tokens) are always entered in native secure fields, never chat.

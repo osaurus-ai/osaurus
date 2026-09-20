@@ -20,11 +20,13 @@ enum ParentResidencyRetentionContext {
 struct DelegationResidencyContext: Sendable {
     let parent: ParentResidencyRetention?
     let child: ModelResidencyOwnershipToken?
+    let admission: SubagentAdmissionLease?
 
     static func capture(source: SessionSource) -> Self {
         Self(
             parent: source == .delegation ? ParentResidencyRetentionContext.current : nil,
-            child: source == .delegation ? ModelResidencyOwnershipContext.childOwnershipToken : nil
+            child: source == .delegation ? ModelResidencyOwnershipContext.childOwnershipToken : nil,
+            admission: source == .delegation ? SubagentSession.inheritedAdmissionLease : nil
         )
     }
 
@@ -32,7 +34,9 @@ struct DelegationResidencyContext: Sendable {
     func run(_ body: @MainActor () async -> Void) async {
         await ParentResidencyRetentionContext.$current.withValue(parent) {
             await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(child) {
-                await body()
+                await SubagentSession.$inheritedAdmissionLease.withValue(admission) {
+                    await body()
+                }
             }
         }
     }

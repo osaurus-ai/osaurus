@@ -357,31 +357,51 @@ struct AgentDelegationDispatcherTests {
     @Test @MainActor func delegatedSessionsStripSpawnToolsFromTheSchema() async throws {
         let lease = await acquireSubagentStoreSandbox("delegation-spawn-strip")
         defer { lease.release() }
-        // Give the Default agent a non-empty spawn pool so `spawn_agent`
-        // resolves into its direct-chat schema — the baseline the strip is
-        // measured against.
-        SubagentConfigurationStore.save(
-            SubagentConfiguration(spawnableAgentIDs: [UUID()])
+        // This tests source-specific schema stripping, not live AgentManager
+        // discovery/pruning. Freeze the same launcher configuration for both
+        // calls so unrelated agent-store initialization cannot remove the
+        // synthetic target between saving settings and capturing a snapshot.
+        let helperID = UUID()
+        let snapshot = AgentConfigSnapshot(
+            agentId: Agent.defaultId, toolsDisabled: false, memoryDisabled: true,
+            autonomousConfig: nil, toolMode: .auto, model: nil,
+            manualToolNames: nil, systemPrompt: "", dbEnabled: false,
+            spawnConfiguration: .init(
+                agentIDs: [helperID], budgets: .init(), launcherModelOverride: nil
+            )
+        )
+        let targets = SpawnTargetAvailabilitySnapshot(
+            agentTargets: [
+                .init(
+                    descriptor: .init(
+                        id: helperID, name: "Runnable helper", description: nil,
+                        modelId: "fixture/local", isLocal: true, providerName: nil
+                    ),
+                    state: .runnable
+                )
+            ]
         )
 
         let spawnNames = Set(SubagentCapabilityRegistry.spawn.toolNames)
 
         let direct = await ChatExecutionContext.$currentSessionSource.withValue(.chat) {
             SystemPromptComposer.resolveTools(
-                agentId: Agent.defaultId,
-                executionMode: .none
+                snapshot: snapshot,
+                executionMode: .none,
+                spawnTargets: targets
             )
         }
         let directNames = Set(direct.map { $0.function.name })
         #expect(
             !directNames.isDisjoint(with: spawnNames),
-            "baseline: a non-empty spawn pool must expose spawn tools in direct chat"
+            "baseline: a runnable spawn pool must expose spawn tools in direct chat"
         )
 
         let delegated = await ChatExecutionContext.$currentSessionSource.withValue(.delegation) {
             SystemPromptComposer.resolveTools(
-                agentId: Agent.defaultId,
-                executionMode: .none
+                snapshot: snapshot,
+                executionMode: .none,
+                spawnTargets: targets
             )
         }
         let delegatedNames = Set(delegated.map { $0.function.name })

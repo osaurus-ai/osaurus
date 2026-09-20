@@ -535,6 +535,10 @@ public enum OsaurusPaths {
     public static func computerUseConfigFile() -> URL {
         config().appendingPathComponent("computer-use.json")
     }
+    /// Explicit, local-only profiles for the experimental form-filling helper.
+    public static func formContexts() -> URL {
+        root().appendingPathComponent("form-contexts", isDirectory: true)
+    }
     /// Native Browser Use config (the Default agent's opt-in lives here since
     /// the built-in Default agent has no per-agent settings editor).
     public static func browserConfigFile() -> URL {

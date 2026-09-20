@@ -18,6 +18,19 @@ import AppKit
 import Foundation
 import WebKit
 
+/// Read-only DOM evidence captured before the action gate. The signature binds
+/// consent to this document, node and control semantics, not just a CSS query.
+struct BrowserClickTarget: Sendable {
+    enum Kind: String, Sendable {
+        case link, edit, submit
+    }
+    let label: String
+    let kind: Kind
+    let signature: String
+
+    var effect: EffectClass { BrowserEffectClassifier.clickEffect(label: label, kind: kind) }
+}
+
 @MainActor
 final class BrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// Per-agent WebKit profile identifier. The `WKWebsiteDataStore` and the
@@ -568,7 +581,7 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
     // MARK: - Page text
 
     /// Readability-style main-content extraction: the layout-aware text of
-    /// `<main>` / `<article>` (falling back to `<body>`), full length — the
+    /// `<main>` / `[role="main"]` (falling back to `<body>`), full length — the
     /// executor paginates. Snapshots only show interactive elements; this is
     /// how the child actually READS a page.
     func readPageText() async -> (text: String?, error: String?) {
@@ -581,7 +594,12 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
                     if (!document || !document.body) {
                         return {error: 'Page not ready - document.body is null.'};
                     }
-                    const root = document.querySelector('main, article, [role="main"]') || document.body;
+                    // An article can be just one product or cart item. Keep
+                    // sibling items and totals, and prefer main explicitly
+                    // rather than whichever selector matches first in DOM order.
+                    const root = document.querySelector('main')
+                        || document.querySelector('[role="main"]')
+                        || document.body;
                     // innerText is layout-aware: skips display:none content and
                     // preserves visual line structure.
                     const text = (root.innerText || root.textContent || '')
@@ -608,7 +626,7 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
         // Returns the JS expression that resolves the element, or nil when
         // neither ref nor selector was provided.
         if let ref {
-            target = "window.__osaurus_refs?.get('\(ref)')"
+            target = "window.__osaurus_refs?.get('\(browserEscapeSelector(ref))')"
             return """
                 if (!window.__osaurus_refs) { return {success:false, error:'No snapshot taken. Call browser_snapshot first.'}; }
                 if (window.__osaurus_snapshot_gen !== \(snapshotGeneration)) { return {success:false, error:'Snapshot is stale. Call browser_snapshot again.'}; }
@@ -657,7 +675,86 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
         return (label?.isEmpty ?? true) ? nil : label
     }
 
-    func clickElement(ref: String?, selector: String?) async -> (success: Bool, error: String?) {
+    /// Shared by preparation and the mutation itself. Node identities are weak
+    /// references; discarded DOM trees are not retained by approval bookkeeping.
+    private static let describeClickTarget = #"""
+        function describeClickTarget(el) {
+            if (!el || !el.isConnected) throw new Error('Element not found or no longer in DOM. Call browser_snapshot.');
+            const control = el.closest('button,input,select,textarea,a[href],label,[role="button"],[role="link"],[role="checkbox"],[role="radio"]') || el;
+            const action = control.tagName === 'LABEL' && control.control ? control.control : control;
+            if (action.disabled || action.matches(':disabled') || action.getAttribute('aria-disabled') === 'true') {
+                throw new Error('Target is disabled. Call browser_snapshot.');
+            }
+            const tag = action.tagName.toLowerCase();
+            const type = String(action.type || '').toLowerCase();
+            const role = action.getAttribute('role') || '';
+            const form = action.form;
+            const submits = !!form && ((tag === 'button' && type === 'submit') ||
+                (tag === 'input' && (type === 'submit' || type === 'image')));
+            const href = action.href || '';
+            const link = tag === 'a' && !!href && !action.onclick && !/^javascript:/i.test(href);
+            const kind = submits ? 'submit' : link ? 'link' : 'edit';
+            const label = String(action.getAttribute('aria-label') || action.innerText ||
+                action.value || action.getAttribute('title') || tag).trim().replace(/\s+/g, ' ');
+            const store = window.__osaurus_click_targets || (window.__osaurus_click_targets = {
+                document: Array.from(crypto.getRandomValues(new Uint32Array(4))).join('-'),
+                next: 0, nodes: new WeakMap()
+            });
+            const identity = node => {
+                if (!store.nodes.has(node)) store.nodes.set(node, ++store.next);
+                return store.nodes.get(node);
+            };
+            return {label, kind, signature: JSON.stringify([
+                store.document, location.href, identity(el), identity(action), label, tag, type, role, href,
+                action.target || '', action.getAttribute('onclick'), !!action.onclick,
+                form ? identity(form) : null, form ? form.action : '', form ? form.method : '',
+                action.formAction || '', action.formMethod || '', action.formTarget || ''
+            ])};
+        }
+        """#
+
+    private func uniqueClickSelectorCheck(ref: String?, selector: String?) -> String {
+        guard ref == nil, let selector else { return "" }
+        return """
+            if (document.querySelectorAll('\(browserEscapeSelector(selector))').length !== 1) {
+                throw new Error('Selector is missing or ambiguous. Call browser_snapshot for a unique ref.');
+            }
+            """
+    }
+
+    func prepareClick(ref: String?, selector: String?) async -> (target: BrowserClickTarget?, error: String?) {
+        guard hasNavigated else { return (nil, "No page loaded. Call browser_navigate first.") }
+        var getEl = ""
+        guard let validation = refPreamble(ref: ref, selector: selector, target: &getEl) else {
+            return (nil, "Either ref or selector must be provided")
+        }
+        let uniqueSelector = uniqueClickSelectorCheck(ref: ref, selector: selector)
+        let result = await evaluateJavaScript(
+            """
+            (function() { try {
+                \(validation)
+                \(uniqueSelector)
+                \(Self.describeClickTarget)
+                return describeClickTarget(\(getEl));
+            } catch (e) { return {error: e.message || String(e)}; } })()
+            """
+        )
+        if let error = result.error { return (nil, error) }
+        guard let row = result.result as? [String: Any],
+            let label = row["label"] as? String,
+            let kind = (row["kind"] as? String).flatMap(BrowserClickTarget.Kind.init(rawValue:)),
+            let signature = row["signature"] as? String
+        else {
+            return (nil, (result.result as? [String: Any])?["error"] as? String ?? "Cannot resolve click target.")
+        }
+        return (BrowserClickTarget(label: label, kind: kind, signature: signature), nil)
+    }
+
+    func clickElement(
+        ref: String?,
+        selector: String?,
+        approvedTarget: BrowserClickTarget
+    ) async -> (success: Bool, error: String?) {
         guard hasNavigated else { return (false, "No page loaded. Call browser_navigate first.") }
         var getEl = ""
         guard let validation = refPreamble(ref: ref, selector: selector, target: &getEl) else {
@@ -670,7 +767,11 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
                     \(validation)
                     const el = \(getEl);
                     if (!el) { return {success:false, error:'Element not found. Call browser_snapshot for refs.'}; }
-                    if (!document.body.contains(el)) { return {success:false, error:'Element no longer in DOM. Call browser_snapshot.'}; }
+                    \(Self.describeClickTarget)
+                    \(uniqueClickSelectorCheck(ref: ref, selector: selector))
+                    if (describeClickTarget(el).signature !== '\(browserEscapeSelector(approvedTarget.signature))') {
+                        return {success:false, error:'Click target changed while awaiting approval. Snapshot and request approval again.'};
+                    }
                     el.scrollIntoView({block:'center', behavior:'instant'});
                     el.click();
                     return {success:true};

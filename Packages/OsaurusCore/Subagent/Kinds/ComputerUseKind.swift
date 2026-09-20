@@ -89,6 +89,7 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
     /// override, or the same local model already resident).
     private var residencyPlan: ResidencyPlan = .none
     private var invokingParentModelName: String?
+    private var forms: CUAFormsAgentRun?
 
     /// Funnel attribution for `ComputerUseTool`. `loopStarted` flips the
     /// moment `run` hands control to `ComputerUseLoop` (from then on the run
@@ -185,6 +186,7 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
             )
         )
         self.residencyPlan = resolved.decision.plan
+        forms = try await CUAFormsAgentRun.resolve(agentID: agentId, kind: "computer_use")
         return ResolvedModel(name: modelId, id: resolved.installedModelID, isLocal: resolved.decision.isLocal)
     }
 
@@ -328,7 +330,8 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
             vision: config.vision,
             sessionId: scope.sessionId,
             enableThinking: scope.enableThinking(forDelegatedModel: resolved.name),
-            reasoningEffort: scope.reasoningEffort(forDelegatedModel: resolved.name)
+            reasoningEffort: scope.reasoningEffort(forDelegatedModel: resolved.name),
+            forms: forms
         )
 
         await MainActor.run {
@@ -337,7 +340,9 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
                 outcome: ComputerUseTool.outcomeToken(result.outcome)
             )
         }
-        return try Self.mapOutcome(result, model: resolved.name)
+        var mapped = try Self.mapOutcome(result, model: resolved.name)
+        if let receipt = await forms?.receipt() { mapped.payload["form_scorer"] = receipt.payload }
+        return mapped
     }
 
     /// Map a finished `ComputerUseLoop` run onto the shared subagent result
