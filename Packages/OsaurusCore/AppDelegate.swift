@@ -239,9 +239,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // on the main thread during launch.
         ChatSessionStore.preloadInBackground()
 
+        // Stamp the install's first-launch date BEFORE analytics come up so
+        // the baseline `app_launched` can carry the install-cohort/age
+        // retention dimensions. One-shot: fresh installs record now,
+        // existing installs are back-dated from the data roots' birth times.
+        FeatureTelemetry.stampFirstLaunchIfNeeded()
+
         // Bring up analytics early so the launch + onboarding funnel is
         // captured. No-ops silently when no Aptabase key is configured.
-        TelemetryService.shared.configure()
+        TelemetryService.shared.configure(launchProps: FeatureTelemetry.installProps() ?? [:])
+
+        // Once-per-local-day retention signal (the cohort-retention
+        // numerator/denominator). Consent-gated like every other event.
+        FeatureTelemetry.dailyActive()
 
         // Attribute the `brain_source` dimension for installs that completed
         // onboarding before the choice existed: stamp `pre_choice` once so

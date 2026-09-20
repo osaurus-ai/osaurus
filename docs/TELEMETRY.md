@@ -54,13 +54,14 @@ The events are organized around three product questions.
 | Pillar | Question | Primary signals |
 |--------|----------|-----------------|
 | Engagement | Are people using the core product? | `message_sent`, `chat_session_started`, `agent_run` |
-| Retention / lifecycle | Do people come back and run the server? | `app_launched`, `server_started` (DAU/WAU/sessions derived by Aptabase) |
+| Retention / lifecycle | Do people come back and run the server? | `daily_active`, `app_launched`, `server_started` |
 | Feature adoption | Which features get used? | `model_downloaded`, `remote_provider_added`, `mcp_provider_added`, `agent_created` |
 
-Retention, session counts, new-vs-returning users, app version, OS version,
-and locale are derived by Aptabase from its **anonymous** session model plus
-the events below. No persistent per-user identifier is added by Osaurus to
-make this work.
+Session counts, app version, OS version, and locale are derived by Aptabase
+from its **anonymous** session model plus the events below. Cohort retention
+is computed from event *counts* using the install-cohort dimensions described
+under "Install cohort and age" — no persistent per-user identifier is added by
+Osaurus to make this work.
 
 ## Common properties (every event)
 
@@ -198,7 +199,59 @@ Diagnostics so users can self-report).
 
 ### `app_launched`
 
-Emitted once at launch. No properties. Baseline signal for retention.
+Emitted once at launch. Carries the three install-cohort dimensions below
+(see "Install cohort and age") so launches can be segmented by cohort; no
+other properties.
+
+| Property | Type | Values / meaning |
+|----------|------|------------------|
+| `install_cohort` | string | ISO week the install belongs to, e.g. `2026-W38` |
+| `install_age_days` | string | Whole local calendar days since the install's first launch: `0`, `1`, … `364`, or `365+` |
+| `install_cohort_source` | string | How the install date was determined: `install`, `inferred`, or `unknown` |
+
+### `daily_active`
+
+Emitted **at most once per local calendar day per install**, on the first
+launch (or first event-producing launch) of that day. Carries exactly the
+three install-cohort dimensions listed under `app_launched`. This is the
+retention numerator and denominator: launch frequency within a day cannot
+inflate it, and it does not depend on Aptabase's own daily-user heuristic.
+
+### Install cohort and age
+
+Aptabase has no user id, and the daily user count it derives server-side is
+not joinable across days. Cohort retention therefore cannot be computed from
+`app_launched` alone. Instead, each install keeps a **first-launch date**
+locally (in `UserDefaults`) and sends two derived, low-cardinality dimensions:
+the ISO week of that date and the number of days since it. Day-N retention
+for cohort W is then a ratio of two counts:
+
+```
+count(daily_active where install_cohort = W and install_age_days = N)
+count(daily_active where install_cohort = W and install_age_days = 0)
+```
+
+No identifier is involved — this is the same pattern as `brain_source` and
+`total_memory_gb`: a fact stored on the device, attached as a coarse bucket.
+
+**How the date is determined** (`install_cohort_source`):
+
+- `install` — the install's first-ever launch stamped the current date.
+- `inferred` — the install predates this dimension (it existed before the
+  version that introduced it). Its date is the earliest filesystem creation
+  time of the Osaurus data directories (`~/.osaurus`, and the retired
+  `~/Library/Application Support/com.dinoki.osaurus` where it still exists).
+  Day-level precision; two file-metadata reads, no database is opened.
+- `unknown` — the install predates this dimension and neither data directory
+  could be inspected. The stamp is the launch that introduced the dimension.
+  Dashboards should exclude these rows from cohort math.
+
+The stamp is written once and never updated, so re-running onboarding or
+upgrading cannot move a user between cohorts. Caveats: resetting
+`UserDefaults` (or a fresh macOS user account) starts a new cohort, and
+combining `install_cohort` with `install_age_days` and the event date can
+reconstruct the install *day* — a ~365-valued bucket per year, not an
+identifier.
 
 ### `model_downloaded`
 
