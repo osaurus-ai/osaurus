@@ -876,6 +876,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     userAgent: userAgent
                 )
+            } else if head.method == .POST, path.hasPrefix("/workspace-agents/"), path.hasSuffix("/run") {
+                handleWorkspaceAgentRunEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path == "/workspaces/agents" {
+                handleWorkspaceAgentsEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .GET, path == "/projects" {
                 handleListProjectsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/sessions" {
@@ -5064,6 +5079,263 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     requestBody: nil,
                     responseBody: outcome.1,
                     responseStatus: Int(outcome.0.code),
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// POST /workspace-agents/{workspaceId}/{address}/run — run a teammate's
+    /// shared agent (docs/MOBILE_PROTOCOL.md §15.2). The run happens on THEIR
+    /// Mac: this one only holds the workspace membership, prepares the relay
+    /// pairing, and pipes the answer back to the phone as the same SSE chunks
+    /// `/agents/{id}/run` emits. Owner-only — workspace membership is the
+    /// user's, not an agent's.
+    private func handleWorkspaceAgentRunEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        func reject(_ status: HTTPResponseStatus, _ body: String) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            logRequest(
+                method: "POST",
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        let components = path.split(separator: "/")
+        guard components.count == 4, components[3] == "run",
+            let workspaceId = String(components[1]).removingPercentEncoding, !workspaceId.isEmpty,
+            let address = String(components[2]).removingPercentEncoding, !address.isEmpty
+        else {
+            reject(.badRequest, #"{"error":"invalid_workspace_agent"}"#)
+            return
+        }
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data),
+            !request.messages.isEmpty
+        else {
+            reject(.badRequest, #"{"error":"bad_request","message":"Expected {messages:[…]}"}"#)
+            return
+        }
+
+        let ref = WorkspaceAgentRef(workspaceId: workspaceId, agentAddress: address)
+        let messages = request.messages
+        let parameters = GenerationParameters(
+            temperature: request.temperature,
+            maxTokens: request.resolvedMaxTokens ?? 4096,
+            maxTokensExplicit: request.resolvedMaxTokens != nil,
+            topPOverride: request.top_p,
+            topKOverride: request.top_k
+        )
+        let stopSequences = request.stop ?? []
+
+        let loop = context.eventLoop
+        let writer = SSEResponseWriter()
+        let writerBound = NIOLoopBound(writer, eventLoop: loop)
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let responseId = Self.shortId(prefix: "chatcmpl-", length: 12)
+        let created = Int(Date().timeIntervalSince1970)
+
+        runRequestTask(priority: .userInitiated) {
+            let displayName = await MainActor.run { AgentTargetResolver.displayName(for: ref) }
+            // The SSE writer emits a response head every time it is asked to,
+            // so the failure path must know whether one already went out.
+            var headersSent = false
+            do {
+                // Refuses up front on an offline host, a lapsed key or an
+                // agent that is no longer shared, rather than failing midway.
+                let prepared = try await WorkspaceAgentRunClient.shared.prepare(ref)
+                guard
+                    let service = await MainActor.run({
+                        RemoteProviderManager.shared.service(for: prepared.providerId)
+                    })
+                else {
+                    throw WorkspaceAgentRunError.connectFailed("no provider service")
+                }
+                let model = prepared.effectiveModel ?? request.model
+                let stream = try await service.streamDeltas(
+                    messages: messages,
+                    parameters: parameters,
+                    requestedModel: prepared.effectiveModel,
+                    stopSequences: stopSequences
+                )
+                hop {
+                    writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
+                    writerBound.value.writeRole(
+                        "assistant",
+                        model: model,
+                        responseId: responseId,
+                        created: created,
+                        context: ctx.value
+                    )
+                }
+                headersSent = true
+                for try await delta in stream {
+                    hop {
+                        writerBound.value.writeContent(
+                            delta,
+                            model: model,
+                            responseId: responseId,
+                            created: created,
+                            context: ctx.value
+                        )
+                    }
+                }
+                hop {
+                    writerBound.value.writeFinish(
+                        model,
+                        responseId: responseId,
+                        created: created,
+                        context: ctx.value
+                    )
+                    writerBound.value.writeEnd(ctx.value)
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: path,
+                        userAgent: logUserAgent,
+                        requestBody: nil,
+                        responseBody: "[stream]",
+                        responseStatus: 200,
+                        startTime: logStartTime
+                    )
+                }
+            } catch {
+                let message = WorkspaceAgentRunClient.message(for: error, agentName: displayName)
+                let needsHeaders = !headersSent
+                hop {
+                    // A refusal before the first chunk still owes the client a
+                    // response head; after it, the error chunk is all that is
+                    // left to say.
+                    if needsHeaders { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
+                    writerBound.value.writeError(message, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: path,
+                        userAgent: logUserAgent,
+                        requestBody: nil,
+                        responseBody: message,
+                        responseStatus: 200,
+                        startTime: logStartTime
+                    )
+                }
+            }
+        }
+    }
+
+    /// One shared agent of `GET /workspaces/agents`.
+    struct WorkspaceAgentDTO: Encodable {
+        /// Lowercased agent address — the id everything workspace-side uses.
+        let address: String
+        let name: String
+        let description: String?
+        /// The teammate sharing it, in the Mac's friendly form.
+        let owner: String?
+        /// `online | offline | unknown` — never render `unknown` as offline,
+        /// it means the relay could not be reached.
+        let presence: String
+        let last_seen: String?
+        /// True when this Mac hosts the agent: run it locally instead.
+        let hosted_here: Bool
+    }
+
+    private struct WorkspaceRosterDTO: Encodable {
+        let id: String
+        let name: String
+        let agents: [WorkspaceAgentDTO]
+    }
+
+    private struct WorkspaceRostersResponse: Encodable {
+        let workspaces: [WorkspaceRosterDTO]
+    }
+
+    /// GET /workspaces/agents — the teammates' agents shared into the
+    /// workspaces this Mac has joined (docs/MOBILE_PROTOCOL.md §15).
+    /// Owner-only: workspace membership is the user's, not an agent's.
+    private func handleWorkspaceAgentsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(
+                head: head,
+                context: context,
+                path: "/workspaces/agents",
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let workspaces: [WorkspaceRosterDTO] = await MainActor.run {
+                let store = WorkspaceRosterStore.shared
+                return store.rosters.map { roster in
+                    WorkspaceRosterDTO(
+                        id: roster.workspace.id,
+                        name: roster.workspace.name,
+                        agents: roster.agents.map { agent in
+                            let presence: String
+                            switch WorkspaceRosterStore.presence(for: agent) {
+                            case .online: presence = "online"
+                            case .offline: presence = "offline"
+                            case .unknown: presence = "unknown"
+                            }
+                            return WorkspaceAgentDTO(
+                                address: agent.agentAddress.lowercased(),
+                                name: agent.displayName ?? String(agent.agentAddress.prefix(10)),
+                                description: agent.description,
+                                owner: agent.owner?.friendlyName,
+                                presence: presence,
+                                last_seen: agent.lastSeen,
+                                hosted_here: store.isHostedHere(address: agent.agentAddress)
+                            )
+                        }
+                    )
+                }
+            }
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(WorkspaceRostersResponse(workspaces: workspaces)))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"workspaces":[]}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET",
+                    path: "/workspaces/agents",
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "{\"workspaces\":[\(workspaces.count)]}",
+                    responseStatus: 200,
                     startTime: startTime
                 )
             }

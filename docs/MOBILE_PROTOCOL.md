@@ -969,3 +969,38 @@ is that tool's row in the §14.4 shape, already reflecting the change, so a
 client can redraw without refetching the catalog. Tool settings are global
 on this Mac, so `{id}` only scopes the route. `404 tool_not_found` when the
 name is not registered; the name is percent-decoded. Owner-only.
+
+---
+
+## 15. Workspace agents
+
+Agents a teammate shared into a router workspace this Mac has joined. They
+run on THEIR Mac: this one only holds the membership, so the phone always
+goes through its own Mac for them. Both routes are owner-only — workspace
+membership belongs to the user, not to an agent.
+
+### 15.1 `GET /workspaces/agents`
+
+```json
+{"workspaces":[{"id":"ws_123","name":"Acme","agents":[
+  {"address":"0xabc…","name":"Researcher","description":"…","owner":"@rex-42",
+   "presence":"online","last_seen":"…","hosted_here":false}]}]}
+```
+
+`presence` is `online | offline | unknown`; `unknown` means the relay could
+not be reached and must never be drawn as offline. `hosted_here` marks an
+agent this Mac itself shared — run it locally through `/agents/{id}/run`
+instead. The roster is whatever the Mac last synced from the router.
+
+### 15.2 `POST /workspace-agents/{workspaceId}/{address}/run`
+
+Body is the `/agents/{id}/run` shape (`messages`, optional `model`,
+`temperature`, `max_tokens`, `stop`). The Mac prepares the relay pairing,
+refuses up front when the host is offline, the key lapsed or the agent is no
+longer shared, and otherwise streams the reply back as the same SSE chunks
+`/agents/{id}/run` emits.
+
+The run belongs to the teammate's Mac, so this is a thinner stream than a
+local agent's: assistant text only — no tool trace, prefill or artifact
+chunks — and it is not written into this Mac's chat history, so it does not
+appear under §14. A refusal arrives as an error chunk naming the agent.
