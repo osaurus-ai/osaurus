@@ -588,6 +588,7 @@ private final class Counter: @unchecked Sendable {
 /// `URLSession` thread.
 private final class TransferLane: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let lock = NSLock()
+    private var isInvalidated: Bool = false
     private var handle: FileHandle?
     private var expected: Int64 = 0
     private var onBytes: (@Sendable (Int64) -> Void)?
@@ -612,6 +613,7 @@ private final class TransferLane: NSObject, URLSessionDataDelegate, @unchecked S
 
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
             lock.lock()
+            let alreadyInvalidated = isInvalidated
             self.handle = handle
             self.expected = expected
             self.onBytes = onBytes
@@ -619,11 +621,20 @@ private final class TransferLane: NSObject, URLSessionDataDelegate, @unchecked S
             self.failure = nil
             self.continuation = c
             lock.unlock()
+            guard !alreadyInvalidated else {
+                c.resume(throwing: URLError(.cancelled))
+                return
+            }
             session.dataTask(with: request).resume()
         }
     }
 
-    func invalidate() { session.invalidateAndCancel() }
+    func invalidate() {
+        lock.lock()
+        isInvalidated = true
+        lock.unlock()
+        session.invalidateAndCancel()
+    }
 
     private func setFailure(_ error: Error) {
         lock.lock()
