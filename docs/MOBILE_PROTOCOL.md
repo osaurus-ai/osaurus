@@ -868,14 +868,16 @@ chat history from `~/.osaurus/chat-history/history.sqlite`.
 Metadata only, newest first. Query: `agent_id`, `archived=true` (archived
 only — it is a lens, as on the Mac), `pinned=true`, `origin` (`mac`, `ios`,
 or a source such as `http`), `capabilities` (comma-separated `vision,code`;
-the chat must have all of them, as on the Mac), `project_id`, `q` (matches
+the chat must have all of them, as on the Mac), `project_id`, `plugin_id`
+(chats started by that plugin), `q` (matches
 the title or any message body, the same scan the Mac search uses), `limit`
 (default 200, max 500).
 
 ```json
 {"sessions":[{"id":"<uuid>","title":"Bitcoin price","created_at":"…","updated_at":"…",
               "agent_id":"<uuid>|null","selected_model":"qwen3","source":"chat",
-              "archived":false,"pinned":true,"origin":"mac","capabilities":["vision"]}]}
+              "archived":false,"pinned":true,"origin":"mac","capabilities":["vision"],
+              "project_id":"<uuid>|null","plugin_id":"<id>|null"}]}
 ```
 
 `agent_id` is null for the built-in Default agent's chats. `source` is where
@@ -936,6 +938,12 @@ meaning (host-side cache scoping) and is unrelated.
 
 ### 14.6 `GET /projects`
 
-`{"projects":[{"id":"<uuid>","name":"Website rewrite"}]}` — the user's chat
-projects, so a client can offer the Mac's project filter. Sessions carry
-`project_id` for the same purpose. Owner-only.
+```json
+{"projects":[{"id":"<uuid>","name":"Website rewrite"}],
+ "plugins":[{"id":"com.example.notes","name":"Notes"}]}
+```
+
+The user's chat projects and the installed plugins (display name from the
+manifest, falling back to the id), so a client can offer the Mac's project
+and plugin filters. Sessions carry `project_id` and `plugin_id` for the same
+purpose. Owner-only.

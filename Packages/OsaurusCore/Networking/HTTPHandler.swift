@@ -4949,6 +4949,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     private struct ProjectsResponse: Encodable {
         let projects: [ProjectDTO]
+        /// Installed plugins, for the history's plugin filter.
+        let plugins: [ProjectDTO]
     }
 
     /// GET /projects — the user's chat projects, for the history filter
@@ -4968,11 +4970,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask(priority: .userInitiated) {
-            let projects = await MainActor.run {
-                ProjectManager.shared.projects.map { ProjectDTO(id: $0.id.uuidString, name: $0.name) }
+            let (projects, plugins) = await MainActor.run {
+                (
+                    ProjectManager.shared.projects.map { ProjectDTO(id: $0.id.uuidString, name: $0.name) },
+                    PluginManager.shared.plugins
+                        .map { loaded in
+                            ProjectDTO(
+                                id: loaded.plugin.manifest.plugin_id,
+                                name: loaded.plugin.manifest.name ?? loaded.plugin.manifest.plugin_id
+                            )
+                        }
+                        .sorted { $0.name.caseInsensitiveCompare($1.name) == .orderedAscending }
+                )
             }
             let json =
-                (try? JSONEncoder.osaurusCanonical().encode(ProjectsResponse(projects: projects)))
+                (try? JSONEncoder.osaurusCanonical().encode(ProjectsResponse(projects: projects, plugins: plugins)))
                 .map { String(decoding: $0, as: UTF8.self) } ?? #"{"projects":[]}"#
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -5012,6 +5024,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let capabilities: [String]
         /// Project this chat belongs to, when any.
         let project_id: String?
+        /// Plugin that started this chat (`source == "plugin"`).
+        let plugin_id: String?
     }
 
     private struct SessionsResponse: Encodable {
@@ -5083,6 +5097,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // `mac`, `ios`, or a SessionSource raw value (http, channel, …).
         let originFilter = query["origin"].flatMap { $0.isEmpty ? nil : $0 }
         let projectFilter = query["project_id"].flatMap { UUID(uuidString: $0) }
+        let pluginFilter = query["plugin_id"].flatMap { $0.isEmpty ? nil : $0 }
         let search = (query["q"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         // Multi-select AND, as on the Mac: a chat must have every capability asked for.
         let requiredCapabilities: Set<SessionCapability> = Set(
@@ -5125,6 +5140,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
                 .filter { requiredCapabilities.isSubset(of: $0.capabilities) }
                 .filter { projectFilter == nil || $0.projectId == projectFilter }
+                .filter { pluginFilter == nil || ($0.source == .plugin && $0.sourcePluginId == pluginFilter) }
                 .filter { session in
                     guard !search.isEmpty else { return true }
                     return session.title.lowercased().contains(search) || contentMatches.contains(session.id)
@@ -5292,7 +5308,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             pinned: session.pinned,
             origin: fromPhone ? "ios" : (session.source == .chat ? "mac" : session.source.rawValue),
             capabilities: session.capabilities.map(\.rawValue).sorted(),
-            project_id: session.projectId?.uuidString
+            project_id: session.projectId?.uuidString,
+            plugin_id: session.source == .plugin ? session.sourcePluginId : nil
         )
     }
 
