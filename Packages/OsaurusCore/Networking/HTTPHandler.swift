@@ -890,6 +890,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } else if head.method == .GET, path == "/agents" {
                 handleListAgents(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .PATCH, path.hasPrefix("/agents/"), path.contains("/tools/") {
+                handleUpdateAgentToolEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .GET, path.hasPrefix("/agents/"), path.hasSuffix("/tools") {
                 handleAgentToolsEndpoint(
                     head: head,
@@ -4900,27 +4908,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask(priority: .userInitiated) {
             let tools: [AgentToolDTO] = await MainActor.run {
-                let registry = ToolRegistry.shared
-                return registry.listTools().map { entry in
-                    let info = registry.policyInfo(for: entry.name)
-                    let policy = info?.effectivePolicy ?? .auto
-                    let missingGrants = (info?.grantsByRequirement ?? [:])
-                        .filter { !$0.value }
-                        .map(\.key)
-                    let missingSystem = (info?.systemPermissionStates ?? [:])
-                        .filter { !$0.value }
-                        .map(\.key.rawValue)
-                    let blocked = (missingGrants + missingSystem).sorted()
-                    let deniedHere = ToolRegistry.isDeniedForCurrentSurface(entry.name)
-                    return AgentToolDTO(
-                        name: entry.name,
-                        description: entry.description,
-                        enabled: entry.enabled,
-                        policy: policy.rawValue,
-                        remote_safe: policy == .auto && blocked.isEmpty && !deniedHere,
-                        blocked_by: blocked.isEmpty ? nil : blocked
-                    )
-                }
+                ToolRegistry.shared.listTools().map(Self.agentToolDTO(for:))
             }
             let json =
                 (try? JSONEncoder.osaurusCanonical().encode(AgentToolsResponse(tools: tools)))
@@ -4936,6 +4924,143 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     requestBody: nil,
                     responseBody: "{\"tools\":[\(tools.count)]}",
                     responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    private struct AgentToolPatchRequest: Decodable {
+        let enabled: Bool?
+        let policy: String?
+    }
+
+    /// Parses a §14.7 body. Nil when it carries neither field or names a
+    /// policy that is not `auto` / `ask` / `deny`.
+    static func toolPatch(from data: Data) -> (enabled: Bool?, policy: ToolPermissionPolicy?)? {
+        guard let patch = try? JSONDecoder().decode(AgentToolPatchRequest.self, from: data),
+            patch.enabled != nil || patch.policy != nil
+        else { return nil }
+        if let raw = patch.policy {
+            guard let parsed = ToolPermissionPolicy(rawValue: raw) else { return nil }
+            return (patch.enabled, parsed)
+        }
+        return (patch.enabled, nil)
+    }
+
+    /// One row of the tool catalog, shared by the GET and the PATCH reply.
+    @MainActor
+    private static func agentToolDTO(for entry: ToolRegistry.ToolEntry) -> AgentToolDTO {
+        let registry = ToolRegistry.shared
+        let info = registry.policyInfo(for: entry.name)
+        let policy = info?.effectivePolicy ?? .auto
+        let missingGrants = (info?.grantsByRequirement ?? [:])
+            .filter { !$0.value }
+            .map(\.key)
+        let missingSystem = (info?.systemPermissionStates ?? [:])
+            .filter { !$0.value }
+            .map(\.key.rawValue)
+        let blocked = (missingGrants + missingSystem).sorted()
+        let deniedHere = ToolRegistry.isDeniedForCurrentSurface(entry.name)
+        return AgentToolDTO(
+            name: entry.name,
+            description: entry.description,
+            enabled: entry.enabled,
+            policy: policy.rawValue,
+            remote_safe: policy == .auto && blocked.isEmpty && !deniedHere && entry.enabled,
+            blocked_by: blocked.isEmpty ? nil : blocked
+        )
+    }
+
+    /// PATCH /agents/{id}/tools/{name} — turn a tool on or off, or change its
+    /// permission behaviour, the way the Mac's Tools catalog does
+    /// (docs/MOBILE_PROTOCOL.md §14.4). Tool settings are global on the Mac,
+    /// so the agent id only scopes the route.
+    private func handleUpdateAgentToolEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        func reply(_ status: HTTPResponseStatus, _ body: String) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            logRequest(
+                method: "PATCH",
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        let components = path.split(separator: "/")
+        guard components.count == 4, components[0] == "agents", components[2] == "tools",
+            let toolName = String(components[3]).removingPercentEncoding, !toolName.isEmpty
+        else {
+            reply(.badRequest, #"{"error":"invalid_tool"}"#)
+            return
+        }
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let patch = Self.toolPatch(from: data) else {
+            reply(
+                .badRequest,
+                #"{"error":"bad_request","message":"Expected {enabled?, policy?} with policy auto, ask or deny"}"#
+            )
+            return
+        }
+        let policy = patch.policy
+        let enabled = patch.enabled
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let outcome: (HTTPResponseStatus, String) = await MainActor.run {
+                let registry = ToolRegistry.shared
+                guard registry.isRegistered(toolName) else {
+                    return (.notFound, #"{"error":"tool_not_found"}"#)
+                }
+                if let enabled { registry.setEnabled(enabled, for: toolName) }
+                if let policy { registry.setPolicy(policy, for: toolName) }
+                guard let entry = registry.listTools().first(where: { $0.name == toolName }) else {
+                    return (.notFound, #"{"error":"tool_not_found"}"#)
+                }
+                let dto = Self.agentToolDTO(for: entry)
+                let json =
+                    (try? JSONEncoder.osaurusCanonical().encode(dto))
+                    .map { String(decoding: $0, as: UTF8.self) } ?? #"{"ok":true}"#
+                return (.ok, json)
+            }
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: outcome.0,
+                    headers: headers,
+                    body: outcome.1
+                )
+                self.logRequest(
+                    method: "PATCH",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: outcome.1,
+                    responseStatus: Int(outcome.0.code),
                     startTime: startTime
                 )
             }

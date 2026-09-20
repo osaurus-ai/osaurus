@@ -921,8 +921,9 @@ transcript.
 `policy` is the effective permission (`auto | ask | deny`). `remote_safe` is
 true only when running the tool raises no approval card on the Mac and the
 surface allows it — an `ask` tool would block on a card the phone can't
-answer yet (that arrives with remote approvals). `blocked_by` lists
-ungranted requirements or missing system permissions.
+answer yet (that arrives with remote approvals), and only when the tool is
+enabled. `blocked_by` lists ungranted requirements or missing system
+permissions.
 
 ### 14.5 Continuing a Mac chat
 
@@ -950,3 +951,12 @@ manifest, falling back to the id) and the joined router workspaces, so a
 client can offer the Mac's project, plugin and workspace filters. Sessions
 carry `project_id`, `plugin_id` and `workspace_id` for the same purpose.
 Owner-only.
+
+### 14.7 `PATCH /agents/{id}/tools/{name}`
+
+Body `{"enabled":false}` and/or `{"policy":"auto"}` — turn a tool off, or
+change its permission behaviour, as the Mac's Tools catalog does. The reply
+is that tool's row in the §14.4 shape, already reflecting the change, so a
+client can redraw without refetching the catalog. Tool settings are global
+on this Mac, so `{id}` only scopes the route. `404 tool_not_found` when the
+name is not registered; the name is percent-decoded. Owner-only.
