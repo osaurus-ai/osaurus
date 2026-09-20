@@ -5132,30 +5132,41 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         .map(\.id)
                 )
             }
-            let rows =
-                sessions
-                .filter { includeArchived || !$0.archived }
-                .filter { !pinnedOnly || $0.pinned }
-                .filter { agentFilter == nil || $0.agentId == agentFilter }
-                .filter { session in
-                    guard let originFilter else { return true }
-                    let origin =
+            // One predicate rather than a chain of `.filter`s: the chain grew
+            // long enough that the type checker gave up on it.
+            func matches(_ session: ChatSessionData) -> Bool {
+                if !includeArchived && session.archived { return false }
+                if pinnedOnly && !session.pinned { return false }
+                if let agentFilter, session.agentId != agentFilter { return false }
+                if let originFilter {
+                    let origin: String =
                         phoneSessions.contains(session.id)
                         ? "ios" : (session.source == .chat ? "mac" : session.source.rawValue)
-                    return origin == originFilter
+                    if origin != originFilter { return false }
                 }
-                .filter { requiredCapabilities.isSubset(of: $0.capabilities) }
-                .filter { projectFilter == nil || $0.projectId == projectFilter }
-                .filter { pluginFilter == nil || ($0.source == .plugin && $0.sourcePluginId == pluginFilter) }
-                .filter { workspaceFilter == nil || $0.workspace?.workspaceId == workspaceFilter }
-                .filter { session in
-                    guard !search.isEmpty else { return true }
-                    return session.title.lowercased().contains(search) || contentMatches.contains(session.id)
+                if !requiredCapabilities.isSubset(of: session.capabilities) { return false }
+                if let projectFilter, session.projectId != projectFilter { return false }
+                if let pluginFilter {
+                    if session.source != .plugin || session.sourcePluginId != pluginFilter { return false }
                 }
+                if let workspaceFilter, session.workspace?.workspaceId != workspaceFilter { return false }
+                if !search.isEmpty {
+                    if !session.title.lowercased().contains(search)
+                        && !contentMatches.contains(session.id)
+                    {
+                        return false
+                    }
+                }
+                return true
+            }
+            let rows: [SessionSummaryDTO] =
+                sessions
+                .lazy
+                .filter(matches)
                 .prefix(limit)
                 .map { Self.summary(for: $0, fromPhone: phoneSessions.contains($0.id)) }
             let json =
-                (try? JSONEncoder.osaurusCanonical().encode(SessionsResponse(sessions: Array(rows))))
+                (try? JSONEncoder.osaurusCanonical().encode(SessionsResponse(sessions: rows)))
                 .map { String(decoding: $0, as: UTF8.self) } ?? #"{"sessions":[]}"#
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
