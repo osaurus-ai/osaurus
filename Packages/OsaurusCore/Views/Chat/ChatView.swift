@@ -4862,6 +4862,26 @@ final class ChatSession: ObservableObject {
         }
     }
 
+    /// Mark the start of one model generation step inside a run and return
+    /// its `streamStartTime`.
+    ///
+    /// `outputComplete` is set by the relay when a step's engine finishes and
+    /// is otherwise only cleared when `isStreaming` flips on — which happens
+    /// once per RUN, not per step. A tool-call continuation therefore started
+    /// with the flag still true from the previous step: `streamingTurnId`
+    /// resolved to nil, the fresh assistant turn rendered as finished (no
+    /// typing indicator during its load/prefill, so no "Loading Model..."),
+    /// and every delta took the non-streaming table path (per-token height
+    /// notes — the visible jump). Clear it BEFORE awaiting `streamChat`, which
+    /// may span the whole model load, so the indicator covers that wait.
+    private func beginModelStep() -> Date {
+        if outputComplete {
+            outputComplete = false
+            rebuildVisibleBlocks()
+        }
+        return Date()
+    }
+
     private func processStreamDeltas(
         stream: AsyncThrowingStream<String, Error>,
         assistantTurn: ChatTurn,
@@ -4886,6 +4906,15 @@ final class ChatSession: ObservableObject {
         currentTurn.unclosedReasoning = false
         currentTurn.completedAt = nil
         currentTurn.lastOutputAt = nil
+        // Same contract for the session-level flag: the previous step's
+        // relay completion set it, and `isStreaming` (which resets it) stays
+        // true across the whole run. Callers already reset it before awaiting
+        // `streamChat` (see `beginModelStep`); this covers any path that
+        // reaches the processor without it.
+        if outputComplete {
+            outputComplete = false
+            rebuildVisibleBlocks()
+        }
         // Output-complete relay: the adapter announces the instant vmlx's
         // terminal info arrives (before the cache-store tail it withholds the
         // stream end for). Stop the cursor and stamp completion right then.
@@ -4952,9 +4981,15 @@ final class ChatSession: ObservableObject {
         // cursor and stamp. No engine output can follow `.info`, so the quiet
         // window only ever waits on delivery, never on generation.
         var lastDeltaAt = Date()
+        // Only THIS session's own (non-utility) generation may complete this
+        // step. The relay is process-wide, and the previous turn's title /
+        // follow-up / memory jobs queue behind the same solo lease, so they
+        // finish right after a new send starts — a bare timestamp filter let
+        // them mark this turn complete before its model emitted a token.
+        let relaySessionId = sessionId?.uuidString
         let outputCompleteSub = GenerationOutputRelay.shared.$lastCompletion
             .compactMap { $0 }
-            .filter { $0.at >= streamStartTime }
+            .filter { $0.matches(sessionId: relaySessionId, startedAt: streamStartTime) }
             .first()
             .receive(on: RunLoop.main)
             .sink { [weak self, weak currentTurn] completion in
@@ -7794,7 +7829,7 @@ final class ChatSession: ObservableObject {
                                 )
                             }
                             do {
-                                let streamStartTime = Date()
+                                let streamStartTime = self.beginModelStep()
                                 let (invocations, finalTurn) = try await self.processStreamDeltas(
                                     stream: try await engine.streamChat(request: req),
                                     assistantTurn: assistantTurn,
@@ -8318,11 +8353,12 @@ final class ChatSession: ObservableObject {
                                 // stats envelopes into ChatTurn.content (and then
                                 // transcript exports) whenever the agent reached
                                 // its iteration cap.
+                                let finalStreamStartTime = beginModelStep()
                                 let (_, finalTurn) = try await processStreamDeltas(
                                     stream: try await engine.streamChat(request: finalReq),
                                     assistantTurn: assistantTurn,
                                     runId: runId,
-                                    streamStartTime: Date(),
+                                    streamStartTime: finalStreamStartTime,
                                     ttftTrace: ttftTrace,
                                     selectedModel: turnModelId
                                 )

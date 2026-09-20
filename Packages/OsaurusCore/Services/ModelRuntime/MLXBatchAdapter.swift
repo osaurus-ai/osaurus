@@ -1682,6 +1682,11 @@ struct MLXBatchAdapter {
         // `STREAM-DRAINED postSubmitMs` = this step's decode + KV store, and the
         // lease (which the next step waits on) releases right after.
         let producerSubmitAt = CFAbsoluteTimeGetCurrent()
+        // Relay attribution, captured as plain values so the producer task
+        // does not hold the whole parameter struct.
+        let relaySessionId = generation.sessionId
+        let relayActivitySource = generation.activitySource
+        let relayAuxiliary = generation.auxiliaryCacheIntent
         let producerTask = Task<Void, Never> {
             var terminalInfo: Generation?
             await withTaskCancellationHandler {
@@ -1700,9 +1705,15 @@ struct MLXBatchAdapter {
                         // completion on the relay so the chat can stop its
                         // cursor at the last letter; the run's ordering
                         // (lease, allocator window, send gate) is untouched.
+                        // Scoped to the producing request so a chat only
+                        // accepts completions for its own session (see
+                        // `Completion.matches`).
                         GenerationOutputRelay.shared.announce(
                             modelName: modelName,
-                            generationTokens: info.generationTokenCount
+                            generationTokens: info.generationTokenCount,
+                            sessionId: relaySessionId,
+                            activitySource: relayActivitySource,
+                            auxiliary: relayAuxiliary
                         )
                         terminalInfo = event
                         continue
