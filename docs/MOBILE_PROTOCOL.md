@@ -863,18 +863,26 @@ mascot images themselves ship inside each client.
 Owner-only (§12), inside the Secure Channel. These expose the user's own
 chat history from `~/.osaurus/chat-history/history.sqlite`.
 
-### 14.1 `GET /sessions[?agent_id=…&archived=true&limit=200]`
+### 14.1 `GET /sessions`
 
-Metadata only, newest first; archived chats are excluded unless asked for.
+Metadata only, newest first. Query: `agent_id`, `archived=true` (archived
+only — it is a lens, as on the Mac), `pinned=true`, `origin` (`mac`, `ios`,
+or a source such as `http`), `q` (matches the title or any message body,
+the same scan the Mac search uses), `limit` (default 200, max 500).
 
 ```json
 {"sessions":[{"id":"<uuid>","title":"Bitcoin price","created_at":"…","updated_at":"…",
               "agent_id":"<uuid>|null","selected_model":"qwen3","source":"chat",
-              "archived":false,"pinned":true}]}
+              "archived":false,"pinned":true,"origin":"mac","capabilities":["vision"]}]}
 ```
 
 `agent_id` is null for the built-in Default agent's chats. `source` is where
 the chat came from (`chat`, `http`, `channel`, `schedule`, …).
+
+`origin` is what a client shows as the row icon: `mac` for the user's own
+chats, `ios` for chats this phone started (hosted runs stamp the pairing
+key as their caller), otherwise the source. `capabilities` are the Mac's
+badges (`vision`, `voice`, `code`, `search`).
 
 ### 14.2 `GET /sessions/{id}`
 

@@ -66,10 +66,23 @@ enum RemoteSessionContinuation {
         )
     }
 
-    /// Whether this session exists and can be continued remotely. Workspace
-    /// (teammate-served) chats are excluded: they belong to the sharing flow.
+    /// Whether this session can be continued by the owner's phone. The
+    /// owner's own chats qualify, as do the rows the phone itself created
+    /// (hosted runs stamp a workspace context whose caller is the pairing
+    /// key). Chats served for a workspace teammate do not.
     static func isContinuable(_ sessionId: UUID) -> Bool {
         guard let session = ChatSessionsManager.shared.session(for: sessionId) else { return false }
-        return session.workspace == nil
+        guard let workspace = session.workspace else { return true }
+        return isFromPairedPhone(workspace)
+    }
+
+    /// A hosted row created by this Mac's paired phone: no workspace, and
+    /// the caller is the pairing key.
+    static func isFromPairedPhone(_ workspace: WorkspaceSessionContext) -> Bool {
+        guard workspace.workspaceId.isEmpty,
+            let caller = workspace.callerWallet?.lowercased(),
+            let nonce = MobilePairingService.shared.pairedKeyNonce?.lowercased()
+        else { return false }
+        return caller == nonce
     }
 }

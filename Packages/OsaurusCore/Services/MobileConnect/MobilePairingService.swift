@@ -261,6 +261,13 @@ final class MobilePairingService: ObservableObject {
         }
     }
 
+    /// Nonce of the paired phone's access key, which run rows carry as their
+    /// caller identity — how a chat started on the phone is recognised.
+    var pairedKeyNonce: String? {
+        guard let device = pairedDevice else { return nil }
+        return APIKeyManager.shared.listKeys().first { $0.id == device.keyId }?.nonce
+    }
+
     // MARK: Paired device
 
     /// `POST /pair/unpair`: the paired phone unpairs itself. Only the key

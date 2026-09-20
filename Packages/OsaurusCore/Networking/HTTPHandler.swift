@@ -4954,6 +4954,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let source: String
         let archived: Bool
         let pinned: Bool
+        /// `mac` for the user's own chats, `ios` for ones this phone started,
+        /// otherwise the source (api, channel, …) — drives the row icon.
+        let origin: String
+        /// `vision | voice | code | search` badges the Mac shows.
+        let capabilities: [String]
     }
 
     private struct SessionsResponse: Encodable {
@@ -5021,6 +5026,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let query = Self.queryItems(from: head.uri)
         let agentFilter = query["agent_id"].flatMap { UUID(uuidString: $0) }
         let includeArchived = query["archived"] == "true"
+        let pinnedOnly = query["pinned"] == "true"
+        // `mac`, `ios`, or a SessionSource raw value (http, channel, …).
+        let originFilter = query["origin"].flatMap { $0.isEmpty ? nil : $0 }
+        let search = (query["q"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let limit = query["limit"].flatMap(Int.init).map { max(1, min($0, 500)) } ?? 200
 
         let cors = stateRef.value.corsHeaders
@@ -5029,12 +5038,37 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask(priority: .userInitiated) {
             let sessions = await MainActor.run { ChatSessionStore.loadAll() }
+            // Like the Mac's history search: title match, or the message
+            // bodies contain the query (a DB scan off the main actor).
+            let contentMatches: Set<UUID> =
+                search.isEmpty ? [] : await ChatSessionStore.sessionIds(withContentContaining: search)
+            let phoneSessions: Set<UUID> = await MainActor.run {
+                Set(
+                    sessions
+                        .filter { session in
+                            session.workspace.map(RemoteSessionContinuation.isFromPairedPhone) ?? false
+                        }
+                        .map(\.id)
+                )
+            }
             let rows =
                 sessions
                 .filter { includeArchived || !$0.archived }
+                .filter { !pinnedOnly || $0.pinned }
                 .filter { agentFilter == nil || $0.agentId == agentFilter }
+                .filter { session in
+                    guard let originFilter else { return true }
+                    let origin =
+                        phoneSessions.contains(session.id)
+                        ? "ios" : (session.source == .chat ? "mac" : session.source.rawValue)
+                    return origin == originFilter
+                }
+                .filter { session in
+                    guard !search.isEmpty else { return true }
+                    return session.title.lowercased().contains(search) || contentMatches.contains(session.id)
+                }
                 .prefix(limit)
-                .map(Self.summary(for:))
+                .map { Self.summary(for: $0, fromPhone: phoneSessions.contains($0.id)) }
             let json =
                 (try? JSONEncoder.osaurusCanonical().encode(SessionsResponse(sessions: Array(rows))))
                 .map { String(decoding: $0, as: UTF8.self) } ?? #"{"sessions":[]}"#
@@ -5183,7 +5217,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: Session DTO mapping
 
-    static func summary(for session: ChatSessionData) -> SessionSummaryDTO {
+    static func summary(for session: ChatSessionData, fromPhone: Bool = false) -> SessionSummaryDTO {
         SessionSummaryDTO(
             id: session.id.uuidString,
             title: session.title,
@@ -5193,7 +5227,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             selected_model: session.selectedModel,
             source: session.source.rawValue,
             archived: session.archived,
-            pinned: session.pinned
+            pinned: session.pinned,
+            origin: fromPhone ? "ios" : (session.source == .chat ? "mac" : session.source.rawValue),
+            capabilities: session.capabilities.map(\.rawValue).sorted()
         )
     }
 
