@@ -171,6 +171,57 @@ enum ToolPermissionPromptService {
         queue.removeAll()
     }
 
+    // MARK: - Remote approvals (Osaurus Connect)
+
+    /// One card as a paired phone sees it (docs/MOBILE_PROTOCOL.md §16).
+    struct RemotePrompt: Sendable, Equatable {
+        let id: UUID
+        let toolName: String
+        let description: String
+        let argumentsJSON: String
+        /// Whether "Allow for This Task" is on offer.
+        let offersRunLease: Bool
+        /// Where the approved call would run, so consent is informed.
+        let surface: String?
+        /// True for the card on screen; the rest are queued behind it.
+        let isPresented: Bool
+    }
+
+    /// Everything outstanding, presented card first. The phone shows these
+    /// and answers them with `resolveRemotely`.
+    static var remotePrompts: [RemotePrompt] {
+        var result: [RemotePrompt] = []
+        if let slot, let request = presentedRequest {
+            result.append(remotePrompt(id: slot.id, request: request, isPresented: true))
+        }
+        for entry in queue where entry.id != slot?.id {
+            result.append(remotePrompt(id: entry.id, request: entry.request, isPresented: false))
+        }
+        return result
+    }
+
+    private static func remotePrompt(id: UUID, request: PromptRequest, isPresented: Bool) -> RemotePrompt {
+        RemotePrompt(
+            id: id,
+            toolName: request.toolName,
+            description: request.description,
+            argumentsJSON: request.argumentsJSON,
+            offersRunLease: request.offersRunLease && !request.perCallApprovalOnly,
+            surface: request.executionSurface?.rawValue,
+            isPresented: isPresented
+        )
+    }
+
+    /// Answers a card from a paired phone, exactly as the panel's buttons do:
+    /// the waiting run resumes and any open panel is torn down. False when
+    /// the id is unknown — already answered on the Mac, or the run ended.
+    @discardableResult
+    static func resolveRemotely(id: UUID, outcome: PromptResolution) -> Bool {
+        guard continuations[id] != nil else { return false }
+        resolve(id: id, outcome: outcome)
+        return true
+    }
+
     // MARK: - Entry points
 
     static func requestApproval(

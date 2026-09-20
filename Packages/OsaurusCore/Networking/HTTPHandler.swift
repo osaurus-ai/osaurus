@@ -884,6 +884,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     userAgent: userAgent
                 )
+            } else if head.method == .GET, path == "/approvals" {
+                handleListApprovalsEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .POST, path.hasPrefix("/approvals/") {
+                handleAnswerApprovalEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .GET, path == "/workspaces/agents" {
                 handleWorkspaceAgentsEndpoint(
                     head: head,
@@ -5243,6 +5258,181 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     )
                 }
             }
+        }
+    }
+
+    /// One pending approval card of `GET /approvals`.
+    private struct ApprovalDTO: Encodable {
+        let id: String
+        let tool: String
+        let description: String
+        /// The call's arguments, as the Mac's own card shows them.
+        let arguments: String
+        /// `sandboxVM | nativeHost | remoteServer`, or null when the card is
+        /// not about running a tool somewhere.
+        let surface: String?
+        /// Whether `allow_for_run` is one of the answers.
+        let offers_run_lease: Bool
+        /// True for the card on screen; the rest are queued behind it.
+        let presented: Bool
+    }
+
+    private struct ApprovalsResponse: Encodable {
+        let approvals: [ApprovalDTO]
+    }
+
+    private struct ApprovalDecisionRequest: Decodable {
+        let decision: String
+    }
+
+    /// GET /approvals — the cards this Mac is waiting on
+    /// (docs/MOBILE_PROTOCOL.md §16.1). Owner-only: answering a card is
+    /// consent to run something on this Mac.
+    private func handleListApprovalsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(
+                head: head,
+                context: context,
+                path: "/approvals",
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let approvals: [ApprovalDTO] = await MainActor.run {
+                ToolPermissionPromptService.remotePrompts.map { prompt in
+                    ApprovalDTO(
+                        id: prompt.id.uuidString,
+                        tool: prompt.toolName,
+                        description: prompt.description,
+                        arguments: prompt.argumentsJSON,
+                        surface: prompt.surface,
+                        offers_run_lease: prompt.offersRunLease,
+                        presented: prompt.isPresented
+                    )
+                }
+            }
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(ApprovalsResponse(approvals: approvals)))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"approvals":[]}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET",
+                    path: "/approvals",
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "{\"approvals\":[\(approvals.count)]}",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// POST /approvals/{id} — answer one card (§16.2). Owner-only.
+    private func handleAnswerApprovalEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        func reply(_ status: HTTPResponseStatus, _ body: String) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            logRequest(
+                method: "POST",
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        let components = path.split(separator: "/")
+        guard components.count == 2, let promptId = UUID(uuidString: String(components[1])) else {
+            reply(.badRequest, #"{"error":"invalid_approval_id"}"#)
+            return
+        }
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(ApprovalDecisionRequest.self, from: data),
+            let outcome = Self.promptResolution(for: request.decision)
+        else {
+            reply(
+                .badRequest,
+                #"{"error":"bad_request","message":"Expected {decision: deny | allow_once | allow_for_run | always_allow}"}"#
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let answered = await MainActor.run {
+                ToolPermissionPromptService.resolveRemotely(id: promptId, outcome: outcome)
+            }
+            // A card that is gone was already answered on the Mac, or its run
+            // ended — say so rather than pretending the decision landed.
+            let status: HTTPResponseStatus = answered ? .ok : .notFound
+            let json = answered ? #"{"ok":true}"# : #"{"error":"approval_not_pending"}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: status,
+                    headers: headers,
+                    body: json
+                )
+                self.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: json,
+                    responseStatus: Int(status.code),
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// The §16.2 decision vocabulary. Nil for anything else.
+    static func promptResolution(
+        for decision: String
+    ) -> ToolPermissionPromptService.PromptResolution? {
+        switch decision {
+        case "deny": return .denied
+        case "allow_once": return .allowOnce
+        case "allow_for_run": return .allowForRun
+        case "always_allow": return .alwaysAllow
+        default: return nil
         }
     }
 

@@ -1004,3 +1004,34 @@ The run belongs to the teammate's Mac, so this is a thinner stream than a
 local agent's: assistant text only — no tool trace, prefill or artifact
 chunks — and it is not written into this Mac's chat history, so it does not
 appear under §14. A refusal arrives as an error chunk naming the agent.
+
+---
+
+## 16. Remote approvals
+
+A tool whose policy is `ask` raises an approval card on the Mac and the run
+waits on it. These routes let a paired phone answer that card instead of the
+run stalling until someone is back at the Mac. Owner-only: answering a card
+is consent to run something on this Mac.
+
+### 16.1 `GET /approvals`
+
+```json
+{"approvals":[{"id":"<uuid>","tool":"file_write","description":"…",
+               "arguments":"{\"path\":\"…\"}","surface":"nativeHost",
+               "offers_run_lease":true,"presented":true}]}
+```
+
+Everything outstanding, the card on screen first (`presented: true`) and the
+queue behind it after. `surface` is `sandboxVM | nativeHost | remoteServer`,
+or null for a card that is not about running a tool somewhere.
+
+### 16.2 `POST /approvals/{id}`
+
+Body `{"decision":"deny" | "allow_once" | "allow_for_run" | "always_allow"}`
+— the same four answers the Mac's card offers; `allow_for_run` only when the
+card said `offers_run_lease`. The waiting run resumes immediately and any
+open panel on the Mac is torn down, exactly as if the button had been
+pressed there. `404 approval_not_pending` when the card is already gone —
+answered on the Mac, or its run ended. An unknown decision is a `400`, never
+an allow.
