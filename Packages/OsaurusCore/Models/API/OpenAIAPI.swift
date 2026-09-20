@@ -724,6 +724,10 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// vmlx-swift's `CacheCoordinator` is content-addressed and discovers
     /// reusable prefixes autonomously.
     var session_id: String? = nil
+    /// Osaurus Connect: continue one of the Mac's own chat sessions — its
+    /// turns become the model context and the new turns are appended back
+    /// (docs/MOBILE_PROTOCOL.md §14.5). Owner callers only.
+    var osaurus_session_id: String? = nil
     /// Deterministic-sampling seed (OpenAI v1.x). When set, identical
     /// requests should yield identical completions on the same backend.
     var seed: Int? = nil

@@ -910,3 +910,16 @@ true only when running the tool raises no approval card on the Mac and the
 surface allows it — an `ask` tool would block on a card the phone can't
 answer yet (that arrives with remote approvals). `blocked_by` lists
 ungranted requirements or missing system permissions.
+
+### 14.5 Continuing a Mac chat
+
+`POST /agents/{id}/run` accepts `osaurus_session_id: "<session uuid>"`
+(owner callers only). The host loads that chat's turns as the model context
+— so the client sends only the new user message — and appends the turns the
+run produces back into the same chat. An open Mac window showing it updates
+live; otherwise History refreshes. The run's model becomes the chat's
+`selected_model`, as it does on the Mac.
+
+Ignored (the run proceeds statelessly) when the id is unknown or names a
+workspace chat served for a teammate. `session_id` keeps its existing
+meaning (host-side cache scoping) and is unrelated.

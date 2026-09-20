@@ -7194,6 +7194,46 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 modelOverride: model
             )
             var messages = enrichedReq.messages
+            // Osaurus Connect: continuing one of the Mac's own chats. Its
+            // stored turns become the context, and the turns this run adds
+            // are appended back to it below (docs/MOBILE_PROTOCOL.md §14.5).
+            let continuedSessionId: UUID? = await {
+                guard includeToolDetail,  // owner caller (loopback / master key)
+                    let raw = req.osaurus_session_id,
+                    let id = UUID(uuidString: raw)
+                else { return nil }
+                return await MainActor.run { RemoteSessionContinuation.isContinuable(id) ? id : nil }
+            }()
+            // Index of the first message this run adds to that chat (its own
+            // request messages and everything the loop appends).
+            let persistFrom = SendableInt(0)
+            if let continuedSessionId {
+                let history = await RemoteSessionContinuation.history(for: continuedSessionId)
+                // Keep the composed system prompt first, then the stored
+                // conversation, then this request's new messages.
+                let systemCount = messages.prefix(while: { $0.role == "system" }).count
+                messages.insert(contentsOf: history, at: systemCount)
+                persistFrom.value = systemCount + history.count
+            }
+            // Append this run's turns to the continued chat when the request
+            // ends, however it ends (finished, errored, client gone).
+            defer {
+                if let continuedSessionId {
+                    let start = min(persistFrom.value, messages.count)
+                    let appended = Array(messages[start...]).filter { $0.role != "system" }
+                    let runModel = model
+                    if !appended.isEmpty {
+                        Task { @MainActor in
+                            RemoteSessionContinuation.append(
+                                appended,
+                                to: continuedSessionId,
+                                model: runModel
+                            )
+                        }
+                    }
+                }
+            }
+
             let tools = enrichedReq.tools ?? []
             let resolvedToolChoice = enrichedReq.tool_choice
 

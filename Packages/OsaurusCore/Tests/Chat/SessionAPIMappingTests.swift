@@ -79,3 +79,39 @@ struct SessionAPIMappingTests {
         #expect(dto.source == "chat")
     }
 }
+
+@MainActor
+struct RemoteSessionContinuationTests {
+    @Test func storedTurnsBecomeModelMessages() throws {
+        let call = ToolCall(
+            id: "c1",
+            type: "function",
+            function: ToolCallFunction(name: "web_search", arguments: "{}")
+        )
+        let user = try #require(RemoteSessionContinuation.message(from: .init(role: .user, content: "hi")))
+        #expect(user.role == "user")
+        #expect(user.content == "hi")
+
+        let assistant = try #require(
+            RemoteSessionContinuation.message(from: .init(role: .assistant, content: "", toolCalls: [call]))
+        )
+        #expect(assistant.tool_calls?.count == 1)
+
+        let toolTurn = try #require(
+            RemoteSessionContinuation.message(
+                from: .init(role: .tool, content: "result", toolCallId: "c1")
+            )
+        )
+        #expect(toolTurn.tool_call_id == "c1")
+    }
+
+    @Test func emptyAndExcludedTurnsAreSkipped() {
+        #expect(RemoteSessionContinuation.message(from: .init(role: .assistant, content: "")) == nil)
+        #expect(RemoteSessionContinuation.message(from: .init(role: .system, content: "prompt")) == nil)
+        #expect(
+            RemoteSessionContinuation.message(
+                from: .init(role: .user, content: "old", modelContextExcluded: true)
+            ) == nil
+        )
+    }
+}
