@@ -5238,7 +5238,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     )
                 }
             } catch {
-                let message = WorkspaceAgentRunClient.message(for: error, agentName: displayName)
+                let message = await MainActor.run {
+                    WorkspaceAgentRunClient.message(for: error, agentName: displayName)
+                }
                 let needsHeaders = !headersSent
                 hop {
                     // A refusal before the first chunk still owes the client a
