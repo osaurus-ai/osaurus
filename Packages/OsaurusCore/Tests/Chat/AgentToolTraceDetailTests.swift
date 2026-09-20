@@ -68,3 +68,13 @@ struct AgentToolTraceDetailTests {
         #expect(timer.finish("never-started") == nil)
     }
 }
+
+struct AgentAvatarContentTypeTests {
+    @Test func mapsImageExtensionsAndDefaultsToJPEG() {
+        #expect(HTTPHandler.imageContentType(forPathExtension: "PNG") == "image/png")
+        #expect(HTTPHandler.imageContentType(forPathExtension: "heic") == "image/heic")
+        #expect(HTTPHandler.imageContentType(forPathExtension: "tif") == "image/tiff")
+        #expect(HTTPHandler.imageContentType(forPathExtension: "jpg") == "image/jpeg")
+        #expect(HTTPHandler.imageContentType(forPathExtension: "") == "image/jpeg")
+    }
+}

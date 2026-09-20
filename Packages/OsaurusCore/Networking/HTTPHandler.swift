@@ -878,6 +878,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } else if head.method == .GET, path == "/agents" {
                 handleListAgents(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .GET, path.hasPrefix("/agents/"), path.hasSuffix("/avatar") {
+                handleAgentAvatarEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .GET, path.hasPrefix("/agents/") {
                 handleGetAgentEndpoint(
                     head: head,
@@ -4296,6 +4304,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// Relay base URL (docs/MOBILE_PROTOCOL.md §6.1) when the agent's
         /// relay tunnel is enabled; nil = reachable on the LAN only.
         let relay_url: String?
+        /// True when the agent has a user-supplied avatar image. The bytes are
+        /// never inlined; owner callers fetch `GET /agents/{id}/avatar`.
+        let custom_avatar: Bool?
     }
 
     private struct AgentListResponse: Codable {
@@ -4729,6 +4740,105 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime
                 )
             }
+        }
+    }
+
+    /// GET /agents/{id}/avatar — the agent's user-supplied avatar image
+    /// bytes. Owner-only (the image is host content), and only for agents
+    /// whose metadata says `custom_avatar` (docs/MOBILE_PROTOCOL.md §13).
+    private func handleAgentAvatarEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/")
+        guard components.count == 3, components[0] == "agents",
+            let agentId = UUID(uuidString: String(components[1]))
+                ?? AgentIdentityRegistry.shared.agentId(forAddress: String(components[1]))
+        else {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: headers,
+                body: #"{"error":"invalid_agent_id"}"#
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let url = await MainActor.run { AgentManager.shared.agent(for: agentId)?.customAvatarURL }
+            guard let url, let data = try? Data(contentsOf: url) else {
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .notFound,
+                        headers: headers,
+                        body: #"{"error":"no_custom_avatar"}"#
+                    )
+                    self.logRequest(
+                        method: "GET",
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: #"{"error":"no_custom_avatar"}"#,
+                        responseStatus: 404,
+                        startTime: startTime
+                    )
+                }
+                return
+            }
+            let contentType = Self.imageContentType(forPathExtension: url.pathExtension)
+            hop {
+                let context = ctx.value
+                var head2 = HTTPResponseHead(version: head.version, status: .ok)
+                var headers = HTTPHeaders()
+                headers.add(name: "Content-Type", value: contentType)
+                headers.add(name: "Content-Length", value: String(data.count))
+                headers.add(name: "Cache-Control", value: "no-store")
+                for (name, value) in cors { headers.add(name: name, value: value) }
+                head2.headers = headers
+                var buffer = context.channel.allocator.buffer(capacity: data.count)
+                buffer.writeBytes(data)
+                context.write(NIOAny(HTTPServerResponsePart.head(head2)), promise: nil)
+                context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?)), promise: nil)
+                self.logRequest(
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "<\(data.count) bytes \(contentType)>",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    static func imageContentType(forPathExtension ext: String) -> String {
+        switch ext.lowercased() {
+        case "png": return "image/png"
+        case "gif": return "image/gif"
+        case "heic": return "image/heic"
+        case "webp": return "image/webp"
+        case "tiff", "tif": return "image/tiff"
+        default: return "image/jpeg"
         }
     }
 
@@ -5997,6 +6107,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     address: agent.agentAddress?.lowercased(),
                     relay_url: relayEnabled.contains(agent.id)
                         ? agent.agentAddress.map(RelayTunnelManager.publicURL(forAddress:)) : nil
+                    ,
+                    custom_avatar: agent.customAvatarURL != nil ? true : nil
                 )
             }
 
@@ -6149,6 +6261,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 updated_at: formatter.string(from: agent.updatedAt),
                 address: agent.agentAddress?.lowercased(),
                 relay_url: relayOn ? agent.agentAddress.map(RelayTunnelManager.publicURL(forAddress:)) : nil
+                ,
+                custom_avatar: agent.customAvatarURL != nil ? true : nil
             )
             let json =
                 (try? JSONEncoder.osaurusCanonical().encode(item)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"

@@ -29,6 +29,7 @@ Related: [`IDENTITY.md`](IDENTITY.md) (identity model, key derivation),
 10. [Sequence diagrams](#10-sequence-diagrams)
 11. [Osaurus Connect pairing (6-digit code)](#11-osaurus-connect-pairing-6-digit-code)
 12. [Choosing a model](#12-choosing-a-model)
+13. [Agent avatars](#13-agent-avatars)
 
 ---
 
@@ -839,3 +840,17 @@ model — exactly what picking a model in the Mac composer does — and returns
 built-in agents. Per-chat choice is simply the `model` field of `/run`
 (§6.3); shared workspace agents still refuse overrides
 (`workspace_model_locked`).
+
+---
+
+## 13. Agent avatars
+
+`GET /agents` and `GET /agents/{id}` carry the agent's mascot id in `avatar`
+(`blue | green | orange | purple | red | yellow`; the client falls back to a
+monogram of the agent's name) and `custom_avatar: true` when the user picked
+their own image.
+
+`GET /agents/{id}/avatar` returns those image bytes with the matching
+`image/*` content type. Owner-only (`403 owner_only` otherwise), since the
+image is host content; `404 no_custom_avatar` when the agent has none. The
+mascot images themselves ship inside each client.
