@@ -5001,7 +5001,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let pinned: Bool?
     }
 
-    private static let sessionDateFormatter = ISO8601DateFormatter()
+    /// Formatting-only use of a shared formatter: `ISO8601DateFormatter` is
+    /// documented as thread-safe for formatting, and this one is never
+    /// reconfigured after creation.
+    nonisolated(unsafe) private static let sessionDateFormatter = ISO8601DateFormatter()
 
     /// GET /sessions[?agent_id=&limit=&archived=] — the Mac's chat history
     /// (docs/MOBILE_PROTOCOL.md §14). Owner-only: these are the user's chats.
