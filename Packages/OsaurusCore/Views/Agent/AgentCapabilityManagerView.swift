@@ -1013,8 +1013,7 @@ struct AgentCapabilityManagerView: View {
     // MARK: - Apple apps
 
     /// Turning an app ON also fires the macOS permission request right away
-    /// (iMCP's activation pattern) so the first tool call does not stall on
-    /// a TCC dialog mid-turn; a denial does NOT revert the toggle — the
+    /// so the first tool call does not stall on a TCC dialog mid-turn; a denial does NOT revert the toggle — the
     /// header shows "Permission needed" with a one-click path instead.
     private func setAppleApp(_ app: AppleApp, enabled: Bool) {
         guard includesAppleApps else { return }
