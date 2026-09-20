@@ -858,6 +858,15 @@ mascot images themselves ship inside each client.
 
 ---
 
+## 13.1 The agent's system prompt
+
+`GET /agents/{id}` carries `system_prompt` for owner callers, so a paired
+phone can show what the agent was told to be. It is absent (null) for
+agent-scoped callers — a workspace peer has no business reading it — and is
+never included in the `GET /agents` list, which stays small.
+
+---
+
 ## 14. Reading the Mac's chats
 
 Owner-only (§12), inside the Secure Channel. These expose the user's own

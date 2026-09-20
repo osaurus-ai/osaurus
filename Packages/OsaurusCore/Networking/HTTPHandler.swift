@@ -4335,6 +4335,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// True when the agent has a user-supplied avatar image. The bytes are
         /// never inlined; owner callers fetch `GET /agents/{id}/avatar`.
         let custom_avatar: Bool?
+        /// The agent's system prompt, on `GET /agents/{id}` and for owner
+        /// callers only — a workspace peer has no business reading it.
+        let system_prompt: String?
     }
 
     private struct AgentListResponse: Codable {
@@ -6778,7 +6781,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     relay_url: relayEnabled.contains(agent.id)
                         ? agent.agentAddress.map(RelayTunnelManager.publicURL(forAddress:)) : nil
                     ,
-                    custom_avatar: agent.customAvatarURL != nil ? true : nil
+                    custom_avatar: agent.customAvatarURL != nil ? true : nil,
+                    system_prompt: nil
                 )
             }
 
@@ -6853,6 +6857,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             return
         }
+
+        // The system prompt is owner-only; read the flag on the event loop.
+        let ownerCaller = callerOwnsThisMac(context)
 
         // Confine agent-scoped keys to their own agent: a key minted by
         // `/pair` / `/pair-invite` for agent A must not read another agent's
@@ -6932,7 +6939,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 address: agent.agentAddress?.lowercased(),
                 relay_url: relayOn ? agent.agentAddress.map(RelayTunnelManager.publicURL(forAddress:)) : nil
                 ,
-                custom_avatar: agent.customAvatarURL != nil ? true : nil
+                custom_avatar: agent.customAvatarURL != nil ? true : nil,
+                system_prompt: ownerCaller ? agent.systemPrompt : nil
             )
             let json =
                 (try? JSONEncoder.osaurusCanonical().encode(item)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
