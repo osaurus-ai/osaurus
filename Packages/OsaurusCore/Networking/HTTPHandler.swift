@@ -4951,6 +4951,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let projects: [ProjectDTO]
         /// Installed plugins, for the history's plugin filter.
         let plugins: [ProjectDTO]
+        /// Joined router workspaces, for the history's workspace filter.
+        let workspaces: [ProjectDTO]
     }
 
     /// GET /projects — the user's chat projects, for the history filter
@@ -4970,7 +4972,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask(priority: .userInitiated) {
-            let (projects, plugins) = await MainActor.run {
+            let (projects, plugins, workspaces) = await MainActor.run {
                 (
                     ProjectManager.shared.projects.map { ProjectDTO(id: $0.id.uuidString, name: $0.name) },
                     PluginManager.shared.plugins
@@ -4980,11 +4982,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 name: loaded.plugin.manifest.name ?? loaded.plugin.manifest.plugin_id
                             )
                         }
-                        .sorted { $0.name.caseInsensitiveCompare($1.name) == .orderedAscending }
+                        .sorted { $0.name.caseInsensitiveCompare($1.name) == .orderedAscending },
+                    WorkspacesService.shared.workspaces.map { ProjectDTO(id: $0.id, name: $0.name) }
                 )
             }
             let json =
-                (try? JSONEncoder.osaurusCanonical().encode(ProjectsResponse(projects: projects, plugins: plugins)))
+                (try? JSONEncoder.osaurusCanonical().encode(ProjectsResponse(projects: projects, plugins: plugins, workspaces: workspaces)))
                 .map { String(decoding: $0, as: UTF8.self) } ?? #"{"projects":[]}"#
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -5026,6 +5029,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let project_id: String?
         /// Plugin that started this chat (`source == "plugin"`).
         let plugin_id: String?
+        /// Router workspace this chat was served for, when any.
+        let workspace_id: String?
     }
 
     private struct SessionsResponse: Encodable {
@@ -5098,6 +5103,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let originFilter = query["origin"].flatMap { $0.isEmpty ? nil : $0 }
         let projectFilter = query["project_id"].flatMap { UUID(uuidString: $0) }
         let pluginFilter = query["plugin_id"].flatMap { $0.isEmpty ? nil : $0 }
+        let workspaceFilter = query["workspace_id"].flatMap { $0.isEmpty ? nil : $0 }
         let search = (query["q"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         // Multi-select AND, as on the Mac: a chat must have every capability asked for.
         let requiredCapabilities: Set<SessionCapability> = Set(
@@ -5141,6 +5147,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 .filter { requiredCapabilities.isSubset(of: $0.capabilities) }
                 .filter { projectFilter == nil || $0.projectId == projectFilter }
                 .filter { pluginFilter == nil || ($0.source == .plugin && $0.sourcePluginId == pluginFilter) }
+                .filter { workspaceFilter == nil || $0.workspace?.workspaceId == workspaceFilter }
                 .filter { session in
                     guard !search.isEmpty else { return true }
                     return session.title.lowercased().contains(search) || contentMatches.contains(session.id)
@@ -5309,7 +5316,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             origin: fromPhone ? "ios" : (session.source == .chat ? "mac" : session.source.rawValue),
             capabilities: session.capabilities.map(\.rawValue).sorted(),
             project_id: session.projectId?.uuidString,
-            plugin_id: session.source == .plugin ? session.sourcePluginId : nil
+            plugin_id: session.source == .plugin ? session.sourcePluginId : nil,
+            workspace_id: session.workspace.map(\.workspaceId).flatMap { $0.isEmpty ? nil : $0 }
         )
     }
 
