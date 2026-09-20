@@ -918,6 +918,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     userAgent: userAgent
                 )
+            } else if head.method == .POST, path == "/agents" {
+                handleCreateAgentEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .GET, path == "/agents" {
                 handleListAgents(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .PATCH, path.hasPrefix("/agents/"), path.contains("/tools/") {
@@ -5259,6 +5266,105 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         startTime: logStartTime
                     )
                 }
+            }
+        }
+    }
+
+    private struct CreateAgentRequest: Decodable {
+        let name: String
+        let description: String?
+        let system_prompt: String?
+        let model: String?
+    }
+
+    /// POST /agents — create an agent from the phone
+    /// (docs/MOBILE_PROTOCOL.md §17). Owner-only: a new agent is a new
+    /// identity on this Mac. The reply is the agent in the `GET /agents/{id}`
+    /// shape so the client can open a chat with it straight away.
+    private func handleCreateAgentEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(
+                head: head,
+                context: context,
+                path: "/agents",
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        func reply(_ status: HTTPResponseStatus, _ body: String) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            logRequest(
+                method: "POST",
+                path: "/agents",
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(CreateAgentRequest.self, from: data) else {
+            reply(.badRequest, #"{"error":"bad_request","message":"Expected {name, description?, system_prompt?, model?}"}"#)
+            return
+        }
+        let name = request.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            reply(.badRequest, #"{"error":"bad_request","message":"name must not be empty"}"#)
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let description = request.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let systemPrompt = request.system_prompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let model = request.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        runRequestTask(priority: .userInitiated) {
+            let created: (id: String, name: String) = await MainActor.run {
+                let agent = AgentManager.shared.create(
+                    name: String(name.prefix(80)),
+                    description: String(description.prefix(300)),
+                    systemPrompt: systemPrompt,
+                    defaultModel: (model?.isEmpty ?? true) ? nil : model
+                )
+                return (agent.id.uuidString, agent.name)
+            }
+            let escapedName = created.name.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            let json = #"{"id":"\#(created.id)","name":"\#(escapedName)"}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .created,
+                    headers: headers,
+                    body: json
+                )
+                self.logRequest(
+                    method: "POST",
+                    path: "/agents",
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: json,
+                    responseStatus: 201,
+                    startTime: startTime
+                )
             }
         }
     }

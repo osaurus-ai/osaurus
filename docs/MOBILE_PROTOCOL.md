@@ -1035,3 +1035,19 @@ open panel on the Mac is torn down, exactly as if the button had been
 pressed there. `404 approval_not_pending` when the card is already gone —
 answered on the Mac, or its run ended. An unknown decision is a `400`, never
 an allow.
+
+---
+
+## 17. Creating an agent
+
+### `POST /agents`
+
+Body `{"name":"Researcher","description":"…","system_prompt":"…","model":"…"}`
+— only `name` is required; `description` is capped at 300 characters and the
+name at 80. `model` is a picker id from §12, or omitted to inherit the Mac's
+default. The reply is `201 {"id":"<uuid>","name":"…"}`, and `GET /agents/{id}`
+then returns the full record, so a client can open a chat with the new agent
+straight away.
+
+Owner-only: a new agent is a new identity on this Mac. The agent is created
+exactly as the Mac's own New Agent flow creates it, sandbox policy included.
