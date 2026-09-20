@@ -5183,11 +5183,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // Refuses up front on an offline host, a lapsed key or an
                 // agent that is no longer shared, rather than failing midway.
                 let prepared = try await WorkspaceAgentRunClient.shared.prepare(ref)
-                guard
-                    let service = await MainActor.run({
-                        RemoteProviderManager.shared.service(for: prepared.providerId)
-                    })
-                else {
+                let providerId = prepared.providerId
+                let resolved: RemoteProviderService? = await MainActor.run {
+                    RemoteProviderManager.shared.service(for: providerId)
+                }
+                guard let service = resolved else {
                     throw WorkspaceAgentRunError.connectFailed("no provider service")
                 }
                 let model = prepared.effectiveModel ?? request.model
