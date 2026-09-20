@@ -867,8 +867,10 @@ chat history from `~/.osaurus/chat-history/history.sqlite`.
 
 Metadata only, newest first. Query: `agent_id`, `archived=true` (archived
 only — it is a lens, as on the Mac), `pinned=true`, `origin` (`mac`, `ios`,
-or a source such as `http`), `q` (matches the title or any message body,
-the same scan the Mac search uses), `limit` (default 200, max 500).
+or a source such as `http`), `capabilities` (comma-separated `vision,code`;
+the chat must have all of them, as on the Mac), `project_id`, `q` (matches
+the title or any message body, the same scan the Mac search uses), `limit`
+(default 200, max 500).
 
 ```json
 {"sessions":[{"id":"<uuid>","title":"Bitcoin price","created_at":"…","updated_at":"…",
@@ -931,3 +933,9 @@ live; otherwise History refreshes. The run's model becomes the chat's
 Ignored (the run proceeds statelessly) when the id is unknown or names a
 workspace chat served for a teammate. `session_id` keeps its existing
 meaning (host-side cache scoping) and is unrelated.
+
+### 14.6 `GET /projects`
+
+`{"projects":[{"id":"<uuid>","name":"Website rewrite"}]}` — the user's chat
+projects, so a client can offer the Mac's project filter. Sessions carry
+`project_id` for the same purpose. Owner-only.

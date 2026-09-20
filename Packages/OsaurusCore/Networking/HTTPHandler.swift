@@ -876,6 +876,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     userAgent: userAgent
                 )
+            } else if head.method == .GET, path == "/projects" {
+                handleListProjectsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/sessions" {
                 handleListSessionsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET || head.method == .PATCH, path.hasPrefix("/sessions/") {
@@ -4940,6 +4942,55 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    private struct ProjectDTO: Encodable {
+        let id: String
+        let name: String
+    }
+
+    private struct ProjectsResponse: Encodable {
+        let projects: [ProjectDTO]
+    }
+
+    /// GET /projects — the user's chat projects, for the history filter
+    /// (docs/MOBILE_PROTOCOL.md §14.6). Owner-only.
+    private func handleListProjectsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: "/projects", startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let projects = await MainActor.run {
+                ProjectManager.shared.projects.map { ProjectDTO(id: $0.id.uuidString, name: $0.name) }
+            }
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(ProjectsResponse(projects: projects)))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"projects":[]}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET",
+                    path: "/projects",
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: json,
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
     // MARK: - Chat sessions (Osaurus Connect)
 
     /// One row of `GET /sessions`: everything the phone's history list needs
@@ -4959,6 +5010,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let origin: String
         /// `vision | voice | code | search` badges the Mac shows.
         let capabilities: [String]
+        /// Project this chat belongs to, when any.
+        let project_id: String?
     }
 
     private struct SessionsResponse: Encodable {
@@ -5029,6 +5082,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let pinnedOnly = query["pinned"] == "true"
         // `mac`, `ios`, or a SessionSource raw value (http, channel, …).
         let originFilter = query["origin"].flatMap { $0.isEmpty ? nil : $0 }
+        let projectFilter = query["project_id"].flatMap { UUID(uuidString: $0) }
         let search = (query["q"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         // Multi-select AND, as on the Mac: a chat must have every capability asked for.
         let requiredCapabilities: Set<SessionCapability> = Set(
@@ -5070,6 +5124,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     return origin == originFilter
                 }
                 .filter { requiredCapabilities.isSubset(of: $0.capabilities) }
+                .filter { projectFilter == nil || $0.projectId == projectFilter }
                 .filter { session in
                     guard !search.isEmpty else { return true }
                     return session.title.lowercased().contains(search) || contentMatches.contains(session.id)
@@ -5236,7 +5291,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             archived: session.archived,
             pinned: session.pinned,
             origin: fromPhone ? "ios" : (session.source == .chat ? "mac" : session.source.rawValue),
-            capabilities: session.capabilities.map(\.rawValue).sorted()
+            capabilities: session.capabilities.map(\.rawValue).sorted(),
+            project_id: session.projectId?.uuidString
         )
     }
 
