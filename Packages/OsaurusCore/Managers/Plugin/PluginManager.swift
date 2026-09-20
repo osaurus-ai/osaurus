@@ -399,7 +399,17 @@ final class PluginManager {
     /// any context.
     nonisolated static let supersededPluginIds: Set<String> = [
         "osaurus.search", "osaurus.browser",
+        // Apple app plugins → built-in `AppleApps/` tool families, toggled per
+        // custom agent under Abilities → Tools (one picker group per app).
+        "osaurus.calendar", "osaurus.reminders", "osaurus.contacts", "osaurus.notes",
+        "osaurus.mail", "osaurus.messages", "osaurus.maps", "osaurus.music",
     ]
+
+    /// Apple app plugin ids specifically (subset of `supersededPluginIds`),
+    /// derived from `AppleApp.supersededPluginId` so the two lists cannot drift.
+    nonisolated static var supersededAppleAppPluginIds: Set<String> {
+        Set(AppleApp.allCases.compactMap(\.supersededPluginId))
+    }
 
     /// Drops superseded plugins from a scan result BEFORE any dlopen. Also
     /// removes their verification failures (e.g. a missing consent marker)
@@ -432,7 +442,9 @@ final class PluginManager {
         switch pluginId {
         case "osaurus.search": return .search
         case "osaurus.browser": return .browser
-        default: return nil
+        default:
+            // Apple app plugins live on as per-agent groups in the Tools picker.
+            return supersededAppleAppPluginIds.contains(pluginId) ? .agents : nil
         }
     }
 

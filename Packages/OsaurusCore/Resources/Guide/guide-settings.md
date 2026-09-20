@@ -14,7 +14,7 @@ Ask the assistant to change declarative settings in chat (`osaurus_config`); eac
 
 - The Orchestrator (itself): display name, model, temperature, max output tokens, persona (system prompt).
 - Memory: enabled, budget tokens, retention days.
-- Agents: create/update custom agents, capability toggles, which agent new chats open with (`new_chat_agent`).
+- Agents: create/update custom agents, capability toggles, which agent new chats open with (`new_chat_agent`), and which built-in **Apple Apps** a custom agent may use (`capabilities.apple_apps`, e.g. `["calendar", "reminders"]`). The Orchestrator never calls the Apple app tools itself; ask it to "give Planner access to Calendar" or "create a Mail agent" and it patches or provisions the custom agent.
 - Tools: global enablement and permission policies.
 - Delegation: allowed subagents (custom agents and teammates' shared agents as `Name@Workspace`), per-workspace auto-join, spawn permissions, and the per-subagent limits (tokens, turns, seconds, local/remote parallelism).
 - Plus everything else the declarative document covers: models, providers, MCP servers, plugins, commands, knowledge collections, channel routing, schedules, watchers, and web-search providers.
@@ -46,6 +46,12 @@ Ask the assistant to change declarative settings in chat (`osaurus_config`); eac
 | Max tokens (API defaults) | Generation Defaults → Max Tokens | ⌘⇧M → Server → Settings → Sampling Defaults |
 | KV / cache window | KV Retention Override | Same Cache panel as the context cap |
 | Tool permissions | Could be Tools catalog, Chat folder tools, or macOS Permissions — ask `find` |
+| Calendar / Reminders / Contacts / Notes / Mail / Messages / Maps / Weather / Music / Shortcuts access for an agent | Apple app groups in the tool picker (one group per app, toggled per app) | ⌘⇧M → Agents → *custom agent* → Abilities → Tools (declarative: `agents[].capabilities.apple_apps`) |
+| Calendar / Contacts / Automation grant for the whole app | macOS permission | ⌘⇧M → Permissions (or Grant / Open System Settings on the Apple Apps card) |
+
+## Apple Apps (built-in)
+
+Osaurus ships native tools for Calendar, Reminders, Contacts, Notes, Mail, Messages, Maps & Location, Weather, Music, and Shortcuts. They are **off by default** for every agent and are turned on per custom agent under **Agents → Abilities → Tools**, where each app is a group in the tool picker (Calendar, Reminders, …) listed above the plugin and MCP groups. The group's master checkbox — or any row switch, marked **Per app** — turns all of that app's tools on or off together; individual tools are not toggled separately. Turning an app on asks macOS for that app's permission right away (Calendar, Reminders, Contacts, Location, or Automation for Notes/Mail/Messages/Music; Messages reading needs Full Disk Access via System Settings). A denied grant does not flip the switch back — the group header shows a **Permission needed** badge; click it to re-ask or open System Settings. The Default agent (Orchestrator) has no Apple app groups in its picker and never calls these tools; it manages them on custom agents through `osaurus_config` (`capabilities.apple_apps`, the full list replaces the set, `[]` turns all off) and can provision a new agent with apps in the same call. The former `osaurus.calendar` / `.reminders` / `.contacts` / `.notes` / `.mail` / `.messages` / `.maps` / `.music` plugins are superseded by these built-ins.
 
 Unknown-Model Metadata Fallback on the same Cache panel does **not** constrain local models. Use Context Window Cap to lower the window.
 

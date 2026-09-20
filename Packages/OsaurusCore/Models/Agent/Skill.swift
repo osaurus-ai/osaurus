@@ -249,13 +249,13 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                 instructions: """
                     When helping manage calendar, reminders, email, or messages:
 
-                    ## Available tools (from plugins)
-                    - **Calendar**: `get_events`, `search_events`, `create_event`, `open_event`
-                    - **Reminders**: `get_reminders`, `search_reminders`, `create_reminder`, `get_lists`
-                    - **Mail**: `list_messages`, `read_message`, `search_messages`, `compose_message`, `reply_to_message`
-                    - **Messages**: `send_message`, `read_messages`, `get_unread_messages`
+                    ## Available tools (built into Osaurus, per-agent opt-in)
+                    - **Calendar**: `calendar_events`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event`, `calendar_open_event`
+                    - **Reminders**: `reminders_lists`, `reminders_fetch`, `reminders_create`, `reminders_update`, `reminders_complete`
+                    - **Mail**: `mail_list`, `mail_read`, `mail_search`, `mail_compose`, `mail_reply`
+                    - **Messages**: `messages_conversations`, `messages_read`, `messages_unread`, `messages_send`
 
-                    These come from installable plugins. If a tool is missing, use `capabilities_discover` to check what is available, and tell the user which plugin to install from Management → Plugins (osaurus.calendar, osaurus.reminders, osaurus.mail, osaurus.messages).
+                    These are built into Osaurus but OFF until the app is enabled for this agent. If a tool is missing, use `capabilities_discover` to check what is available, and tell the user to turn the app on for this agent under Management → Agents → this agent → Abilities → Tools (each Apple app is a group there; or ask the Orchestrator to enable it). Calendar, Reminders, and Contacts ask macOS for access on first use; Mail and Messages ask to allow automation.
 
                     ## Working with dates
                     - Call `get_current_time` before computing any relative date ("tomorrow", "next Tuesday") — never guess today's date

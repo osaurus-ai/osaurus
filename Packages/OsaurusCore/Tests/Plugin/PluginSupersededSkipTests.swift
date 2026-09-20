@@ -66,4 +66,22 @@ struct PluginSupersededSkipTests {
             #expect(PluginManager.nativeSettingsTab(forSupersededPlugin: pluginId) != nil)
         }
     }
+
+    @Test func supersededListCoversTheEightAppleAppPlugins() {
+        let appleIds = [
+            "osaurus.calendar", "osaurus.reminders", "osaurus.contacts", "osaurus.notes",
+            "osaurus.mail", "osaurus.messages", "osaurus.maps", "osaurus.music",
+        ]
+        for pluginId in appleIds {
+            #expect(PluginManager.supersededPluginIds.contains(pluginId), Comment(rawValue: pluginId))
+            #expect(PluginManager.supersededAppleAppPluginIds.contains(pluginId), Comment(rawValue: pluginId))
+            // Banner deep link lands on the Agents tab (Abilities → Apple Apps).
+            #expect(PluginManager.nativeSettingsTab(forSupersededPlugin: pluginId) == .agents, Comment(rawValue: pluginId))
+        }
+        // Every AppleApp with a plugin ancestor is in the skip list; the two
+        // net-new families (weather, shortcuts) have no plugin to supersede.
+        #expect(Set(AppleApp.allCases.compactMap(\.supersededPluginId)) == Set(appleIds))
+        #expect(AppleApp.weather.supersededPluginId == nil)
+        #expect(AppleApp.shortcuts.supersededPluginId == nil)
+    }
 }

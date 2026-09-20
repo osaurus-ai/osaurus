@@ -451,6 +451,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 // catalog so existing sign-ins carry over to Browser Use.
                 BrowserPluginMigration.migrateIfNeeded()
             }
+            // Superseded Apple app plugins → built-in Apple Apps: rename any
+            // ticked legacy plugin tools on custom agents and enable the owning
+            // app so those agents keep working. No Keychain involved.
+            AppleAppsPluginMigration.migrateIfNeeded()
             await MediaGenerationCoordinator.shared.refreshCloudCatalog()
             await MediaGenerationCoordinator.shared.resumePendingJobs()
             await ModelPickerItemCache.shared.prewarmModelCache()

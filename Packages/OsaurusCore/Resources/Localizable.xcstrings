@@ -272833,7 +272833,31 @@
           }
         }
       }
-    }
+    },
+    "Allows Osaurus to control other applications using AppleScript and Apple Events.": {},
+    "Allows Osaurus to control the Maps app via Apple Events.": {},
+    "Allows Osaurus to interact with UI elements, simulate input, and control the computer.": {},
+    "Allows Osaurus to read and create events in Calendar.app via AppleScript.": {},
+    "Allows Osaurus to read protected files such as the Messages database and other app data.": {},
+    "Allows the Calendar tools to read, create, and update events directly.": {},
+    "Allows the Contacts tools to look up, create, and update contacts.": {},
+    "Allows the Mail tools to read, search, and send email through Mail.app via Apple Events.": {},
+    "Allows the Maps & Location tools to use your current location.": {},
+    "Allows the Music tools to control playback and browse your library in Music.app via Apple Events.": {},
+    "Allows the Notes tools to read and create notes in the Notes app via Apple Events.": {},
+    "Allows the Reminders tools to read, create, and complete reminders.": {},
+    "Apple Apps": {},
+    "Apple apps: %@": {},
+    "Automation (Music)": {},
+    "Maps & Location": {},
+    "Music": {},
+    "Per app": {},
+    "Permission needed": {},
+    "Permissions needed": {},
+    "Shortcuts": {},
+    "Unnamed contact": {},
+    "Weather": {},
+    "macOS has not granted: %@. Click to grant or open System Settings.": {}
   },
   "version": "1.1"
 }

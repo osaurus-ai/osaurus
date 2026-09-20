@@ -146,6 +146,21 @@ struct SettingsSearchSelfFindProbe {
             // Workspaces → Shared agents: the per-workspace auto-join switch.
             ("let the orchestrator delegate to shared agents", "workspaces.agents.orchestratorAutoJoin"),
             ("auto-join", "workspaces.agents.orchestratorAutoJoin"),
+            // Agents → Abilities → Tools: the Apple Apps group row and one picker group per app,
+            // by the exact title each picker group shows.
+            ("apple apps", "agents.appleApps"),
+            ("Calendar", "agents.appleApps.calendar"),
+            ("Reminders", "agents.appleApps.reminders"),
+            ("Contacts", "agents.appleApps.contacts"),
+            ("Notes", "agents.appleApps.notes"),
+            ("Mail", "agents.appleApps.mail"),
+            ("Messages", "agents.appleApps.messages"),
+            ("Maps & Location", "agents.appleApps.maps"),
+            ("Weather", "agents.appleApps.weather"),
+            ("Music", "agents.appleApps.music"),
+            ("Shortcuts", "agents.appleApps.shortcuts"),
+            ("imessage", "agents.appleApps.messages"),
+            ("apple_apps", "agents.appleApps"),
         ]
 
         let missed = labels.filter { label in

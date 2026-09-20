@@ -346,6 +346,15 @@ public final class ToolRegistry: ObservableObject {
             AppleScriptTool(),
             MacQueryTool(),
         ]
+        // Built-in Apple app tools (Calendar, Reminders, Contacts, Notes,
+        // Mail, Messages, Maps/Location, Weather, Music, Shortcuts) — the
+        // native replacement for the osaurus-tools Apple plugins. Always
+        // registered so the runtime can execute them; the composer strips
+        // every app the agent has not enabled (`enabledAppleApps`) and the
+        // Orchestrator never carries them (`orchestratorExcludedToolNames`).
+        // Each conforms to `PermissionedTool` with the app's macOS
+        // permission(s) as requirements so the first call prompts via TCC.
+        + AppleAppToolCatalog.makeTools()
         var configChanged = false
         for tool in builtIns {
             register(tool)
@@ -2945,13 +2954,20 @@ extension ToolRegistry {
     /// `web_search` / `search_and_extract` are NOT excluded: quick lookups
     /// are a basic orchestrator capability (heavy research still dispatches
     /// to workers).
-    nonisolated static let orchestratorExcludedToolNames: Set<String> = [
+    nonisolated static let orchestratorExcludedToolNames: Set<String> = Set([
         "share_artifact",
         // The Orchestrator reads its working folder (`file_read` /
         // `file_search`) to brief workers and read their deliverables; the
         // workers do the writing and shell work in that folder.
         "file_write", "file_edit", "shell_run", "redact_file",
-    ]
+    ])
+    // The built-in Apple app tools (Calendar, Mail, Messages, …) are a
+    // custom-agent capability: the Orchestrator enables them on other
+    // agents through `osaurus_config` (`capabilities.apple_apps`) and
+    // dispatches the actual calendar/mail work there. Excluded here so
+    // not even a ticked manual name or a session load leaks one into the
+    // Orchestrator's schema.
+    .union(AppleApp.allToolNames)
 
     /// Baseline names every agent-target spawned worker carries regardless
     /// of the target's capability toggles: time for grounding, and

@@ -248,7 +248,8 @@ public enum DefaultAgentSystemPromptBuilder {
                     + "even when the request mentions web or downloads: use the tools above. "
                     + "A question about Osaurus or its features starts with an `osaurus_help` "
                     + "read or find — never answer one from memory, and never spawn a "
-                    + "specialist or Computer Use agent to click through Settings."
+                    + "specialist or Computer Use agent to click through Settings. "
+                    + Self.appleAppsDelegationLine
             )
             lines.append("")
             return lines.joined(separator: "\n")
@@ -388,7 +389,26 @@ public enum DefaultAgentSystemPromptBuilder {
                 + "`osaurus_help` (read or find). Never spawn an agent or Computer Use to click "
                 + "through Settings."
         )
+        lines.append("- " + Self.appleAppsDelegationLine)
         lines.append("")
         return lines.joined(separator: "\n")
     }
+
+    /// Apple app access (Calendar, Mail, Messages, …) is a custom-agent
+    /// capability the Orchestrator configures but never exercises itself:
+    /// the built-in tools are excluded from its schema
+    /// (`ToolRegistry.orchestratorExcludedToolNames`). One sentence teaches
+    /// both the routing (spawn an agent that has the app) and the enable
+    /// path (`capabilities.apple_apps`, including at creation). Shared by
+    /// the compact and full variants so they cannot drift.
+    static let appleAppsDelegationLine: String =
+        "Apple apps (Calendar, Reminders, Contacts, Notes, Mail, Messages, Maps, Weather, "
+        + "Music, Shortcuts) are built-in tools that run on a CUSTOM agent, never on you: "
+        + "to enable or disable them apply `agents: [{name: X, capabilities: {apple_apps: "
+        + "[calendar, reminders, …]}}]` (the list replaces the set; `[]` turns all off; you "
+        + "can create the agent with them in the same apply). For calendar/mail/messages/"
+        + "notes/reminders/contacts/maps/weather/music/shortcut work, `spawn_agent` an agent "
+        + "that has that app enabled (check `osaurus_inspect` describe → `apple_apps`); if "
+        + "none does, enable it on a fitting agent (or create one) and spawn it in the same "
+        + "turn. macOS asks the user for the app's permission the first time a tool runs."
 }

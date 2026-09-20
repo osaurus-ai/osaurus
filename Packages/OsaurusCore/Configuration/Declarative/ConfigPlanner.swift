@@ -379,6 +379,14 @@ enum ConfigPlanner {
                                 + "`\(raw)` is not a UUID.")
                     }
                 }
+                if let apps = entry.capabilities?.appleApps {
+                    for raw in apps where AppleApp.parse(raw) == nil {
+                        issues.append(
+                            "agents[\(entry.name)].capabilities.apple_apps: `\(raw)` is not a "
+                                + "built-in Apple app. Allowed: "
+                                + AppleApp.allCases.map(\.rawValue).joined(separator: ", ") + ".")
+                    }
+                }
                 // A doc name colliding with a built-in (non-default) agent
                 // would silently patch it; refuse instead.
                 if let existing = AgentManager.shared.agents.first(where: {
@@ -1138,6 +1146,10 @@ enum ConfigPlanner {
                     if caps.computerUseEnabled == true { risks.append(ConfigRisk.computerUse(entry.name)) }
                     if caps.browserUseEnabled == true { risks.append(ConfigRisk.browserUse(entry.name)) }
                     if caps.relayEnabled == true { risks.append(ConfigRisk.relayEnabled(entry.name)) }
+                    if let apps = Self.appleApps(from: caps), !apps.isEmpty {
+                        changes.append(
+                            "apple_apps: enable " + AppleApp.sorted(apps).map(\.displayName).joined(separator: ", "))
+                    }
                 }
                 actions.append(
                     ConfigPlanAction(
@@ -1205,6 +1217,12 @@ enum ConfigPlanner {
             current: agent.settings.renderChartEnabled, into: &changes)
         let currentRelay = RelayConfigurationStore.load().isEnabled(for: agent.id)
         diff("relay_enabled", desired: caps.relayEnabled, current: currentRelay, into: &changes)
+        if let desiredApps = Self.appleApps(from: caps) {
+            let current = agent.settings.enabledAppleApps
+            if desiredApps != current {
+                changes.append(contentsOf: appleAppsChangeLines(current: current, desired: desiredApps))
+            }
+        }
         if caps.computerUseEnabled == true && !agent.settings.computerUseEnabled {
             risks.append(ConfigRisk.computerUse(agent.name))
         }
@@ -1214,6 +1232,28 @@ enum ConfigPlanner {
         if caps.relayEnabled == true && !currentRelay {
             risks.append(ConfigRisk.relayEnabled(agent.name))
         }
+    }
+
+    /// Resolve `capabilities.apple_apps` into the enum set (nil when the
+    /// key is absent; unknown names were already rejected by `validate`).
+    static func appleApps(from caps: AgentCapabilitiesEntry) -> Set<AppleApp>? {
+        guard let raw = caps.appleApps else { return nil }
+        return Set(raw.compactMap(AppleApp.parse))
+    }
+
+    /// Plan-card rows for an Apple apps change: one "enable …" and/or one
+    /// "disable …" line naming the apps by display name.
+    static func appleAppsChangeLines(current: Set<AppleApp>, desired: Set<AppleApp>) -> [String] {
+        var lines: [String] = []
+        let added = AppleApp.sorted(desired.subtracting(current))
+        let removed = AppleApp.sorted(current.subtracting(desired))
+        if !added.isEmpty {
+            lines.append("apple_apps: enable " + added.map(\.displayName).joined(separator: ", "))
+        }
+        if !removed.isEmpty {
+            lines.append("apple_apps: disable " + removed.map(\.displayName).joined(separator: ", "))
+        }
+        return lines
     }
 
     // MARK: - Tools

@@ -31,12 +31,20 @@ struct SpawnPoolAutoAddTests {
 
     @Test("agents apply adds the new agent to the Default spawn pool; delete prunes it")
     func agentsApply_addsToSpawnPool_deleteRemoves() async throws {
-        // Cross-suite lock: delegation suites sandbox the same store via
+        // Canonical lock order: Storage → Sandbox (`AgentManager.shared`
+        // reads `OsaurusPaths.overrideRoot`, which storage-swapping suites
+        // flip) → SubagentStore innermost. Cross-suite: delegation suites
+        // sandbox the same store via
         // `SubagentConfigurationStore.setOverrideDirectory`; mutating the
         // live store while a sandbox lease is active races both sides.
-        await SubagentStoreTestLock.shared.acquire()
-        defer { SubagentStoreTestLock.shared.release() }
+        try await SandboxTestLock.runWithStoragePaths {
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+            try await agentsApplyBody()
+        }
+    }
 
+    private func agentsApplyBody() async throws {
         let name = "Spawn Pool Probe \(UUID().uuidString.prefix(6))"
         var document = OsaurusConfigDocument()
         document.agents = [AgentEntry(name: name)]
@@ -71,9 +79,14 @@ struct SpawnPoolAutoAddTests {
 
     @Test("AgentManager.create auto-adds; built-ins are excluded; the append is idempotent")
     func managerCreate_addsToPool_builtInsExcluded() async throws {
-        await SubagentStoreTestLock.shared.acquire()
-        defer { SubagentStoreTestLock.shared.release() }
+        try await SandboxTestLock.runWithStoragePaths {
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+            try await managerCreateBody()
+        }
+    }
 
+    private func managerCreateBody() async throws {
         let agent = AgentManager.shared.create(
             name: "Pool Create Probe \(UUID().uuidString.prefix(6))",
             description: "", systemPrompt: "")
@@ -155,10 +168,14 @@ struct SameTurnSpawnStagingTests {
 
     @Test("a chat-turn apply that creates an agent stages constrained spawn specs")
     func chatApply_stagesSpawnSpecs_sameTurn() async throws {
-        await SubagentStoreTestLock.shared.acquire()
-        defer { SubagentStoreTestLock.shared.release() }
-
         try await ChatHistoryTestStorage.run {
+            // Canonical lock order: Storage → Sandbox (via
+            // `ChatHistoryTestStorage.run`) → SubagentStore innermost. Taking
+            // the store lock outermost deadlocks against suites that nest it
+            // canonically (`SpawnPermissionGateTests`, `AppleApps*Tests`).
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+
             let buffer = CapabilityLoadBuffer()
             let name = "Same Turn Spawn \(UUID().uuidString.prefix(6))"
             var document = OsaurusConfigDocument()
@@ -222,10 +239,14 @@ struct SameTurnSpawnStagingTests {
 
     @Test("non-chat applies stage nothing")
     func nonChatApply_stagesNothing() async throws {
-        await SubagentStoreTestLock.shared.acquire()
-        defer { SubagentStoreTestLock.shared.release() }
-
         try await ChatHistoryTestStorage.run {
+            // Canonical lock order: Storage → Sandbox (via
+            // `ChatHistoryTestStorage.run`) → SubagentStore innermost. Taking
+            // the store lock outermost deadlocks against suites that nest it
+            // canonically (`SpawnPermissionGateTests`, `AppleApps*Tests`).
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+
             let buffer = CapabilityLoadBuffer()
             let name = "Headless Spawn \(UUID().uuidString.prefix(6))"
             var document = OsaurusConfigDocument()
@@ -257,10 +278,14 @@ struct SameTurnSpawnStagingTests {
 
     @Test("a chat-turn apply that does not grow the pool stages nothing")
     func chatApply_withoutPoolGrowth_stagesNothing() async throws {
-        await SubagentStoreTestLock.shared.acquire()
-        defer { SubagentStoreTestLock.shared.release() }
-
         try await ChatHistoryTestStorage.run {
+            // Canonical lock order: Storage → Sandbox (via
+            // `ChatHistoryTestStorage.run`) → SubagentStore innermost. Taking
+            // the store lock outermost deadlocks against suites that nest it
+            // canonically (`SpawnPermissionGateTests`, `AppleApps*Tests`).
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+
             let buffer = CapabilityLoadBuffer()
             // A memory-only change: no agents section, pool untouched.
             var document = OsaurusConfigDocument()

@@ -55,6 +55,7 @@ enum AgentCapabilitiesPayload {
             "self_scheduling_enabled": agent.settings.selfSchedulingEnabled,
             "computer_use_enabled": agent.settings.computerUseEnabled,
             "browser_use_enabled": agent.settings.browserUseEnabled,
+            "apple_apps": AppleApp.sorted(agent.settings.enabledAppleApps).map(\.rawValue),
             "speak_enabled": agent.settings.speakEnabled,
             "render_chart_enabled": agent.settings.renderChartEnabled,
             "theme_id": agent.themeId?.uuidString ?? "",

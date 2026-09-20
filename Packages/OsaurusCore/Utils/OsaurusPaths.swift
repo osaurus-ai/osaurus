@@ -540,6 +540,10 @@ public enum OsaurusPaths {
     public static func browserConfigFile() -> URL {
         config().appendingPathComponent("browser.json")
     }
+    /// Built-in Apple app tools state (one-time plugin → native migration marker).
+    public static func appleAppsConfigFile() -> URL {
+        config().appendingPathComponent("apple-apps.json")
+    }
     /// Persistent catalog of native browser sessions (agent id → WebKit
     /// profile UUID + last-known page + observed auth status). The WebKit
     /// on-disk store itself is owned by `WKWebsiteDataStore(forIdentifier:)`.

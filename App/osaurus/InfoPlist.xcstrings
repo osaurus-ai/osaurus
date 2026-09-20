@@ -98,7 +98,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Osaurus uses automation to control other applications on your behalf — including agents that write and run AppleScript to automate tasks on this Mac, and plugins that use automation."
+            "value" : "Osaurus uses automation to control other apps on your behalf — the built-in Notes, Mail, Messages, and Music tools you enable per agent, agents that write and run AppleScript, and plugins that use automation."
           }
         },
         "ko" : {
@@ -109,19 +109,19 @@
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus использует автоматизацию, чтобы управлять другими приложениями от вашего имени: в том числе агенты могут писать и запускать AppleScript для автоматизации задач на этом Mac, а плагины могут использовать автоматизацию."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 插件可能会使用自动化代表你控制其他应用。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 插件可能會用自動化來代表你控制其他應用。"
           }
         }
@@ -133,37 +133,37 @@
       "localizations" : {
         "de" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus-Plugins können auf deinen Kalender zugreifen, um Termine zu lesen und zu erstellen."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Osaurus plugins may access your calendar to read and create events."
+            "value" : "Osaurus reads, creates, and updates Calendar events only for agents you have given Calendar access to."
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 플러그인이 이벤트를 읽고 생성하기 위해 캘린더에 접근할 수 있습니다."
           }
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Плагины Osaurus могут получать доступ к календарю, чтобы читать и создавать события."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 插件可能会访问你的日历，以读取和创建日程。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 插件可能會讀取你的行事曆，用來讀取和建立行事曆。"
           }
         }
@@ -175,37 +175,37 @@
       "localizations" : {
         "de" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus-Plugins können auf deinen Kalender zugreifen, um Termine zu lesen und zu erstellen."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Osaurus plugins may access your calendar to read and create events."
+            "value" : "Osaurus reads, creates, and updates Calendar events only for agents you have given Calendar access to."
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 플러그인이 이벤트를 읽고 생성하기 위해 캘린더에 접근할 수 있습니다."
           }
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Плагины Osaurus могут получать доступ к календарю, чтобы читать и создавать события."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 插件可能会访问你的日历，以读取和创建日程。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 插件可能會讀取你的行事曆，用來讀取和建立行事曆。"
           }
         }
@@ -217,37 +217,37 @@
       "localizations" : {
         "de" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus-Plugins können auf deine Kontakte zugreifen, um Kontaktinformationen zu suchen und zu lesen."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Osaurus plugins may access your contacts to search and read contact information."
+            "value" : "Osaurus looks up, creates, and updates contacts only for agents you have given Contacts access to."
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 플러그인이 연락처 정보를 검색하고 읽기 위해 연락처에 접근할 수 있습니다."
           }
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Плагины Osaurus могут получать доступ к контактам, чтобы искать и читать контактную информацию."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 插件可能会访问你的联系人，以搜索和读取联系人信息。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 插件可能會存取你的聯絡人，以搜尋和讀取聯絡人資訊。"
           }
         }
@@ -313,37 +313,37 @@
       "localizations" : {
         "de" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus-Plugins können auf deinen Standort zugreifen, um standortbasierte Dienste bereitzustellen."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Osaurus plugins may access your location to provide location-based services."
+            "value" : "Osaurus uses your location for nearby places, directions, and weather only for agents you have given Maps & Location access to."
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 플러그인이 위치 기반 서비스를 제공하기 위해 위치 정보에 접근할 수 있습니다."
           }
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Плагины Osaurus могут получать доступ к вашей геопозиции, чтобы предоставлять сервисы с учётом местоположения."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 插件可能会访问你的位置，以提供基于位置的服务。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 插件可能會存取你的位置，以提供基於位置的服務。"
           }
         }
@@ -355,37 +355,37 @@
       "localizations" : {
         "de" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus-Plugins können auf deinen Standort zugreifen, um standortbasierte Dienste bereitzustellen."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Osaurus plugins may access your location to provide location-based services."
+            "value" : "Osaurus uses your location for nearby places, directions, and weather only for agents you have given Maps & Location access to."
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 플러그인이 위치 기반 서비스를 제공하기 위해 위치 정보에 접근할 수 있습니다."
           }
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Плагины Osaurus могут получать доступ к вашей геопозиции, чтобы предоставлять сервисы с учётом местоположения."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 插件可能会访问你的位置，以提供基于位置的服务。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 插件可能會存取你的位置，以提供基於位置的服務。"
           }
         }
@@ -433,43 +433,55 @@
         }
       }
     },
+    "NSRemindersFullAccessUsageDescription" : {
+      "comment" : "Privacy - Reminders Full Access Usage Description",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Osaurus reads, creates, and completes reminders only for agents you have given Reminders access to."
+          }
+        }
+      }
+    },
     "NSRemindersUsageDescription" : {
       "comment" : "Privacy - Reminders Usage Description",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "de" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus-Plugins können auf deine Erinnerungen zugreifen, um Aufgaben zu lesen und zu erstellen."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Osaurus plugins may access your reminders to read and create tasks."
+            "value" : "Osaurus reads, creates, and completes reminders only for agents you have given Reminders access to."
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 플러그인이 작업을 읽고 생성하기 위해 미리 알림에 접근할 수 있습니다."
           }
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Плагины Osaurus могут получать доступ к напоминаниям, чтобы читать и создавать задачи."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 插件可能会访问你的提醒事项，以读取和创建任务。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 插件可能會存取你的提醒事項，以讀取和建立任務。"
           }
         }

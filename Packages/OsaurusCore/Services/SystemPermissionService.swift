@@ -200,6 +200,8 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             return checkMailPermission()
         case .automationMessages:
             return checkMessagesPermission()
+        case .automationMusic:
+            return checkMusicPermission()
         case .calendar:
             return checkCalendarPermission()
         case .reminders:
@@ -260,7 +262,7 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         case .screenRecording:
             return SystemPermissionProbe.screenRecordingGranted()
         case .location, .automation, .automationCalendar, .automationMail, .automationMessages,
-            .notes, .maps:
+            .automationMusic, .notes, .maps:
             return nil
         }
     }
@@ -359,6 +361,8 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             requestMailPermission()
         case .automationMessages:
             requestMessagesPermission()
+        case .automationMusic:
+            requestMusicPermission()
         case .calendar:
             requestCalendarPermission()
         case .reminders:
@@ -410,9 +414,9 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         case .location:
             requestLocationPermission()
             return checkLocationPermission()
-        case .automation, .automationCalendar, .automationMail, .automationMessages, .notes, .maps:
-            requestPermission(permission)
-            return permissionStates[permission] ?? false
+        case .automation, .automationCalendar, .automationMail, .automationMessages, .automationMusic, .notes,
+            .maps:
+            return await requestAutomationPermissionAndWait(permission)
         case .accessibility, .disk, .screenRecording:
             return false
         }
@@ -704,6 +708,93 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             if !granted {
                 self.openSystemSettings(for: .automationMessages)
             }
+        }
+    }
+
+    // MARK: - Music Automation Permission
+
+    private func checkMusicPermission() -> Bool {
+        // Return cached state for Music (Automation)
+        return permissionStates[.automationMusic] ?? false
+    }
+
+    private func requestMusicPermission() {
+        Task { @MainActor in
+            let alreadyGranted = checkMusicPermission()
+            if alreadyGranted {
+                refreshAllPermissions()
+                return
+            }
+
+            let granted: Bool = await Task.detached { [weak self] in
+                guard self != nil else { return false }
+                let result = SystemPermissionService.debugTestMusicAccess()
+                return result.hasPrefix("SUCCESS")
+            }.value
+
+            setPermission(.automationMusic, isGranted: granted)
+
+            if !granted {
+                self.openSystemSettings(for: .automationMusic)
+            }
+        }
+    }
+
+    /// Probe an Apple Events automation permission and wait for the answer.
+    /// Unlike `requestPermission(_:)` (fire-and-forget, opens System Settings
+    /// on denial) this returns the fresh result so a tool gate or an Abilities
+    /// toggle can react to it. The first probe shows the macOS "wants access
+    /// to control X" dialog; later probes just read the TCC decision.
+    func requestAutomationPermissionAndWait(_ permission: SystemPermission) async -> Bool {
+        if RuntimeEnvironment.isUnderTests { return false }
+        let probe: (@Sendable () -> String)?
+        switch permission {
+        case .automation:
+            let granted: Bool = await Task.detached { [weak self] in
+                guard let self else { return false }
+                return self.performFullAutomationCheck()
+            }.value
+            setPermission(.automation, isGranted: granted)
+            return granted
+        case .automationCalendar:
+            let granted: Bool = await Task.detached { [weak self] in
+                guard let self else { return false }
+                return await self.performFullCalendarAutomationCheck()
+            }.value
+            setPermission(.automationCalendar, isGranted: granted)
+            return granted
+        case .automationMail: probe = { SystemPermissionService.debugTestMailAccess() }
+        case .automationMessages: probe = { SystemPermissionService.debugTestMessagesAccess() }
+        case .automationMusic: probe = { SystemPermissionService.debugTestMusicAccess() }
+        case .notes: probe = { SystemPermissionService.debugTestNotesAccess() }
+        case .maps: probe = { SystemPermissionService.debugTestMapsAccess() }
+        default: probe = nil
+        }
+        guard let probe else { return permissionStates[permission] ?? false }
+        // `tell application "X"` launches X if needed and would bring it to the
+        // front; launching it ourselves first (activates = false) keeps the
+        // probe from stealing focus from the chat window.
+        if let bundleId = Self.automationProbeBundleIdentifier(for: permission) {
+            _ = await AppleScriptBridge.ensureRunning(
+                bundleIdentifier: bundleId, appName: permission.displayName
+            )
+        }
+        let granted: Bool = await Task.detached { probe().hasPrefix("SUCCESS") }.value
+        setPermission(permission, isGranted: granted)
+        return granted
+    }
+
+    /// Bundle id of the app an Automation probe targets, so it can be
+    /// launched in the background first.
+    nonisolated static func automationProbeBundleIdentifier(for permission: SystemPermission) -> String? {
+        switch permission {
+        case .automationMail: return "com.apple.mail"
+        case .automationMessages: return "com.apple.MobileSMS"
+        case .automationMusic: return "com.apple.Music"
+        case .notes: return "com.apple.Notes"
+        case .maps: return "com.apple.Maps"
+        case .automationCalendar: return "com.apple.iCal"
+        default: return nil
         }
     }
 
@@ -1183,6 +1274,40 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         let script = NSAppleScript(
             source: """
                 tell application "Messages"
+                    return name
+                end tell
+                """
+        )
+
+        var errorInfo: NSDictionary?
+        let result = script?.executeAndReturnError(&errorInfo)
+
+        if let error = errorInfo {
+            let errorNumber = error[NSAppleScript.errorNumber] as? Int ?? -1
+            let errorMessage = error[NSAppleScript.errorMessage] as? String ?? "Unknown error"
+
+            var guidance = ""
+            if errorNumber == -1743 {
+                guidance = " → Permission denied. Grant in System Settings → Privacy & Security → Automation"
+            }
+
+            return "ERROR [\(errorNumber)]: \(errorMessage)\(guidance)"
+        }
+
+        if let resultValue = result?.stringValue {
+            return L("SUCCESS: Connected to \(resultValue)")
+        }
+
+        return L("NO RESULT")
+    }
+
+    // MARK: - Debug: Test Music Access
+
+    /// Debug function to test if Music access works via AppleScript.
+    nonisolated static func debugTestMusicAccess() -> String {
+        let script = NSAppleScript(
+            source: """
+                tell application "Music"
                     return name
                 end tell
                 """

@@ -15,19 +15,21 @@
 	<key>SUPublicEDKey</key>
 	<string>HBRBQ8QQOhmvMKnSxQxqb3upTjyirdx0xkHSSRqn7aI=</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Osaurus uses automation to control other applications on your behalf — including agents that write and run AppleScript to automate tasks on this Mac, and plugins that use automation.</string>
+	<string>Osaurus uses automation to control other apps on your behalf — the built-in Notes, Mail, Messages, and Music tools you enable per agent, agents that write and run AppleScript, and plugins that use automation.</string>
 	<key>NSCalendarsUsageDescription</key>
-	<string>Osaurus plugins may access your calendar to read and create events.</string>
+	<string>Osaurus reads, creates, and updates Calendar events only for agents you have given Calendar access to.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>Osaurus plugins may access your calendar to read and create events.</string>
+	<string>Osaurus reads, creates, and updates Calendar events only for agents you have given Calendar access to.</string>
 	<key>NSContactsUsageDescription</key>
-	<string>Osaurus plugins may access your contacts to search and read contact information.</string>
+	<string>Osaurus looks up, creates, and updates contacts only for agents you have given Contacts access to.</string>
 	<key>NSRemindersUsageDescription</key>
-	<string>Osaurus plugins may access your reminders to read and create tasks.</string>
+	<string>Osaurus reads, creates, and completes reminders only for agents you have given Reminders access to.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Osaurus reads, creates, and completes reminders only for agents you have given Reminders access to.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Osaurus plugins may access your location to provide location-based services.</string>
+	<string>Osaurus uses your location for nearby places, directions, and weather only for agents you have given Maps &amp; Location access to.</string>
 	<key>NSLocationUsageDescription</key>
-	<string>Osaurus plugins may access your location to provide location-based services.</string>
+	<string>Osaurus uses your location for nearby places, directions, and weather only for agents you have given Maps &amp; Location access to.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Osaurus uses the microphone for on-device voice transcription with FluidAudio.</string>
 	<key>NSScreenCaptureUsageDescription</key>

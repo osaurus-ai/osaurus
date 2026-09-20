@@ -58,6 +58,8 @@ struct AgentAbilityContextPreview: Equatable {
         var appleScriptEnabled: Bool? = nil
         var spawnableAgentIDs: [UUID]? = nil
         var spawnConfiguration: AgentSpawnConfigSnapshot? = nil
+        /// Live Abilities-tab Apple Apps toggles (nil = use the stored set).
+        var enabledAppleApps: Set<AppleApp>? = nil
         /// Full live Sandbox-tab configuration. `codeExecutionEnabled`
         /// remains the compatibility fallback for Overview-only callers.
         var autonomousConfig: AutonomousExecConfig? = nil
@@ -215,7 +217,8 @@ struct AgentAbilityContextPreview: Equatable {
                 && draft.knowledgeCuratorEnabled
                 && !effectiveCollections.isEmpty,
             knowledgeCollections: draft.knowledgeEnabled ? effectiveCollections : [],
-            hasChannelPublishDestinations: base.hasChannelPublishDestinations
+            hasChannelPublishDestinations: base.hasChannelPublishDestinations,
+            enabledAppleApps: draft.enabledAppleApps ?? base.enabledAppleApps
         )
 
         // Mirror ChatView's optimistic execution-mode estimate: autonomous-on

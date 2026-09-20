@@ -1351,6 +1351,24 @@ public enum SettingsSearchIndex {
                 "agent data", "structured data", "encrypted database", "db",
             ]
         ),
+        // Agents → (custom agent) → Abilities → Tools. The built-in Apple
+        // apps are groups in the tool picker (one per app, toggled per app);
+        // the anchor sits on the picker. Also writable via
+        // `capabilities.apple_apps`.
+        .init(
+            id: "agents.appleApps",
+            tab: .agents,
+            section: "Abilities → Tools",
+            title: "Apple Apps",
+            keywords: [
+                "apple apps", "apple", "native apps", "mac apps", "built-in apps", "apple tools",
+                "calendar", "reminders", "contacts", "notes", "mail", "messages", "imessage",
+                "maps", "location", "weather", "music", "shortcuts", "apple_apps",
+            ],
+            disambiguation:
+                "Per-custom-agent groups in Abilities → Tools for the built-in Apple app tools (off by default, toggled per app). The Orchestrator never uses them directly; it enables them on a custom agent via osaurus_config capabilities.apple_apps.",
+            declarativeSection: "agents"
+        ),
 
         // MARK: Search
         .init(
@@ -1477,5 +1495,40 @@ public enum SettingsSearchIndex {
             title: "Insights",
             keywords: ["analytics", "usage", "charts", "metrics"]
         ),
-    ]
+    ] + appleAppEntries
+
+    /// One row per Apple app group in a custom agent's Abilities → Tools
+    /// picker (`agents.appleApps.<app>`), with the exact group title and the
+    /// tool verbs the model or a user might type. Generated from `AppleApp`
+    /// so a new family cannot ship without a catalog row.
+    static let appleAppEntries: [SettingsSearchEntry] = AppleApp.allCases.map { app in
+        SettingsSearchEntry(
+            id: "agents.appleApps.\(app.rawValue)",
+            tab: .agents,
+            section: "Abilities → Tools",
+            title: app.displayName,
+            keywords: appleAppKeywords(app),
+            disambiguation:
+                "Abilities → Tools group on a custom agent; the master checkbox (or any row switch) turns all \(app.displayName) tools on or off together (off by default). Not the \(app.displayName) plugin, which is built in now; not the macOS Permissions tab. Declarative: capabilities.apple_apps includes \"\(app.rawValue)\".",
+            declarativeSection: "agents"
+        )
+    }
+
+    private static func appleAppKeywords(_ app: AppleApp) -> [String] {
+        var words = ["apple", "apple apps", "apple app", app.rawValue, "apple_apps"]
+        words += app.toolNames.sorted()
+        switch app {
+        case .calendar: words += ["events", "schedule", "meeting", "ical", "eventkit", "agenda"]
+        case .reminders: words += ["todo", "to-do", "task list", "due date", "reminder"]
+        case .contacts: words += ["address book", "phone number", "email address", "people", "my card"]
+        case .notes: words += ["apple notes", "note", "folders", "notebook"]
+        case .mail: words += ["email", "inbox", "mailbox", "compose", "reply", "apple mail"]
+        case .messages: words += ["imessage", "sms", "text message", "chat.db", "conversations"]
+        case .maps: words += ["maps & location", "location", "directions", "geocode", "eta", "places", "nearby", "current location"]
+        case .weather: words += ["forecast", "weatherkit", "temperature", "hourly", "daily", "conditions"]
+        case .music: words += ["apple music", "now playing", "playlist", "play", "pause", "volume", "itunes"]
+        case .shortcuts: words += ["shortcut", "run shortcut", "automation", "workflow"]
+        }
+        return words
+    }
 }

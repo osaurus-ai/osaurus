@@ -1316,6 +1316,8 @@ struct AgentDetailView: View {
     @State private var abilityContextDeltaDismissTask: Task<Void, Never>?
     @State private var abilityPreviewToolMode: ToolSelectionMode?
     @State private var abilityPreviewToolNames: Set<String>?
+    @State private var abilityPreviewAppleApps: Set<AppleApp>?
+    @Environment(\.settingsLandingPending) private var settingsLandingPending
     @State private var abilityPreviewAutonomousConfig: AutonomousExecConfig?
     @State private var abilityPreviewRegistryRevision = 0
     /// Editable mirror of `AutonomousExecConfig.sandboxAllowedDomains`
@@ -1506,6 +1508,17 @@ struct AgentDetailView: View {
         return hasConfig || hasInstructions || hasSecrets
     }
 
+    /// The Tools picker hosts every Apple app group, so it is the landing
+    /// target for the group row and for each per-app catalog row. One anchor
+    /// id at a time (stacked `.id()`s would shadow each other): whichever
+    /// `agents.appleApps*` id is pending, else the group id.
+    private var appleAppsLandingAnchorId: String {
+        if let pending = settingsLandingPending, pending.hasPrefix("agents.appleApps") {
+            return pending
+        }
+        return "agents.appleApps"
+    }
+
     @ViewBuilder
     private var tabContent: some View {
         switch selectedTab {
@@ -1513,12 +1526,16 @@ struct AgentDetailView: View {
             AgentCapabilityManagerView(
                 agentId: agent.id,
                 onDismiss: nil,
-                onSelectionChanged: { mode, names in
+                onSelectionChanged: { mode, names, appleApps in
                     abilityPreviewToolMode = mode
                     abilityPreviewToolNames = names
+                    abilityPreviewAppleApps = appleApps
                 }
             )
                 .environment(\.theme, themeManager.currentTheme)
+                // Built-in Apple apps live in this picker (one group per
+                // app); the `agents.appleApps[.<app>]` catalog rows land here.
+                .settingsLandingAnchor(appleAppsLandingAnchorId)
                 .id(selectedTab)
         case .builtIn(.database):
             DatabaseWorkspaceView(
@@ -3255,6 +3272,12 @@ struct AgentDetailView: View {
         let toolNames =
             abilityPreviewToolNames
             ?? Set(agentManager.effectiveEnabledToolNames(for: agent.id) ?? [])
+        // Apple apps are written by the Tools picker straight through
+        // `AgentManager` (like `manualToolNames`); mirror the picker's
+        // in-flight value first, then the persisted set.
+        let enabledAppleApps =
+            agent.id == Agent.defaultId
+            ? [] : (abilityPreviewAppleApps ?? currentAgent.settings.enabledAppleApps)
         let autonomous =
             abilityPreviewAutonomousConfig
             ?? agentManager.effectiveAutonomousExec(for: agent.id)
@@ -3297,6 +3320,7 @@ struct AgentDetailView: View {
             appleScriptEnabled: appleScriptEnabled,
             spawnableAgentIDs: spawnableAgentIDs,
             spawnConfiguration: spawnConfiguration,
+            enabledAppleApps: enabledAppleApps,
             autonomousConfig: autonomous,
             knowledgeCollections: collections,
             registryRevision: abilityPreviewRegistryRevision
@@ -3345,6 +3369,7 @@ struct AgentDetailView: View {
                 searchMemoryEnabled,
                 knowledgeEnabled,
                 webSearchEnabled,
+                !(abilityPreviewAppleApps ?? currentAgent.settings.enabledAppleApps).isEmpty,
                 selfSchedulingEnabled,
                 dbEnabled,
                 abilityPreviewAutonomousConfig?.enabled
@@ -7139,7 +7164,12 @@ struct AgentDetailView: View {
                 knowledgeEnabled: knowledgeEnabled,
                 knowledgeCollectionIds: knowledgeCollectionIds,
                 knowledgeCuratorEnabled: knowledgeCuratorEnabled,
-                spawnableWorkspaceAgents: spawnableWorkspaceAgents
+                spawnableWorkspaceAgents: spawnableWorkspaceAgents,
+                // Apple app families are written by the Tools picker through
+                // `AgentManager.updateEnabledAppleApps` (instant save, like
+                // `manualToolNames`), so pass the persisted value through.
+                // The Default agent never carries any.
+                enabledAppleApps: agent.id == Agent.defaultId ? [] : current.settings.enabledAppleApps
             ),
             order: current.order
         )
@@ -8076,6 +8106,11 @@ private struct AgentEditorSheet: View {
     @State private var draftMode: ToolSelectionMode = .auto
     @State private var draftToolNames: Set<String> = []
     @State private var draftSeeded: Bool = false
+    /// Optional Apple app families to provision at creation, picked in the
+    /// same Customize… tool picker (one group per app; Abilities → Tools
+    /// after the fact). Empty by default — macOS is asked for permission
+    /// only once an app is on and the agent exists.
+    @State private var draftAppleApps: Set<AppleApp> = []
 
     @FocusState private var nameFocused: Bool
 
@@ -8192,6 +8227,7 @@ private struct AgentEditorSheet: View {
         AgentCapabilityManagerView(
             draftMode: $draftMode,
             draftTools: $draftToolNames,
+            draftAppleApps: $draftAppleApps,
             onDismiss: {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
                     inlineCustomize = false
@@ -8478,7 +8514,11 @@ private struct AgentEditorSheet: View {
             ? L("Loaded on demand from your assigned set.")
             : L("All assigned tools are sent every turn.")
         let countLabel = toolCount == 1 ? L("1 tool assigned") : L("\(toolCount) tools assigned")
-        return "\(countLabel) · \(modeBlurb)"
+        if draftAppleApps.isEmpty {
+            return "\(countLabel) · \(modeBlurb)"
+        }
+        let apps = AppleApp.sorted(draftAppleApps).map(\.displayName).joined(separator: ", ")
+        return "\(countLabel) · \(L("Apple apps: \(apps)")) · \(modeBlurb)"
     }
 
     private var promptField: some View {
@@ -8668,6 +8708,7 @@ private struct AgentEditorSheet: View {
         agent.toolSelectionMode = draftMode
         agent.manualToolNames = Array(draftToolNames)
         agent.avatar = selectedAvatar
+        agent.settings.enabledAppleApps = draftAppleApps
 
         onSave(agent)
     }

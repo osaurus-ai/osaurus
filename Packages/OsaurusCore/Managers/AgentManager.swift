@@ -1339,7 +1339,11 @@ extension AgentManager {
                 // Like Computer Use, Browser Use is a custom-agent capability:
                 // the Default agent is locked to its fixed baseline and never
                 // gets browser access.
-                browserUseEnabled: false
+                browserUseEnabled: false,
+                // Apple app tools are custom-agent capabilities too: the
+                // Default agent provisions them on other agents through
+                // `osaurus_config` and never calls them itself.
+                enabledAppleApps: []
             )
         }
 
@@ -1370,7 +1374,8 @@ extension AgentManager {
             knowledgeCollectionIds: agent.settings.knowledgeCollectionIds,
             // Curator is a child of the knowledge opt-in.
             knowledgeCuratorEnabled: agent.settings.knowledgeEnabled
-                && agent.settings.knowledgeCuratorEnabled
+                && agent.settings.knowledgeCuratorEnabled,
+            enabledAppleApps: agent.settings.enabledAppleApps
         )
     }
 
@@ -1489,6 +1494,19 @@ extension AgentManager {
         }
         guard var agent = agent(for: agentId), !agent.isBuiltIn else { return }
         agent.manualToolNames = names
+        update(agent)
+    }
+
+    /// Replace the built-in Apple app families a custom agent may use. Written
+    /// by the Tools picker's Apple groups (per app, never per tool). The
+    /// Default agent never carries Apple tools, so it is refused here like
+    /// every other built-in.
+    public func updateEnabledAppleApps(_ apps: Set<AppleApp>, for agentId: UUID) {
+        guard agentId != Agent.defaultId,
+            var agent = agent(for: agentId), !agent.isBuiltIn,
+            agent.settings.enabledAppleApps != apps
+        else { return }
+        agent.settings.enabledAppleApps = apps
         update(agent)
     }
 

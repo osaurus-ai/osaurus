@@ -117,7 +117,7 @@ private struct SystemPermissionRow: View {
     // Permissions that support the diagnostic test button
     private var canTest: Bool {
         switch permission {
-        case .automation, .automationCalendar, .automationMail, .automationMessages, .notes,
+        case .automation, .automationCalendar, .automationMail, .automationMessages, .automationMusic, .notes,
             .contacts, .calendar, .reminders, .location, .accessibility:
             return true
         default:
@@ -345,6 +345,8 @@ private struct SystemPermissionRow: View {
                 result = SystemPermissionService.debugTestMailAccess()
             case .automationMessages:
                 result = SystemPermissionService.debugTestMessagesAccess()
+            case .automationMusic:
+                result = SystemPermissionService.debugTestMusicAccess()
             case .calendar:
                 result = SystemPermissionService.debugTestCalendarEventKitAccess()
             case .reminders:

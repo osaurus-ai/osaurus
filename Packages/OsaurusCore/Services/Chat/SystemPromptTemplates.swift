@@ -996,6 +996,51 @@ public enum SystemPromptTemplates {
         - Both return `status` + `values` + `errors` (with AppleScript error numbers) — read `values` to confirm, use `errors` to retry/fix. Use AppleScript for documents open in Mac apps; file tools are only for path-addressed files in a selected folder/sandbox. Not for shell or web.
         """
 
+    // MARK: - Apple apps
+
+    /// Grounding for the built-in Apple app tools. Rendered by the composer
+    /// only when at least one Apple tool actually resolved into the schema
+    /// (per-agent opt-in via `enabledAppleApps`; the Default agent never
+    /// carries them). Lists just the enabled apps so the prompt never
+    /// advertises an app the model cannot reach, and states the shared
+    /// contract: ground relative dates, read before write, confirm before
+    /// send/delete, report the exact result back.
+    public static func appleAppsGuidance(apps: [AppleApp]) -> String {
+        guard !apps.isEmpty else { return "" }
+        let names = apps.map(\.displayName).joined(separator: ", ")
+        var lines: [String] = [
+            "## Apple apps",
+            "",
+            "- You can work directly with the user's \(names) through the `\(apps.map(\.rawValue).joined(separator: "_*`, `"))_*` tools. Use them instead of saying you cannot access these apps.",
+            "- Call `get_current_time` before resolving relative dates (\"tomorrow\", \"next Monday\", \"this week\"); pass dates as ISO 8601 with the local offset. A bare `YYYY-MM-DD` means local midnight and an end date is inclusive.",
+            "- Read before you write: look the item up first (its `id`, list, calendar, or mailbox) and reuse the returned identifiers instead of guessing names.",
+            "- Creating or updating pauses for the user to approve; sending or deleting always does. State exactly what you will change and let that gate handle confirmation — do not ask for permission yourself first.",
+            "- After a change, report back the exact title, date/time, recipient, or list the tool returned so the user can verify it.",
+            "- If a tool returns `permission_denied`, tell the user which macOS permission to grant (the message names the System Settings pane) and stop; do not retry in a loop.",
+        ]
+        if apps.contains(.mail) {
+            lines.append(
+                "- Mail: `mail_compose` creates a draft unless `send: true`; quote the recipient, subject, and first line back before sending."
+            )
+        }
+        if apps.contains(.messages) {
+            lines.append(
+                "- Messages: reading uses the local Messages database; `messages_send` sends immediately once approved, so echo the recipient and text first."
+            )
+        }
+        if apps.contains(.calendar) || apps.contains(.reminders) {
+            lines.append(
+                "- Calendar/Reminders: when the user names a calendar or list, resolve it with `calendar_list` / `reminders_lists` first; otherwise the default is used and reported."
+            )
+        }
+        if apps.contains(.shortcuts) {
+            lines.append(
+                "- Shortcuts: list first with `shortcuts_list`; `shortcuts_run` passes `input` as text and returns the shortcut's text output."
+            )
+        }
+        return lines.joined(separator: "\n")
+    }
+
     // MARK: - Knowledge
 
     /// Grant manifest + retrieval nudge for the knowledge tools, rendered
