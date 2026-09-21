@@ -45,7 +45,7 @@ enum LocalVisionEvidence {
 
     static func inspect(_ directory: URL, refresh: Bool = false) -> Result {
         _ = observer
-        let key = directory.standardizedFileURL.path
+        let key = directory.path
         let processorVersion = VLMProcessorTypeRegistry.shared.registrationVersion
         lock.lock()
         let version = generation
@@ -81,7 +81,7 @@ enum LocalVisionEvidence {
     /// authoritative gate never sees a pending nil.
     static func cachedOrWarm(_ directory: URL) -> Result? {
         _ = observer
-        let key = directory.standardizedFileURL.path
+        let key = directory.path
         let processorVersion = VLMProcessorTypeRegistry.shared.registrationVersion
         lock.lock()
         if let cached = cache[key], cached.processorVersion == processorVersion {
