@@ -97,8 +97,8 @@ struct EventKitContractTests {
         #expect(location["type"] == .string("string"))
     }
 
-    @Test("calendar_update_event: null clears location; recurring event without occurrence defaults to future_events with a warning")
-    func updateNullClearAndRecurringDefault() async throws {
+    @Test("calendar_update_event: null clears location; a recurring event without occurrence_start is refused like delete")
+    func updateNullClearAndRecurringRefusal() async throws {
         let service = NullClearCalendarService()
         let tool = CalendarUpdateEventTool(service: service)
         let payload = try result(await tool.execute(argumentsJSON: #"{"id":"e1","location":null,"notes":"keep"}"#))
@@ -108,17 +108,29 @@ struct EventKitContractTests {
         #expect(patch.notes == .some("keep"))
         #expect(service.lastSpan == .thisEvent)
 
-        // Recurring master, no occurrence_start, no explicit span → series.
+        // Recurring master, no occurrence_start → refused; nothing written.
+        // "Move my standup tomorrow" must never silently rewrite the series
+        // (or detach only the first occurrence).
         service.recurring = true
-        let raw = try await tool.execute(argumentsJSON: #"{"id":"e1","title":"Renamed"}"#)
-        let env = try envelope(raw)
-        #expect(env["ok"] as? Bool == true)
-        #expect(service.lastSpan == .futureEvents)
-        #expect((env["warnings"] as? [String])?.first?.contains("whole series") == true)
+        let before = service.updateCount
+        let env = try envelope(await tool.execute(argumentsJSON: #"{"id":"e1","title":"Renamed"}"#))
+        #expect(env["ok"] as? Bool == false)
+        #expect(env["kind"] as? String == "invalid_args")
+        #expect(env["field"] as? String == "occurrence_start")
+        #expect(service.updateCount == before)
 
-        // Explicit span wins.
-        _ = try result(await tool.execute(argumentsJSON: #"{"id":"e1","title":"One","span":"this_event","occurrence_start":"2026-09-19T10:00"}"#))
+        // An explicit `span: future_events` alone is not enough either — the
+        // occurrence anchors the edit exactly as it does for delete.
+        let env2 = try envelope(await tool.execute(argumentsJSON: #"{"id":"e1","title":"Renamed","span":"future_events"}"#))
+        #expect(env2["kind"] as? String == "invalid_args")
+        #expect(service.updateCount == before)
+
+        // With the occurrence, span is honoured (default this_event).
+        _ = try result(await tool.execute(argumentsJSON: #"{"id":"e1","title":"One","occurrence_start":"2026-09-19T10:00"}"#))
         #expect(service.lastSpan == .thisEvent)
+        _ = try result(await tool.execute(argumentsJSON: #"{"id":"e1","title":"All","span":"future_events","occurrence_start":"2026-09-19T10:00"}"#))
+        #expect(service.lastSpan == .futureEvents)
+        #expect(service.updateCount == before + 2)
     }
 
     @Test("calendar_events reports the four-year clamp as a warning and in range.end_clamped")
@@ -185,6 +197,7 @@ private final class NullClearCalendarService: CalendarServicing, @unchecked Send
     private(set) var lastPatch: CalendarEventPatch?
     private(set) var lastSpan: CalendarEditSpan?
     private(set) var lastDraft: CalendarEventDraft?
+    private(set) var updateCount = 0
 
     private func event(_ id: String) -> CalendarEventInfo {
         let start = Date(timeIntervalSince1970: 1_789_000_000)
@@ -208,6 +221,7 @@ private final class NullClearCalendarService: CalendarServicing, @unchecked Send
     func update(id: String, occurrenceStart: Date?, span: CalendarEditSpan, patch: CalendarEventPatch) async throws -> CalendarEventInfo {
         lastPatch = patch
         lastSpan = span
+        updateCount += 1
         return event(id)
     }
     func delete(id: String, occurrenceStart: Date?, span: CalendarEditSpan) async throws -> CalendarEventInfo { event(id) }

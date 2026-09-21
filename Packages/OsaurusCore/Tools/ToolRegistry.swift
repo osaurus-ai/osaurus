@@ -795,6 +795,20 @@ public final class ToolRegistry: ObservableObject {
                 )
                 effectivePolicy = ToolPermissionPolicy.strictest(effectivePolicy, resolved)
             }
+            // A per-call tool refuses every pre-grant: the run lease and the
+            // global auto-allow both go through the shortcuts below, and a
+            // lease taken for a bulk WRITE must not end up covering a delete
+            // later in the same run. It also refuses a configured `.auto` —
+            // whether set from the Tools catalog menu or `tools.policies` in a
+            // declarative document — because "always confirmed" cannot depend
+            // on a policy the Orchestrator can rewrite. `.deny` still wins.
+            let perCallApproval =
+                (tool as? PerCallApprovalTool)?.requiresApprovalEveryCall == true
+                || (tool as? ArgumentAwarePerCallApprovalTool)?
+                    .requiresApprovalEveryCall(argumentsJSON: argumentsJSON) == true
+            if perCallApproval {
+                effectivePolicy = ToolPermissionPolicy.strictest(effectivePolicy, .ask)
+            }
             switch effectivePolicy {
             case .deny:
                 throw NSError(
@@ -804,14 +818,6 @@ public final class ToolRegistry: ObservableObject {
                 )
             case .ask:
                 let approved: Bool
-                // A per-call tool refuses every pre-grant: the run lease and
-                // the global auto-allow both go through the shortcuts below,
-                // and a lease taken for a bulk WRITE must not end up covering
-                // a delete later in the same run.
-                let perCallApproval =
-                    (tool as? PerCallApprovalTool)?.requiresApprovalEveryCall == true
-                    || (tool as? ArgumentAwarePerCallApprovalTool)?
-                        .requiresApprovalEveryCall(argumentsJSON: argumentsJSON) == true
                 if permissioned.handlesOwnApproval {
                     // The tool runs its own purpose-built interactive
                     // approval in its body (osaurus_config's plan-review
@@ -1875,6 +1881,24 @@ public final class ToolRegistry: ObservableObject {
         return toolsByName[name] != nil
     }
 
+    /// Whether the registered tool asks for approval on every call
+    /// unconditionally (`PerCallApprovalTool`, e.g. `messages_send`,
+    /// `calendar_delete_event`). `execute` forces the effective policy to
+    /// `.ask` for these, so a configured `auto` is stored but never
+    /// honoured; the Tools catalog menu hides Auto and the declarative
+    /// planner says the setting is inert.
+    func requiresPerCallApproval(_ name: String) -> Bool {
+        (toolsByName[name] as? PerCallApprovalTool)?.requiresApprovalEveryCall == true
+    }
+
+    /// Whether the registered tool asks on every call for SOME arguments
+    /// (`ArgumentAwarePerCallApprovalTool`, e.g. `mail_compose` with
+    /// `send: true`). `auto` still applies to the other calls (drafts), so the
+    /// menu keeps offering it; the planner adds the caveat.
+    func mayRequirePerCallApproval(_ name: String) -> Bool {
+        toolsByName[name] is ArgumentAwarePerCallApprovalTool
+    }
+
     /// Explicit per-tool enablement and policy overrides, for the
     /// declarative config exporter/planner. Only names the user (or a
     /// previous apply) explicitly touched appear here.
@@ -1962,7 +1986,12 @@ public final class ToolRegistry: ObservableObject {
             requirements = []
         }
         let configured = configuration.policy[name]
-        let effective = configured ?? defaultPolicy
+        var effective = configured ?? defaultPolicy
+        // Mirror `execute`: a per-call approval tool never runs on `auto`, so
+        // the pill must not show "Auto" for a stored value that is inert.
+        if effective == .auto, requiresPerCallApproval(name) {
+            effective = .ask
+        }
         var grants: [String: Bool] = [:]
         // Only track grants for non-system requirements
         for r in requirements where !SystemPermissionService.isSystemPermission(r) {

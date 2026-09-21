@@ -62,7 +62,8 @@ enum CalendarArgs {
     }
 
     /// Explicit `span`, or nil when the caller did not pass one (the update
-    /// tool then picks a default from the event's recurrence).
+    /// and delete tools then use `this_event`, and refuse recurring events
+    /// that name no `occurrence_start`).
     static func span(_ args: [String: Any]) throws -> CalendarEditSpan? {
         guard let raw = try AppleArgs.enumeration(args, "span", allowed: ["this_event", "future_events"]) else { return nil }
         return raw == "future_events" ? .futureEvents : .thisEvent
@@ -268,11 +269,11 @@ final class CalendarUpdateEventTool: AppleToolBase, @unchecked Sendable {
             app: .calendar,
             name: "calendar_update_event",
             description:
-                "Update an existing event by `id` (from calendar_events). Only the supplied fields change; moving `start` alone keeps the duration. For a recurring event pass `occurrence_start` (the occurrence's `start`) and choose `span`: this_event or future_events (default this_event with an occurrence, future_events — the whole series — without one). Pass null for location/notes/url to clear them, or `clear_recurrence: true` to remove the repeat rule.",
+                "Update an existing event by `id` (from calendar_events). Only the supplied fields change; moving `start` alone keeps the duration. For a recurring event you MUST pass `occurrence_start` (the occurrence's `start` from calendar_events) and choose `span`: this_event (default; that occurrence only) or future_events (it and everything after). Pass null for location/notes/url to clear them, or `clear_recurrence: true` to remove the repeat rule.",
             parameters: AppleSchema.object(
                 [
                     "id": AppleSchema.string("Event id from calendar_events."),
-                    "occurrence_start": AppleSchema.date("For recurring events: the start of the occurrence to edit."),
+                    "occurrence_start": AppleSchema.date("Required for recurring events: the start of the occurrence to edit."),
                     "span": AppleSchema.string("Which occurrences to change.", enum: ["this_event", "future_events"]),
                     "title": AppleSchema.string("New title."),
                     "start": AppleSchema.date("New start."),
@@ -327,17 +328,18 @@ final class CalendarUpdateEventTool: AppleToolBase, @unchecked Sendable {
             )
         }
         // Recurring event without an occurrence: the fetch returns the
-        // master, and `this_event` would silently detach only the first
-        // occurrence. Default to the whole series and say so.
-        var span = explicitSpan ?? .thisEvent
+        // master, so `this_event` would silently detach only the first
+        // occurrence and `future_events` would rewrite every one. Neither is
+        // a safe guess for "move my standup tomorrow", and the approval card
+        // would not make the scope obvious — refuse, exactly like delete.
+        let span = explicitSpan ?? .thisEvent
         var warnings: [String] = []
-        if explicitSpan == nil, occurrenceStart == nil {
-            let existing = try await service.event(id: id, occurrenceStart: nil)
-            if existing.isRecurring {
-                span = .futureEvents
-                warnings.append(
-                    "`\(existing.title)` repeats and no `occurrence_start` was given, so the whole series was updated (span future_events). Pass `occurrence_start` and `span: this_event` to change one occurrence.")
-            }
+        let existing = try await service.event(id: id, occurrenceStart: occurrenceStart)
+        if existing.isRecurring, occurrenceStart == nil {
+            throw AppleToolError.invalidArgs(
+                "`\(existing.title)` repeats. Pass `occurrence_start` (the occurrence's `start` from calendar_events) and `span` (this_event for that occurrence only, future_events for it and everything after) so the right occurrence(s) are changed.",
+                field: "occurrence_start"
+            )
         }
         if let w = CalendarArgs.alarmWarning(patch.alarmsMinutesBefore ?? nil) { warnings.append(w) }
         let updated = try await service.update(id: id, occurrenceStart: occurrenceStart, span: span, patch: patch)

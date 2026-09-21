@@ -42,6 +42,8 @@ Writes follow the normal per-tool permission policy (`ask` by default; "Allow fo
 - **Sending**: `messages_send`, and `mail_compose` / `mail_reply` when `send: true`.
 - **Deleting**: `calendar_delete_event` and `reminders_delete`.
 
+"Regardless of that policy" is enforced in `ToolRegistry.execute`, not in the UI: a per-call tool's effective policy is forced to `ask` before the policy switch (`deny` still wins), so neither the Tools catalog menu nor `tools.policies: {messages_send: auto}` in a declarative document can make a send silent. The catalog hides **Auto** for the unconditional per-call tools; for `mail_compose` / `mail_reply`, `auto` covers drafts only. The `osaurus_config` plan card says so when a document sets one of these to `auto`.
+
 `notes_open` activates Notes and steals focus, so it is treated as a write; the other `*_open` tools only open a deep link. `music_play`, `music_playback`, and `music_set_volume` are writes.
 
 Enabling Mail, Messages, or Shortcuts on an agent adds a risk line to the `osaurus_config` plan card: these apps can act on the user's behalf (send mail or messages, run arbitrary shortcuts).
@@ -66,7 +68,7 @@ Enabling Mail, Messages, or Shortcuts on an agent adds a risk line to the `osaur
 
 - **Dates** in and out are ISO 8601 with the local offset. Bare dates (`2026-09-21`) are accepted; invalid calendar dates (Feb 31) are rejected rather than rolled over. All-day events use the inclusive convention — `end` is the last day, not the day after.
 - **Clearing a field**: pass JSON `null` for `location` / `notes` / `url` (Calendar) and `notes` / `url` / `due` (Reminders). Empty strings are stripped by the validator and mean "leave unchanged".
-- **Recurring events**: `calendar_update_event` without `occurrence_start` or `span` defaults to `future_events` and says so in a warning; alarms are clamped to 0 … 4 weeks and reported.
+- **Recurring events**: `calendar_update_event` and `calendar_delete_event` both refuse a recurring event without `occurrence_start` (`invalid_args`, field `occurrence_start`) — "move my standup tomorrow" must never rewrite the series or silently detach only the first occurrence. With the occurrence, `span` picks `this_event` (default) or `future_events`. Alarms are clamped to 0 … 4 weeks and reported.
 - **Calendar range**: EventKit caps a single query at four years; `calendar_events` reports `end_clamped` and the effective end when that applies.
 - **Notes with attachments**: `notes_append` refuses (the AppleScript body setter would drop the attachments) and names them; use `notes_create` or `notes_open`.
 - **Mail ids** from `mail_list` / `mail_search` are stable within Mail and resolve with `first message of <mailbox> whose id is …`; mailbox paths are `Account/Folder/Subfolder` with `\/` for a literal slash.
@@ -105,8 +107,8 @@ On first launch after upgrading, `AppleAppsPluginMigration` runs once (marker in
 
 1. It scans `Tools/` for folders of the superseded Apple plugins that are actually **installed**. Only those plugins' legacy tool names are considered — a Slack plugin's `send_message` or a Spotify plugin's `play` is never touched.
 2. For each custom agent whose manual tool allowlist names one of those legacy tools, the legacy names are **removed** from the allowlist and the owning Apple app is **enabled** on the agent. `search_messages` maps to Messages when the Messages plugin is installed, otherwise to Mail.
-3. The marker is written only after every agent has been persisted.
-4. If superseded Apple plugin folders are present, a one-time toast points to Agents → Abilities → Tools → Apple Apps.
+3. Each changed agent is saved and then read back from disk (`AgentStore.loadPersisted`); the marker is written only when every record shows the change. `AgentStore.save` swallows write errors, so a save that "returned" is not proof — a failed read-back leaves the marker unset and the sweep retries on the next launch.
+4. If superseded Apple plugin folders are present, a one-time toast names the apps and, when the sweep migrated agents, says which ones already have them turned on; otherwise it points to Agents → Abilities → Tools → Apple Apps.
 
 Installed copies of the superseded plugins are skipped at load (`PluginManager.excludeSupersededPlugins`); their marketplace cards show a "Built into Osaurus" banner that links to the native settings. Uninstall them when you are ready.
 

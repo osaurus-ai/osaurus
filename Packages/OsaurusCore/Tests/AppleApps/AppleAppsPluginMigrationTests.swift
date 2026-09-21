@@ -139,7 +139,7 @@ struct AppleAppsPluginMigrationTests {
             let count = AppleAppsPluginMigration.migrateIfNeeded(
                 agents: [legacy, untouched], installedPluginIds: ["osaurus.reminders"]
             ) { persisted.append($0) }
-            #expect(count == 1)
+            #expect(count == [legacy.name])
             #expect(persisted.count == 1)
             #expect(persisted.first?.id == legacy.id)
             #expect(persisted.first?.settings.enabledAppleApps == [.reminders])
@@ -151,7 +151,7 @@ struct AppleAppsPluginMigrationTests {
             let again = AppleAppsPluginMigration.migrateIfNeeded(
                 agents: [legacy], installedPluginIds: ["osaurus.reminders"]
             ) { _ in Issue.record("must not persist on a second run") }
-            #expect(again == 0)
+            #expect(again.isEmpty)
         }
     }
 
@@ -163,15 +163,38 @@ struct AppleAppsPluginMigrationTests {
             let count = AppleAppsPluginMigration.migrateIfNeeded(
                 agents: [legacy], installedPluginIds: ["osaurus.reminders"]
             ) { _ in throw PersistFailed() }
-            #expect(count == 0)
+            #expect(count.isEmpty)
             #expect(!AppleAppsConfigurationStore.load().pluginToolNamesMigrated)
 
             // A later successful run completes and sets the marker.
             let retry = AppleAppsPluginMigration.migrateIfNeeded(
                 agents: [legacy], installedPluginIds: ["osaurus.reminders"]
             ) { _ in }
-            #expect(retry == 1)
+            #expect(retry == [legacy.name])
             #expect(AppleAppsConfigurationStore.load().pluginToolNamesMigrated)
+        }
+    }
+
+    @Test("the production persist reads the record back from disk and throws when the write did not land")
+    func persistVerifiesDisk() async throws {
+        try await withIsolatedStore { _ in
+            // A built-in-flagged agent is refused by AgentManager.update /
+            // AgentStore.save without an error, so nothing reaches disk —
+            // exactly the "call returned, nothing persisted" shape the old
+            // closure trusted. The verification must throw so the marker is
+            // not written over a silent save failure.
+            let ghost = Agent(
+                name: "Ghost \(UUID().uuidString.prefix(6))",
+                isBuiltIn: true,
+                agentAddress: "test-apple-migration-\(UUID().uuidString)",
+                toolSelectionMode: .manual,
+                manualToolNames: ["get_reminders"]
+            )
+            let outcome = AppleAppsPluginMigration.migrate(agent: ghost, installedPluginIds: ["osaurus.reminders"])
+            #expect(outcome.changed)
+            #expect(throws: AgentStore.PersistenceError.self) {
+                try AppleAppsPluginMigration.persistAndVerify(outcome)
+            }
         }
     }
 
@@ -182,7 +205,7 @@ struct AppleAppsPluginMigrationTests {
             let count = AppleAppsPluginMigration.migrateIfNeeded(agents: [spotifyish], installedPluginIds: []) { _ in
                 Issue.record("nothing should be persisted")
             }
-            #expect(count == 0)
+            #expect(count.isEmpty)
             #expect(AppleAppsConfigurationStore.load().pluginToolNamesMigrated)
         }
     }
@@ -229,12 +252,32 @@ struct AppleAppsPluginMigrationTests {
             #expect(shown.message.contains("Mail"))
             #expect(shown.message.contains("Music"))
             #expect(shown.message.contains("Abilities"))
+            #expect(!shown.message.contains("Already turned on"))
             #expect(AppleAppsConfigurationStore.load().supersededPluginNoticeShown)
 
             let again = AppleAppsPluginMigration.showSupersededNoticeIfNeeded(installedPluginIds: ["osaurus.mail"]) { _, _ in
                 Issue.record("notice must show once")
             }
             #expect(again == nil)
+        }
+    }
+
+    @Test("when the sweep migrated agents, the notice names them instead of telling the user to flip switches")
+    func noticeNamesMigratedAgents() async throws {
+        try await withIsolatedStore { _ in
+            let shown = NoticeCapture()
+            let capture: @MainActor (String, String) -> Void = { _, body in shown.message = body }
+            let message = AppleAppsPluginMigration.showSupersededNoticeIfNeeded(
+                installedPluginIds: ["osaurus.mail"],
+                migratedAgents: ["Inbox Helper", "Personal Organizer"],
+                present: capture
+            )
+            #expect(message != nil)
+            #expect(shown.message.contains("Mail"))
+            #expect(shown.message.contains("Already turned on"))
+            #expect(shown.message.contains("Inbox Helper"))
+            #expect(shown.message.contains("Personal Organizer"))
+            #expect(shown.message.contains("Abilities"))
         }
     }
 

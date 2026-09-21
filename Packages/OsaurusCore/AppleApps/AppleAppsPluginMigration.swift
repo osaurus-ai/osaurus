@@ -21,8 +21,10 @@
 //
 //  Pure mapping (`migrate(agent:installedPluginIds:)`) + a marker-guarded
 //  launch sweep, same shape as `BrowserPluginMigration`. The marker is
-//  written only after every changed agent persisted, and the sweep's file
-//  I/O runs off the main actor.
+//  written only after every changed agent persisted AND its record read
+//  back from disk with the change in it (`AgentStore.save` swallows write
+//  errors, so the call returning proves nothing); the sweep's `Tools/`
+//  scan runs off the main actor.
 //
 
 import Foundation
@@ -164,36 +166,63 @@ public enum AppleAppsPluginMigration {
         return Outcome(agent: updated, changed: true, enabledApps: apps, renamedTools: renamed)
     }
 
+    /// The save did not land: the record read back from disk still carries a
+    /// legacy name or lacks the app the sweep enabled.
+    public struct PersistMismatch: Error, CustomStringConvertible {
+        public let agentName: String
+        public var description: String { "on-disk record for \"\(agentName)\" does not reflect the migration" }
+    }
+
+    /// Production persist: `AgentManager.update` queues an async write and
+    /// swallows its errors, so the marker must not trust the call returning.
+    /// Read the record back from disk and require the two fields this sweep
+    /// changes to be there; anything else throws and the sweep retries on
+    /// the next launch.
+    static func persistAndVerify(_ outcome: Outcome) throws {
+        AgentManager.shared.update(outcome.agent)
+        let onDisk = try AgentStore.loadPersisted(id: outcome.agent.id)
+        let stillHasLegacy = !Set(onDisk.manualToolNames ?? []).isDisjoint(with: outcome.renamedTools.keys)
+        let missingApps = !onDisk.settings.enabledAppleApps.isSuperset(of: outcome.enabledApps)
+        if stillHasLegacy || missingApps {
+            throw PersistMismatch(agentName: outcome.agent.name)
+        }
+    }
+
     /// Launch sweep. Runs once (marker in `apple-apps.json`); `agents` /
     /// `installedPluginIds` / `persist` are test seams, production uses
-    /// `AgentManager.shared` and the on-disk `Tools/` folder. The marker is
-    /// written only when every changed agent was persisted; if `persist`
-    /// throws, the sweep retries on the next launch.
+    /// `AgentManager.shared`, the on-disk `Tools/` folder, and
+    /// `persistAndVerify`. The marker is written only when every changed
+    /// agent was persisted **and read back**; otherwise the sweep retries on
+    /// the next launch. Returns the names of the agents that were migrated so
+    /// the launch notice can say which ones already have their apps on.
     @discardableResult
     public static func migrateIfNeeded(
         agents: [Agent]? = nil,
         installedPluginIds: Set<String>? = nil,
         persist: ((Agent) throws -> Void)? = nil
-    ) -> Int {
+    ) -> [String] {
         var config = AppleAppsConfigurationStore.load()
-        guard !config.pluginToolNamesMigrated else { return 0 }
+        guard !config.pluginToolNamesMigrated else { return [] }
 
         let installed = installedPluginIds ?? PluginManager.installedSupersededAppleAppPluginIds()
         let source = agents ?? AgentManager.shared.agents
-        let save = persist ?? { AgentManager.shared.update($0) }
-        var migrated = 0
+        var migrated: [String] = []
         var allPersisted = true
         for agent in source {
             let outcome = migrate(agent: agent, installedPluginIds: installed)
             guard outcome.changed else { continue }
             do {
-                try save(outcome.agent)
+                if let persist {
+                    try persist(outcome.agent)
+                } else {
+                    try persistAndVerify(outcome)
+                }
             } catch {
                 allPersisted = false
                 print("[Osaurus] Apple apps: failed to persist migrated agent \"\(agent.name)\": \(error)")
                 continue
             }
-            migrated += 1
+            migrated.append(agent.name)
             print(
                 "[Osaurus] Apple apps: removed \(outcome.renamedTools.count) legacy plugin tool name(s) on \"\(agent.name)\" → enabled \(AppleApp.sorted(outcome.enabledApps).map(\.rawValue).joined(separator: ", "))"
             )
@@ -211,17 +240,20 @@ public enum AppleAppsPluginMigration {
         let installed = await Task.detached(priority: .utility) {
             PluginManager.installedSupersededAppleAppPluginIds()
         }.value
-        migrateIfNeeded(installedPluginIds: installed)
-        showSupersededNoticeIfNeeded(installedPluginIds: installed)
+        let migratedAgents = migrateIfNeeded(installedPluginIds: installed)
+        showSupersededNoticeIfNeeded(installedPluginIds: installed, migratedAgents: migratedAgents)
     }
 
     /// One-time launch notice when a superseded Apple plugin folder still
     /// exists: the user had e.g. `osaurus.mail` and would otherwise get no
-    /// hint that Mail is now a per-agent built-in. Returns the notice text
-    /// when shown (test seam), nil otherwise.
+    /// hint that Mail is now a per-agent built-in. When the sweep just turned
+    /// apps on for agents that used the plugin, the notice names them instead
+    /// of telling the user to go flip switches that are already on. Returns
+    /// the notice text when shown (test seam), nil otherwise.
     @discardableResult
     public static func showSupersededNoticeIfNeeded(
         installedPluginIds: Set<String>,
+        migratedAgents: [String] = [],
         present: ((String, String) -> Void)? = nil
     ) -> String? {
         var config = AppleAppsConfigurationStore.load()
@@ -230,10 +262,18 @@ public enum AppleAppsPluginMigration {
         guard !apps.isEmpty else { return nil }
         let title = L("Apple apps are now built into Osaurus")
         let list = apps.map(\.displayName).joined(separator: ", ")
-        let message = String(
-            format: L("%@ no longer need a plugin. Turn each app on per agent under Agents → Abilities → Tools → Apple Apps."),
-            list
-        )
+        let message: String
+        if migratedAgents.isEmpty {
+            message = String(
+                format: L("%@ no longer need a plugin. Turn each app on per agent under Agents → Abilities → Tools → Apple Apps."),
+                list
+            )
+        } else {
+            message = String(
+                format: L("%@ no longer need a plugin. Already turned on for %@; for other agents use Agents → Abilities → Tools → Apple Apps."),
+                list, ListFormatter.localizedString(byJoining: migratedAgents)
+            )
+        }
         if let present {
             present(title, message)
         } else {

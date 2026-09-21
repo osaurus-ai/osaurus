@@ -272859,6 +272859,7 @@
     "macOS has not granted: %@. Click to grant or open System Settings.": {},
     "Apple apps are now built into Osaurus": {},
     "%@ no longer need a plugin. Turn each app on per agent under Agents → Abilities → Tools → Apple Apps.": {},
+    "%@ no longer need a plugin. Already turned on for %@; for other agents use Agents → Abilities → Tools → Apple Apps.": {},
 
     "More SSD cache space would help this chat": {
       "extractionState": "manual",

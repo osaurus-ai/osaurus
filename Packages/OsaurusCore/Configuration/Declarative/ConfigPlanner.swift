@@ -29,6 +29,16 @@ enum ConfigRisk {
     static func autoPolicy(_ tool: String) -> String {
         "Sets tool `\(tool)` to auto — it will run without asking."
     }
+    /// A per-call approval tool (send / delete) cannot be made silent: the
+    /// registry forces `ask` at execution, so the stored `auto` is inert.
+    static func autoPolicyIgnoredPerCall(_ tool: String) -> String {
+        "Sets tool `\(tool)` to auto, but it always asks for approval on every call (it sends or deletes as the user) — the setting is stored and has no effect."
+    }
+    /// Argument-aware per-call tools (`mail_compose` / `mail_reply`): `auto`
+    /// covers drafts, never the `send: true` calls.
+    static func autoPolicySendsStillAsk(_ tool: String) -> String {
+        "Sets tool `\(tool)` to auto — drafts will run without asking; calls that send as the user still show an approval card every time."
+    }
     static func computerUse(_ agent: String) -> String {
         "Gives agent `\(agent)` screen control (computer use)."
     }
@@ -1302,7 +1312,15 @@ enum ConfigPlanner {
             let current = registry.configuredPolicy(for: tool) ?? .ask
             if current != policy {
                 changes.append("\(tool): policy \(current.rawValue) -> \(policy.rawValue)")
-                if policy == .auto { risks.append(ConfigRisk.autoPolicy(tool)) }
+                if policy == .auto {
+                    if registry.requiresPerCallApproval(tool) {
+                        risks.append(ConfigRisk.autoPolicyIgnoredPerCall(tool))
+                    } else if registry.mayRequirePerCallApproval(tool) {
+                        risks.append(ConfigRisk.autoPolicySendsStillAsk(tool))
+                    } else {
+                        risks.append(ConfigRisk.autoPolicy(tool))
+                    }
+                }
             }
         }
         guard !changes.isEmpty else { return }
