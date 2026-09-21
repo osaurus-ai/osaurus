@@ -317,10 +317,20 @@ struct ChatSessionQueuedSendTests {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()
             session.forceChatEngineRouteForTests = true
-            session.chatEngineFactory = { _ in DelayedCancellingBeforeDeltaChatEngine(delayMs: 120) }
+            // 500ms (not 120ms): the test must observe `isStreaming`,
+            // capture the transient id, and enqueue — all before the
+            // privacy-cancel fires. On loaded CI a 120ms window races
+            // the 20ms `waitUntil` poll and flakes with
+            // `sessionId == nil` at the capture below.
+            session.chatEngineFactory = { _ in DelayedCancellingBeforeDeltaChatEngine(delayMs: 500) }
 
             session.send("review will cancel")
-            try await waitUntil(timeout: .seconds(1)) { session.isStreaming }
+            // Capture atomically with the streaming observation: once the
+            // cancel fires `sessionId` goes back to nil, so requiring it
+            // in a separate step after `isStreaming` alone is racy.
+            try await waitUntil(timeout: .seconds(2)) {
+                session.isStreaming && session.sessionId != nil
+            }
             let transientId = try #require(session.sessionId)
 
             let queuedAttachment = Attachment.document(
@@ -330,7 +340,7 @@ struct ChatSessionQueuedSendTests {
             )
             session.enqueueSend("queued follow-up", attachments: [queuedAttachment])
 
-            try await waitUntil(timeout: .seconds(2)) {
+            try await waitUntil(timeout: .seconds(3)) {
                 !session.isStreaming
                     && session.turns.isEmpty
                     && session.queuedSend != nil
