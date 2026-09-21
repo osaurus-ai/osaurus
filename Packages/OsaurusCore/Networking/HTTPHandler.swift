@@ -264,6 +264,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// gates (Osaurus Router) can tell keyed callers from key-less
         /// loopback-trusted ones.
         var callerHasVerifiedAccessKey: Bool = false
+        /// `true` when that verified key is master-scoped. Unlike
+        /// `authedScopeIsMaster` this is also set by the opportunistic
+        /// loopback validation, so owner-only routes (`/credits/*`) can
+        /// refuse agent-scoped keys that loopback trust lets past the gate.
+        var callerAccessKeyIsMaster: Bool = false
         /// Set when the request arrived as an encrypted `/secure/call`
         /// envelope and was rewritten to its inner request. Routes that
         /// hard-require end-to-end encryption (`/agents/{id}/run`,
@@ -376,6 +381,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stateRef.value.authedAudience = nil
             stateRef.value.authedScopeIsMaster = false
             stateRef.value.callerHasVerifiedAccessKey = false
+            stateRef.value.callerAccessKeyIsMaster = false
             // Clear last request's attribution so a keep-alive connection's
             // next (possibly loopback / public) request can't inherit it.
             _inboundConnection.value = nil
@@ -556,6 +562,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         stateRef.value.authedAudience = audience.lowercased()
                         stateRef.value.authedScopeIsMaster =
                             apiKeyValidator.isMasterScoped(audience: audience)
+                        stateRef.value.callerAccessKeyIsMaster = stateRef.value.authedScopeIsMaster
                         stateRef.value.authedKeyIsWorkspaceMinted =
                             !stateRef.value.authedScopeIsMaster
                             && WorkspaceAgentAccessHost.isWorkspaceMintedKey(nonce: keyNonce)
@@ -669,8 +676,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let authHeader = head.headers.first(name: "Authorization") ?? ""
                 if authHeader.hasPrefix("Bearer ") {
                     let token = String(authHeader.dropFirst(7))
-                    if case .valid = apiKeyValidator.validate(rawKey: token) {
+                    if case .valid(_, let audience, _) = apiKeyValidator.validate(rawKey: token) {
                         stateRef.value.callerHasVerifiedAccessKey = true
+                        stateRef.value.callerAccessKeyIsMaster =
+                            apiKeyValidator.isMasterScoped(audience: audience)
                     }
                 }
             }
@@ -1392,8 +1401,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// `GET /credits/balance` — read-only Osaurus Router credit balance for
     /// local tools (usage dashboards, menu bar apps). Osaurus signs the router
     /// request itself, so the caller never touches the wallet key. Loopback
-    /// skips the global auth gate, so the Router spend policy is applied here:
-    /// a verified access key, or the key-less loopback opt-in.
+    /// skips the global auth gate, so `LocalCreditsBalance.isAuthorized` is
+    /// applied here: a verified master key, or the key-less loopback opt-in
+    /// for non-browser callers.
     private func handleCreditsBalanceEndpoint(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -1412,13 +1422,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logMethod = method
         let logPath = path
-        let hasVerifiedAccessKey = stateRef.value.callerHasVerifiedAccessKey
+        let hasVerifiedMasterKey =
+            stateRef.value.callerHasVerifiedAccessKey && stateRef.value.callerAccessKeyIsMaster
+        let requestHasOrigin = head.headers.contains(name: "Origin")
 
         runRequestTask(priority: .userInitiated) {
             let response: (status: Int, json: [String: Any])
             if LocalCreditsBalance.isAuthorized(
-                callerHasVerifiedAccessKey: hasVerifiedAccessKey,
-                allowsUnkeyedLoopbackSpend: OsaurusRouter.allowsUnkeyedLoopbackSpend
+                callerHasVerifiedMasterKey: hasVerifiedMasterKey,
+                allowsUnkeyedLoopbackSpend: OsaurusRouter.allowsUnkeyedLoopbackSpend,
+                requestHasOrigin: requestHasOrigin
             ) {
                 let result = await OsaurusRouterAccountService.shared.balanceForLocalAPI()
                 response = LocalCreditsBalance.response(for: result)

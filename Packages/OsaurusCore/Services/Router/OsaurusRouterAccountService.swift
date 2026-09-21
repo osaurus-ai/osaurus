@@ -43,12 +43,30 @@ final class OsaurusRouterAccountService: ObservableObject {
     /// increase confirms it. Gates `balance_topup_succeeded` so it fires for a
     /// real top-up rather than any incidental balance refresh.
     private var awaitingTopUpConfirmation = false
-    /// When `balance` was last fetched successfully; drives the staleness
-    /// check for the local `GET /credits/balance` endpoint.
-    private var balanceFetchedAt: Date?
+
+    // State for `balanceForLocalAPI`. Ages use `ContinuousClock` so wall-clock
+    // corrections and system sleep cannot make an old value look fresh.
+    private static let localAPIBalanceTimeout: TimeInterval = 8
+    private var localAPIBalanceCache:
+        (balance: OsaurusRouterBalanceResponse, fetchedAt: Date, at: ContinuousClock.Instant)?
+    private var localAPIBalanceFailure: (result: LocalCreditsBalanceResult, at: ContinuousClock.Instant)?
+    private var localAPIBalanceRefresh: Task<Void, Never>?
+    private var localAPIBalanceGeneration = 0
+    private var identityObserver: NSObjectProtocol?
 
     init(client: OsaurusRouterAPIClient = .shared) {
         self.client = client
+        // A deleted or restored identity is a different account: never serve
+        // the previous account's balance from the local API cache.
+        identityObserver = NotificationCenter.default.addObserver(
+            forName: .osaurusIdentityChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.clearLocalAPIBalance()
+            }
+        }
         activationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
             object: nil,
@@ -98,8 +116,8 @@ final class OsaurusRouterAccountService: ObservableObject {
     /// from `RemoteProviderManager.setOsaurusRouterEnabled(false)` so the Credits
     /// UI doesn't show a stale balance/activity while server polling is stopped.
     func clearForDisabledRouter() {
+        clearLocalAPIBalance()
         balance = nil
-        balanceFetchedAt = nil
         usage = []
         nextUsageCursor = nil
         transactions = []
@@ -132,7 +150,6 @@ final class OsaurusRouterAccountService: ObservableObject {
             let previousMicro = balanceMicroValue
             let newBalance = try await client.balance()
             balance = newBalance
-            balanceFetchedAt = Date()
             lastError = nil
             // Best-effort top-up confirmation: a balance increase after we
             // initiated a Checkout (and returned to the app) means the funds
@@ -154,22 +171,90 @@ final class OsaurusRouterAccountService: ObservableObject {
         }
     }
 
-    /// Balance for the local HTTP API. Serves the cached value while it is
-    /// younger than `maxAge` so a polling dashboard never turns into a signed
-    /// router request per poll; otherwise refreshes first. When the refresh
-    /// fails, the last known balance is still returned, flagged stale.
-    func balanceForLocalAPI(maxAge: TimeInterval = 30, now: Date = Date()) async -> LocalCreditsBalanceResult {
+    // MARK: Local HTTP API balance
+
+    /// Balance for the local `GET /credits/balance` endpoint. Deliberately
+    /// separate from the `@Published` Credits state: an external poller must
+    /// never drive the UI's spinner or error banner, and the UI's optimistic
+    /// post-request deductions must never be served as a Router-fetched value.
+    ///
+    /// Fresh for `maxAge`; after a failed refresh the Router is not retried
+    /// for `failureBackoff`, and concurrent callers share one in-flight
+    /// request, so polling never becomes one signed Router request per poll.
+    /// The last fetched balance is returned flagged stale when a refresh fails.
+    func balanceForLocalAPI(
+        maxAge: TimeInterval = 30,
+        failureBackoff: TimeInterval = 10
+    ) async -> LocalCreditsBalanceResult {
+        if let blocked = localAPIBalancePrecondition() { return blocked }
+        if let fresh = freshLocalAPIBalance(maxAge: maxAge) { return fresh }
+        if let failure = localAPIBalanceFailure,
+            failure.at.duration(to: .now) < .seconds(failureBackoff)
+        {
+            return staleLocalAPIBalance(or: failure.result)
+        }
+
+        let refresh = localAPIBalanceRefresh ?? startLocalAPIBalanceRefresh()
+        await refresh.value
+
+        // The Router switch or identity may have changed during the await.
+        if let blocked = localAPIBalancePrecondition() { return blocked }
+        if let fresh = freshLocalAPIBalance(maxAge: maxAge) { return fresh }
+        return staleLocalAPIBalance(
+            or: localAPIBalanceFailure?.result ?? .unavailable("The Osaurus Router could not be reached.")
+        )
+    }
+
+    private func localAPIBalancePrecondition() -> LocalCreditsBalanceResult? {
         guard OsaurusRouter.isEnabled else { return .routerDisabled }
         guard OsaurusIdentity.existsCached() else { return .noIdentity }
-        if let balance, let fetchedAt = balanceFetchedAt, now.timeIntervalSince(fetchedAt) < maxAge {
-            return .balance(balance, fetchedAt: fetchedAt, stale: false)
+        return nil
+    }
+
+    private func freshLocalAPIBalance(maxAge: TimeInterval) -> LocalCreditsBalanceResult? {
+        guard let cache = localAPIBalanceCache, cache.at.duration(to: .now) < .seconds(maxAge) else {
+            return nil
         }
-        let previousFetch = balanceFetchedAt
-        await refreshBalance()
-        guard let balance, let fetchedAt = balanceFetchedAt else {
-            return .unavailable(lastError ?? "The Osaurus Router could not be reached.")
+        return .balance(cache.balance, fetchedAt: cache.fetchedAt, stale: false)
+    }
+
+    private func staleLocalAPIBalance(or fallback: LocalCreditsBalanceResult) -> LocalCreditsBalanceResult {
+        guard let cache = localAPIBalanceCache else { return fallback }
+        return .balance(cache.balance, fetchedAt: cache.fetchedAt, stale: true)
+    }
+
+    private func startLocalAPIBalanceRefresh() -> Task<Void, Never> {
+        let generation = localAPIBalanceGeneration
+        let client = client
+        let task = Task { [weak self] in
+            let outcome: Result<OsaurusRouterBalanceResponse, Error>
+            do {
+                outcome = .success(try await client.balance(timeout: Self.localAPIBalanceTimeout))
+            } catch {
+                outcome = .failure(error)
+            }
+            // A bumped generation means the Router was turned off or the
+            // identity changed mid-flight: this result belongs to old state.
+            guard let self, self.localAPIBalanceGeneration == generation else { return }
+            self.localAPIBalanceRefresh = nil
+            switch outcome {
+            case .success(let balance):
+                self.localAPIBalanceCache = (balance, Date(), .now)
+                self.localAPIBalanceFailure = nil
+            case .failure(let error):
+                self.localAPIBalanceFailure = (LocalCreditsBalance.result(forRefreshError: error), .now)
+            }
         }
-        return .balance(balance, fetchedAt: fetchedAt, stale: fetchedAt == previousFetch)
+        localAPIBalanceRefresh = task
+        return task
+    }
+
+    private func clearLocalAPIBalance() {
+        localAPIBalanceGeneration += 1
+        localAPIBalanceRefresh?.cancel()
+        localAPIBalanceRefresh = nil
+        localAPIBalanceCache = nil
+        localAPIBalanceFailure = nil
     }
 
     func refreshUsage(reset: Bool = true) async {
