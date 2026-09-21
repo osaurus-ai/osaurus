@@ -16,27 +16,30 @@ struct DiskCacheQuotaSnapshot: Sendable {
     let directory: URL
     let usage: DiskCacheUsage
 
-    var key: Key {
-        Key(directory: directory.standardizedFileURL.path, maxBytes: usage.maxBytes)
+    /// One notice per (cache folder, chat) per launch, even if later turns
+    /// produce more oversized snapshots.
+    func key(session: String) -> Key {
+        Key(directory: directory.standardizedFileURL.path, session: session)
     }
 
     struct Key: Hashable, Sendable {
         let directory: String
-        let maxBytes: Int
+        let session: String
     }
 }
 
 struct DiskCacheQuotaNoticePolicy {
     private var presented: Set<DiskCacheQuotaSnapshot.Key> = []
 
-    /// One notice per root and effective limit per app launch. A janitor can
-    /// lower usage before the next sample; actual quota evictions still count.
-    mutating func claim(_ snapshot: DiskCacheQuotaSnapshot) -> Bool {
+    /// Quota enforcement can lower usage before the next sample. The event
+    /// identifies an oversized snapshot independently of current fullness.
+    /// Routine evictions and trims do not consume the chat's notice.
+    mutating func claim(_ snapshot: DiskCacheQuotaSnapshot, session: String?) -> Bool {
         let usage = snapshot.usage
-        guard !usage.isDisabled, usage.maxBytes > 0,
-            usage.usedBytes >= usage.maxBytes || usage.evictions > 0
+        guard let session, !usage.isDisabled, usage.maxBytes > 0,
+            usage.pressureAffects(session: session)
         else { return false }
-        return presented.insert(snapshot.key).inserted
+        return presented.insert(snapshot.key(session: session)).inserted
     }
 }
 
@@ -59,8 +62,8 @@ final class DiskCacheQuotaNotices {
     static let shared = DiskCacheQuotaNotices()
     private var policy = DiskCacheQuotaNoticePolicy()
 
-    func claim(_ snapshot: DiskCacheQuotaSnapshot) -> Bool {
+    func claim(_ snapshot: DiskCacheQuotaSnapshot, session: String?) -> Bool {
         guard !DiskCacheQuotaNoticeSuppression.isSuppressed() else { return false }
-        return policy.claim(snapshot)
+        return policy.claim(snapshot, session: session)
     }
 }

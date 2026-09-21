@@ -61,6 +61,51 @@ final class DiskCacheUsageTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(live.diskL2UsedFraction), 0.25, accuracy: 0.0001)
     }
 
+    /// The quota counters add up across a model handoff like every other
+    /// per-instance counter; the last pass time, the pressure kind and the last
+    /// request's restore are readings and come from the live snapshot alone.
+    func testQuotaCountersAccumulateAndReadingsStayLiveThroughCounterMerging() {
+        let restore = CacheRestoreSummary(
+            modelName: "model-b",
+            restoredTokens: 1536,
+            promptTokens: 2049,
+            detail: "disk"
+        )
+        let live = BatchDiagnosticsSnapshot(
+            pendingCount: 0,
+            activeCount: 0,
+            activeHighWatermark: 0,
+            decodeSplitCount: 0,
+            turboQuantCompressions: 0,
+            isAcceptingRequests: true,
+            diskL2EvictedBytes: 1_000,
+            diskL2QuotaPasses: 2,
+            diskL2LastQuotaPassMs: 12.5,
+            diskL2FailedIndexWrites: 1,
+            diskL2PressureEventSeq: 3,
+            diskL2PressureKind: "activeChainTrimmed",
+            lastCacheRestore: restore
+        )
+        let retired = ProcessLifetimeBatchCounters(
+            diskL2Evictions: 4,
+            diskL2EvictedBytes: 500,
+            diskL2QuotaPasses: 1,
+            diskL2FailedIndexWrites: 4,
+            diskL2PressureEventSeq: 2
+        )
+
+        let merged = retired.mergingCounters(into: live)
+
+        XCTAssertEqual(merged.diskL2Evictions, 4)
+        XCTAssertEqual(merged.diskL2EvictedBytes, 1_500)
+        XCTAssertEqual(merged.diskL2QuotaPasses, 3)
+        XCTAssertEqual(merged.diskL2FailedIndexWrites, 5)
+        XCTAssertEqual(merged.diskL2PressureEventSeq, 5)
+        XCTAssertEqual(merged.diskL2LastQuotaPassMs, 12.5)
+        XCTAssertEqual(merged.diskL2PressureKind, "activeChainTrimmed")
+        XCTAssertEqual(merged.lastCacheRestore, restore)
+    }
+
     // MARK: - Warning threshold
 
     func testWarningFiresAtSeventyFivePercentAndNotBefore() {

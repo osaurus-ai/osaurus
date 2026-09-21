@@ -21,7 +21,7 @@ Ask the assistant to change declarative settings in chat (`osaurus_config`); eac
 
 ## What lives only in the Settings UI
 
-- Server: port, expose to network, generation defaults, batching/concurrency, prefix/paged-KV/disk cache, **Context Window Cap**, KV retention, memory safety, model exposure. (Port and exposure changes restart the server; cache changes unload loaded models.)
+- Server: port, expose to network, generation defaults, batching/concurrency, prefix/paged-KV/disk cache, **Context Window Cap**, KV retention, memory safety, model exposure. (Port and exposure changes restart the server; cache topology changes unload loaded models; disk-size changes update resident quotas.)
 - Orchestrator: Settings → Orchestrator holds Identity, Model & Generation (with the **Model readiness** row), **Working Folder**, Subagents (**Allowed subagents**, **Create starter agents**, **Permission**, **Permission for shared (workspace) agents**, **Limits**, **Advanced**, Local Models & Memory), and the **Delegations** list (Sent / Received). The working folder, model override, RAM-safety helpers and the Delegations list are UI-only; the rest is also declarative (`default_agent`, `delegation`).
 - Chat behavior: compaction model, clipboard monitoring, smooth streaming, thinking display, chat titles, follow-ups. **Not** the context window — that is Server → Cache.
 - App: start at login, hide dock icon, appearance, global hotkey, notifications/toasts.
@@ -134,11 +134,22 @@ Config JSON lives under `~/.osaurus/config/` (`server.json`, `server-runtime.jso
 
 ### SSD cache limit notice
 
-The chat composer shows **SSD cache limit reached** when the active disk cache
-reaches its effective Disk Cache Size limit or removes older entries to make room.
-It uses the runtime quota, including the limit calculated from the configured SSD
-percentage. The notice appears once per cache directory and limit per app launch.
-**Clear SSD Cache** removes indexed conversation cache files and their linked
-companion data in one click; **Dismiss** closes the notice. Clearing can make the
-next reply slower while cached data rebuilds. The same clear action is available
-under Management → Server → Settings → Cache. Chats and model weights are preserved.
+Normal cache filling and eviction are silent. The chat composer shows one notice
+per chat and cache directory per app launch when the runtime reports that the
+chat's latest saved progress exceeds the cache limit. Shorter cached prefixes may
+still be reusable; this notice does not mean that all progress was lost.
+
+**Increase Cache Size** opens **Disk Cache Size (% of disk)** under
+Management → Server → Settings → Cache and highlights the control. **Don't show
+this again** suppresses inline notices across launches. To restore them, turn on
+**Show SSD Cache Capacity Notices** in the same Cache section; that preference
+applies immediately.
+
+**Clear SSD Cache** remains available in Cache settings and removes indexed
+conversation cache files and linked companion data. Chats and model weights are
+preserved. Clearing can make the next reply slower while cached data rebuilds;
+it does not increase the cache limit.
+
+Disk Cache Size left blank uses **Automatic**: 30% of free space plus the cache's indexed payload bytes, including companions. Cache growth therefore does not shrink its own quota. An explicit percentage remains a percentage of total volume size, bounded by 25% of free space plus this cache; Settings shows the requested and effective amounts when limited. Existing percentages and legacy GB choices are preserved. Editing the percentage field replaces a legacy GB choice; clearing the field selects Automatic.
+
+Saving only the disk size updates resident models without unloading their weights. A decrease is enforced at the next cache write. Low free space produces an advisory and does not silently disable caching. Prefix Cache remains the master reuse switch; with paged RAM off, SSD reuse can still operate independently.

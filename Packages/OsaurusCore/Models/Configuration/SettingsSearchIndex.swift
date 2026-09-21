@@ -640,6 +640,22 @@ public enum SettingsSearchIndex {
             subTab: "cache"
         ),
         .init(
+            id: "settings.server.diskCacheSize",
+            tab: .server,
+            section: "Cache",
+            title: "Disk Cache Size (% of disk)",
+            keywords: ["ssd cache size", "increase cache size", "disk cache limit", "cache capacity"],
+            subTab: "cache"
+        ),
+        .init(
+            id: "settings.server.diskCacheNotices",
+            tab: .server,
+            section: "Cache",
+            title: "Show SSD Cache Capacity Notices",
+            keywords: ["cache warning", "cache banner", "don't show this again", "cache notice"],
+            subTab: "cache"
+        ),
+        .init(
             id: "server.memorySafety",
             tab: .server,
             section: "Memory Safety",

@@ -519,7 +519,7 @@ public enum ServerRuntimeSettingsStore {
             // migration overwrite a choice the user made.
             && (cache.blockDisk.maxSizePercent == nil
                 || cache.blockDisk.maxSizePercent
-                    == VMLXServerRuntimeSettings.autoDiskCacheFraction * 100)
+                    == 10) // Historical shipped default, independent of today's Automatic policy.
             && cache.blockDisk.directory == nil
             && cache.enableSSMReDerive == false
     }
@@ -561,7 +561,7 @@ public enum ServerRuntimeSettingsStore {
             // migration overwrite a choice the user made.
             && (cache.blockDisk.maxSizePercent == nil
                 || cache.blockDisk.maxSizePercent
-                    == VMLXServerRuntimeSettings.autoDiskCacheFraction * 100)
+                    == 10) // Historical shipped default, independent of today's Automatic policy.
             && cache.blockDisk.directory == nil
             && cache.enableSSMReDerive
     }

@@ -104,6 +104,57 @@ import Testing
         }
     }
 
+    /// A newer index counts companions without a KV row in `legacy_companions`.
+    /// A row whose files were removed must go; a row whose files are still on
+    /// disk must stay, or those bytes stop counting against the cap.
+    @Test func legacyCompanionRowsFollowTheFilesThatWereRemoved() throws {
+        try withRoot { root in
+            let hash = String(repeating: "d", count: 32)
+            try index(root, hash: hash)
+            let removedKey = String(repeating: "e", count: 64)
+            let keptKey = String(repeating: "f", count: 64)
+            var db: OpaquePointer?
+            #expect(sqlite3_open(root.appendingPathComponent("cache_index.db").path, &db) == SQLITE_OK)
+            defer { sqlite3_close(db) }
+            #expect(
+                sqlite3_exec(
+                    db,
+                    """
+                    CREATE TABLE legacy_companions (key TEXT PRIMARY KEY, bytes INTEGER NOT NULL, modified REAL NOT NULL);
+                    INSERT INTO legacy_companions VALUES('\(removedKey)', 2, 0);
+                    INSERT INTO legacy_companions VALUES('\(keptKey)', 5, 0);
+                    """,
+                    nil,
+                    nil,
+                    nil
+                ) == SQLITE_OK
+            )
+            try Data([1]).write(to: root.appendingPathComponent(hash + ".safetensors"))
+            let sub = root.appendingPathComponent("ssm_companion")
+            try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+            let unindexedHash = String(repeating: "9", count: 32)
+            for (key, kvHash) in [(removedKey, hash), (keptKey, unindexedHash)] {
+                try JSONSerialization.data(withJSONObject: ["kv_hash": kvHash, "num_states": 2])
+                    .write(to: sub.appendingPathComponent("ssm-\(key).json"))
+                try Data([2, 3]).write(to: sub.appendingPathComponent("ssm-\(key).safetensors"))
+            }
+
+            let result = SafeDiskCachePurge.clear(directory: root)
+            #expect(result.error == nil && result.removedFiles == 3)
+            #expect(!FileManager.default.fileExists(atPath: sub.appendingPathComponent("ssm-\(removedKey).safetensors").path))
+            #expect(FileManager.default.fileExists(atPath: sub.appendingPathComponent("ssm-\(keptKey).safetensors").path))
+
+            var remaining: [String] = []
+            var statement: OpaquePointer?
+            #expect(sqlite3_prepare_v2(db, "SELECT key FROM legacy_companions", -1, &statement, nil) == SQLITE_OK)
+            while sqlite3_step(statement) == SQLITE_ROW, let text = sqlite3_column_text(statement, 0) {
+                remaining.append(String(cString: text))
+            }
+            sqlite3_finalize(statement)
+            #expect(remaining == [keptKey])
+        }
+    }
+
     @Test func unknownDisabledAndBelowQuotaDoNotWarn() {
         #expect(!DiskCacheUsage(usedBytes: 100, maxBytes: 0).shouldWarn)
         #expect(!DiskCacheUsage(usedBytes: 100, maxBytes: 100, isDisabled: true).shouldWarn)

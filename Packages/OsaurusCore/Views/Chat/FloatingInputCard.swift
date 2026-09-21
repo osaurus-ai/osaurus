@@ -478,8 +478,7 @@ struct FloatingInputCard: View {
     // MARK: - SSD Cache Quota Notice
 
     @State private var ssdWarningSnapshot: DiskCacheQuotaSnapshot?
-    @State private var ssdClearInProgress = false
-    @State private var ssdClearResult: String?
+    @AppStorage(DiskCacheQuotaNoticeSuppression.defaultsKey) private var ssdNoticesSuppressed = false
     @State private var ssdCacheSettings = ServerRuntimeSettingsStore.snapshot().cache
 
     // MARK: - MTP Bundle-Layout Advisory State
@@ -964,19 +963,32 @@ struct FloatingInputCard: View {
                 if ssdCacheSettings != latest {
                     ssdCacheSettings = latest
                     ssdWarningSnapshot = nil
-                    ssdClearResult = nil
                 }
             }
             .task(id: ssdQuotaNoticePollContext) {
+                if ssdWarningSnapshot?.usage.pressureAffects(session: inputHistoryKey?.uuidString) != true {
+                    ssdWarningSnapshot = nil
+                }
                 while !Task.isCancelled {
-                    if canPresentSSDQuotaNotice, ssdWarningSnapshot == nil {
-                        let snapshots = await ModelRuntime.shared.diskCacheQuotaSnapshots(matching: ssdCacheSettings)
+                    if canPresentSSDQuotaNotice {
+                        let snapshots = await ModelRuntime.shared.diskCacheQuotaSnapshots(
+                            matching: ssdCacheSettings, modelName: selectedModel
+                        )
                         guard !Task.isCancelled else { return }
-                        if canPresentSSDQuotaNotice,
-                            let snapshot = snapshots.first(where: { DiskCacheQuotaNotices.shared.claim($0) })
+                        if let visible = ssdWarningSnapshot,
+                            !snapshots.contains(where: {
+                                $0.directory == visible.directory
+                                    && $0.usage.pressureAffects(session: inputHistoryKey?.uuidString)
+                            }) {
+                            ssdWarningSnapshot = nil
+                        }
+                        if canPresentSSDQuotaNotice, ssdWarningSnapshot == nil,
+                            let session = ssdQuotaNoticePollContext.session?.uuidString,
+                            let snapshot = snapshots.first(where: {
+                                DiskCacheQuotaNotices.shared.claim($0, session: session)
+                            })
                         {
                             ssdWarningSnapshot = snapshot
-                            ssdClearResult = nil
                         }
                     }
                     try? await Task.sleep(for: .seconds(3))
@@ -1024,6 +1036,7 @@ struct FloatingInputCard: View {
                 )
             )
             .onChange(of: selectedModel) { _, _ in
+                ssdWarningSnapshot = nil
                 refreshMTPLayoutAdvisory()
             }
             .onAppear {
@@ -2932,7 +2945,8 @@ extension FloatingInputCard {
                 breakdown: { budget.breakdown },
                 compactionState: compactionState,
                 canCompact: canCompactConversation && !isStreaming,
-                onCompact: onCompactConversation
+                onCompact: onCompactConversation,
+                currentSessionKey: inputHistoryKey?.uuidString
             )
         }
     }
@@ -4421,7 +4435,8 @@ extension FloatingInputCard {
     }
 
     private var canPresentSSDQuotaNotice: Bool {
-        guard ModelRuntime.cacheDiskDirectoryOverride(for: ssdCacheSettings) != nil,
+        guard !ssdNoticesSuppressed,
+            ModelRuntime.cacheDiskDirectoryOverride(for: ssdCacheSettings) != nil,
             isSelectedModelLocal, !isRemoteAgentRun, !isStreaming,
             !configContextTooSmall, modelSwitchContinuityWarning == nil,
             mtpLayoutAdvisory == nil, !ThemedAlertCenter.shared.hasAnyActiveAlert,
@@ -4436,52 +4451,27 @@ extension FloatingInputCard {
 
     @ViewBuilder
     private var ssdQuotaWarningRow: some View {
-        if canPresentSSDQuotaNotice, let snapshot = ssdWarningSnapshot {
+        if canPresentSSDQuotaNotice, let snapshot = ssdWarningSnapshot,
+            snapshot.usage.pressureAffects(session: inputHistoryKey?.uuidString)
+        {
             VStack(alignment: .leading, spacing: 10) {
-                Text("SSD cache limit reached", bundle: .module)
+                Text("More SSD cache space would help this chat", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-                if ssdClearResult == nil {
-                    Text(
-                        verbatim: String(
-                            format: L(
-                                "The SSD cache reached its %@ limit. Removing older cached data to make room can make replies slower to start. Clearing frees cache space, but the next reply may need to rebuild it."
-                            ),
-                            snapshot.usage.maxLabel
-                        )
-                    )
+                Text(verbatim: snapshot.usage.pressureText)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .fixedSize(horizontal: false, vertical: true)
-                }
-                if let ssdClearResult {
-                    Text(verbatim: ssdClearResult).font(.caption)
-                }
                 bannerPrimaryButton(
-                    String(localized: "Clear SSD Cache", bundle: .module),
+                    String(localized: "Increase Cache Size", bundle: .module),
                     tint: .orange
                 ) {
-                    ssdClearInProgress = true
-                    ssdClearResult = nil
-                    Task {
-                        let result = await ModelRuntime.shared.clearDiskCaches(directory: snapshot.directory)
-                        if ssdWarningSnapshot?.key == snapshot.key {
-                            ssdClearResult =
-                                result.error
-                                ?? String(
-                                    format: L("Cleared %@"),
-                                    DiskCacheUsage.format(bytes: result.reclaimedBytes)
-                                )
-                        }
-                        ssdClearInProgress = false
-                    }
+                    ManagementStateManager.shared.serverSectionRequest = "cache"
+                    SettingsHighlightCoordinator.shared.request("settings.server.diskCacheSize")
+                    AppDelegate.shared?.showManagementWindow(initialTab: .server)
                 }
-                .disabled(ssdClearInProgress || isStreaming)
-                if ssdClearInProgress { ProgressView().controlSize(.small) }
                 bannerTextButton(String(localized: "Don't show this again", bundle: .module)) {
                     DiskCacheQuotaNoticeSuppression.suppress()
                     ssdWarningSnapshot = nil
-                    ssdClearResult = nil
                 }
-                .disabled(ssdClearInProgress)
                 .padding(.vertical, 4)
                 .frame(maxWidth: .infinity)
             }
@@ -6620,6 +6610,9 @@ private struct ContextBreakdownPopover: View {
     /// off or no quota is configured, in which case the section is hidden
     /// entirely rather than rendering a meaningless 0 GB.
     var diskCache: DiskCacheUsage? = nil
+    /// The chat this chip belongs to; the disk-cache note is shown only when
+    /// the cap took this chat's rows.
+    var currentSessionKey: String? = nil
 
     /// Fraction of the configured quota at which the footer starts warning.
     static let diskCacheWarnFraction: Double = 0.75
@@ -6859,7 +6852,9 @@ private struct ContextBreakdownPopover: View {
     /// instead of inferred.
     private func diskCacheSection(_ usage: DiskCacheUsage) -> some View {
         let fraction = usage.usedFraction
-        let warn = fraction >= Self.diskCacheWarnFraction
+        // A full cache is an LRU's steady state, not a problem; the tint and
+        // the note appear only when the cap took THIS chat's saved progress.
+        let warn = usage.pressureAffects(session: currentSessionKey)
         let tint = warn ? theme.warningColor : theme.accentColor
         return VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -6881,7 +6876,7 @@ private struct ContextBreakdownPopover: View {
                 .frame(height: 4)
             }
             if warn, usage.maxBytes > 0 {
-                Text(verbatim: usage.warningText)
+                Text(verbatim: usage.pressureText)
                     .font(.system(size: 9))
                     .foregroundColor(tint)
                     .fixedSize(horizontal: false, vertical: true)
@@ -8947,88 +8942,25 @@ private struct FloatingContextChip: View {
     /// configured (disk cache off), so the popover hides the section rather
     /// than showing a meaningless 0 GB.
     nonisolated static func readDiskCacheUsage() async -> DiskCacheUsage? {
-        // Preferred source: a resident model's coordinator, which reports both
-        // the live payload bytes and the cap it is actually enforcing.
-        if let snapshot = await MLXBatchAdapter.snapshotDiagnostics(),
-            snapshot.diskL2MaxBytes > 0
-        {
+        let settings = ServerRuntimeSettingsStore.snapshot()
+        let directory = ModelRuntime.cacheDiskDirectoryOverride(for: settings.cache)
+        let dir = directory ?? OsaurusPaths.diskKVCache()
+        let volume = DiskCacheVolumeSnapshot.read(directory: dir)
+        guard directory != nil else {
             return DiskCacheUsage(
-                usedBytes: snapshot.diskL2PayloadBytes,
-                maxBytes: snapshot.diskL2MaxBytes,
-                evictions: snapshot.diskL2Evictions
+                usedBytes: Int(clamping: volume.ownBytes ?? 0), maxBytes: 0,
+                evictions: 0, isDisabled: true
             )
         }
-        // Fallback: nothing resident. The coordinator-backed figures only
-        // exist while a model is loaded, so gating the whole row on them made
-        // the cache readout VANISH on an idle chat — which reads as the
-        // feature being missing rather than merely unmeasured. The cache is
-        // still on disk and still capped, so report it from disk and settings.
-        guard let settings = ServerRuntimeSettingsStore.load() else { return nil }
-        // Measure the directory the RUNTIME caps, not the default one.
-        // `OsaurusPaths.diskKVCacheUsageBytes()` hardcodes the default path, so
-        // with a custom Disk Cache Directory configured it would report the size
-        // of a directory that is not the one being evicted — a plausible-looking
-        // number about the wrong thing. Resolve the override the same way
-        // `ModelRuntime` does.
-        let dir =
-            ModelRuntime.cacheDiskDirectoryOverride(for: settings.cache)
-            ?? OsaurusPaths.diskKVCache()
-        // A tier the USER switched off still gets a row, reading "· Off".
-        // Returning nil here instead made the readout vanish the moment
-        // someone unticked Disk Cache — the exact failure the comment above
-        // describes for an idle chat ("reads as the feature being missing"),
-        // and it left `isDisabled` reachable only from the host-aware
-        // free-disk decision. The state was built and then never rendered.
-        guard settings.cache.blockDisk.enabled else {
-            return DiskCacheUsage(
-                usedBytes: OsaurusPaths.directorySizeIfExists(at: dir),
-                maxBytes: 0,
-                evictions: 0,
-                isDisabled: true
-            )
+        if let snapshot = await ModelRuntime.shared.diskCacheQuotaSnapshots(matching: settings.cache).first {
+            return snapshot.usage
         }
-        // Resolve the cap the same way the coordinator does.
-        //
-        // This used to report ONLY an explicit `maxSizeGB`, on the reasoning
-        // that an unset size could not be known without a resident model. That
-        // is no longer true, and after the percent migration `maxSizeGB` is nil
-        // on every install — so the bar would have rendered "used · Auto" with
-        // no cap and no percentage while a real cap was being enforced, which
-        // is a worse lie than the guess it was avoiding. A share of a volume we
-        // can measure IS the number, computed by the same function that builds
-        // CacheCoordinatorConfig.
-        var resolvedGB = VMLXServerRuntimeSettings.resolveDiskCacheMaxGB(
-            percent: settings.cache.blockDisk.maxSizePercent,
-            legacyGB: settings.cache.blockDisk.maxSizeGB,
-            directory: dir
-        )
-        // The share is not the last word: `applyHostAwareDiskCacheCeiling`
-        // additionally bounds the cap to a quarter of the free bytes. Measured
-        // live, 10% of a 3.7 TB volume resolved to 372 GB while the coordinator
-        // enforced 242 GB, because only 969 GB was free. Reporting the
-        // unbounded number would make the bar's denominator disagree with the
-        // cap that is actually evicting.
-        var tierDisabled = false
-        if let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: dir.path), freeBytes > 0 {
-            let decision = ModelRuntime.hostAwareDiskCacheDecision(
-                configuredCapGB: resolvedGB,
-                freeBytes: freeBytes
-            )
-            tierDisabled = !decision.enabled
-            resolvedGB = decision.enabled ? decision.capGB : 0
-        }
-        // Still honest when the volume cannot be measured: the resolver falls
-        // back to the floor, which is a real enforced cap, not a guess.
-        //
-        // `isDisabled` is carried separately so a switched-off tier renders as
-        // "Off" rather than "Auto" — a zero cap and an unknown cap are both
-        // maxBytes 0, and calling the former "Auto" tells the user their cache
-        // is being sized for them when it is not running at all.
+        // No resident model: report indexed ownership, not unrelated files in the directory.
+        guard let ownBytes = volume.ownBytes else { return nil }
+        let resolution = ModelRuntime.diskCacheCap(for: settings.cache, directory: dir)
         return DiskCacheUsage(
-            usedBytes: OsaurusPaths.directorySizeIfExists(at: dir),
-            maxBytes: Int(resolvedGB * 1_073_741_824),
-            evictions: 0,
-            isDisabled: tierDisabled
+            usedBytes: Int(clamping: ownBytes), maxBytes: Int(clamping: resolution.capBytes),
+            evictions: 0
         )
     }
 
@@ -9048,6 +8980,9 @@ private struct FloatingContextChip: View {
     var compactionState: ContextCompactionUIState = .idle
     var canCompact: Bool = false
     var onCompact: (() -> Void)? = nil
+    /// The chat this chip belongs to. The disk-cache note is shown only when
+    /// the cap had to take THIS chat's saved progress.
+    var currentSessionKey: String? = nil
 
     @Environment(\.theme) private var theme
 
@@ -9150,7 +9085,8 @@ private struct FloatingContextChip: View {
                 compactionState: compactionState,
                 canCompact: canCompact,
                 onCompact: onCompact,
-                diskCache: diskCacheUsage
+                diskCache: diskCacheUsage,
+                currentSessionKey: currentSessionKey
             )
             .task(id: showContextBreakdown) {
                 // Poll while open. The cache index is a small SQLite read, but

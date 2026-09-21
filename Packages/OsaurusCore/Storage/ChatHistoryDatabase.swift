@@ -172,7 +172,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// Highest schema version this build knows how to produce.
     /// Internal (not private) so migration-repair tests assert "reconciled
     /// to the latest" against the real constant instead of a stale literal.
-    static let latestSchemaVersion = 17
+    static let latestSchemaVersion = 18
 
     /// Forward-compatibility invariant. Every chat-history migration is
     /// **additive** — it only `ADD COLUMN`s, `CREATE INDEX`es, or `CREATE
@@ -221,6 +221,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             migrateToV1, migrateToV2, migrateToV3, migrateToV4, migrateToV5, migrateToV6,
             migrateToV7, migrateToV8, migrateToV9, migrateToV10, migrateToV11, migrateToV12,
             migrateToV13, migrateToV14, migrateToV15, migrateToV16, migrateToV17,
+            migrateToV18,
         ]
     }
 
@@ -262,6 +263,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         "created_at", "completed_at", "generation_token_count", "time_to_first_token",
         "tool_call_durations", "thinking_duration", "router_billing",
         "terminal_stop_reason", "model_context_excluded", "tool_call_logs",
+        "injected_context_prefix",
     ]
 
     private func assertWritableSchema() throws {
@@ -545,6 +547,21 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private func migrateToV17() throws {
         try addColumnIfMissing("turns", "tool_call_logs", "TEXT")
         try setSchemaVersion(17)
+    }
+
+    /// v18: `injected_context_prefix` — the frozen `[Current Time]` / memory /
+    /// screen block a user turn was SENT with. `ChatTurnData` has always
+    /// documented it as persisted "so a reloaded session replays the exact
+    /// wire bytes of every past turn and the disk-backed prefix cache can
+    /// still hit", but no column carried it: after a relaunch (or reopening
+    /// a chat from History) every past user turn rendered WITHOUT its block,
+    /// the prompt diverged at the first user turn, and the whole conversation
+    /// was prefilled again — measured live, a 10.7k-token chat resumed with
+    /// a hit at the 3.5k-token system prompt only. Additive and nullable;
+    /// a sibling build that already added the column is left as found.
+    private func migrateToV18() throws {
+        try addColumnIfMissing("turns", "injected_context_prefix", "TEXT")
+        try setSchemaVersion(18)
     }
 
     // MARK: - Public API: sessions
@@ -1472,6 +1489,11 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if let thinkingDuration = turn.thinkingDuration {
             hasher.update(data: Data(String(thinkingDuration).utf8))
         }
+        // The frozen injected block is stamped at send time, which can be
+        // after the row's first save; hash it so that write is not skipped.
+        if let injected = turn.injectedContextPrefix {
+            hasher.update(data: Data(injected.utf8))
+        }
         // Timing fields are part of the hash so that a turn whose
         // `completedAt` / token-count lands after the initial save still
         // triggers `upsertTurnsIncrementally` to write the updated row.
@@ -1606,8 +1628,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
              tool_calls, tool_call_id, tool_results, thinking, content_hash,
              created_at, completed_at, generation_token_count, time_to_first_token,
              tool_call_durations, thinking_duration, router_billing, terminal_stop_reason,
-             model_context_excluded, tool_call_logs)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+             model_context_excluded, tool_call_logs, injected_context_prefix)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
         ON CONFLICT(id) DO UPDATE SET
             session_id             = excluded.session_id,
             seq                    = excluded.seq,
@@ -1629,7 +1651,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             router_billing         = excluded.router_billing,
             terminal_stop_reason   = excluded.terminal_stop_reason,
             model_context_excluded = excluded.model_context_excluded,
-            tool_call_logs         = excluded.tool_call_logs
+            tool_call_logs         = excluded.tool_call_logs,
+            injected_context_prefix = excluded.injected_context_prefix
         """
 
     private static let selectTurnsSQL = """
@@ -1637,7 +1660,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
                tool_calls, tool_call_id, tool_results, thinking,
                created_at, completed_at, generation_token_count, time_to_first_token,
                tool_call_durations, thinking_duration, router_billing, terminal_stop_reason,
-               model_context_excluded, tool_call_logs
+               model_context_excluded, tool_call_logs, injected_context_prefix
         FROM turns
         WHERE session_id = ?1
         ORDER BY seq ASC
@@ -1729,6 +1752,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             sqlite3_column_text(stmt, 18)
             .map { String(cString: $0) }
             .flatMap(decodeJSON) ?? [:]
+        let injectedContextPrefix = sqlite3_column_text(stmt, 19).map { String(cString: $0) }
         return ChatTurnData(
             id: UUID(uuidString: idStr) ?? UUID(),
             role: role,
@@ -1748,6 +1772,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             terminalStopReason: terminalStopReason,
             modelContextExcluded: modelContextExcluded,
             routerBilling: routerBilling,
+            injectedContextPrefix: injectedContextPrefix,
             toolCallLogs: toolCallLogs
         )
     }
@@ -1796,6 +1821,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         bindText(stmt, index: 20, value: turn.terminalStopReason)
         sqlite3_bind_int(stmt, 21, turn.modelContextExcluded ? 1 : 0)
         bindText(stmt, index: 22, value: turn.toolCallLogs.isEmpty ? nil : encodeJSON(turn.toolCallLogs))
+        bindText(stmt, index: 23, value: turn.injectedContextPrefix)
     }
 
     static func bindNullableDouble(_ stmt: OpaquePointer, index: Int, value: Double?) {

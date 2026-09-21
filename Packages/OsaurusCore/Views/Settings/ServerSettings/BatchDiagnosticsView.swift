@@ -57,7 +57,39 @@ struct BatchDiagnosticsView: View {
                 stat("Paged evictions", value: "\(snapshot.pagedEvictions)")
                 stat(
                     "Disk L2 hits / misses / stores",
-                    value: "\(snapshot.diskL2Hits) / \(snapshot.diskL2Misses) / \(snapshot.diskL2Stores)"
+                    value: "\(snapshot.diskL2Hits) / \(snapshot.diskL2Misses) / \(snapshot.diskL2Stores)",
+                    identifier: "live-activity-disk-l2-hits-misses-stores"
+                )
+                stat(
+                    "Disk L2 used / cap",
+                    value: Self.diskUsageValue(snapshot),
+                    identifier: "live-activity-disk-l2-used-cap"
+                )
+                stat(
+                    "Disk L2 evictions / evicted",
+                    value:
+                        "\(snapshot.diskL2Evictions) / \(DiskCacheUsage.format(bytes: snapshot.diskL2EvictedBytes))",
+                    identifier: "live-activity-disk-l2-evictions"
+                )
+                stat(
+                    "Disk L2 quota passes / last pass",
+                    value: Self.quotaPassValue(snapshot),
+                    identifier: "live-activity-disk-l2-quota-passes"
+                )
+                stat(
+                    "Disk L2 failed writes",
+                    value: "\(snapshot.diskL2FailedIndexWrites)",
+                    identifier: "live-activity-disk-l2-failed-writes"
+                )
+                stat(
+                    "Disk L2 pressure",
+                    value: Self.pressureValue(snapshot),
+                    identifier: "live-activity-disk-l2-pressure"
+                )
+                stat(
+                    "Last request cache restore",
+                    value: Self.cacheRestoreValue(snapshot.lastCacheRestore),
+                    identifier: "live-activity-last-cache-restore"
                 )
                 stat(
                     "SSM hits / misses / re-derives",
@@ -80,9 +112,13 @@ struct BatchDiagnosticsView: View {
         }
     }
 
+    /// One readout row. A row that carries an `identifier` is a single
+    /// accessibility element — the label as its label, the figure as its
+    /// value — so assistive tools and UI automation read the pair together
+    /// instead of two unrelated texts.
     @ViewBuilder
-    private func stat(_ label: String, value: String) -> some View {
-        HStack {
+    private func stat(_ label: String, value: String, identifier: String? = nil) -> some View {
+        let row = HStack {
             Text(LocalizedStringKey(label), bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(theme.secondaryText)
@@ -97,6 +133,47 @@ struct BatchDiagnosticsView: View {
             RoundedRectangle(cornerRadius: 6)
                 .fill(theme.inputBackground)
         )
+        if let identifier {
+            row
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(LocalizedStringKey(label), bundle: .module))
+                .accessibilityValue(Text(verbatim: value))
+                .accessibilityIdentifier(identifier)
+        } else {
+            row
+        }
+    }
+
+    /// Bytes on disk against the cap the runtime enforces, which can differ
+    /// from the saved setting until the next model load.
+    static func diskUsageValue(_ snapshot: BatchDiagnosticsSnapshot) -> String {
+        let used = DiskCacheUsage.format(bytes: snapshot.diskL2PayloadBytes)
+        guard snapshot.diskL2MaxBytes > 0 else { return "\(used) / —" }
+        return "\(used) / \(DiskCacheUsage.format(bytes: snapshot.diskL2MaxBytes))"
+    }
+
+    static func quotaPassValue(_ snapshot: BatchDiagnosticsSnapshot) -> String {
+        guard snapshot.diskL2QuotaPasses > 0 else { return "0 / —" }
+        return "\(snapshot.diskL2QuotaPasses) / "
+            + String(format: "%.1f ms", snapshot.diskL2LastQuotaPassMs)
+    }
+
+    /// The runtime's own name for the event, which is what its logs use.
+    static func pressureValue(_ snapshot: BatchDiagnosticsSnapshot) -> String {
+        guard snapshot.diskL2PressureEventSeq > 0 else { return L("none") }
+        guard let kind = snapshot.diskL2PressureKind else {
+            return "#\(snapshot.diskL2PressureEventSeq)"
+        }
+        let chat = snapshot.diskL2PressureChainId.map { " · chat \($0.prefix(8))" } ?? ""
+        return "\(kind)\(chat) · #\(snapshot.diskL2PressureEventSeq)"
+    }
+
+    static func cacheRestoreValue(_ restore: CacheRestoreSummary?) -> String {
+        guard let restore else { return L("No request yet") }
+        guard restore.restoredTokens > 0 else { return L("none (cold)") }
+        let counts = "\(restore.restoredTokens) / \(restore.promptTokens) \(L("tokens"))"
+        guard let detail = restore.detail, !detail.isEmpty else { return counts }
+        return "\(counts) · \(detail)"
     }
 
     private func nativeMTPValue(_ snapshot: BatchDiagnosticsSnapshot) -> String {
