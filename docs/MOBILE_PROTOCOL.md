@@ -1051,3 +1051,27 @@ straight away.
 
 Owner-only: a new agent is a new identity on this Mac. The agent is created
 exactly as the Mac's own New Agent flow creates it, sandbox policy included.
+
+---
+
+## 18. The Orchestrator
+
+The built-in Default agent — the Orchestrator, the one that delegates to the
+other agents — is hidden from HTTP: `GET /agents` filters it out, and
+`GET /agents/{id}` and `POST /agents/{id}/run` answer `404` for it, so an
+external client cannot even learn its id.
+
+Owner callers are the exception (§12): loopback, so App Intents can drive the
+in-app agent, and the user's own paired phone, which holds a master-scoped
+key. For them the Orchestrator is listed with `is_built_in: true` and runs
+like any other agent. Every other caller — workspace peers, agent-scoped
+keys, plaintext — still gets the `404` / `403`, so its persona, memory and
+tools stay off the open surface.
+
+It has no agent address of its own, so a client reaches it inside the Secure
+Channel of one of its pinned agents: the channel authenticates the phone, and
+the inner request names the Orchestrator.
+
+`PUT /agents/{id}/model` still refuses it. The Orchestrator's model belongs to
+the Mac's Orchestrator settings (`DefaultAgentConfiguration`), not to a chat,
+so a client shows its model without offering to change it.

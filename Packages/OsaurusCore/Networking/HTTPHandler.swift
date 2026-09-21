@@ -7290,12 +7290,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logStartTime = startTime
         let logUserAgent = userAgent
 
+        // Read on the event loop, before the detached task.
+        let ownerCaller = callerOwnsThisMac(context)
         runRequestTask(priority: .userInitiated) {
-            // Built-in agents (the Default agent) live only in-app; the
-            // listing endpoint must not advertise them so external clients
-            // can never even attempt to address them.
+            // Built-in agents (the Orchestrator) live in-app and on the user's
+            // own paired phone; the listing must not advertise them to anyone
+            // else, so an external client cannot even attempt to address one.
             let agents = await MainActor.run {
-                AgentManager.shared.agents.filter { !$0.isBuiltIn }
+                AgentManager.shared.agents.filter { ownerCaller || !$0.isBuiltIn }
             }
 
             let db = MemoryDatabase.shared
@@ -7453,12 +7455,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         runRequestTask(priority: .userInitiated) {
-            // Built-in agents are not exposed via HTTP — return 404 (not 403)
-            // so external clients learn the id is unreachable but cannot
-            // distinguish "no such agent" from "you are not allowed to see
-            // this one". This matches the listing endpoint's filter behavior.
+            // Built-in agents are reachable only by owner callers — return 404
+            // (not 403) to everyone else, so an external client learns the id
+            // is unreachable but cannot distinguish "no such agent" from "you
+            // are not allowed to see this one". Matches the listing filter.
             guard let agent = await MainActor.run(body: { AgentManager.shared.agent(for: agentId) }),
-                !agent.isBuiltIn
+                ownerCaller || !agent.isBuiltIn
             else {
                 hop {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -7677,12 +7679,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // before any enrichment so secrets / system prompts / memory writes
         // for built-ins are unreachable from remote HTTP.
         //
-        // Loopback callers are trusted (same machine, no auth) and are allowed
-        // to reach the built-in agent so the App Intents "Ask Osaurus" surface
-        // can drive the in-app default agent. This exposes the built-in agent's
-        // persona/memory/tools to any localhost process, which is acceptable
-        // under the existing no-auth-loopback model.
-        if !isLoopbackConnection(context),
+        // Owner callers are trusted with the built-in agent (the Orchestrator):
+        // loopback, so the App Intents "Ask Osaurus" surface can drive the
+        // in-app default agent, and the user's own paired phone, which holds a
+        // master-scoped key (docs/MOBILE_PROTOCOL.md §18). Every other HTTP
+        // caller — workspace peers, agent-scoped keys, plaintext — is refused,
+        // so the built-in's persona, memory and tools stay off the open surface.
+        if !callerOwnsThisMac(context),
             let rejection = Agent.rejectBuiltInForExternalSurface(agentId, source: "http/agents/run")
         {
             sendResponse(
