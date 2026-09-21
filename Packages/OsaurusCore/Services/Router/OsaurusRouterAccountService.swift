@@ -43,6 +43,9 @@ final class OsaurusRouterAccountService: ObservableObject {
     /// increase confirms it. Gates `balance_topup_succeeded` so it fires for a
     /// real top-up rather than any incidental balance refresh.
     private var awaitingTopUpConfirmation = false
+    /// When `balance` was last fetched successfully; drives the staleness
+    /// check for the local `GET /credits/balance` endpoint.
+    private var balanceFetchedAt: Date?
 
     init(client: OsaurusRouterAPIClient = .shared) {
         self.client = client
@@ -96,6 +99,7 @@ final class OsaurusRouterAccountService: ObservableObject {
     /// UI doesn't show a stale balance/activity while server polling is stopped.
     func clearForDisabledRouter() {
         balance = nil
+        balanceFetchedAt = nil
         usage = []
         nextUsageCursor = nil
         transactions = []
@@ -128,6 +132,7 @@ final class OsaurusRouterAccountService: ObservableObject {
             let previousMicro = balanceMicroValue
             let newBalance = try await client.balance()
             balance = newBalance
+            balanceFetchedAt = Date()
             lastError = nil
             // Best-effort top-up confirmation: a balance increase after we
             // initiated a Checkout (and returned to the app) means the funds
@@ -147,6 +152,24 @@ final class OsaurusRouterAccountService: ObservableObject {
         } catch {
             lastError = error.localizedDescription
         }
+    }
+
+    /// Balance for the local HTTP API. Serves the cached value while it is
+    /// younger than `maxAge` so a polling dashboard never turns into a signed
+    /// router request per poll; otherwise refreshes first. When the refresh
+    /// fails, the last known balance is still returned, flagged stale.
+    func balanceForLocalAPI(maxAge: TimeInterval = 30, now: Date = Date()) async -> LocalCreditsBalanceResult {
+        guard OsaurusRouter.isEnabled else { return .routerDisabled }
+        guard OsaurusIdentity.existsCached() else { return .noIdentity }
+        if let balance, let fetchedAt = balanceFetchedAt, now.timeIntervalSince(fetchedAt) < maxAge {
+            return .balance(balance, fetchedAt: fetchedAt, stale: false)
+        }
+        let previousFetch = balanceFetchedAt
+        await refreshBalance()
+        guard let balance, let fetchedAt = balanceFetchedAt else {
+            return .unavailable(lastError ?? "The Osaurus Router could not be reached.")
+        }
+        return .balance(balance, fetchedAt: fetchedAt, stale: fetchedAt == previousFetch)
     }
 
     func refreshUsage(reset: Bool = true) async {
