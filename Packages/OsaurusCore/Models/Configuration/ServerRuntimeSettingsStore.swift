@@ -22,6 +22,8 @@ import os
 
 /// Centralized persistence for `VMLXServerRuntimeSettings`.
 public enum ServerRuntimeSettingsStore {
+    /// Fingerprint of the previously shipped default, not today's Automatic policy.
+    private static let legacyDefaultDiskCachePercent: Double = 10
     /// Emitted after `server-runtime.json` and the hot snapshot have both been
     /// updated successfully. `ServerController` observes this so non-UI
     /// writers (notably `/admin/runtime-settings`) publish the same live value
@@ -519,7 +521,7 @@ public enum ServerRuntimeSettingsStore {
             // migration overwrite a choice the user made.
             && (cache.blockDisk.maxSizePercent == nil
                 || cache.blockDisk.maxSizePercent
-                    == 10) // Historical shipped default, independent of today's Automatic policy.
+                    == legacyDefaultDiskCachePercent)
             && cache.blockDisk.directory == nil
             && cache.enableSSMReDerive == false
     }
@@ -561,7 +563,7 @@ public enum ServerRuntimeSettingsStore {
             // migration overwrite a choice the user made.
             && (cache.blockDisk.maxSizePercent == nil
                 || cache.blockDisk.maxSizePercent
-                    == 10) // Historical shipped default, independent of today's Automatic policy.
+                    == legacyDefaultDiskCachePercent)
             && cache.blockDisk.directory == nil
             && cache.enableSSMReDerive
     }

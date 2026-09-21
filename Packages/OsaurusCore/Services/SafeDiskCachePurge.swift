@@ -134,12 +134,16 @@ enum SafeDiskCachePurge {
         sqlite3_finalize(statement)
         if code == SQLITE_DONE { return true }
         guard code == SQLITE_ROW else { return false }
-        // Every key was validated as lowercase hex before it got here.
+        guard sqlite3_prepare_v2(
+            db, "DELETE FROM legacy_companions WHERE key = ?", -1, &statement, nil
+        ) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(statement) }
         for key in keys.sorted() {
-            guard
-                sqlite3_exec(db, "DELETE FROM legacy_companions WHERE key = '\(key)'", nil, nil, nil)
-                    == SQLITE_OK
-            else { return false }
+            sqlite3_reset(statement)
+            let bound = key.withCString {
+                sqlite3_bind_text(statement, 1, $0, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+            }
+            guard bound == SQLITE_OK, sqlite3_step(statement) == SQLITE_DONE else { return false }
         }
         return true
     }

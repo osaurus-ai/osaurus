@@ -1485,26 +1485,48 @@ public actor ModelRuntime {
         let error: String?
     }
 
-    /// Size-only saves update all resident coordinators without dropping weights.
-    /// Read on this actor so delayed notifications cannot replay an old cap.
-    func refreshDiskCacheCaps() {
-        let cache = ServerRuntimeSettingsStore.snapshot().cache
-        var caps: [URL: Int] = [:]
+    private var diskCapRefreshTask: Task<VMLXServerCacheSettings, Never>?
+
+    /// Serialize saves without occupying the runtime actor while a store holds
+    /// the quota lock. Read the latest settings after earlier updates finish,
+    /// so delayed notifications cannot replay an older saved size.
+    func refreshDiskCacheCaps() async {
+        let targets = modelCache.values.compactMap { holder -> (CacheCoordinator, VMLXServerCacheSettings)? in
+            guard let previous = holder.cacheSettings,
+                let coordinator = holder.container.cacheCoordinator
+            else { return nil }
+            return (coordinator, previous)
+        }
+        let predecessor = diskCapRefreshTask
+        let task = Task.detached(priority: .utility) {
+            _ = await predecessor?.value
+            let cache = ServerRuntimeSettingsStore.snapshot().cache
+            var caps: [URL: Int] = [:]
+            for (coordinator, previous) in targets {
+                guard !previous.requiresModelReload(comparedTo: cache),
+                    coordinator.config.enableDiskCache,
+                    let directory = coordinator.config.diskCacheDir
+                else { continue }
+                let root = directory.standardizedFileURL.resolvingSymlinksInPath()
+                let cap = caps[root] ?? Int(clamping: Self.diskCacheCap(
+                    for: cache, directory: root,
+                    previousCapBytes: coordinator.snapshotStats().diskStats.map { Int64($0.maxSizeBytes) }
+                ).capBytes)
+                caps[root] = cap
+                coordinator.updateDiskCap(bytes: cap)
+            }
+            return cache
+        }
+        diskCapRefreshTask = task
+        let applied = await task.value
+        guard ServerRuntimeSettingsStore.snapshot().cache == applied else { return }
         for holder in modelCache.values {
             guard let previous = holder.cacheSettings,
-                !previous.requiresModelReload(comparedTo: cache),
+                !previous.requiresModelReload(comparedTo: applied),
                 let coordinator = holder.container.cacheCoordinator,
-                coordinator.config.enableDiskCache,
-                let directory = coordinator.config.diskCacheDir
+                targets.contains(where: { $0.0 === coordinator })
             else { continue }
-            let root = directory.standardizedFileURL.resolvingSymlinksInPath()
-            let cap = caps[root] ?? Int(clamping: Self.diskCacheCap(
-                for: cache, directory: root,
-                previousCapBytes: coordinator.snapshotStats().diskStats.map { Int64($0.maxSizeBytes) }
-            ).capBytes)
-            caps[root] = cap
-            coordinator.updateDiskCap(bytes: cap)
-            holder.cacheSettings = cache
+            holder.cacheSettings = applied
         }
     }
 
@@ -1521,7 +1543,8 @@ public actor ModelRuntime {
 
     /// Live quotas are read from the coordinator, including size-only saves.
     func diskCacheQuotaSnapshots(
-        matching settings: VMLXServerCacheSettings? = nil, modelName: String? = nil
+        matching settings: VMLXServerCacheSettings? = nil, modelName: String? = nil,
+        session: String? = nil
     ) -> [DiskCacheQuotaSnapshot] {
         let canonical = modelName.flatMap { ModelManager.findInstalledModelFromCache(named: $0)?.name }
         return modelCache.compactMap { name, holder in
@@ -1532,15 +1555,17 @@ public actor ModelRuntime {
                 let stats = coordinator.snapshotStats().diskStats,
                 let directory = coordinator.config.diskCacheDir
             else { return nil }
+            let pressure = session.flatMap { stats.capacityPressureByChain[$0] }
+            let event = session == nil ? stats.lastPressureEvent : pressure?.event
             return DiskCacheQuotaSnapshot(
                 directory: directory,
                 usage: DiskCacheUsage(
                     usedBytes: stats.currentPayloadBytes,
                     maxBytes: stats.maxSizeBytes,
                     evictions: stats.evictions,
-                    pressureKind: stats.lastPressureEvent?.kind.rawValue,
-                    pressureChainId: stats.lastPressureEvent?.chainId,
-                    pressureSeq: Int(clamping: stats.pressureEventSeq)
+                    pressureKind: event?.kind.rawValue,
+                    pressureChainId: event?.chainId,
+                    pressureSeq: Int(clamping: pressure?.sequence ?? stats.pressureEventSeq)
                 )
             )
         }

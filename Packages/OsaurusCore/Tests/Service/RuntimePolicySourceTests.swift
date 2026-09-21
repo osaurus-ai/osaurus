@@ -808,7 +808,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "5d58079f251d4f692212d857ed4883a1ba1e5658"
+        let expectedRuntimeHardenedRevision = "b02a170f8615b43d18c4fcc54f9fbdbde24414b6"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -1238,12 +1238,13 @@ struct RuntimePolicySourceTests {
         )
     }
 
-    @Test("Server settings cache changes clear loaded model runtime")
+    @Test("Cache topology changes reload models while size changes refresh resident caps")
     func cacheSettingsChangesClearLoadedModelRuntime() throws {
         let controller = try Self.source("Networking/ServerController.swift")
 
         #expect(controller.contains("loadedModelRuntimeInputsRequireRefresh"))
-        #expect(controller.contains("previous.cache != next.cache"))
+        #expect(controller.contains("previous.cache.requiresModelReload(comparedTo: next.cache)"))
+        #expect(controller.contains("await ModelRuntime.shared.refreshDiskCacheCaps()"))
         #expect(controller.contains("previous.memorySafety != next.memorySafety"))
         #expect(controller.contains("previous.multimodal != next.multimodal"))
         // Deliberately NOT `previous.mtp != next.mtp` any more: comparing the

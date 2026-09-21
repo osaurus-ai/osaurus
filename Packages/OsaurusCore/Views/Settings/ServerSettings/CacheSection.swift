@@ -22,6 +22,7 @@ struct CacheSection: View {
     @State private var loadedModels: [ModelRuntime.ModelCacheSummary] = []
     @State private var isClearingDiskCache = false
     @State private var clearedCacheSummary: String?
+    @State private var diskCacheResolution: DiskCacheCapPolicy.Resolution?
     @AppStorage(DiskCacheQuotaNoticeSuppression.defaultsKey) private var ssdNoticesSuppressed = false
 
     var body: some View {
@@ -98,6 +99,21 @@ struct CacheSection: View {
             SettingsSubsection(label: "Planned Cache Controls") {
                 plannedControls
             }
+        }
+        .task(id: draft.cache) {
+            let cache = draft.cache
+            diskCacheResolution = nil
+            // Coalesce edits before opening the index; cancellation also keeps
+            // an older draft's measurement from replacing the current label.
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled else { return }
+            let resolution = await Task.detached(priority: .utility) {
+                ModelRuntime.diskCacheCap(
+                    for: cache, directory: ModelRuntime.diskCacheDirectoryForDisplay(for: cache)
+                )
+            }.value
+            guard !Task.isCancelled else { return }
+            diskCacheResolution = resolution
         }
         .task {
             while !Task.isCancelled {
@@ -224,8 +240,7 @@ struct CacheSection: View {
     }
 
     private var resolvedDiskCacheLabel: String {
-        let directory = ModelRuntime.diskCacheDirectoryForDisplay(for: draft.cache)
-        let result = ModelRuntime.diskCacheCap(for: draft.cache, directory: directory)
+        guard let result = diskCacheResolution else { return "—" }
         let effective = DiskCacheUsage.format(bytes: Int(clamping: result.capBytes))
         let requested = DiskCacheUsage.format(bytes: Int(clamping: result.requestedBytes))
         let label: String

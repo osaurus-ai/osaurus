@@ -689,8 +689,8 @@ struct MLXBatchAdapter {
             var diskL2QuotaPasses = 0
             var diskL2FailedIndexWrites = 0
             var diskL2PressureEventSeq = 0
-            // Readings with no order between models: the slowest recent pass,
-            // and the pressure event of the model that has reported the most.
+            // DispatchTime.uptimeNanoseconds is process-wide. Select readings
+            // by that clock; the summed report count is not an event identity.
             var diskL2LastQuotaPassMs = 0.0
             var diskL2PressureKind: String?
             var diskL2PressureChainId: String?

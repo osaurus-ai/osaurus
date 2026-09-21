@@ -478,6 +478,7 @@ struct FloatingInputCard: View {
     // MARK: - SSD Cache Quota Notice
 
     @State private var ssdWarningSnapshot: DiskCacheQuotaSnapshot?
+    @State private var ssdWarningModel: String?
     @AppStorage(DiskCacheQuotaNoticeSuppression.defaultsKey) private var ssdNoticesSuppressed = false
     @State private var ssdCacheSettings = ServerRuntimeSettingsStore.snapshot().cache
 
@@ -966,21 +967,27 @@ struct FloatingInputCard: View {
                 }
             }
             .task(id: ssdQuotaNoticePollContext) {
-                if ssdWarningSnapshot?.usage.pressureAffects(session: inputHistoryKey?.uuidString) != true {
+                if ssdWarningModel != selectedModel
+                    || ssdWarningSnapshot?.usage.pressureAffects(session: inputHistoryKey?.uuidString) != true {
                     ssdWarningSnapshot = nil
                 }
                 while !Task.isCancelled {
                     if canPresentSSDQuotaNotice {
                         let snapshots = await ModelRuntime.shared.diskCacheQuotaSnapshots(
-                            matching: ssdCacheSettings, modelName: selectedModel
+                            matching: ssdCacheSettings, modelName: selectedModel,
+                            session: inputHistoryKey?.uuidString
                         )
                         guard !Task.isCancelled else { return }
-                        if let visible = ssdWarningSnapshot,
-                            !snapshots.contains(where: {
+                        if let visible = ssdWarningSnapshot {
+                            let current = snapshots.first(where: {
                                 $0.directory == visible.directory
                                     && $0.usage.pressureAffects(session: inputHistoryKey?.uuidString)
-                            }) {
-                            ssdWarningSnapshot = nil
+                            })
+                            if current?.usage.pressureSeq != visible.usage.pressureSeq
+                                || current?.usage.maxBytes != visible.usage.maxBytes
+                            {
+                                ssdWarningSnapshot = current
+                            }
                         }
                         if canPresentSSDQuotaNotice, ssdWarningSnapshot == nil,
                             let session = ssdQuotaNoticePollContext.session?.uuidString,
@@ -988,6 +995,7 @@ struct FloatingInputCard: View {
                                 DiskCacheQuotaNotices.shared.claim($0, session: session)
                             })
                         {
+                            ssdWarningModel = selectedModel
                             ssdWarningSnapshot = snapshot
                         }
                     }
@@ -4452,6 +4460,7 @@ extension FloatingInputCard {
     @ViewBuilder
     private var ssdQuotaWarningRow: some View {
         if canPresentSSDQuotaNotice, let snapshot = ssdWarningSnapshot,
+            ssdWarningModel == selectedModel,
             snapshot.usage.pressureAffects(session: inputHistoryKey?.uuidString)
         {
             VStack(alignment: .leading, spacing: 10) {

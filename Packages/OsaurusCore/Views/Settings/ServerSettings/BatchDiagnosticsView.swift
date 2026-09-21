@@ -160,12 +160,9 @@ struct BatchDiagnosticsView: View {
 
     /// The runtime's own name for the event, which is what its logs use.
     static func pressureValue(_ snapshot: BatchDiagnosticsSnapshot) -> String {
-        guard snapshot.diskL2PressureEventSeq > 0 else { return L("none") }
-        guard let kind = snapshot.diskL2PressureKind else {
-            return "#\(snapshot.diskL2PressureEventSeq)"
-        }
+        guard let kind = snapshot.diskL2PressureKind else { return L("none") }
         let chat = snapshot.diskL2PressureChainId.map { " · chat \($0.prefix(8))" } ?? ""
-        return "\(kind)\(chat) · #\(snapshot.diskL2PressureEventSeq)"
+        return "\(kind)\(chat)"
     }
 
     static func cacheRestoreValue(_ restore: CacheRestoreSummary?) -> String {

@@ -64,7 +64,7 @@ final class DiskCacheUsageTests: XCTestCase {
     /// The quota counters add up across a model handoff like every other
     /// per-instance counter; the last pass time, the pressure kind and the last
     /// request's restore are readings and come from the live snapshot alone.
-    func testQuotaCountersAccumulateAndReadingsStayLiveThroughCounterMerging() {
+    @MainActor func testQuotaCountersAccumulateAndReadingsStayLiveThroughCounterMerging() {
         let restore = CacheRestoreSummary(
             modelName: "model-b",
             restoredTokens: 1536,
@@ -104,6 +104,14 @@ final class DiskCacheUsageTests: XCTestCase {
         XCTAssertEqual(merged.diskL2LastQuotaPassMs, 12.5)
         XCTAssertEqual(merged.diskL2PressureKind, "activeChainTrimmed")
         XCTAssertEqual(merged.lastCacheRestore, restore)
+        XCTAssertEqual(BatchDiagnosticsView.pressureValue(merged), "activeChainTrimmed")
+        let unloaded = ProcessLifetimeBatchCounters(snapshot: merged).mergingCounters(into:
+            BatchDiagnosticsSnapshot(
+                pendingCount: 0, activeCount: 0, activeHighWatermark: 0,
+                decodeSplitCount: 0, turboQuantCompressions: 0, isAcceptingRequests: true))
+        XCTAssertEqual(unloaded.diskL2PressureEventSeq, 5)
+        XCTAssertNil(unloaded.diskL2PressureKind)
+        XCTAssertEqual(BatchDiagnosticsView.pressureValue(unloaded), L("none"))
     }
 
     // MARK: - Warning threshold

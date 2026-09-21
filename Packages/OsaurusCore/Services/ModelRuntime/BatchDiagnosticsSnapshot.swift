@@ -92,8 +92,7 @@ public struct BatchDiagnosticsSnapshot: Equatable, Sendable {
 
     /// Wall time of the most recent quota pass that found the cache over its
     /// cap, in milliseconds; 0 until there has been one. A reading, not a
-    /// counter: with several models loaded there is no order between their
-    /// passes, so the aggregation takes the slowest (`max`).
+    /// counter: aggregation selects the newest process-monotonic pass tick.
     public let diskL2LastQuotaPassMs: Double
 
     /// Index writes that failed after their files were on disk. Per-instance
@@ -101,12 +100,13 @@ public struct BatchDiagnosticsSnapshot: Equatable, Sendable {
     public let diskL2FailedIndexWrites: Int
 
     /// Quota passes that reported the cap as too small for the conversation in
-    /// progress. Per-instance counter, summed, so any new event moves it.
+    /// progress. Historical per-instance count, summed across models and
+    /// retained after unload. This is NOT the identity of the live event.
     public let diskL2PressureEventSeq: Int
 
     /// What the most recent pressure event was, as the runtime names it, or
     /// nil when there has been none on a loaded model. With several models
-    /// loaded it is the event of the one that has reported the most.
+    /// loaded it is selected by the engine's process-monotonic event tick.
     public let diskL2PressureKind: String?
 
     /// The chat (session id) the most recent pressure event was about, or nil.
