@@ -313,7 +313,7 @@ let package = Package(
         // to conversation chains, and reports current-chat capacity pressure.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "ed22e0ab6b65cfd356c77551cbdb4da5ff3510c3"
+            revision: "218accceef2353bdceaf9f089ef319d97d1acdca"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
