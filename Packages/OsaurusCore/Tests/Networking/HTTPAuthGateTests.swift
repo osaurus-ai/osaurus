@@ -279,6 +279,32 @@ struct HTTPAuthGateTests {
         #expect((resp as? HTTPURLResponse)?.statusCode == 200)
     }
 
+    // MARK: - Credits Balance Gate
+
+    /// Loopback skips the global gate, so the credits endpoint must refuse a
+    /// key-less local caller itself unless the user opted in.
+    @Test func creditsBalance_trustedLoopbackWithoutKey_returns403() async throws {
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: OsaurusRouter.allowUnkeyedLoopbackSpendDefaultsKey)
+        defaults.removeObject(forKey: OsaurusRouter.allowUnkeyedLoopbackSpendDefaultsKey)
+        defer {
+            if let previous {
+                defaults.set(previous, forKey: OsaurusRouter.allowUnkeyedLoopbackSpendDefaultsKey)
+            }
+        }
+
+        let server = try await startAuthTestServer(validator: .empty, trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+
+        for path in ["/credits/balance", "/v1/credits/balance"] {
+            let (data, resp) = try await URLSession.shared.data(
+                from: URL(string: "http://\(server.host):\(server.port)\(path)")!
+            )
+            #expect((resp as? HTTPURLResponse)?.statusCode == 403)
+            #expect(String(decoding: data, as: UTF8.self).contains("credits_access_not_authorized"))
+        }
+    }
+
     // MARK: - Agent-Scoped Key Confinement (by key origin)
 
     /// Builds a validator that knows Alice's master + one derived agent, and an
