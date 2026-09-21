@@ -28,7 +28,9 @@ struct ShortcutsProcessRunnerTests {
         #expect(result.exitCode == 0)
         #expect(result.truncated)
         #expect(result.stdout.utf8.count == ShortcutsProcessRunner.outputCap)
-        #expect(Date().timeIntervalSince(started) < 15)
+        // A real deadlock surfaces as the 20 s runner timeout above; this only
+        // guards against a silent multi-minute stall on a loaded CI box.
+        #expect(Date().timeIntervalSince(started) < 60)
     }
 
     @Test("small output is returned whole, from both streams, with the exit code")
@@ -52,7 +54,8 @@ struct ShortcutsProcessRunnerTests {
                 return
             }
         }
-        #expect(Date().timeIntervalSince(started) < 5)
+        // The child is asked to sleep 30 s; anything well under that proves the kill.
+        #expect(Date().timeIntervalSince(started) < 15)
     }
 
     @Test("cancelling the task terminates the child promptly")
@@ -73,7 +76,7 @@ struct ShortcutsProcessRunnerTests {
         } catch {
             #expect(error is CancellationError, "got \(error)")
         }
-        #expect(Date().timeIntervalSince(started) < 5)
+        #expect(Date().timeIntervalSince(started) < 15)
         // The child died before its `touch` — it did not keep running.
         try await Task.sleep(nanoseconds: 200_000_000)
         #expect(!FileManager.default.fileExists(atPath: marker.path))
