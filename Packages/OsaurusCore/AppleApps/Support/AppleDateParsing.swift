@@ -107,12 +107,23 @@ enum AppleDateParsing {
 
     // MARK: - Formatting
 
-    /// ISO8601 with the local offset, seconds precision.
+    /// ISO8601 with the local offset, seconds precision. Always a numeric
+    /// offset (`+00:00` on UTC). Both `ISO8601DateFormatter` and
+    /// `DateFormatter`'s `XXXXX` emit `Z` when the offset is zero, which
+    /// the contract forbids — so the offset is written by hand.
     static func format(_ date: Date, timeZone: TimeZone = .current) -> String {
-        let f = ISO8601DateFormatter()
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = Calendar(identifier: .gregorian)
         f.timeZone = timeZone
-        f.formatOptions = [.withInternetDateTime]
-        return f.string(from: date)
+        f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        let body = f.string(from: date)
+        let seconds = timeZone.secondsFromGMT(for: date)
+        let sign = seconds >= 0 ? "+" : "-"
+        let absSeconds = abs(seconds)
+        let hours = absSeconds / 3600
+        let minutes = (absSeconds % 3600) / 60
+        return String(format: "%@%@%02d:%02d", body, sign, hours, minutes)
     }
 
     /// `yyyy-MM-dd` in the local calendar (for all-day events / due dates).

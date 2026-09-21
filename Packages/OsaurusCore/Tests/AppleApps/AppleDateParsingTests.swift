@@ -74,9 +74,13 @@ struct AppleDateParsingTests {
         #expect(!pacific.hasSuffix("Z"))
         let tokyo = AppleDateParsing.format(date, timeZone: TimeZone(identifier: "Asia/Tokyo")!)
         #expect(tokyo.hasSuffix("+09:00"))
+        let utc = AppleDateParsing.format(date, timeZone: TimeZone(identifier: "UTC")!)
+        #expect(utc.hasSuffix("+00:00"))
+        #expect(!utc.hasSuffix("Z"))
         // Round trip.
         #expect(AppleDateParsing.parse(pacific)?.date == date)
         #expect(AppleDateParsing.parse(tokyo)?.date == date)
+        #expect(AppleDateParsing.parse(utc)?.date == date)
     }
 
     @Test("date-only formatting uses yyyy-MM-dd in the calendar's zone")
