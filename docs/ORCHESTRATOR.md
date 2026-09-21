@@ -15,6 +15,8 @@ It deliberately does *not* do hands-on work itself: no sandbox, no working folde
 
 See [AGENT_LOOP.md](AGENT_LOOP.md) for the folder/sandbox tool contract on custom agents.
 
+**Apple apps are a custom-agent path too.** The Orchestrator never calls the built-in Calendar / Reminders / Contacts / Notes / Mail / Messages / Maps / Music / Shortcuts tools and has no Apple app groups in its own picker. It does know how to hand them out: `osaurus_inspect list agents` shows each agent's `apple_apps`, and `osaurus_config` sets `capabilities.apple_apps` on an existing agent or provisions a new one with the apps it needs — plan, approval card, apply — then delegates the task. Enabling Mail, Messages, or Shortcuts adds a risk line to the plan card because those apps act on your behalf. See [APPLE_APPS.md](APPLE_APPS.md).
+
 ## Settings → Orchestrator
 
 The Orchestrator has its own settings tab (Management `⌘⇧M` → Orchestrator):

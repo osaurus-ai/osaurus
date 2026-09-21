@@ -30,6 +30,7 @@
         "computer_use_enabled": false,
         "image_enabled": false,
         "applescript_enabled": false,
+        "apple_apps": [],
         "relay_enabled": false
       }
     }
@@ -108,7 +109,7 @@
     }
   ],
   "models": ["mlx-community/Qwen2.5-7B-Instruct-4bit"],
-  "plugins": ["osaurus.weather"],
+  "plugins": ["osaurus.fetch"],
   "providers": [
     {
       "name": "Anthropic",
