@@ -229,8 +229,8 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
 /// hovered and never showed the favourite heart. The area is rebuilt on every
 /// resize as well, so exit detection tracks the real viewport.
 final class HoverTrackingScrollView: NSScrollView {
-    var onMouseMoved: ((NSEvent) -> Void)?
-    var onMouseExited: (() -> Void)?
+    /// Fired when the pointer enters or leaves the viewport.
+    var onPointerCrossed: (() -> Void)?
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -252,16 +252,15 @@ final class HoverTrackingScrollView: NSScrollView {
         addTrackingArea(
             NSTrackingArea(
                 rect: bounds,
-                options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp],
+                options: [.mouseEnteredAndExited, .activeInActiveApp],
                 owner: self,
                 userInfo: nil
             )
         )
     }
 
-    override func mouseMoved(with event: NSEvent) { onMouseMoved?(event) }
-    override func mouseEntered(with event: NSEvent) { onMouseMoved?(event) }
-    override func mouseExited(with event: NSEvent) { onMouseExited?() }
+    override func mouseEntered(with event: NSEvent) { onPointerCrossed?() }
+    override func mouseExited(with event: NSEvent) { onPointerCrossed?() }
 }
 
 
@@ -1084,9 +1083,8 @@ extension ModelPickerTableRepresentable {
         }
 
         func setupHoverTracking(on scrollView: HoverTrackingScrollView) {
-            scrollView.onMouseMoved = { [weak self] event in self?.handleMouseMoved(with: event) }
-            scrollView.onMouseExited = { [weak self] in
-                // Re-resolve rather than clear: an exit from a stale area
+            scrollView.onPointerCrossed = { [weak self] in
+                // Re-resolve rather than clear: a crossing of a stale area
                 // can fire while the pointer is still over a row.
                 self?.refreshHoverAtPointer()
             }
@@ -1389,7 +1387,7 @@ extension ModelPickerTableRepresentable {
         /// under it during the scroll, and no `mouseMoved` arrives until the
         /// pointer itself moves.
         private func refreshHoverAtPointer() {
-            guard let tableView, let window = tableView.window else { return }
+            guard !isScrolling, let tableView, let window = tableView.window else { return }
             let point = tableView.convert(window.mouseLocationOutsideOfEventStream, from: nil)
             let row = tableView.visibleRect.contains(point) ? tableView.row(at: point) : -1
             setHoveredRow(row >= 0 && row < rowIds.count ? rowIds[row] : nil)
