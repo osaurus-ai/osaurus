@@ -242,12 +242,15 @@ struct MCPHTTPHandlerTests {
         // Independent literal copy: if a new agent_channel_* tool ships
         // without updating `ToolRegistry.agentChannelToolNames`, this fails.
         #expect(ToolRegistry.agentChannelToolNames == Set(Self.agentChannelToolNames))
-        // The external deny list is derived, so the channel family can never
-        // drift out of it.
+        // The external deny list is derived, so neither the channel family nor
+        // the per-agent Apple app family can ever drift out of it.
         #expect(ToolRegistry.agentChannelToolNames.isSubset(of: ToolRegistry.externallyDeniedToolNames))
+        #expect(AppleApp.allToolNames.isSubset(of: ToolRegistry.externallyDeniedToolNames))
         #expect(
             ToolRegistry.externallyDeniedToolNames
-                == ToolRegistry.externallyDeniedHostToolNames.union(ToolRegistry.agentChannelToolNames)
+                == ToolRegistry.externallyDeniedHostToolNames
+                .union(ToolRegistry.agentChannelToolNames)
+                .union(AppleApp.allToolNames)
         )
         // Every REGISTERED agent_channel_* tool must be in the deny family.
         let registeredChannelNames = Set(
