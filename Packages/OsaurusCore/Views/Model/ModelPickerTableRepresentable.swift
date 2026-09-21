@@ -864,17 +864,20 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
 
         // Heart sits right after the name text, clamped so it never runs into
         // the right-aligned Vision badge (or the trailing edge). The button is
-        // framed at the symbol's natural size with its baseline (encoded in
-        // the image's alignment insets) placed on the title's baseline, so the
-        // glyph sits exactly on the text line instead of being box-centred.
+        // framed at the symbol's natural size and its glyph (the image's
+        // alignment rect, which excludes the symbol's padding) is centred on
+        // the name's optical centre line: midway between the cap-height and
+        // x-height centres, measured from the label's real baseline, so it
+        // lines up with mixed-case and all-lowercase model ids alike.
         // The Favorites tab's always-visible remove heart shares this inline
         // placement so both tabs read the same.
         if accessoryKind != .none {
             let imgSize = accessoryButton.image?.size ?? .zero
-            let baselineInset = accessoryButton.image?.alignmentRect.origin.y ?? 0
             let font = nameLabel.font ?? NSFont.systemFont(ofSize: 12, weight: .medium)
-            let lineH = font.ascender - font.descender
-            let baselineFromTop = (nameH - lineH) / 2 + font.ascender
+            let textCenterY = nameY + nameLabel.firstBaselineOffsetFromTop - (font.capHeight + font.xHeight) / 4
+            // Glyph centre from the image's top edge (alignment rect is bottom-up).
+            let alignment = accessoryButton.image?.alignmentRect ?? CGRect(origin: .zero, size: imgSize)
+            let glyphCenterFromTop = imgSize.height - alignment.midY
             let nameTextW = min(nameLabel.intrinsicContentSize.width, nameLabel.frame.width)
             let firstBadgeX = [mediaBadge, vlmBadge]
                 .filter { !$0.isHidden }
@@ -882,12 +885,9 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
                 .min() ?? trailingX
             let limit = firstBadgeX - imgSize.width - 4
             let x = min(nameLabel.frame.minX + nameTextW + 6, limit)
-            // Lift the glyph slightly off the baseline so it reads as
-            // vertically centred against the name text.
-            let bottomPadding: CGFloat = 3.2
             accessoryButton.frame = CGRect(
                 x: max(contentX, x),
-                y: nameY + baselineFromTop - (imgSize.height - baselineInset) - bottomPadding,
+                y: ((textCenterY - glyphCenterFromTop) * 2).rounded() / 2,
                 width: imgSize.width,
                 height: imgSize.height
             )
