@@ -557,15 +557,34 @@ struct FloatingInputCard: View {
     // the underlying font-descriptor/dynamic-type lookups have shown up as app
     // hangs during layout. Line height is a pure function of the point size, so
     // memoize it and serve the memo thereafter.
+    //
+    // IMPORTANT: NSFont.systemFont(ofSize:) acquires an Apple-internal typeface
+    // lock on first use. To avoid holding lineHeightCacheLock while that lock
+    // blocks, we use a double-checked pattern: check under lock, then load the
+    // font *outside* the lock, then re-acquire to write. The cache is pre-warmed
+    // from .onAppear/.onChange so layout always hits the fast path.
     private static let lineHeightCacheLock = NSLock()
     private nonisolated(unsafe) static var lineHeightCache: [CGFloat: CGFloat] = [:]
     private static func lineHeight(forFontSize size: CGFloat) -> CGFloat {
+        // Fast path: already cached.
         lineHeightCacheLock.lock()
-        defer { lineHeightCacheLock.unlock() }
-        if let cached = lineHeightCache[size] { return cached }
+        if let cached = lineHeightCache[size] {
+            lineHeightCacheLock.unlock()
+            return cached
+        }
+        lineHeightCacheLock.unlock()
+
+        // Slow path: load font outside the lock to avoid holding it while
+        // NSFont internally blocks on its own typeface lock.
         let font = NSFont.systemFont(ofSize: size)
         let lineHeight = font.ascender - font.descender + font.leading
+
+        // Write result; another thread may have raced us — that's fine, the
+        // value is deterministic so we just overwrite with the same result.
+        lineHeightCacheLock.lock()
         lineHeightCache[size] = lineHeight
+        lineHeightCacheLock.unlock()
+
         return lineHeight
     }
     private let maxImageSize: Int = 10 * 1024 * 1024  // 10MB limit
@@ -1034,6 +1053,21 @@ struct FloatingInputCard: View {
                     if !showVoiceOverlay {
                         showVoiceOverlay = true
                     }
+                }
+
+                // Pre-warm the line-height cache so the first layout pass always
+                // hits the fast (cached) path and never blocks the main thread on
+                // NSFont's internal typeface lock.
+                let fontSize = inputFontSize
+                Task.detached(priority: .userInitiated) {
+                    _ = FloatingInputCard.lineHeight(forFontSize: fontSize)
+                }
+            }
+            .onChange(of: inputFontSize) { _, newSize in
+                // Re-warm when the theme body size changes to avoid a layout hang
+                // the first time the new size is encountered.
+                Task.detached(priority: .userInitiated) {
+                    _ = FloatingInputCard.lineHeight(forFontSize: newSize)
                 }
             }
             .onChange(of: isSandboxEnabled) { _, enabled in
