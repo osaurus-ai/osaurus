@@ -273,6 +273,16 @@ struct CacheSection: View {
                 format: "%g"
             )
             .settingsLandingAnchor("settings.server.diskCacheSize")
+            Button {
+                draft.cache.blockDisk.maxSizePercent = nil
+                draft.cache.blockDisk.maxSizeGB = nil
+                draft.cache.legacyDisk.maxSizeGB = nil
+            } label: {
+                Text("Use Automatic Cache Size", bundle: .module)
+            }
+            .disabled(draft.cache.blockDisk.maxSizePercent == nil
+                && draft.cache.blockDisk.maxSizeGB == nil && draft.cache.legacyDisk.maxSizeGB == nil)
+            .settingsLandingAnchor("settings.server.diskCacheAutomatic")
             Text(verbatim: resolvedDiskCacheLabel)
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)

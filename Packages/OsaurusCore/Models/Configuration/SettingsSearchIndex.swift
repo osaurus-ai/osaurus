@@ -648,6 +648,14 @@ public enum SettingsSearchIndex {
             subTab: "cache"
         ),
         .init(
+            id: "settings.server.diskCacheAutomatic",
+            tab: .server,
+            section: "Cache",
+            title: "Use Automatic Cache Size",
+            keywords: ["automatic ssd", "reset cache size", "legacy cache size", "available disk space"],
+            subTab: "cache"
+        ),
+        .init(
             id: "settings.server.diskCacheNotices",
             tab: .server,
             section: "Cache",

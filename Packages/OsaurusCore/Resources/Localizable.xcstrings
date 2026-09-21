@@ -273346,6 +273346,34 @@
           }
         }
       }
+    },
+    "Use Automatic Cache Size": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatische Cache-Größe verwenden"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用自动缓存大小"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "자동 캐시 크기 사용"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Использовать автоматический размер кэша"
+          }
+        }
+      }
     }
   },
   "version": "1.1"
