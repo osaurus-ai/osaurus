@@ -670,7 +670,7 @@ Example response:
 
 ### Credit Balance — `GET /credits/balance` (also available at `GET /v1/credits/balance`)
 
-Read-only Osaurus Router credit balance for local tools. Requires a valid access key (`Authorization: Bearer <key>`), or "Allow local API access without a key" enabled on the Credits screen. Agent-scoped keys are refused.
+Read-only Osaurus Router credit balance for local tools. Requires a valid master access key (`Authorization: Bearer <key>`), or "Allow local API access without a key" enabled on the Credits screen. Agent-scoped keys are refused, and requests with an `Origin` header (browsers) always need a key.
 
 ```bash
 curl http://127.0.0.1:1337/v1/credits/balance -H "Authorization: Bearer $OSAURUS_KEY"
@@ -686,7 +686,7 @@ curl http://127.0.0.1:1337/v1/credits/balance -H "Authorization: Bearer $OSAURUS
 }
 ```
 
-The balance is cached for 30 seconds. `stale: true` means the Router could not be reached and the last known value was returned. Errors: `403 credits_access_not_authorized`, `409 router_disabled`, `409 no_account`, `503 router_unavailable`.
+The balance is cached for 30 seconds and always reflects a value fetched from the Router. `stale: true` means the refresh failed and the last known value was returned. Errors: `403 credits_access_not_authorized`, `409 router_disabled`, `409 no_account`, `503 router_unavailable`, `502 router_error`.
 
 ---
 

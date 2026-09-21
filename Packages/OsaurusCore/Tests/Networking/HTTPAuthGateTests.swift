@@ -305,6 +305,27 @@ struct HTTPAuthGateTests {
         }
     }
 
+    /// Trusted loopback skips scope confinement, so the endpoint itself must
+    /// refuse a valid key that is not master-scoped, on either transport.
+    @Test func creditsBalance_agentScopedKey_returns403_onLoopbackAndRemote() async throws {
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: OsaurusRouter.allowUnkeyedLoopbackSpendDefaultsKey)
+        defaults.removeObject(forKey: OsaurusRouter.allowUnkeyedLoopbackSpendDefaultsKey)
+        defer {
+            if let previous {
+                defaults.set(previous, forKey: OsaurusRouter.allowUnkeyedLoopbackSpendDefaultsKey)
+            }
+        }
+
+        let fixture = try Self.agentScopedFixture()
+        for trustLoopback in [true, false] {
+            let server = try await startAuthTestServer(validator: fixture.validator, trustLoopback: trustLoopback)
+            let result = try await Self.send("GET", "/credits/balance", token: fixture.token, server: server)
+            await server.shutdown()
+            #expect(result.status == 403)
+        }
+    }
+
     // MARK: - Agent-Scoped Key Confinement (by key origin)
 
     /// Builds a validator that knows Alice's master + one derived agent, and an

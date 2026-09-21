@@ -17,19 +17,57 @@ struct LocalCreditsBalanceTests {
     @Test func unkeyedCaller_withoutOptIn_isRefused() {
         #expect(
             !LocalCreditsBalance.isAuthorized(
-                callerHasVerifiedAccessKey: false,
-                allowsUnkeyedLoopbackSpend: false
+                callerHasVerifiedMasterKey: false,
+                allowsUnkeyedLoopbackSpend: false,
+                requestHasOrigin: false
             )
         )
     }
 
-    @Test func keyedCaller_orOptIn_isAllowed() {
+    @Test func masterKey_orOptIn_isAllowed() {
         #expect(
-            LocalCreditsBalance.isAuthorized(callerHasVerifiedAccessKey: true, allowsUnkeyedLoopbackSpend: false)
+            LocalCreditsBalance.isAuthorized(
+                callerHasVerifiedMasterKey: true,
+                allowsUnkeyedLoopbackSpend: false,
+                requestHasOrigin: false
+            )
         )
         #expect(
-            LocalCreditsBalance.isAuthorized(callerHasVerifiedAccessKey: false, allowsUnkeyedLoopbackSpend: true)
+            LocalCreditsBalance.isAuthorized(
+                callerHasVerifiedMasterKey: false,
+                allowsUnkeyedLoopbackSpend: true,
+                requestHasOrigin: false
+            )
         )
+    }
+
+    /// Loopback responses carry `Access-Control-Allow-Origin: *`, so the
+    /// key-less opt-in must not extend to browser-originated requests.
+    @Test func optIn_doesNotCoverBrowserOrigins_butMasterKeyDoes() {
+        #expect(
+            !LocalCreditsBalance.isAuthorized(
+                callerHasVerifiedMasterKey: false,
+                allowsUnkeyedLoopbackSpend: true,
+                requestHasOrigin: true
+            )
+        )
+        #expect(
+            LocalCreditsBalance.isAuthorized(
+                callerHasVerifiedMasterKey: true,
+                allowsUnkeyedLoopbackSpend: false,
+                requestHasOrigin: true
+            )
+        )
+    }
+
+    @Test func refreshErrors_separateUnreachableFromRejected() {
+        #expect(
+            LocalCreditsBalance.result(forRefreshError: OsaurusRouterAPIError.transport("offline"))
+                == .unavailable(OsaurusRouterAPIError.transport("offline").localizedDescription)
+        )
+        let rejected = LocalCreditsBalance.result(forRefreshError: OsaurusRouterAPIError.unauthorized)
+        #expect(rejected == .routerRejected(OsaurusRouterAPIError.unauthorized.localizedDescription))
+        #expect(LocalCreditsBalance.response(for: rejected).status == 502)
     }
 
     @Test func creditsDecimalString_keepsSubCreditResidue() {
@@ -62,6 +100,7 @@ struct LocalCreditsBalanceTests {
             (.routerDisabled, 409, "router_disabled"),
             (.noIdentity, 409, "no_account"),
             (.unavailable("offline"), 503, "router_unavailable"),
+            (.routerRejected("nope"), 502, "router_error"),
         ]
         for (result, status, code) in cases {
             let response = LocalCreditsBalance.response(for: result)
