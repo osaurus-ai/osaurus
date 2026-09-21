@@ -153,3 +153,11 @@ it does not increase the cache limit.
 Disk Cache Size left blank uses **Automatic**: 30% of free space plus the cache's indexed payload bytes, including companions. Cache growth therefore does not shrink its own quota. An explicit percentage remains a percentage of total volume size, bounded by 25% of free space plus this cache; Settings shows the requested and effective amounts when limited. Existing percentages and legacy GB choices are preserved. Editing the percentage field replaces a legacy GB choice; clearing an explicit percentage selects Automatic. For a saved legacy GB choice, click **Use Automatic Cache Size**, then Save Changes.
 
 Saving only the disk size updates resident models without unloading their weights. A decrease is enforced at the next cache write. Low free space produces an advisory and does not silently disable caching. Prefix Cache remains the master reuse switch; with paged RAM off, SSD reuse can still operate independently.
+
+Cache controls are individually searchable: **Prefix Cache**, **Enable GPU Cache**,
+**Block Size (tokens)**, **Max Blocks**, **Disk Cache**, **Disk Cache Directory**,
+and **Re-derive SSM State After Generation**. Each result opens Server → Settings
+→ Cache and scrolls to that control. **Increase Cache Size** lands directly on
+**Disk Cache Size (% of disk)**. Prefix Cache controls all reuse; Enable GPU
+Cache controls the optional RAM tier, Disk Cache controls SSD reuse, and the
+SSM option retains architecture-specific companion state for hybrid models.

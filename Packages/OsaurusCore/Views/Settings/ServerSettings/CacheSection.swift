@@ -35,7 +35,6 @@ struct CacheSection: View {
             SettingsSubsection(label: "Context & KV Policy") {
                 contextAndKVPolicyControls
             }
-            .settingsLandingAnchor("settings.chat.contextLength")
 
             SettingsDivider()
 
@@ -45,6 +44,7 @@ struct CacheSection: View {
                     "Reuse cached prompt prefixes across requests for faster TTFT. When off, GPU and disk reuse are also disabled.",
                 isOn: $draft.cache.prefix.enabled
             )
+            .settingsLandingAnchor("settings.server.prefixCache")
 
             SettingsDivider()
 
@@ -56,6 +56,7 @@ struct CacheSection: View {
                             "Optional hot tier held in GPU memory. SSD cache can still restore prefixes across requests when this is off.",
                         isOn: $draft.cache.pagedKV.enabled
                     )
+                    .settingsLandingAnchor("settings.server.gpuCache")
 
                     OptionalIntField(
                         label: "Block Size (tokens)",
@@ -63,6 +64,7 @@ struct CacheSection: View {
                         help: "Tokens per paged block.",
                         value: $draft.cache.pagedKV.blockSize
                     )
+                    .settingsLandingAnchor("settings.server.gpuCacheBlockSize")
 
                     OptionalIntField(
                         label: "Max Blocks",
@@ -70,6 +72,7 @@ struct CacheSection: View {
                         help: "Upper bound on GPU cache memory.",
                         value: $draft.cache.pagedKV.maxBlocks
                     )
+                    .settingsLandingAnchor("settings.server.gpuCacheMaxBlocks")
                 }
             }
 
@@ -93,6 +96,7 @@ struct CacheSection: View {
                     "Hybrid Mamba models only. On by default so SSM companion state can be restored with prefix/L2 cache hits.",
                 isOn: $draft.cache.enableSSMReDerive
             )
+            .settingsLandingAnchor("settings.server.ssmReDerive")
 
             SettingsDivider()
 
@@ -280,6 +284,7 @@ struct CacheSection: View {
                     "Persist content-addressed prompt checkpoints on SSD. Works with paged RAM cache off and restores the longest matching prefix after restart; turn off to disable disk reuse.",
                 isOn: $draft.cache.blockDisk.enabled
             )
+            .settingsLandingAnchor("settings.server.diskCache")
             OptionalDoubleField(
                 label: "Disk Cache Size (% of disk)",
                 placeholder: "Blank = Automatic (30% of available space)",
@@ -325,6 +330,7 @@ struct CacheSection: View {
                 }
                 .disabled(isClearingDiskCache)
                 .accessibilityLabel(Text("Clear SSD Cache", bundle: .module))
+                .settingsLandingAnchor("settings.server.clearDiskCache")
                 if let clearedCacheSummary {
                     Text(verbatim: clearedCacheSummary)
                         .font(.caption)
@@ -345,6 +351,7 @@ struct CacheSection: View {
                 help: "Absolute path or ~/... path for persisted disk-cache entries.",
                 value: $draft.cache.blockDisk.directory
             )
+            .settingsLandingAnchor("settings.server.diskCacheDirectory")
 
             SettingsToggle(
                 title: L("Show SSD Cache Capacity Notices"),

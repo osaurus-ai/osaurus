@@ -640,6 +640,70 @@ public enum SettingsSearchIndex {
             subTab: "cache"
         ),
         .init(
+            id: "settings.server.prefixCache",
+            tab: .server,
+            section: "Cache",
+            title: "Prefix Cache",
+            keywords: ["prefix reuse", "master reuse switch"],
+            subTab: "cache"
+        ),
+        .init(
+            id: "settings.server.gpuCache",
+            tab: .server,
+            section: "Cache",
+            title: "Enable GPU Cache",
+            keywords: ["paged kv", "hot tier"],
+            subTab: "cache"
+        ),
+        .init(
+            id: "settings.server.gpuCacheBlockSize",
+            tab: .server,
+            section: "Cache",
+            title: "Block Size (tokens)",
+            keywords: ["paged block tokens"],
+            subTab: "cache"
+        ),
+        .init(
+            id: "settings.server.gpuCacheMaxBlocks",
+            tab: .server,
+            section: "Cache",
+            title: "Max Blocks",
+            keywords: ["gpu cache memory"],
+            subTab: "cache"
+        ),
+        .init(
+            id: "settings.server.diskCache",
+            tab: .server,
+            section: "Cache",
+            title: "Disk Cache",
+            keywords: ["ssd reuse", "l2"],
+            subTab: "cache"
+        ),
+        .init(
+            id: "settings.server.clearDiskCache",
+            tab: .server,
+            section: "Cache",
+            title: "Clear SSD Cache",
+            keywords: ["purge cached conversations"],
+            subTab: "cache"
+        ),
+        .init(
+            id: "settings.server.diskCacheDirectory",
+            tab: .server,
+            section: "Cache",
+            title: "Disk Cache Directory",
+            keywords: ["ssd path", "cache folder"],
+            subTab: "cache"
+        ),
+        .init(
+            id: "settings.server.ssmReDerive",
+            tab: .server,
+            section: "Cache",
+            title: "Re-derive SSM State After Generation",
+            keywords: ["hybrid", "mamba", "companion"],
+            subTab: "cache"
+        ),
+        .init(
             id: "settings.server.diskCacheSize",
             tab: .server,
             section: "Cache",

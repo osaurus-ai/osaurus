@@ -962,8 +962,10 @@ struct FloatingInputCard: View {
             ) { _ in
                 let latest = ServerRuntimeSettingsStore.snapshot().cache
                 if ssdCacheSettings != latest {
+                    if ssdCacheSettings.requiresModelReload(comparedTo: latest) {
+                        ssdWarningSnapshot = nil
+                    }
                     ssdCacheSettings = latest
-                    ssdWarningSnapshot = nil
                 }
             }
             .task(id: ssdQuotaNoticePollContext) {
@@ -978,25 +980,23 @@ struct FloatingInputCard: View {
                             session: inputHistoryKey?.uuidString
                         )
                         guard !Task.isCancelled else { return }
-                        if let visible = ssdWarningSnapshot {
-                            let current = snapshots.first(where: {
-                                $0.directory == visible.directory
-                                    && $0.usage.pressureAffects(session: inputHistoryKey?.uuidString)
-                            })
-                            if current?.usage.pressureSeq != visible.usage.pressureSeq
-                                || current?.usage.maxBytes != visible.usage.maxBytes
+                        if canPresentSSDQuotaNotice,
+                            let session = ssdQuotaNoticePollContext.session?.uuidString,
+                            let observed = snapshots.first(where: { $0.usage.pressureAffects(session: session) })
+                                ?? snapshots.first
+                        {
+                            // Missing during reload/save is not evidence that
+                            // the loss resolved. A known root with no current
+                            // pressure retires the notice. Its process-lifetime
+                            // presentation survives switching away and back.
+                            let current = DiskCacheQuotaNotices.shared.presentation(for: observed, session: session)
+                            if ssdWarningModel != selectedModel
+                                || current?.usage.pressureSeq != ssdWarningSnapshot?.usage.pressureSeq
+                                || current?.usage.maxBytes != ssdWarningSnapshot?.usage.maxBytes
                             {
+                                ssdWarningModel = selectedModel
                                 ssdWarningSnapshot = current
                             }
-                        }
-                        if canPresentSSDQuotaNotice, ssdWarningSnapshot == nil,
-                            let session = ssdQuotaNoticePollContext.session?.uuidString,
-                            let snapshot = snapshots.first(where: {
-                                DiskCacheQuotaNotices.shared.claim($0, session: session)
-                            })
-                        {
-                            ssdWarningModel = selectedModel
-                            ssdWarningSnapshot = snapshot
                         }
                     }
                     try? await Task.sleep(for: .seconds(3))

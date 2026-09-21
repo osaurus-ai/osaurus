@@ -61,6 +61,22 @@ import Testing
         expectClaim(true, snapshot(used: 100, root: "/cache/second", pressure: ("activeTipDropped", me, 6)), session: me)
     }
 
+    @Test func aVisibleNoticeSurvivesOtherChatsAndUpdatesUntilConfirmedResolution() {
+        var policy = DiskCacheQuotaNoticePolicy()
+        let a = snapshot(used: 0, pressure: ("activeTipDropped", "a", 1))
+        let b = snapshot(used: 0, pressure: ("activeTipDropped", "b", 2))
+        #expect(policy.presentation(for: a, session: "a")?.usage.pressureSeq == 1)
+        #expect(policy.presentation(for: b, session: "b")?.usage.pressureSeq == 2)
+        // A newly created view can recover the same already-claimed notice.
+        #expect(policy.presentation(for: a, session: "a")?.usage.pressureSeq == 1)
+        let updated = snapshot(used: 20, limit: 200, pressure: ("activeTipDropped", "a", 3))
+        #expect(policy.presentation(for: updated, session: "a")?.usage.maxBytes == 200)
+        #expect(policy.presentation(for: updated, session: "a")?.usage.pressureSeq == 3)
+        #expect(policy.presentation(for: snapshot(used: 20, limit: 1000), session: "a") == nil)
+        #expect(policy.presentation(for: updated, session: "a") == nil, "one notice per launch, no renewed nag")
+        #expect(policy.presentation(for: b, session: "b")?.usage.pressureSeq == 2)
+    }
+
     @Test func theNoticeNamesTheCapWithoutClaimingAllReuseIsLost() {
         let me = UUID().uuidString
         let dropped = snapshot(used: 0, limit: 4_000_000_000, pressure: ("activeTipDropped", me, 1)).usage

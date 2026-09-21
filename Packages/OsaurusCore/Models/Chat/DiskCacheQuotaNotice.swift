@@ -10,8 +10,9 @@ struct SSDQuotaNoticePollContext: Equatable {
     var cacheSettings: VMLXServerCacheSettings = .init()
 }
 
-/// A resident coordinator's real directory and enforced quota, including linked
-/// recurrent payloads. Never substitute a saved setting for an active quota.
+/// A cache root's measured usage and capacity loss, including linked recurrent
+/// payloads. Resident models report the enforced quota; idle roots resolve the
+/// saved policy while retaining confirmed per-chat pressure metadata.
 struct DiskCacheQuotaSnapshot: Sendable {
     let directory: URL
     let usage: DiskCacheUsage
@@ -30,6 +31,25 @@ struct DiskCacheQuotaSnapshot: Sendable {
 
 struct DiskCacheQuotaNoticePolicy {
     private var presented: Set<DiskCacheQuotaSnapshot.Key> = []
+    private var active: [DiskCacheQuotaSnapshot.Key: DiskCacheQuotaSnapshot] = [:]
+
+    /// A claimed notice remains the same notice when a chat view is recreated
+    /// or the user visits another chat. A confirmed resolution retires it;
+    /// later pressure does not nag again during this app launch.
+    mutating func presentation(
+        for snapshot: DiskCacheQuotaSnapshot, session: String
+    ) -> DiskCacheQuotaSnapshot? {
+        let key = snapshot.key(session: session)
+        guard !snapshot.usage.isDisabled, snapshot.usage.maxBytes > 0,
+            snapshot.usage.pressureAffects(session: session)
+        else {
+            active.removeValue(forKey: key)
+            return nil
+        }
+        guard active[key] != nil || claim(snapshot, session: session) else { return nil }
+        active[key] = snapshot
+        return snapshot
+    }
 
     /// Quota enforcement can lower usage before the next sample. The event
     /// identifies an oversized snapshot independently of current fullness.
@@ -62,8 +82,10 @@ final class DiskCacheQuotaNotices {
     static let shared = DiskCacheQuotaNotices()
     private var policy = DiskCacheQuotaNoticePolicy()
 
-    func claim(_ snapshot: DiskCacheQuotaSnapshot, session: String?) -> Bool {
-        guard !DiskCacheQuotaNoticeSuppression.isSuppressed() else { return false }
-        return policy.claim(snapshot, session: session)
+    func presentation(
+        for snapshot: DiskCacheQuotaSnapshot, session: String
+    ) -> DiskCacheQuotaSnapshot? {
+        guard !DiskCacheQuotaNoticeSuppression.isSuppressed() else { return nil }
+        return policy.presentation(for: snapshot, session: session)
     }
 }

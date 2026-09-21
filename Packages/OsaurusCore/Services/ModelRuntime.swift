@@ -1485,6 +1485,27 @@ public actor ModelRuntime {
         let error: String?
     }
 
+    /// Metadata only; no holder, coordinator, weights or KV arrays survive unload.
+    private struct RetiredDiskQuota: Sendable {
+        let directory: URL
+        let modelKey: String?
+        let settings: VMLXServerCacheSettings
+        let capBytes: Int
+    }
+    private var retiredDiskQuotas: [String: RetiredDiskQuota] = [:]
+
+    private func rememberDiskQuotaBeforeUnload(name: String) {
+        guard let holder = modelCache[name], let settings = holder.cacheSettings,
+            let coordinator = holder.container.cacheCoordinator,
+            coordinator.config.enableDiskCache,
+            let directory = coordinator.config.diskCacheDir,
+            let disk = coordinator.diskCache
+        else { return }
+        retiredDiskQuotas[name] = RetiredDiskQuota(
+            directory: directory, modelKey: coordinator.config.modelKey,
+            settings: settings, capBytes: disk.maxSizeBytes)
+    }
+
     private var diskCapRefreshTask: Task<VMLXServerCacheSettings, Never>?
 
     /// Serialize saves without occupying the runtime actor while a store holds
@@ -1541,34 +1562,63 @@ public actor ModelRuntime {
         )
     }
 
-    /// Live quotas are read from the coordinator, including size-only saves.
+    /// Sample outside the runtime actor: SQLite and cache locks can wait behind
+    /// a store. Retired models retain only their root/fingerprint/settings;
+    /// pressure history itself survives idle unload in the engine.
     func diskCacheQuotaSnapshots(
         matching settings: VMLXServerCacheSettings? = nil, modelName: String? = nil,
         session: String? = nil
-    ) -> [DiskCacheQuotaSnapshot] {
+    ) async -> [DiskCacheQuotaSnapshot] {
         let canonical = modelName.flatMap { ModelManager.findInstalledModelFromCache(named: $0)?.name }
-        return modelCache.compactMap { name, holder in
-            if let modelName, name != modelName && name != canonical { return nil }
-            if let settings, holder.cacheSettings != settings { return nil }
-            guard let coordinator = holder.container.cacheCoordinator,
-                coordinator.config.enableDiskCache,
-                let stats = coordinator.snapshotStats().diskStats,
-                let directory = coordinator.config.diskCacheDir
-            else { return nil }
-            let pressure = session.flatMap { stats.capacityPressureByChain[$0] }
-            let event = session == nil ? stats.lastPressureEvent : pressure?.event
-            return DiskCacheQuotaSnapshot(
-                directory: directory,
-                usage: DiskCacheUsage(
-                    usedBytes: stats.currentPayloadBytes,
-                    maxBytes: stats.maxSizeBytes,
-                    evictions: stats.evictions,
-                    pressureKind: event?.kind.rawValue,
-                    pressureChainId: event?.chainId,
-                    pressureSeq: Int(clamping: pressure?.sequence ?? stats.pressureEventSeq)
-                )
-            )
+        func matches(_ name: String) -> Bool {
+            modelName == nil || name == modelName || name == canonical
         }
+        let resident = modelCache.compactMap { name, holder -> CacheCoordinator? in
+            guard matches(name), settings == nil || holder.cacheSettings == settings else { return nil }
+            return holder.container.cacheCoordinator
+        }
+        let retired = retiredDiskQuotas.compactMap { name, entry -> RetiredDiskQuota? in
+            guard matches(name), modelCache[name] == nil else { return nil }
+            if let settings, entry.settings.requiresModelReload(comparedTo: settings) { return nil }
+            return entry
+        }
+        return await Task.detached(priority: .utility) {
+            let live = resident.compactMap { coordinator -> DiskCacheQuotaSnapshot? in
+                guard coordinator.config.enableDiskCache,
+                    let stats = coordinator.snapshotStats().diskStats,
+                    let directory = coordinator.config.diskCacheDir
+                else { return nil }
+                let pressure = session.flatMap { stats.capacityPressureByChain[$0] }
+                let event = session == nil ? stats.lastPressureEvent : pressure?.event
+                return DiskCacheQuotaSnapshot(
+                    directory: directory,
+                    usage: DiskCacheUsage(
+                        usedBytes: stats.currentPayloadBytes, maxBytes: stats.maxSizeBytes,
+                        evictions: stats.evictions, pressureKind: event?.kind.rawValue,
+                        pressureChainId: event?.chainId,
+                        pressureSeq: Int(clamping: pressure?.sequence ?? stats.pressureEventSeq)))
+            }
+            let idle = retired.compactMap { entry -> DiskCacheQuotaSnapshot? in
+                let cap = Self.diskCacheCap(
+                    for: settings ?? entry.settings, directory: entry.directory,
+                    previousCapBytes: Int64(entry.capBytes))
+                let records = DiskCachePressureHistory.records(
+                    directory: entry.directory, modelKey: entry.modelKey,
+                    maxSizeBytes: Int(clamping: cap.capBytes))
+                let pressure = session.flatMap { records[$0] }
+                    ?? (session == nil ? records.values.max(by: { $0.tick < $1.tick }) : nil)
+                let volume = DiskCacheVolumeSnapshot.read(directory: entry.directory)
+                return DiskCacheQuotaSnapshot(
+                    directory: entry.directory,
+                    usage: DiskCacheUsage(
+                        usedBytes: Int(clamping: volume.ownBytes ?? 0),
+                        maxBytes: Int(clamping: cap.capBytes), evictions: 0,
+                        pressureKind: pressure?.event.kind.rawValue,
+                        pressureChainId: pressure?.event.chainId,
+                        pressureSeq: Int(clamping: pressure?.sequence ?? 0)))
+            }
+            return live + idle
+        }.value
     }
 
     /// Serializes with runtime cache IO and removes indexed payloads and linked
@@ -1581,9 +1631,8 @@ public actor ModelRuntime {
             ?? OsaurusPaths.diskKVCache()
         // A notice clears the root it measured. The Settings action clears
         // both active roots and the saved root, including after a path change.
-        let directories =
-            directory.map { [$0] }
-            ?? (diskCacheQuotaSnapshots().map(\.directory) + [configuredDirectory])
+        let observedDirectories = await diskCacheQuotaSnapshots().map(\.directory)
+        let directories = directory.map { [$0] } ?? (observedDirectories + [configuredDirectory])
         let roots = Set(directories.map(\.standardizedFileURL))
         let hadResidentModel = !modelCache.isEmpty
         // A resident coordinator keeps its own account of what is on disk. The
@@ -1612,6 +1661,7 @@ public actor ModelRuntime {
                         // still have removed payloads before it stopped.
                         if result.error == nil || result.removedFiles > 0 {
                             changedRootPaths.insert(root.path)
+                            if result.error == nil { DiskCachePressureHistory.clear(directory: root) }
                         }
                     }
                     combined.error = errors.isEmpty ? nil : errors.joined(separator: "\n")
@@ -2365,6 +2415,7 @@ public actor ModelRuntime {
         let retiredCacheCounters = modelCache[name].flatMap {
             Self.processLifetimeCacheCounters(for: $0)
         }
+        rememberDiskQuotaBeforeUnload(name: name)
         modelCache[name]?.container.disableCaching()
 
         Stream.gpu.synchronize()
@@ -2563,6 +2614,7 @@ public actor ModelRuntime {
         if !quit { await MetalGate.shared.enterModelTeardown(model: "all-models") }
         var retiredCacheCounters = ProcessLifetimeBatchCounters()
         var hasRetiredCacheCounters = false
+        for name in modelCache.keys { rememberDiskQuotaBeforeUnload(name: name) }
         for holder in modelCache.values {
             if let counters = Self.processLifetimeCacheCounters(for: holder) {
                 retiredCacheCounters.absorb(counters)
