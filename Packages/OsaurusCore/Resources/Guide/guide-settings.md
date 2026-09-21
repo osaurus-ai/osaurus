@@ -23,7 +23,7 @@ Ask the assistant to change declarative settings in chat (`osaurus_config`); eac
 
 - Server: port, expose to network, generation defaults, batching/concurrency, prefix/paged-KV/disk cache, **Context Window Cap**, KV retention, memory safety, model exposure. (Port and exposure changes restart the server; cache topology changes unload loaded models; disk-size changes update resident quotas.)
 - Orchestrator: Settings → Orchestrator holds Identity, Model & Generation (with the **Model readiness** row), **Working Folder**, Subagents (**Allowed subagents**, **Create starter agents**, **Permission**, **Permission for shared (workspace) agents**, **Limits**, **Advanced**, Local Models & Memory), and the **Delegations** list (Sent / Received). The working folder, model override, RAM-safety helpers and the Delegations list are UI-only; the rest is also declarative (`default_agent`, `delegation`).
-- Chat behavior: compaction model, clipboard monitoring, smooth streaming, thinking display, chat titles, follow-ups. **Not** the context window — that is Server → Cache.
+- Chat behavior: compaction model (unset = the chat's current model summarizes; compaction runs automatically near the context limit and on demand from the **Compact conversation** button in the chat's context budget popover), clipboard monitoring, smooth streaming, thinking display, chat titles, follow-ups. **Not** the context window — that is Server → Cache.
 - App: start at login, hide dock icon, appearance, global hotkey, notifications/toasts.
 - Voice: speech-to-text models, dictation, wake phrase, text-to-speech engine and voice.
 - Themes: theme gallery, custom theme editor, import/export.

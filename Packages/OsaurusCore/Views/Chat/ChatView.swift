@@ -3109,18 +3109,28 @@ final class ChatSession: ObservableObject {
         return Double(total) / Double(effective)
     }
 
-    /// Popover-button gate: utilization crossed the manual threshold (~70%)
-    /// and there's an uncovered older span a summary could reclaim.
+    /// Popover-button gate: there's an uncovered older span a summary could
+    /// reclaim. Deliberately NOT gated on utilization — a user who wants to
+    /// free context early (before the auto threshold) can, and hiding the
+    /// button until ~70% read as "compaction doesn't exist".
     var canManuallyCompactConversation: Bool {
-        guard hasCompactableConversation,
-            let fraction = contextUsageFractionEstimate
-        else { return false }
-        return fraction >= ContextCompactionService.manualTriggerThreshold
+        hasCompactableConversation
     }
 
-    /// One-shot suppression after the user dismisses the first-run dialog
-    /// without picking a model: stop auto-prompting for the rest of this
-    /// session (the manual popover button remains available).
+    /// The model the next compaction run will use (configured compaction
+    /// model, else this chat's current model). Nil when neither is known.
+    var effectiveCompactionModelIdentifier: String? {
+        ContextCompactionService.effectiveModelIdentifier(fallback: selectedModel)
+    }
+
+    /// True when a stashed auto-triggered send is waiting on the compaction
+    /// outcome (drives the "Send without compacting" dialog action).
+    var hasPendingSendAfterCompaction: Bool { resumeSendAfterCompaction }
+
+    /// One-shot suppression after the user dismisses the model-selection
+    /// dialog without picking a model: stop auto-prompting for the rest of
+    /// this session. Only reachable when there is no chat model to fall
+    /// back to, so it no longer disables auto compaction in normal chats.
     private var compactionDeclinedForSession = false
 
     /// Auto-trigger gate, checked at send time: the estimated next send is
@@ -3128,11 +3138,16 @@ final class ChatSession: ObservableObject {
     /// the context chip amber) and there is an uncovered span to summarize.
     private var shouldAutoCompactBeforeSend: Bool {
         guard !skipAutoCompactionForNextSend,
-            !compactionDeclinedForSession,
             compactionState == .idle,
             hasCompactableConversation,
             let fraction = contextUsageFractionEstimate
         else { return false }
+        // Without a usable model the only outcome is the picker dialog; a
+        // user who already declined it once shouldn't be re-prompted on
+        // every send this session.
+        if effectiveCompactionModelIdentifier == nil, compactionDeclinedForSession {
+            return false
+        }
         return fraction >= 0.85
     }
 
@@ -3178,9 +3193,10 @@ final class ChatSession: ObservableObject {
     private func beginCompaction(resumeSend: Bool, showDialogWhileRunning: Bool) {
         validateConversationSummary()
         resumeSendAfterCompaction = resumeSend
-        guard ContextCompactionService.configuredModelIdentifier() != nil else {
-            // First run: no model configured. Open the explainer dialog and
-            // let the user pick one (or decline).
+        guard effectiveCompactionModelIdentifier != nil else {
+            // No compaction model configured AND no chat model to fall back
+            // to. Open the explainer dialog and let the user pick one (or
+            // decline).
             compactionState = .needsModelSelection
             showCompactionDialog = true
             return
@@ -3259,21 +3275,29 @@ final class ChatSession: ObservableObject {
         }
     }
 
-    /// Post-run bookkeeping: resume a stashed auto-triggered send, and let
-    /// transient states (completed badge) settle back to idle.
+    /// Post-run bookkeeping: resume a stashed auto-triggered send after a
+    /// success, and let transient states (completed badge) settle back to
+    /// idle.
+    ///
+    /// A FAILED auto run does not resume on its own. Proceeding silently
+    /// made compaction look like it never ran — the only trace was a
+    /// six-second row in the hover popover. Instead the dialog stays (or
+    /// comes back, if the user hid it mid-run) in its failed state so the
+    /// user sees why, and chooses Retry or "Send without compacting"
+    /// (`cancelCompactionDialog`, which resumes the stashed send with the
+    /// deterministic trimmer as the safety net).
     private func finishCompaction(success: Bool) {
         let shouldResume = resumeSendAfterCompaction
+        if shouldResume, !success {
+            showCompactionDialog = true
+            return
+        }
         resumeSendAfterCompaction = false
         if shouldResume {
             Task { @MainActor [weak self] in
                 // Let the user read the "done" state briefly before the
-                // dialog closes and the send proceeds. Failures resume
-                // immediately — the deterministic trimmer still protects
-                // the request, and the failed state stays visible in the
-                // budget popover.
-                if success {
-                    try? await Task.sleep(nanoseconds: 900_000_000)
-                }
+                // dialog closes and the send proceeds.
+                try? await Task.sleep(nanoseconds: 900_000_000)
                 guard let self else { return }
                 self.showCompactionDialog = false
                 self.skipAutoCompactionForNextSend = true
@@ -3281,12 +3305,15 @@ final class ChatSession: ObservableObject {
             }
         }
         // Settle transient completed/failed badges back to idle so the
-        // popover button doesn't stay stuck on an old outcome.
+        // popover button doesn't stay stuck on an old outcome. A failure
+        // the dialog is still presenting is left alone — the dialog's
+        // Close/Retry actions own that transition.
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 6_000_000_000)
             guard let self else { return }
             switch self.compactionState {
-            case .completed, .failed: self.compactionState = .idle
+            case .completed: self.compactionState = .idle
+            case .failed where !self.showCompactionDialog: self.compactionState = .idle
             default: break
             }
         }

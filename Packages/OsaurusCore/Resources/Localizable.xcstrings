@@ -1,6 +1,251 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Use the current chat model (default)": {
+      "comment": "Placeholder for the Compaction Model picker when no dedicated model is set.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktuelles Chat-Modell verwenden (Standard)"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "현재 채팅 모델 사용 (기본값)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Использовать текущую модель чата (по умолчанию)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用当前聊天模型（默认）"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用目前聊天模型（預設）"
+          }
+        }
+      }
+    },
+    "Model used to summarize older messages when a chat outgrows its context window (context compaction). Compaction runs automatically near the limit and on demand from the context budget popover. Remote models pass through your Privacy Filter. If unset, the chat's current model summarizes.": {
+      "comment": "Description of the Compaction Model setting.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modell, das ältere Nachrichten zusammenfasst, wenn ein Chat sein Kontextfenster überschreitet (Kontextkompaktierung). Die Kompaktierung läuft automatisch nahe der Grenze und auf Wunsch über das Kontextbudget-Popover. Remote-Modelle durchlaufen deinen Datenschutzfilter. Ohne Auswahl fasst das aktuelle Chat-Modell zusammen."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "채팅이 컨텍스트 창을 초과할 때 이전 메시지를 요약하는 모델입니다(컨텍스트 압축). 압축은 한도에 가까워지면 자동으로, 그리고 컨텍스트 예산 팝오버에서 요청 시 실행됩니다. 원격 모델은 개인정보 필터를 거칩니다. 설정하지 않으면 현재 채팅 모델이 요약합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Модель, которая суммирует старые сообщения, когда чат перерастает контекстное окно (уплотнение контекста). Уплотнение запускается автоматически вблизи лимита и по запросу из всплывающего окна бюджета контекста. Удалённые модели проходят через ваш фильтр приватности. Если не задано, суммирует текущая модель чата."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当聊天超出上下文窗口时用于总结较早消息的模型（上下文压缩）。压缩会在接近上限时自动运行，也可在上下文预算弹窗中手动触发。远程模型会经过你的隐私过滤器。未设置时由当前聊天模型进行总结。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "當聊天超出上下文視窗時用於摘要較早訊息的模型（上下文壓縮）。壓縮會在接近上限時自動執行，也可在上下文預算彈出視窗中手動觸發。遠端模型會經過你的隱私過濾器。未設定時由目前聊天模型進行摘要。"
+          }
+        }
+      }
+    },
+    "Send without compacting": {
+      "comment": "Dialog button: proceed with the pending message without a compaction summary.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ohne Kompaktierung senden"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "압축 없이 보내기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отправить без уплотнения"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不压缩直接发送"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不壓縮直接傳送"
+          }
+        }
+      }
+    },
+    "Your message hasn't been sent yet. Retry, or send it without a summary — older messages will be trimmed to fit instead.": {
+      "comment": "Explains the options after an automatic compaction fails while a send is waiting.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deine Nachricht wurde noch nicht gesendet. Versuche es erneut oder sende sie ohne Zusammenfassung — ältere Nachrichten werden dann stattdessen gekürzt."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "메시지가 아직 전송되지 않았습니다. 다시 시도하거나 요약 없이 보내세요. 이 경우 이전 메시지는 맞추기 위해 잘립니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ваше сообщение ещё не отправлено. Повторите попытку или отправьте его без сводки — тогда старые сообщения будут обрезаны."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你的消息尚未发送。请重试，或不带摘要直接发送——较早的消息将被裁剪以适应窗口。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你的訊息尚未傳送。請重試，或不帶摘要直接傳送——較早的訊息將被裁剪以符合視窗。"
+          }
+        }
+      }
+    },
+    "Summarizes older messages with the current chat model to free up context. The visible chat is unchanged. Pick a dedicated model in Settings → Chat → Compaction Model.": {
+      "comment": "Helper text under the Compact conversation button when no dedicated compaction model is set.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fasst ältere Nachrichten mit dem aktuellen Chat-Modell zusammen, um Kontext freizugeben. Der sichtbare Chat bleibt unverändert. Ein eigenes Modell wählst du unter Einstellungen → Chat → Kompaktierungsmodell."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "현재 채팅 모델로 이전 메시지를 요약하여 컨텍스트를 확보합니다. 표시되는 채팅은 변경되지 않습니다. 전용 모델은 설정 → 채팅 → 압축 모델에서 선택하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Суммирует старые сообщения текущей моделью чата, чтобы освободить контекст. Видимый чат не меняется. Отдельную модель можно выбрать в Настройки → Чат → Модель уплотнения."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用当前聊天模型总结较早的消息以释放上下文。可见的聊天内容保持不变。可在设置 → 聊天 → 压缩模型中选择专用模型。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用目前聊天模型摘要較早的訊息以釋放上下文。可見的聊天內容保持不變。可在設定 → 聊天 → 壓縮模型中選擇專用模型。"
+          }
+        }
+      }
+    },
+    "Summarizes older messages with %@ to free up context. The visible chat is unchanged.": {
+      "comment": "Helper text under the Compact conversation button. %@ is the configured compaction model name.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fasst ältere Nachrichten mit %@ zusammen, um Kontext freizugeben. Der sichtbare Chat bleibt unverändert."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 모델로 이전 메시지를 요약하여 컨텍스트를 확보합니다. 표시되는 채팅은 변경되지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Суммирует старые сообщения с помощью %@, чтобы освободить контекст. Видимый чат не меняется."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 %@ 总结较早的消息以释放上下文。可见的聊天内容保持不变。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 %@ 摘要較早的訊息以釋放上下文。可見的聊天內容保持不變。"
+          }
+        }
+      }
+    },
+    "Compaction": {
+      "comment": "Section eyebrow in the context budget popover.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kompaktierung"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "압축"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Уплотнение"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "压缩"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "壓縮"
+          }
+        }
+      }
+    },
     "Controls image-model cleanup after a job. The shared Swap local models for subagents setting controls whether the invoking chat model unloads. Restoring that parent always unloads the image model first.": {},
     "For text, Browser Use, Computer Use, AppleScript, local image jobs and context compaction using a different local model: On unloads the invoking model, runs the job, then reloads it. AppleScript keep-warm can defer the reload. Off keeps the invoking model loaded during the job, including under Server Strict. Memory checks still apply. Same-model and cloud jobs never swap.": {},
     "For text, Browser Use, Computer Use and AppleScript subagents using a different local model: On unloads the invoking model, runs the subagent, then reloads it. AppleScript keep-warm can defer the reload. Off keeps the invoking model loaded during the job, including under Server Strict. Memory checks still apply. Same-model and cloud subagents never swap.": {},
@@ -32228,10 +32473,6 @@
           }
         }
       }
-    },
-    "Ask on first use (default)": {
-      "comment": "A label for the \"Ask on first use\" option.",
-      "isCommentAutoGenerated": true
     },
     "Ask the agent in chat to remember or track something — it will set up its own tables, and this overview fills in as it works.": {
       "comment": "A subtitle for the \"This agent hasn't stored anything yet.\" empty state in the DatabaseOverviewView.",
@@ -124499,10 +124740,6 @@
         }
       }
     },
-    "Model used to summarize older messages when a chat outgrows its context window (context compaction). Remote models pass through your Privacy Filter. If unset, you'll be asked to pick a model the first time compaction runs.": {
-      "comment": "A description of the compaction model.",
-      "isCommentAutoGenerated": true
-    },
     "models": {
       "localizations": {
         "de": {
@@ -205806,10 +206043,6 @@
       "comment": "A tooltip for the \"Older messages summarized\" section. The argument is the name of the LLM model.",
       "isCommentAutoGenerated": true
     },
-    "Summarizes older messages with your compaction model to free up context. The visible chat is unchanged.": {
-      "comment": "A description of the purpose of the compact button.",
-      "isCommentAutoGenerated": true
-    },
     "Summarizing older messages…": {
       "comment": "Label for a context-compaction dialog phase.",
       "isCommentAutoGenerated": true
@@ -272972,7 +273205,6 @@
     "Apple apps are now built into Osaurus": {},
     "%@ no longer need a plugin. Turn each app on per agent under Agents → Abilities → Tools → Apple Apps.": {},
     "%@ no longer need a plugin. Already turned on for %@; for other agents use Agents → Abilities → Tools → Apple Apps.": {},
-
     "More SSD cache space would help this chat": {
       "extractionState": "manual",
       "localizations": {

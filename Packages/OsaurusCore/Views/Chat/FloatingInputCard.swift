@@ -165,7 +165,8 @@ struct FloatingInputCard: View {
     /// progress / result rows inside the Context Budget popover.
     var compactionState: ContextCompactionUIState = .idle
     /// True when the manual "Compact conversation" action is applicable:
-    /// utilization crossed the threshold and there's an uncovered older span.
+    /// there's an uncovered older span a summary could reclaim (no
+    /// utilization gate — the button is available whenever it can do work).
     var canCompactConversation: Bool = false
     /// Invoked by the popover's "Compact conversation" button.
     var onCompactConversation: (() -> Void)? = nil
@@ -6493,8 +6494,7 @@ private struct ContextBreakdownPopover: View {
     /// Session compaction state — drives the inline progress / result row.
     var compactionState: ContextCompactionUIState = .idle
     /// True when the manual "Compact conversation" button should show
-    /// (utilization past threshold, an uncovered older span exists, and no
-    /// turn is streaming).
+    /// (an uncovered older span exists and no turn is streaming).
     var canCompact: Bool = false
     var onCompact: (() -> Void)? = nil
     /// Live disk-cache usage for the footer readout. nil when the disk cache is
@@ -6790,9 +6790,30 @@ private struct ContextBreakdownPopover: View {
         }
     }
 
+    /// Helper copy naming the model the next compaction run will use:
+    /// the configured compaction model, else the chat's current model
+    /// (`ContextCompactionService.effectiveModelIdentifier`). Read
+    /// per-render from the in-memory config cache — no file I/O.
+    private var compactionHelperText: String {
+        let configured = ContextCompactionService.configuredModelIdentifier()
+        if ContextCompactionService.usesChatModelFallback(configured: configured) {
+            return L(
+                "Summarizes older messages with the current chat model to free up context. The visible chat is unchanged. Pick a dedicated model in Settings → Chat → Compaction Model."
+            )
+        }
+        let name = configured.map(Self.shortModelName) ?? ""
+        return L("Summarizes older messages with \(name) to free up context. The visible chat is unchanged.")
+    }
+
+    /// `provider/model` → `model`; a bare id stays as is.
+    private static func shortModelName(_ identifier: String) -> String {
+        identifier.split(separator: "/", maxSplits: 1).last.map(String.init) ?? identifier
+    }
+
     @ViewBuilder
     private var compactionSection: some View {
         VStack(alignment: .leading, spacing: 7) {
+            sectionEyebrow("Compaction")
             switch compactionState {
             case .running(let phase):
                 HStack(spacing: 7) {
@@ -6835,13 +6856,10 @@ private struct ContextBreakdownPopover: View {
                 if canCompact {
                     VStack(alignment: .leading, spacing: 5) {
                         compactButton(label: L("Compact conversation"))
-                        Text(
-                            "Summarizes older messages with your compaction model to free up context. The visible chat is unchanged.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 9.5))
-                        .foregroundColor(theme.tertiaryText)
-                        .fixedSize(horizontal: false, vertical: true)
+                        Text(verbatim: compactionHelperText)
+                            .font(.system(size: 9.5))
+                            .foregroundColor(theme.tertiaryText)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }

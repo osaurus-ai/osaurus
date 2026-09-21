@@ -227,6 +227,16 @@ struct CompactionDialogView: View {
                     .font(.system(size: 11))
                     .foregroundColor(theme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
+                if session.hasPendingSendAfterCompaction {
+                    Text(
+                        "Your message hasn't been sent yet. Retry, or send it without a summary — older messages will be trimmed to fit instead.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 10.5))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 4)
+                }
             }
             Spacer(minLength: 0)
         }
@@ -296,10 +306,17 @@ struct CompactionDialogView: View {
                 .keyboardShortcut(.defaultAction)
 
             case .failed:
+                // With a stashed auto-triggered send waiting, closing means
+                // "go ahead without the summary" (the deterministic trimmer
+                // still protects the request) — say so.
                 Button {
                     session.cancelCompactionDialog()
                 } label: {
-                    Text("Close", bundle: .module)
+                    if session.hasPendingSendAfterCompaction {
+                        Text("Send without compacting", bundle: .module)
+                    } else {
+                        Text("Close", bundle: .module)
+                    }
                 }
                 .buttonStyle(.plain)
                 .foregroundColor(theme.secondaryText)

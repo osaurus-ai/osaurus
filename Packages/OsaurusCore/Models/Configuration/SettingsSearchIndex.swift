@@ -302,7 +302,12 @@ public enum SettingsSearchIndex {
             tab: .chat,
             section: "Chat",
             title: "Compaction Model",
-            keywords: ["compaction", "compact", "summarize", "context", "summary model"]
+            keywords: [
+                "compaction", "compact", "summarize", "context", "summary model",
+                "auto compact", "compact conversation", "fallback", "context full",
+            ],
+            disambiguation:
+                "Which model writes the summary. Unset means the chat's current model. Compaction runs automatically near the limit and from the Compact button in the context budget popover."
         ),
         .init(
             id: "settings.orchestrator.temperature",
