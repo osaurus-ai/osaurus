@@ -5023,6 +5023,13 @@ public actor ModelRuntime {
         }
     }
 
+    /// Keep configured-root usage visible even while reuse is disabled.
+    nonisolated static func diskCacheDirectoryForDisplay(for cache: VMLXServerCacheSettings) -> URL {
+        let path = !cache.pagedKV.enabled && !cache.blockDisk.enabled && cache.legacyDisk.enabled
+            ? cache.legacyDisk.directory : cache.blockDisk.directory
+        return resolvedServerRuntimeDirectory(path) ?? OsaurusPaths.diskKVCache()
+    }
+
     nonisolated static func cacheDiskDirectoryOverride(
         for cache: VMLXServerCacheSettings
     ) -> URL? {

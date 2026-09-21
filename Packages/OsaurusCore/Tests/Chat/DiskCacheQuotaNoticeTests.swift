@@ -44,33 +44,21 @@ import Testing
     @Test func onlyAnOversizedSnapshotConsumesTheNotice() {
         var policy = DiskCacheQuotaNoticePolicy()
         let me = UUID().uuidString, other = UUID().uuidString
-        #expect(!policy.claim(snapshot(used: 100), session: me), "full is not a warning")
-        #expect(
-            !policy.claim(snapshot(used: 40, evictions: 7), session: me),
-            "evictions alone are not a warning")
-        #expect(
-            !policy.claim(snapshot(used: 100, pressure: ("activeChainTrimmed", me, 1)), session: me),
-            "losing this chat's superseded snapshots is normal operation")
-        #expect(
-            !policy.claim(snapshot(used: 100, pressure: ("activeTipDropped", other, 2)), session: me),
-            "another chat not fitting is not mine")
-        #expect(!policy.claim(snapshot(used: 100, pressure: ("activeTipDropped", me, 3)), session: nil))
-        #expect(
-            !policy.claim(
-                snapshot(used: 100, pressure: ("activeTipDropped", me, 3), disabled: true),
-                session: me))
-        #expect(
-            !policy.claim(snapshot(used: 100, limit: 0, pressure: ("activeTipDropped", me, 3)), session: me))
-        #expect(policy.claim(snapshot(used: 100, pressure: ("activeTipDropped", me, 3)), session: me))
-        // Once per chat per launch, however many more follow.
-        #expect(!policy.claim(snapshot(used: 100, pressure: ("activeTipDropped", me, 4)), session: me))
-        // A different chat in the same folder gets its own.
-        #expect(policy.claim(snapshot(used: 100, pressure: ("activeTipDropped", other, 5)), session: other))
-        // The same chat in a second folder too.
-        #expect(
-            policy.claim(
-                snapshot(used: 100, root: "/cache/second", pressure: ("activeTipDropped", me, 6)),
-                session: me))
+        func expectClaim(_ expected: Bool, _ reading: DiskCacheQuotaSnapshot, session: String?) {
+            let claimed = policy.claim(reading, session: session)
+            #expect(claimed == expected)
+        }
+        expectClaim(false, snapshot(used: 100), session: me)
+        expectClaim(false, snapshot(used: 40, evictions: 7), session: me)
+        expectClaim(false, snapshot(used: 100, pressure: ("activeChainTrimmed", me, 1)), session: me)
+        expectClaim(false, snapshot(used: 100, pressure: ("activeTipDropped", other, 2)), session: me)
+        expectClaim(false, snapshot(used: 100, pressure: ("activeTipDropped", me, 3)), session: nil)
+        expectClaim(false, snapshot(used: 100, disabled: true, pressure: ("activeTipDropped", me, 3)), session: me)
+        expectClaim(false, snapshot(used: 100, limit: 0, pressure: ("activeTipDropped", me, 3)), session: me)
+        expectClaim(true, snapshot(used: 100, pressure: ("activeTipDropped", me, 3)), session: me)
+        expectClaim(false, snapshot(used: 100, pressure: ("activeTipDropped", me, 4)), session: me)
+        expectClaim(true, snapshot(used: 100, pressure: ("activeTipDropped", other, 5)), session: other)
+        expectClaim(true, snapshot(used: 100, root: "/cache/second", pressure: ("activeTipDropped", me, 6)), session: me)
     }
 
     @Test func theNoticeNamesTheCapWithoutClaimingAllReuseIsLost() {
@@ -99,7 +87,9 @@ import Testing
         var oldSession = DiskCacheQuotaNoticePolicy()
         var newSession = DiskCacheQuotaNoticePolicy()
         let me = UUID().uuidString
-        #expect(oldSession.claim(snapshot(used: 100, pressure: ("activeTipDropped", me, 1)), session: me))
-        #expect(newSession.claim(snapshot(used: 100, pressure: ("activeTipDropped", me, 1)), session: me))
+        let oldClaim = oldSession.claim(snapshot(used: 100, pressure: ("activeTipDropped", me, 1)), session: me)
+        #expect(oldClaim)
+        let newClaim = newSession.claim(snapshot(used: 100, pressure: ("activeTipDropped", me, 1)), session: me)
+        #expect(newClaim)
     }
 }

@@ -28,6 +28,14 @@ struct HostAwareDiskCacheTests {
         }
     }
 
+    @Test func disabledReuseStillDisplaysTheConfiguredRoot() {
+        var cache = VMLXServerCacheSettings()
+        cache.prefix.enabled = false
+        cache.blockDisk.directory = "/tmp/custom-ssd-root"
+        #expect(ModelRuntime.cacheDiskDirectoryOverride(for: cache) == nil)
+        #expect(ModelRuntime.diskCacheDirectoryForDisplay(for: cache).path == "/tmp/custom-ssd-root")
+    }
+
     @Test func legacyFallbackKeepsTheSavedSize() {
         var cache = VMLXServerCacheSettings()
         cache.pagedKV.enabled = false

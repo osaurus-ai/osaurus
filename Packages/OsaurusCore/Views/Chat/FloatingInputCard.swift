@@ -8944,7 +8944,7 @@ private struct FloatingContextChip: View {
     nonisolated static func readDiskCacheUsage() async -> DiskCacheUsage? {
         let settings = ServerRuntimeSettingsStore.snapshot()
         let directory = ModelRuntime.cacheDiskDirectoryOverride(for: settings.cache)
-        let dir = directory ?? OsaurusPaths.diskKVCache()
+        let dir = ModelRuntime.diskCacheDirectoryForDisplay(for: settings.cache)
         let volume = DiskCacheVolumeSnapshot.read(directory: dir)
         guard directory != nil else {
             return DiskCacheUsage(

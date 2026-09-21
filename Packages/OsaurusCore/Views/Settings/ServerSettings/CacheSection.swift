@@ -224,7 +224,7 @@ struct CacheSection: View {
     }
 
     private var resolvedDiskCacheLabel: String {
-        let directory = ModelRuntime.cacheDiskDirectoryOverride(for: draft.cache) ?? OsaurusPaths.diskKVCache()
+        let directory = ModelRuntime.diskCacheDirectoryForDisplay(for: draft.cache)
         let result = ModelRuntime.diskCacheCap(for: draft.cache, directory: directory)
         let effective = DiskCacheUsage.format(bytes: Int(clamping: result.capBytes))
         let requested = DiskCacheUsage.format(bytes: Int(clamping: result.requestedBytes))
@@ -241,7 +241,7 @@ struct CacheSection: View {
         }
         let limit = result.limitedByHost
             ? String(format: L("Requested %@; limited to 25%% of free space plus this cache."), requested) : ""
-        let warning = result.lowFreeSpace ? L("Disk space is low. SSD caching remains enabled.") : ""
+        let warning = result.lowFreeSpace && ModelRuntime.cacheDiskDirectoryOverride(for: draft.cache) != nil ? L("Disk space is low. SSD caching remains enabled.") : ""
         return [label, limit, warning].filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
