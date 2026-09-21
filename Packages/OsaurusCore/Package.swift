@@ -309,9 +309,11 @@ let package = Package(
         // full-prompt M-RoPE positions and complete KV/GDN companion state.
         // vmlx-swift#484 uses FP16 Bonsai2 attention K/V after norms/RoPE,
         // retaining FP32 GDN recurrence and isolating old cache precision.
+        // vmlx-swift#489 indexes linked SSD payloads, scopes quota retention
+        // to conversation chains, and reports current-chat capacity pressure.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "6026359408f02c5867643d84300b0ca2225a2e88"
+            revision: "218accceef2353bdceaf9f089ef319d97d1acdca"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

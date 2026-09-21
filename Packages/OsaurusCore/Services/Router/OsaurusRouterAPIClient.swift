@@ -65,8 +65,10 @@ actor OsaurusRouterAPIClient {
         try ensureOK(data: data, response: response)
     }
 
-    func balance() async throws -> OsaurusRouterBalanceResponse {
-        try await get("/credits/balance")
+    /// `timeout` bounds the request for callers that must answer quickly (the
+    /// local `GET /credits/balance` endpoint); nil keeps the session default.
+    func balance(timeout: TimeInterval? = nil) async throws -> OsaurusRouterBalanceResponse {
+        try await get("/credits/balance", timeout: timeout)
     }
 
     func checkout(amountMicro: String) async throws -> OsaurusRouterCheckoutResponse {
@@ -642,11 +644,16 @@ actor OsaurusRouterAPIClient {
         return request
     }
 
-    private func get<T: Decodable>(_ path: String, queryItems: [URLQueryItem] = []) async throws -> T {
+    private func get<T: Decodable>(
+        _ path: String,
+        queryItems: [URLQueryItem] = [],
+        timeout: TimeInterval? = nil
+    ) async throws -> T {
         let url = try url(path: path, queryItems: queryItems)
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let timeout { request.timeoutInterval = timeout }
         try await sign(request: &request, body: Data())
         let (data, response) = try await perform(request)
         try ensureOK(data: data, response: response)

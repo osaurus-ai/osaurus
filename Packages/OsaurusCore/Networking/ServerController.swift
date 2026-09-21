@@ -349,6 +349,7 @@ final class ServerController: ObservableObject {
                     self.runtimeSettings = latest
                 }
                 self.synchronizeSpawnBatchLimit(from: latest)
+                await ModelRuntime.shared.refreshDiskCacheCaps()
             }
         }
         if let existingRuntimeSettings {
@@ -536,6 +537,8 @@ final class ServerController: ObservableObject {
             : 0
         if loadedModelRefreshNeeded {
             await ModelRuntime.shared.clearAll()
+        } else {
+            await ModelRuntime.shared.refreshDiskCacheCaps()
         }
         if restartWasRequested {
             await restartServer()
@@ -557,7 +560,7 @@ final class ServerController: ObservableObject {
         previous: VMLXServerRuntimeSettings,
         next: VMLXServerRuntimeSettings
     ) -> Bool {
-        previous.cache != next.cache
+        previous.cache.requiresModelReload(comparedTo: next.cache)
             || previous.multimodal != next.multimodal
             // Only the MTP fields that change what gets LOADED force a reload.
             // Comparing the whole `mtp` struct meant changing the draft-token

@@ -253,6 +253,7 @@ public actor ModelRuntime {
         /// Defaults belonging to the weights actually loaded, not a short-name
         /// catalog lookup that may become ambiguous when another org is imported.
         var generationDefaults: LocalGenerationDefaults.Defaults = .empty
+        var cacheDiskDirectory: URL? = nil
     }
 
     struct ActiveCachePolicy: Equatable, Sendable {
@@ -1464,7 +1465,8 @@ public actor ModelRuntime {
                         diskL2MaxGB: Double($0.diskCacheMaxGB)
                     )
                 },
-                generationDefaults: holder.generationDefaults
+                generationDefaults: holder.generationDefaults,
+                cacheDiskDirectory: activeConfig?.diskCacheDir
             )
         }.sorted { lhs, rhs in
             if lhs.isCurrent != rhs.isCurrent { return lhs.isCurrent }
@@ -1483,24 +1485,140 @@ public actor ModelRuntime {
         let error: String?
     }
 
-    /// Live quotas may differ from saved settings until the next model load.
-    func diskCacheQuotaSnapshots(matching settings: VMLXServerCacheSettings? = nil) -> [DiskCacheQuotaSnapshot] {
-        modelCache.values.compactMap { holder in
-            if let settings, holder.cacheSettings != settings { return nil }
-            guard let coordinator = holder.container.cacheCoordinator,
-                coordinator.config.enableDiskCache,
-                let stats = coordinator.snapshotStats().diskStats,
-                let directory = coordinator.config.diskCacheDir
+    /// Metadata only; no holder, coordinator, weights or KV arrays survive unload.
+    private struct RetiredDiskQuota: Sendable {
+        let directory: URL
+        let modelKey: String?
+        let settings: VMLXServerCacheSettings
+        let capBytes: Int
+    }
+    private var retiredDiskQuotas: [String: RetiredDiskQuota] = [:]
+
+    private func rememberDiskQuotaBeforeUnload(name: String) {
+        guard let holder = modelCache[name], let settings = holder.cacheSettings,
+            let coordinator = holder.container.cacheCoordinator,
+            coordinator.config.enableDiskCache,
+            let directory = coordinator.config.diskCacheDir,
+            let disk = coordinator.diskCache
+        else { return }
+        retiredDiskQuotas[name] = RetiredDiskQuota(
+            directory: directory, modelKey: coordinator.config.modelKey,
+            settings: settings, capBytes: disk.maxSizeBytes)
+    }
+
+    private var diskCapRefreshTask: Task<VMLXServerCacheSettings, Never>?
+
+    /// Serialize saves without occupying the runtime actor while a store holds
+    /// the quota lock. Read the latest settings after earlier updates finish,
+    /// so delayed notifications cannot replay an older saved size.
+    func refreshDiskCacheCaps() async {
+        let targets = modelCache.values.compactMap { holder -> (CacheCoordinator, VMLXServerCacheSettings)? in
+            guard let previous = holder.cacheSettings,
+                let coordinator = holder.container.cacheCoordinator
             else { return nil }
-            return DiskCacheQuotaSnapshot(
-                directory: directory,
-                usage: DiskCacheUsage(
-                    usedBytes: stats.currentPayloadBytes,
-                    maxBytes: stats.maxSizeBytes,
-                    evictions: stats.evictions
-                )
-            )
+            return (coordinator, previous)
         }
+        let predecessor = diskCapRefreshTask
+        let task = Task.detached(priority: .utility) {
+            _ = await predecessor?.value
+            let cache = ServerRuntimeSettingsStore.snapshot().cache
+            var caps: [URL: Int] = [:]
+            for (coordinator, previous) in targets {
+                guard !previous.requiresModelReload(comparedTo: cache),
+                    coordinator.config.enableDiskCache,
+                    let directory = coordinator.config.diskCacheDir
+                else { continue }
+                let root = directory.standardizedFileURL.resolvingSymlinksInPath()
+                let cap = caps[root] ?? Int(clamping: Self.diskCacheCap(
+                    for: cache, directory: root,
+                    previousCapBytes: coordinator.snapshotStats().diskStats.map { Int64($0.maxSizeBytes) }
+                ).capBytes)
+                caps[root] = cap
+                coordinator.updateDiskCap(bytes: cap)
+            }
+            return cache
+        }
+        diskCapRefreshTask = task
+        let applied = await task.value
+        guard ServerRuntimeSettingsStore.snapshot().cache == applied else { return }
+        for holder in modelCache.values {
+            guard let previous = holder.cacheSettings,
+                !previous.requiresModelReload(comparedTo: applied),
+                let coordinator = holder.container.cacheCoordinator,
+                targets.contains(where: { $0.0 === coordinator })
+            else { continue }
+            holder.cacheSettings = applied
+        }
+    }
+
+    nonisolated static func diskCacheCap(
+        for cache: VMLXServerCacheSettings, directory: URL, previousCapBytes: Int64? = nil
+    ) -> DiskCacheCapPolicy.Resolution {
+        DiskCacheCapPolicy.resolve(
+            percent: cache.blockDisk.maxSizePercent,
+            legacyGB: cache.pagedKV.enabled || cache.blockDisk.enabled
+                ? cache.blockDisk.maxSizeGB : cache.legacyDisk.maxSizeGB,
+            directory: directory, previousCapBytes: previousCapBytes
+        )
+    }
+
+    /// Sample outside the runtime actor: SQLite and cache locks can wait behind
+    /// a store. Retired models retain only their root/fingerprint/settings;
+    /// pressure history itself survives idle unload in the engine.
+    func diskCacheQuotaSnapshots(
+        matching settings: VMLXServerCacheSettings? = nil, modelName: String? = nil,
+        session: String? = nil
+    ) async -> [DiskCacheQuotaSnapshot] {
+        let canonical = modelName.flatMap { ModelManager.findInstalledModelFromCache(named: $0)?.name }
+        func matches(_ name: String) -> Bool {
+            modelName == nil || name == modelName || name == canonical
+        }
+        let resident = modelCache.compactMap { name, holder -> CacheCoordinator? in
+            guard matches(name), settings == nil || holder.cacheSettings == settings else { return nil }
+            return holder.container.cacheCoordinator
+        }
+        let retired = retiredDiskQuotas.compactMap { name, entry -> RetiredDiskQuota? in
+            guard matches(name), modelCache[name] == nil else { return nil }
+            if let settings, entry.settings.requiresModelReload(comparedTo: settings) { return nil }
+            return entry
+        }
+        return await Task.detached(priority: .utility) {
+            let live = resident.compactMap { coordinator -> DiskCacheQuotaSnapshot? in
+                guard coordinator.config.enableDiskCache,
+                    let stats = coordinator.snapshotStats().diskStats,
+                    let directory = coordinator.config.diskCacheDir
+                else { return nil }
+                let pressure = session.flatMap { stats.capacityPressureByChain[$0] }
+                let event = session == nil ? stats.lastPressureEvent : pressure?.event
+                return DiskCacheQuotaSnapshot(
+                    directory: directory,
+                    usage: DiskCacheUsage(
+                        usedBytes: stats.currentPayloadBytes, maxBytes: stats.maxSizeBytes,
+                        evictions: stats.evictions, pressureKind: event?.kind.rawValue,
+                        pressureChainId: event?.chainId,
+                        pressureSeq: Int(clamping: pressure?.sequence ?? stats.pressureEventSeq)))
+            }
+            let idle = retired.compactMap { entry -> DiskCacheQuotaSnapshot? in
+                let cap = Self.diskCacheCap(
+                    for: settings ?? entry.settings, directory: entry.directory,
+                    previousCapBytes: Int64(entry.capBytes))
+                let records = DiskCachePressureHistory.records(
+                    directory: entry.directory, modelKey: entry.modelKey,
+                    maxSizeBytes: Int(clamping: cap.capBytes))
+                let pressure = session.flatMap { records[$0] }
+                    ?? (session == nil ? records.values.max(by: { $0.tick < $1.tick }) : nil)
+                let volume = DiskCacheVolumeSnapshot.read(directory: entry.directory)
+                return DiskCacheQuotaSnapshot(
+                    directory: entry.directory,
+                    usage: DiskCacheUsage(
+                        usedBytes: Int(clamping: volume.ownBytes ?? 0),
+                        maxBytes: Int(clamping: cap.capBytes), evictions: 0,
+                        pressureKind: pressure?.event.kind.rawValue,
+                        pressureChainId: pressure?.event.chainId,
+                        pressureSeq: Int(clamping: pressure?.sequence ?? 0)))
+            }
+            return live + idle
+        }.value
     }
 
     /// Serializes with runtime cache IO and removes indexed payloads and linked
@@ -1513,24 +1631,57 @@ public actor ModelRuntime {
             ?? OsaurusPaths.diskKVCache()
         // A notice clears the root it measured. The Settings action clears
         // both active roots and the saved root, including after a path change.
-        let directories =
-            directory.map { [$0] }
-            ?? (diskCacheQuotaSnapshots().map(\.directory) + [configuredDirectory])
+        let observedDirectories = await diskCacheQuotaSnapshots().map(\.directory)
+        let directories = directory.map { [$0] } ?? (observedDirectories + [configuredDirectory])
         let roots = Set(directories.map(\.standardizedFileURL))
         let hadResidentModel = !modelCache.isEmpty
-        let result = await Task.detached(priority: .utility) {
-            MLXCacheIOLock.withSerializedMLXCacheIO {
-                var combined = SafeDiskCachePurge.Result()
-                var errors: [String] = []
-                for root in roots.sorted(by: { $0.path < $1.path }) {
-                    let result = SafeDiskCachePurge.clear(directory: root)
-                    combined.reclaimedBytes += result.reclaimedBytes
-                    combined.removedFiles += result.removedFiles
-                    if let error = result.error { errors.append(error) }
-                }
-                combined.error = errors.isEmpty ? nil : errors.joined(separator: "\n")
-                return combined
+        // A resident coordinator keeps its own account of what is on disk. The
+        // purge changes the directory behind its back, so each one writing to a
+        // purged root is asked to re-read it afterwards.
+        let residentDiskCoordinators: [(rootPath: String, coordinator: CacheCoordinator)] =
+            modelCache.values.compactMap { holder in
+                guard let coordinator = holder.container.cacheCoordinator,
+                    coordinator.config.enableDiskCache,
+                    let directory = coordinator.config.diskCacheDir
+                else { return nil }
+                return (rootPath: directory.standardizedFileURL.path, coordinator: coordinator)
             }
+        let result = await Task.detached(priority: .utility) { () -> SafeDiskCachePurge.Result in
+            let (combined, changedRootPaths): (SafeDiskCachePurge.Result, Set<String>) =
+                MLXCacheIOLock.withSerializedMLXCacheIO {
+                    var combined = SafeDiskCachePurge.Result()
+                    var errors: [String] = []
+                    var changedRootPaths = Set<String>()
+                    for root in roots.sorted(by: { $0.path < $1.path }) {
+                        let result = SafeDiskCachePurge.clear(directory: root)
+                        combined.reclaimedBytes += result.reclaimedBytes
+                        combined.removedFiles += result.removedFiles
+                        if let error = result.error { errors.append(error) }
+                        // A refused purge touched nothing; a failed one may
+                        // still have removed payloads before it stopped.
+                        if result.error == nil || result.removedFiles > 0 {
+                            changedRootPaths.insert(root.path)
+                            if result.error == nil { DiskCachePressureHistory.clear(directory: root) }
+                        }
+                    }
+                    combined.error = errors.isEmpty ? nil : errors.joined(separator: "\n")
+                    return (combined, changedRootPaths)
+                }
+            // Deliberately after the serialized closure has returned. The
+            // runtime's store path takes its quota lock first and the cache-IO
+            // lock second; reconciling takes the quota lock, so doing it while
+            // still holding the cache-IO lock would invert that order and can
+            // deadlock against an in-flight store. It waits behind such a store
+            // and walks the directory, which is why it runs on this task and
+            // not on the actor.
+            for entry in residentDiskCoordinators where changedRootPaths.contains(entry.rootPath) {
+                // False means the index was busy or the directory could not be
+                // read; the runtime retries on its own after its next store.
+                if !entry.coordinator.reconcileDiskAccounting() {
+                    genLog.notice("disk cache accounting not reconciled after clear; the runtime will retry")
+                }
+            }
+            return combined
         }.value
         return DiskCacheClearResult(
             reclaimedBytes: result.reclaimedBytes,
@@ -1560,7 +1711,12 @@ public actor ModelRuntime {
             diskL2Stores: stats.diskStats?.stores ?? 0,
             ssmCompanionHits: stats.ssmStats.hits,
             ssmCompanionMisses: stats.ssmStats.misses,
-            ssmCompanionReDerives: stats.ssmStats.reDerives
+            ssmCompanionReDerives: stats.ssmStats.reDerives,
+            diskL2Evictions: stats.diskStats?.evictions ?? 0,
+            diskL2EvictedBytes: Int(clamping: stats.diskStats?.evictedBytes ?? 0),
+            diskL2QuotaPasses: stats.diskStats?.quotaPasses ?? 0,
+            diskL2FailedIndexWrites: stats.diskStats?.failedIndexWrites ?? 0,
+            diskL2PressureEventSeq: Int(clamping: stats.diskStats?.pressureEventSeq ?? 0)
         )
     }
 
@@ -2259,6 +2415,7 @@ public actor ModelRuntime {
         let retiredCacheCounters = modelCache[name].flatMap {
             Self.processLifetimeCacheCounters(for: $0)
         }
+        rememberDiskQuotaBeforeUnload(name: name)
         modelCache[name]?.container.disableCaching()
 
         Stream.gpu.synchronize()
@@ -2457,6 +2614,7 @@ public actor ModelRuntime {
         if !quit { await MetalGate.shared.enterModelTeardown(model: "all-models") }
         var retiredCacheCounters = ProcessLifetimeBatchCounters()
         var hasRetiredCacheCounters = false
+        for name in modelCache.keys { rememberDiskQuotaBeforeUnload(name: name) }
         for holder in modelCache.values {
             if let counters = Self.processLifetimeCacheCounters(for: holder) {
                 retiredCacheCounters.absorb(counters)
@@ -4915,7 +5073,6 @@ public actor ModelRuntime {
             config.enableDiskCache = false
             config.diskCacheDir = nil
         }
-        applyHostAwareDiskCacheCeiling(to: &config, diskCacheDir: diskCacheDir)
         return config
     }
 
@@ -4943,109 +5100,11 @@ public actor ModelRuntime {
         }
     }
 
-    /// Bound the L2 disk-cache cap to a fraction of CURRENT free disk so a
-    /// constrained volume can't be driven into disk pressure by the KV cache.
-    ///
-    /// Why: the resolved cap is vmlx's `diskCacheMaxGB` default (10 GB) unless
-    /// the user/profile set one. On a host with tens-of-GB free that 10 GB cap
-    /// can consume most of the volume on big-model agentic runs (see
-    /// `perf-gemma4-12b-mxfp8-baseline.md` Lever 2/5: 9.6 GB written in ~90 s).
-    /// vmlx's own `LOW-SPEC-HOST-GUIDANCE` already recommends host-relative caps
-    /// (4 GB low-spec, 8–16 GB only when > 200 GB free) — this enforces that
-    /// shape automatically.
-    ///
-    /// Invariant: the disk cache may never use more than `freeFraction` of the
-    /// free bytes observed at load. On a healthy host (free ≥ cap / freeFraction,
-    /// i.e. ≥ ~40 GB for the 10 GB default at 0.25) the configured cap is the
-    /// min term and the cap is UNCHANGED → no reuse loss where there's room. If
-    /// even the bounded cap falls below a useful floor, the disk tier is
-    /// disabled rather than left to thrash a near-full volume. Free-space is
-    /// unknowable on some volumes (`volumeFreeBytes == nil`) → leave the
-    /// configured cap as-is rather than guess.
-    private nonisolated static func applyHostAwareDiskCacheCeiling(
-        to config: inout CacheCoordinatorConfig,
-        diskCacheDir: URL?,
-        freeFraction: Double = 0.25,
-        minUsefulGB: Double = 1.0
-    ) {
-        // A non-positive cap is savable through the settings UI and the admin
-        // API (Save is not gated on validation errors). Zero reaches
-        // `DiskCache(maxSizeGB: 0)`, whose quota pass then evicts EVERY entry
-        // at insert — the disk tier reports stores and hits nothing, with no
-        // eviction trace. Normalize here, on the engine-effective path, so
-        // both entry points are covered; the guard below must not run before
-        // this or a 0 cap on an unknown-free-space volume slips through.
-        let rawConfiguredCapGB = Double(config.diskCacheMaxGB)
-        if rawConfiguredCapGB <= 0 {
-            genLog.error(
-                "buildCacheCoordinatorConfig: configured disk-L2 cap \(String(format: "%.1f", rawConfiguredCapGB), privacy: .public) GB is non-positive — a zero cap self-evicts every entry at insert; using engine default 10 GB"
-            )
-            config.diskCacheMaxGB = 10.0
-        }
-        guard config.enableDiskCache, let diskCacheDir,
-            let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: diskCacheDir.path),
-            freeBytes > 0
-        else { return }
-
-        let freeGB = Double(freeBytes) / 1_073_741_824.0
-        let configuredCapGB = Double(config.diskCacheMaxGB)
-        let decision = hostAwareDiskCacheDecision(
-            configuredCapGB: configuredCapGB,
-            freeBytes: freeBytes,
-            freeFraction: freeFraction,
-            minUsefulGB: minUsefulGB
-        )
-
-        if !decision.enabled {
-            genLog.notice(
-                "buildCacheCoordinatorConfig: disabling disk-L2 — only \(String(format: "%.1f", freeGB), privacy: .public) GB free (below host-aware floor of \(String(format: "%.1f", minUsefulGB / freeFraction), privacy: .public) GB)"
-            )
-            config.enableDiskCache = false
-            config.diskCacheDir = nil
-        } else if decision.capGB < configuredCapGB {
-            genLog.notice(
-                "buildCacheCoordinatorConfig: disk-L2 cap \(String(format: "%.1f", configuredCapGB), privacy: .public)→\(String(format: "%.1f", decision.capGB), privacy: .public) GB (host-aware, \(String(format: "%.1f", freeGB), privacy: .public) GB free)"
-            )
-            config.diskCacheMaxGB = Float(decision.capGB)
-        }
-    }
-
-    /// Pure host-aware disk-cap decision (no I/O), extracted so the policy is
-    /// unit-testable. Returns whether the disk tier stays enabled and the
-    /// resulting cap in GB.
-    ///
-    /// - `freeBytes <= 0` (unknown free space) → leave the configured cap as-is.
-    /// - cap is bounded to `freeFraction` of free disk (the cache may never use
-    ///   more than that fraction of what was free at load).
-    /// - if the bounded cap is below `minUsefulGB`, the tier is disabled rather
-    ///   than left to thrash a near-full volume.
-    /// - on a healthy host (free ≥ configuredCap / freeFraction) the configured
-    ///   cap is the min term → returned UNCHANGED (no reuse loss).
-    nonisolated static func hostAwareDiskCacheDecision(
-        configuredCapGB: Double,
-        freeBytes: Int64,
-        freeFraction: Double = 0.25,
-        minUsefulGB: Double = 1.0
-    ) -> (enabled: Bool, capGB: Double) {
-        guard freeBytes > 0 else { return (true, configuredCapGB) }
-        let freeGB = Double(freeBytes) / 1_073_741_824.0
-        let headroomGB = freeGB * freeFraction
-
-        // Disable only when the VOLUME is too full to host a useful cache.
-        //
-        // The old test was `min(configured, headroom) < minUseful`, which also
-        // fired when the user's own share was the smaller term — so choosing a
-        // deliberately small cache silently switched the tier OFF instead of
-        // giving them the small cache they asked for. On a 256 GB disk a 0.2%
-        // share is 0.51 GB, under the 1 GB floor, and the cache just stopped
-        // existing.
-        //
-        // Same shape as the auto-size floor: a bound meant to protect a
-        // nearly-full disk must not override a number the user typed. Their
-        // machine, their call — and a 0.51 GB cache still resumes short
-        // conversations, which beats no cache at all.
-        if headroomGB < minUsefulGB { return (false, configuredCapGB) }
-        return (true, min(configuredCapGB, headroomGB))
+    /// Keep configured-root usage visible even while reuse is disabled.
+    nonisolated static func diskCacheDirectoryForDisplay(for cache: VMLXServerCacheSettings) -> URL {
+        let path = !cache.pagedKV.enabled && !cache.blockDisk.enabled && cache.legacyDisk.enabled
+            ? cache.legacyDisk.directory : cache.blockDisk.directory
+        return resolvedServerRuntimeDirectory(path) ?? OsaurusPaths.diskKVCache()
     }
 
     nonisolated static func cacheDiskDirectoryOverride(

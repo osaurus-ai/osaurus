@@ -272858,7 +272858,549 @@
     "Unnamed contact": {},
     "macOS has not granted: %@. Click to grant or open System Settings.": {},
     "Apple apps are now built into Osaurus": {},
-    "%@ no longer need a plugin. Turn each app on per agent under Agents → Abilities → Tools → Apple Apps.": {}
+    "%@ no longer need a plugin. Turn each app on per agent under Agents → Abilities → Tools → Apple Apps.": {},
+
+    "More SSD cache space would help this chat": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mehr SSD-Cache würde diesem Chat helfen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "增加 SSD 缓存空间有助于此聊天"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SSD 캐시 공간을 늘리면 이 채팅에 도움이 됩니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Этому чату поможет увеличение кэша на SSD"
+          }
+        }
+      }
+    },
+    "Increase Cache Size": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cache vergrößern"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "增加缓存大小"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "캐시 크기 늘리기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Увеличить размер кэша"
+          }
+        }
+      }
+    },
+    "Show SSD Cache Capacity Notices": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hinweise zur SSD-Cache-Kapazität anzeigen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示 SSD 缓存容量提示"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SSD 캐시 용량 알림 표시"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показывать уведомления об объёме кэша SSD"
+          }
+        }
+      }
+    },
+    "Show one notice per chat per app launch when its latest saved progress exceeds the SSD cache limit. Changes apply immediately.": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pro Chat und App-Start einen Hinweis anzeigen, wenn der zuletzt gespeicherte Fortschritt das SSD-Cache-Limit überschreitet. Änderungen gelten sofort."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当聊天最近保存的进度超出 SSD 缓存上限时，每次启动应用为每个聊天显示一次提示。更改立即生效。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "최근 저장된 진행 내용이 SSD 캐시 한도를 초과하면 앱을 실행할 때마다 채팅별로 알림을 한 번 표시합니다. 변경 사항은 즉시 적용됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показывать одно уведомление на чат за запуск приложения, если последние сохранённые данные превышают лимит кэша SSD. Изменения применяются сразу."
+          }
+        }
+      }
+    },
+    "This chat's latest saved progress exceeds the %@ SSD cache limit. Replies may need to process more of the conversation again. Increase Disk Cache Size to retain more progress.": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der zuletzt gespeicherte Fortschritt dieses Chats überschreitet das SSD-Cache-Limit von %@. Für Antworten muss möglicherweise mehr vom Gespräch erneut verarbeitet werden. Vergrößern Sie den Festplatten-Cache, um mehr Fortschritt zu behalten."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此聊天最近保存的进度超出了 %@ 的 SSD 缓存上限。回复时可能需要重新处理更多对话内容。增加磁盘缓存大小可保留更多进度。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 채팅의 최근 저장된 진행 내용이 SSD 캐시 한도 %@를 초과합니다. 응답 시 대화 내용을 더 많이 다시 처리해야 할 수 있습니다. 더 많은 진행 내용을 보관하려면 디스크 캐시 크기를 늘리세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Последние сохранённые данные этого чата превышают лимит кэша SSD (%@). Для ответа может потребоваться повторно обработать больше сообщений. Увеличьте размер дискового кэша, чтобы сохранять больше данных."
+          }
+        }
+      }
+    },
+    "No request yet": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Noch keine Anfrage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚无请求"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "아직 요청 없음"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запросов пока нет"
+          }
+        }
+      }
+    },
+    "none (cold)": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "keine (kalt)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无（冷启动）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "없음 (콜드 시작)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "нет (холодный запуск)"
+          }
+        }
+      }
+    },
+    "Disk Cache Size (% of disk)": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Festplatten-Cache-Größe (% der Festplatte)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "磁盘缓存大小（占磁盘百分比）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "디스크 캐시 크기 (디스크 비율 %)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Размер дискового кэша (% диска)"
+          }
+        }
+      }
+    },
+    "none": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "keine"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "없음"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "нет"
+          }
+        }
+      }
+    },
+    "Automatic: %@ (30%% of free space plus this cache)": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatisch: %@ (30%% des freien Speicherplatzes plus dieses Caches)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动：%@（可用空间加此缓存的 30%%）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "자동: %@ (여유 공간과 이 캐시 합계의 30%%)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Автоматически: %@ (30%% свободного места и этого кэша)"
+          }
+        }
+      }
+    },
+    "%@%% of disk: %@ effective": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@%% des Laufwerks: %@ effektiv"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "磁盘的 %@%%：实际 %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "디스크의 %@%%: 실제 %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@%% диска: фактически %@"
+          }
+        }
+      }
+    },
+    "Saved legacy size: %@ effective": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gespeicherte bisherige Größe: %@ effektiv"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已保存的旧版大小：实际 %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "저장된 이전 크기: 실제 %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сохранённый прежний размер: фактически %@"
+          }
+        }
+      }
+    },
+    "Disk measurement unavailable: %@ fallback": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Laufwerksmessung nicht verfügbar: Ersatzwert %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法测量磁盘：备用值 %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "디스크 측정 불가: 대체값 %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Измерение диска недоступно: резервное значение %@"
+          }
+        }
+      }
+    },
+    "Requested %@; limited to 25%% of free space plus this cache.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Angefordert: %@; begrenzt auf 25%% des freien Speicherplatzes plus dieses Caches."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请求 %@；限制为可用空间加此缓存的 25%%。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "요청한 크기 %@; 여유 공간과 이 캐시 합계의 25%%로 제한됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запрошено %@; ограничено 25%% свободного места и этого кэша."
+          }
+        }
+      }
+    },
+    "Disk space is low. SSD caching remains enabled.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wenig freier Speicherplatz. SSD-Caching bleibt aktiviert."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "磁盘空间不足。SSD 缓存仍保持启用。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "디스크 여유 공간이 부족합니다. SSD 캐시는 계속 활성화됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Мало места на диске. SSD-кэширование остаётся включённым."
+          }
+        }
+      }
+    },
+    "Blank = Automatic (30% of available space)": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leer = Automatisch (30% des verfügbaren Speicherplatzes)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "留空 = 自动（可用空间的 30%）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "비워 두면 자동 (사용 가능한 공간의 30%)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пусто = автоматически (30% доступного места)"
+          }
+        }
+      }
+    },
+    "Automatic uses 30% of free space plus this cache's own bytes. An explicit percentage uses total disk size, bounded by 25% of free space plus this cache. Saving a size change updates loaded models without unloading them; a lower cap is enforced on the next cache write.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatisch nutzt 30% des freien Speicherplatzes plus der Cache-Daten. Ein expliziter Prozentsatz bezieht sich auf die gesamte Laufwerksgröße und ist auf 25% des freien Speicherplatzes plus des Caches begrenzt. Größenänderungen gelten nach dem Speichern ohne Entladen der Modelle; eine kleinere Grenze wird beim nächsten Schreiben durchgesetzt."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动模式使用可用空间加此缓存自身字节数的 30%。指定百分比基于磁盘总容量，并限制为可用空间加此缓存的 25%。保存大小更改会更新已加载模型而无需卸载；降低的上限在下次写入缓存时执行。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "자동은 여유 공간과 이 캐시 크기 합계의 30%를 사용합니다. 명시한 비율은 전체 디스크 크기를 기준으로 하며, 여유 공간과 이 캐시 합계의 25%로 제한됩니다. 크기 변경을 저장하면 모델을 내리지 않고 적용하며, 낮아진 한도는 다음 캐시 쓰기 때 적용됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Автоматический режим использует 30% свободного места и объёма этого кэша. Явный процент относится ко всему диску и ограничивается 25% свободного места и кэша. Сохранение размера обновляет загруженные модели без выгрузки; уменьшенный лимит применяется при следующей записи в кэш."
+          }
+        }
+      }
+    },
+    "Live coordinator policy, including saved disk-size changes. It is not inferred from the unsaved draft.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktuelle Koordinator-Richtlinie einschließlich gespeicherter Cache-Größenänderungen. Sie wird nicht aus ungespeicherten Einstellungen abgeleitet."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "实时协调器策略，包括已保存的磁盘缓存大小更改。不根据未保存的草稿推断。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "저장한 디스크 크기 변경을 포함한 실제 실행 정책입니다. 저장하지 않은 초안에서 추정하지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Текущая политика координатора с сохранёнными изменениями размера кэша. Она не выводится из несохранённого черновика."
+          }
+        }
+      }
+    },
+    "Use Automatic Cache Size": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatische Cache-Größe verwenden"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用自动缓存大小"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "자동 캐시 크기 사용"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Использовать автоматический размер кэша"
+          }
+        }
+      }
+    }
   },
   "version": "1.1"
 }
