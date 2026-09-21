@@ -1075,3 +1075,46 @@ the inner request names the Orchestrator.
 `PUT /agents/{id}/model` still refuses it. The Orchestrator's model belongs to
 the Mac's Orchestrator settings (`DefaultAgentConfiguration`), not to a chat,
 so a client shows its model without offering to change it.
+
+---
+
+## 19. Privacy Filter reviews
+
+When the Privacy Filter finds PII in an outbound request to a cloud model,
+the Mac holds the send and asks the user which items to replace with
+placeholders. A request that cannot show that sheet fails closed with
+`422 privacy_filter_review_required` — which is what a phone-started run used
+to get.
+
+A run started by the owner's paired phone is different: there IS a person
+looking at a screen, just not this Mac's. Those runs hand the review to the
+phone instead of failing, through the routes below. Every other caller — a
+workspace peer, a plugin, a plain HTTP client — still fails closed exactly as
+before.
+
+Owner-only, and the payload is the detected PII itself, so it travels only
+inside the Secure Channel to the user's own device. It is never written to
+the request log.
+
+### 19.1 `GET /privacy/reviews`
+
+```json
+{"reviews":[{"id":"<uuid>","session_id":"<id>","items":[
+  {"id":"<uuid>","category":"person","original":"Ada Lovelace",
+   "placeholder":"[PERSON_1]"}]}]}
+```
+
+`category` is `person | email | phone | address | url | date |
+accountNumber | secret`. A run is suspended for as long as its review is
+listed here.
+
+### 19.2 `POST /privacy/reviews/{id}`
+
+Body `{"decision":"redact","redact":["<item id>", …]}` replaces the listed
+items with their placeholders and lets the send continue; anything left out
+goes to the provider as written. Omitting `redact` redacts every item, the
+same safe default the Mac's sheet opens with. `{"decision":"cancel"}`
+abandons the send — nothing reaches the provider.
+
+`404 review_not_pending` when the review is already answered or its run
+ended.

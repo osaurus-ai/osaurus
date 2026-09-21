@@ -554,7 +554,10 @@ enum PrivacyFilterPipeline {
             outcome = await PrivacyReviewService.shared.review(
                 detections: newDetections,
                 sessionId: sid,
-                allowInteractive: requestSource == .chatUI
+                allowInteractive: requestSource == .chatUI,
+                // A non-interactive caller normally fails closed; the owner's
+                // paired phone can answer instead of blocking the send.
+                allowRemote: ChatExecutionContext.hasRemoteReviewer
             )
         case .autoScrub:
             print("[PrivacyFilter] Review: auto-scrubbing \(newDetections.count) detections for a delegated loop step.")

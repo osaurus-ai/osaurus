@@ -884,6 +884,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     userAgent: userAgent
                 )
+            } else if head.method == .GET, path == "/privacy/reviews" {
+                handleListPrivacyReviewsEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .POST, path.hasPrefix("/privacy/reviews/") {
+                handleAnswerPrivacyReviewEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .GET, path == "/approvals" {
                 handleListApprovalsEndpoint(
                     head: head,
@@ -5369,6 +5384,188 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    /// One pending redaction review of `GET /privacy/reviews`.
+    private struct PrivacyReviewDTO: Encodable {
+        let id: String
+        let session_id: String
+        let items: [Item]
+
+        struct Item: Encodable {
+            let id: String
+            /// `person | email | phone | address | url | date | accountNumber | secret`
+            let category: String
+            /// The detected text, so the user can see exactly what would
+            /// otherwise reach the provider.
+            let original: String
+            /// What replaces it when redacted, e.g. `[PERSON_1]`.
+            let placeholder: String
+        }
+    }
+
+    private struct PrivacyReviewsResponse: Encodable {
+        let reviews: [PrivacyReviewDTO]
+    }
+
+    private struct PrivacyReviewDecisionRequest: Decodable {
+        /// `redact` sends the request with the listed items replaced by their
+        /// placeholders; `cancel` abandons the send.
+        let decision: String
+        /// Item ids to redact. Omitted means all of them.
+        let redact: [String]?
+    }
+
+    /// GET /privacy/reviews — redaction reviews this Mac is holding a send on
+    /// (docs/MOBILE_PROTOCOL.md §19.1). Owner-only: the payload is the PII
+    /// itself, and it travels only inside the Secure Channel to the user's own
+    /// phone.
+    private func handleListPrivacyReviewsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(
+                head: head,
+                context: context,
+                path: "/privacy/reviews",
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let reviews: [PrivacyReviewDTO] = await MainActor.run {
+                PrivacyReviewService.shared.remoteReviews.map { review in
+                    PrivacyReviewDTO(
+                        id: review.id.uuidString,
+                        session_id: review.sessionId,
+                        items: review.items.map {
+                            PrivacyReviewDTO.Item(
+                                id: $0.id.uuidString,
+                                category: $0.category,
+                                original: $0.original,
+                                placeholder: $0.placeholder
+                            )
+                        }
+                    )
+                }
+            }
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(PrivacyReviewsResponse(reviews: reviews)))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"reviews":[]}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET",
+                    path: "/privacy/reviews",
+                    userAgent: userAgent,
+                    // Never log the detections themselves.
+                    requestBody: nil,
+                    responseBody: "{\"reviews\":[\(reviews.count)]}",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// POST /privacy/reviews/{id} — answer one review (§19.2). Owner-only.
+    private func handleAnswerPrivacyReviewEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        func reply(_ status: HTTPResponseStatus, _ body: String) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            logRequest(
+                method: "POST",
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        let components = path.split(separator: "/")
+        guard components.count == 3, let reviewId = UUID(uuidString: String(components[2])) else {
+            reply(.badRequest, #"{"error":"invalid_review_id"}"#)
+            return
+        }
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(PrivacyReviewDecisionRequest.self, from: data),
+            request.decision == "redact" || request.decision == "cancel"
+        else {
+            reply(
+                .badRequest,
+                #"{"error":"bad_request","message":"Expected {decision: redact | cancel, redact?: [id]}"}"#
+            )
+            return
+        }
+        let cancels = request.decision == "cancel"
+        let redactIds = request.redact?.compactMap { UUID(uuidString: $0) }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let answered = await MainActor.run { () -> Bool in
+                let service = PrivacyReviewService.shared
+                if cancels { return service.cancelRemotely(id: reviewId) }
+                // No list means "redact everything", the safe default and
+                // what the Mac's sheet starts with.
+                guard let redactIds else {
+                    let all =
+                        service.remoteReviews.first { $0.id == reviewId }?.items.map(\.id) ?? []
+                    return service.resolveRemotely(id: reviewId, redactedIds: Set(all))
+                }
+                return service.resolveRemotely(id: reviewId, redactedIds: Set(redactIds))
+            }
+            let status: HTTPResponseStatus = answered ? .ok : .notFound
+            let json = answered ? #"{"ok":true}"# : #"{"error":"review_not_pending"}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: status,
+                    headers: headers,
+                    body: json
+                )
+                self.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: json,
+                    responseStatus: Int(status.code),
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
     /// One pending approval card of `GET /approvals`.
     private struct ApprovalDTO: Encodable {
         let id: String
@@ -7685,7 +7882,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // master-scoped key (docs/MOBILE_PROTOCOL.md §18). Every other HTTP
         // caller — workspace peers, agent-scoped keys, plaintext — is refused,
         // so the built-in's persona, memory and tools stay off the open surface.
-        if !callerOwnsThisMac(context),
+        // Read on the event loop: it gates the built-in agent below and, deeper
+        // in the run, whether the Privacy Filter may ask the phone to review.
+        let ownerRun = callerOwnsThisMac(context)
+        if !ownerRun,
             let rejection = Agent.rejectBuiltInForExternalSurface(agentId, source: "http/agents/run")
         {
             sendResponse(
@@ -8889,7 +9089,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // the parallel batch executor inherit the task-locals.
                 // `currentFolderRoot` scopes the folder tools + undo +
                 // change checkpoints to THIS run's granted folder.
-                let runResult = try await ChatExecutionContext.$workspaceBillingContext
+                let runResult = try await ChatExecutionContext.$hasRemoteReviewer
+                    .withValue(ownerRun) {
+                    try await ChatExecutionContext.$workspaceBillingContext
                     .withValue(workspaceBilling) {
                         try await ChatExecutionContext.$currentFolderRoot
                             .withValue(hostFolder?.url) {
@@ -8907,6 +9109,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                         )
                                     }
                             }
+                    }
                     }
                 exitState = runResult.exit
                 RemoteAgentRunLog.server(
