@@ -803,6 +803,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     isLoopback: isPhysicalLoopbackConnection(context),
                     operation: .apply
                 )
+            } else if head.method == .GET, path == "/credits/balance" {
+                handleCreditsBalanceEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    method: method,
+                    path: path
+                )
             } else if head.method == .GET, path == "/models" {
                 handleModelsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/tags" {
@@ -1375,6 +1384,76 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 requestBody: nil,
                 responseBody: body,
                 responseStatus: 200,
+                startTime: logStartTime
+            )
+        }
+    }
+
+    /// `GET /credits/balance` — read-only Osaurus Router credit balance for
+    /// local tools (usage dashboards, menu bar apps). Osaurus signs the router
+    /// request itself, so the caller never touches the wallet key. Loopback
+    /// skips the global auth gate, so the Router spend policy is applied here:
+    /// a verified access key, or the key-less loopback opt-in.
+    private func handleCreditsBalanceEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        method: String,
+        path: String
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let version = head.version
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logMethod = method
+        let logPath = path
+        let hasVerifiedAccessKey = stateRef.value.callerHasVerifiedAccessKey
+
+        runRequestTask(priority: .userInitiated) {
+            let response: (status: Int, json: [String: Any])
+            if LocalCreditsBalance.isAuthorized(
+                callerHasVerifiedAccessKey: hasVerifiedAccessKey,
+                allowsUnkeyedLoopbackSpend: OsaurusRouter.allowsUnkeyedLoopbackSpend
+            ) {
+                let result = await OsaurusRouterAccountService.shared.balanceForLocalAPI()
+                response = LocalCreditsBalance.response(for: result)
+            } else {
+                response = (
+                    403,
+                    LocalCreditsBalance.error(
+                        code: "credits_access_not_authorized",
+                        message: LocalCreditsBalance.unauthorizedMessage
+                    )
+                )
+            }
+            let data = try? JSONSerialization.data(withJSONObject: response.json, options: .osaurusCanonical)
+            let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            let headers: [(String, String)] =
+                [("Content-Type", "application/json; charset=utf-8")]
+                + cors
+            let status = HTTPResponseStatus(statusCode: response.status)
+
+            hop {
+                logSelf.sendResponse(
+                    context: ctx.value,
+                    version: version,
+                    status: status,
+                    headers: headers,
+                    body: body
+                )
+            }
+            logSelf.logRequest(
+                method: logMethod,
+                path: logPath,
+                userAgent: logUserAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: response.status,
                 startTime: logStartTime
             )
         }
@@ -3600,11 +3679,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     /// Legacy pairing / invite keys: everything they could reach before, minus
-    /// server administration. `path` is normalized (no `/v1` / `/api` prefix,
-    /// no query string).
+    /// server administration and the owner's account data (`/credits/*`).
+    /// `path` is normalized (no `/v1` / `/api` prefix, no query string).
     static func legacyAgentScopedKeyMayReach(method: HTTPMethod, path: String) -> Bool {
         let components = path.split(separator: "/", omittingEmptySubsequences: true)
-        return components.first != "admin"
+        return components.first != "admin" && components.first != "credits"
     }
 
     /// Strict allowlist for workspace-minted keys. `path` is already
