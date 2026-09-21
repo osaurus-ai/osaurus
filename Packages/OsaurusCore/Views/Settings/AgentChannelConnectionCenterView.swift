@@ -72,10 +72,12 @@ struct AgentChannelConnectionCenterView: View {
     @State private var auditLoadID = UUID()
 
     @State private var globalWritesEnabled = true
+    @State private var focusChatOnInboundEnabled = false
 
     private let manager = AgentChannelConnectionManager.shared
     private let auditWorkbench = AgentChannelAuditWorkbenchService()
     private let writeKillSwitch = ChannelWriteKillSwitch.shared
+    private let focusPreference = AgentChannelInboundFocusPreference.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -101,6 +103,7 @@ struct AgentChannelConnectionCenterView: View {
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             reloadWriteGate()
+            focusChatOnInboundEnabled = focusPreference.isEnabled
             reloadConnections()
             refreshNativeBadges()
             reloadAuditWorkbench()
@@ -273,12 +276,75 @@ struct AgentChannelConnectionCenterView: View {
                     )
                 }
 
+                incomingSection
+
                 sendingSection
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 24)
             .frame(maxWidth: .infinity)
         }
+    }
+
+    /// What happens on this Mac when a channel message arrives. Today: an
+    /// opt-in to bring the conversation forward (for dedicated / monitoring
+    /// machines); ordinary use keeps it off so inbound messages never steal
+    /// focus.
+    private var incomingSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionLabel(L("Incoming"))
+            focusOnInboundRow
+        }
+    }
+
+    private var focusOnInboundRow: some View {
+        HStack(spacing: 12) {
+            Image(systemName: focusChatOnInboundEnabled ? "macwindow.badge.plus" : "macwindow")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(focusChatOnInboundEnabled ? theme.accentColor : theme.tertiaryText)
+                .frame(width: 32, height: 32)
+                .background(
+                    Circle().fill(
+                        (focusChatOnInboundEnabled ? theme.accentColor : theme.tertiaryText).opacity(0.12)
+                    )
+                )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Focus Chat on Incoming Messages", bundle: .module)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text(
+                    focusChatOnInboundEnabled
+                        ? L("Every channel message brings its conversation forward: the tab is selected and the chat window comes to the front (opening one if needed).")
+                        : L("Channel messages run quietly in the background; watch them in Activity or open the tab yourself. Turn on for a dedicated machine you keep an eye on.")
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+            }
+
+            Spacer()
+
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { focusChatOnInboundEnabled },
+                    set: { setFocusChatOnInboundEnabled($0) }
+                )
+            )
+            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+            .labelsHidden()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
+        .settingsLandingAnchor("agentChannels.focusOnInbound")
     }
 
     /// The master send control gets its own labeled section so it reads as
@@ -1013,13 +1079,20 @@ struct AgentChannelConnectionCenterView: View {
         guard let pending else { return }
         if pending == "agentChannels.outbox", page != .outbox {
             page = .outbox
-        } else if pending == "agentChannels.destinations", page != .connections {
+        } else if pending == "agentChannels.destinations" || pending == "agentChannels.focusOnInbound"
+            || pending == "agentChannels.globalWrites", page != .connections
+        {
             page = .connections
         }
     }
 
     private func reloadWriteGate() {
         globalWritesEnabled = writeKillSwitch.snapshot().writeEnabled
+    }
+
+    private func setFocusChatOnInboundEnabled(_ enabled: Bool) {
+        focusChatOnInboundEnabled = enabled
+        focusPreference.setEnabled(enabled)
     }
 
     private func setGlobalWritesEnabled(_ enabled: Bool) {

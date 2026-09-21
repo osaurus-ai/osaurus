@@ -249,6 +249,72 @@ struct BackgroundTaskQuickReplyTests {
         }
     }
 
+    /// Regression for the frozen channel tab: after terminal cleanup dropped
+    /// the registry's session reference, a follow-up (the next inbound
+    /// channel message) must land in the instance the open tab still shows,
+    /// not in a second copy hydrated from disk that the tab never observes
+    /// (and whose turns the tab's close-time save would then overwrite).
+    @Test func quickReply_afterDehydrate_reusesTheSessionAnOpenTabStillShows() async throws {
+        try await ChatHistoryTestStorage.run {
+            let state = makeTaskState(
+                agentId: Agent.defaultId,
+                title: "Channel conversation",
+                status: .completed(summary: "Chat completed")
+            )
+            let tabSession = try #require(state.chatSession)
+            tabSession.turns = [
+                ChatTurn(role: .user, content: "First inbound message"),
+                ChatTurn(role: .assistant, content: "First reply"),
+            ]
+            tabSession.save()
+            mgr.registerTaskForTesting(state)
+            defer { mgr.finalizeTask(state.id) }
+
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+            #expect(window.attachBackgroundTab(for: state))
+
+            mgr.dehydrateTaskForTesting(state.id)
+            #expect(state.chatSession == nil)
+            #expect(window.tabs.contains { $0.session === tabSession }, "the tab keeps its instance")
+
+            let accepted = ChatWindowManager.shared.withRegisteredWindowStateForTesting(window) {
+                mgr.submitQuickReply(state.id, text: "Second inbound message")
+            }
+            #expect(accepted)
+            #expect(state.chatSession === tabSession, "rehydration adopted the on-screen session")
+            #expect(state.executionContext?.chatSession === tabSession)
+
+            try await waitUntil {
+                tabSession.turns.contains { $0.role == .user && $0.content == "Second inbound message" }
+            }
+            #expect(tabSession.turns.first?.content == "First inbound message", "history kept")
+        }
+    }
+
+    /// Without an on-screen owner the retained row still hydrates from disk.
+    @Test func quickReply_afterDehydrate_withoutAnOpenTab_hydratesFromDisk() async throws {
+        try await ChatHistoryTestStorage.run {
+            let state = makeTaskState(
+                agentId: Agent.defaultId,
+                title: "Headless channel conversation",
+                status: .completed(summary: "Chat completed")
+            )
+            let original = try #require(state.chatSession)
+            original.turns = [ChatTurn(role: .user, content: "Only inbound message")]
+            original.save()
+            mgr.registerTaskForTesting(state)
+            defer { mgr.finalizeTask(state.id) }
+
+            mgr.dehydrateTaskForTesting(state.id)
+            #expect(mgr.submitQuickReply(state.id, text: "Follow-up") == true)
+            let hydrated = try #require(state.chatSession)
+            #expect(hydrated !== original)
+            #expect(hydrated.sessionId == state.id)
+            #expect(hydrated.turns.first?.content == "Only inbound message")
+        }
+    }
+
     @Test func renameTask_updatesLiveAndRetainedConversationTitle() async throws {
         try await ChatHistoryTestStorage.run {
             let state = makeTaskState(

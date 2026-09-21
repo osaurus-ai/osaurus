@@ -124,6 +124,10 @@ struct SettingsSearchSelfFindProbe {
             ("allowed senders", "agentChannels.n8n.pendingApprovals"),
             ("edit allowlists by hand", "agentChannels.n8n.pendingApprovals"),
             ("channel enabled", "agentChannels.n8n.enabled"),
+            // Settings → Channels → Incoming.
+            ("focus chat on incoming messages", "agentChannels.focusOnInbound"),
+            ("bring to front", "agentChannels.focusOnInbound"),
+            ("steal focus", "agentChannels.focusOnInbound"),
             // Settings → Orchestrator controls.
             ("model readiness", "settings.orchestrator.modelReadiness"),
             ("working folder", "settings.orchestrator.workingFolder"),

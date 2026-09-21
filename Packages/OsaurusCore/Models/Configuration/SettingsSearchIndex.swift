@@ -788,6 +788,19 @@ public enum SettingsSearchIndex {
             ]
         ),
         .init(
+            id: "agentChannels.focusOnInbound",
+            tab: .agentChannels,
+            section: "Incoming",
+            title: "Focus Chat on Incoming Messages",
+            keywords: [
+                "focus", "bring to front", "bring forward", "activate window", "popup",
+                "pop up", "attention", "dedicated device", "kiosk", "monitor", "incoming",
+                "inbound", "channel window", "channel tab", "new message", "steal focus",
+            ],
+            disambiguation:
+                "Channels-only: brings the channel conversation's chat tab and window forward when a message arrives. Toast notifications are under Settings → General → Notifications."
+        ),
+        .init(
             id: "agentChannels.discord",
             tab: .agentChannels,
             section: "Native Integrations",

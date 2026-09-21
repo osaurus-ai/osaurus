@@ -26,6 +26,11 @@ Channels (Beta) connect agents to your messaging platforms: Discord, Slack, Tele
 - The first run of a new workflow also raises a toast with *Open Channels* when Settings is closed; repeats of the same conversation/sender do not. Pending requests and Deny decisions live only for the current app session — after a relaunch, run the workflow again and it reappears. Approved ids are saved in the allowlists and survive relaunch.
 - Channels saved before this flow existed open with *Where is your n8n?* unanswered (unless plaintext was allowed, which only LAN offers). Pick it once; the existing n8n credential keeps working meanwhile, and the next Save stores the choice.
 
+## Incoming messages on this Mac
+
+- Each channel conversation is an ordinary chat: the first message opens a tab under the answering agent in the frontmost chat window (without taking focus), and follow-ups on the same conversation land in that same tab. Every run also appears in Activity.
+- Settings → Channels → Incoming → **Focus Chat on Incoming Messages** (off by default): when on, every inbound channel message brings its conversation forward — the tab is selected and the chat window comes to the front, opening one if none is up. Leave it off for everyday use; turn it on for a dedicated machine you keep an eye on so each channel activation is visible as it happens.
+
 ## Safety model
 
 - Inbound is deny-by-default: only allowlisted spaces/rooms/senders reach an agent; bots and self are ignored unless explicitly allowed.
