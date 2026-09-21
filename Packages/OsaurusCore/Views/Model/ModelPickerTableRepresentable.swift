@@ -868,13 +868,13 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         // alignment rect, which excludes the symbol's padding) is centred on
         // the name's cap-height centre, measured from the label's real baseline.
         // A heart carries its visual weight in the lobes, above its geometric
-        // centre, so it is lifted a further half point to read as level.
+        // centre, so it is lifted a further point and a half to read as level.
         // The Favorites tab's always-visible remove heart shares this inline
         // placement so both tabs read the same.
         if accessoryKind != .none {
             let imgSize = accessoryButton.image?.size ?? .zero
             let font = nameLabel.font ?? NSFont.systemFont(ofSize: 12, weight: .medium)
-            let textCenterY = nameY + nameLabel.firstBaselineOffsetFromTop - font.capHeight / 2 - 0.5
+            let textCenterY = nameY + nameLabel.firstBaselineOffsetFromTop - font.capHeight / 2 - 1.5
             // Glyph centre from the image's top edge (alignment rect is bottom-up).
             let alignment = accessoryButton.image?.alignmentRect ?? CGRect(origin: .zero, size: imgSize)
             let glyphCenterFromTop = imgSize.height - alignment.midY
