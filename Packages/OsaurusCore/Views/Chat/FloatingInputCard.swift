@@ -2954,7 +2954,8 @@ extension FloatingInputCard {
                 compactionState: compactionState,
                 canCompact: canCompactConversation && !isStreaming,
                 onCompact: onCompactConversation,
-                currentSessionKey: inputHistoryKey?.uuidString
+                currentSessionKey: inputHistoryKey?.uuidString,
+                currentModel: selectedModel
             )
         }
     }
@@ -8950,7 +8951,7 @@ private struct FloatingContextChip: View {
     /// Read the shared disk-cache gauge. Returns nil when no quota is
     /// configured (disk cache off), so the popover hides the section rather
     /// than showing a meaningless 0 GB.
-    nonisolated static func readDiskCacheUsage() async -> DiskCacheUsage? {
+    nonisolated static func readDiskCacheUsage(model: String?, session: String?) async -> DiskCacheUsage? {
         let settings = ServerRuntimeSettingsStore.snapshot()
         let directory = ModelRuntime.cacheDiskDirectoryOverride(for: settings.cache)
         let dir = ModelRuntime.diskCacheDirectoryForDisplay(for: settings.cache)
@@ -8961,7 +8962,9 @@ private struct FloatingContextChip: View {
                 evictions: 0, isDisabled: true
             )
         }
-        if let snapshot = await ModelRuntime.shared.diskCacheQuotaSnapshots(matching: settings.cache).first {
+        if let snapshot = await ModelRuntime.shared.diskCacheQuotaSnapshots(
+            matching: settings.cache, modelName: model, session: session
+        ).first {
             return snapshot.usage
         }
         // No resident model: report indexed ownership, not unrelated files in the directory.
@@ -8992,6 +8995,7 @@ private struct FloatingContextChip: View {
     /// The chat this chip belongs to. The disk-cache note is shown only when
     /// the cap had to take THIS chat's saved progress.
     var currentSessionKey: String? = nil
+    var currentModel: String? = nil
 
     @Environment(\.theme) private var theme
 
@@ -9097,13 +9101,22 @@ private struct FloatingContextChip: View {
                 diskCache: diskCacheUsage,
                 currentSessionKey: currentSessionKey
             )
-            .task(id: showContextBreakdown) {
+            .task(id: SSDQuotaNoticePollContext(
+                model: currentModel,
+                session: currentSessionKey.flatMap(UUID.init(uuidString:)),
+                eligible: showContextBreakdown
+            )) {
                 // Poll while open. The cache index is a small SQLite read, but
                 // it is still I/O, so it runs off the main actor and stops as
                 // soon as the popover closes.
                 guard showContextBreakdown else { return }
                 while !Task.isCancelled {
-                    diskCacheUsage = await Self.readDiskCacheUsage()
+                    let model = currentModel, session = currentSessionKey
+                    let reading = await Task.detached(priority: .utility) {
+                        await Self.readDiskCacheUsage(model: model, session: session)
+                    }.value
+                    guard !Task.isCancelled else { return }
+                    diskCacheUsage = reading
                     try? await Task.sleep(for: .seconds(2))
                 }
             }

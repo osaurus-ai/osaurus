@@ -27,6 +27,7 @@ final class CacheSectionWiringTests: XCTestCase {
         XCTAssertTrue(src.contains("if canPresentSSDQuotaNotice, let snapshot = ssdWarningSnapshot"))
         XCTAssertTrue(src.contains("ssdWarningModel == selectedModel"))
         XCTAssertTrue(src.contains("session: inputHistoryKey?.uuidString"))
+        XCTAssertTrue(src.contains("matching: settings.cache, modelName: model, session: session"))
         XCTAssertTrue(src.contains("DiskCacheQuotaNoticeSuppression.suppress()"))
     }
 
