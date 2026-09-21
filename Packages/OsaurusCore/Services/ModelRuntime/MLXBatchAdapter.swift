@@ -578,10 +578,6 @@ struct MLXBatchAdapter {
         {
             let entries = await coalescer.resolvedEntries()
             var result: [String: TurboQuantCacheTransitionSnapshot] = [:]
-            for usage in diskRoots.values {
-                diskL2PayloadBytes = Self.saturatingSum(diskL2PayloadBytes, usage.bytes)
-                diskL2MaxBytes = Self.saturatingSum(diskL2MaxBytes, usage.cap)
-            }
             for (modelName, engine) in entries {
                 if let transition = await engine.lastTurboQuantCacheTransitionForDiagnostics {
                     result[modelName] = transition
@@ -755,6 +751,10 @@ struct MLXBatchAdapter {
                 ssmHits += stats.ssmStats.hits
                 ssmMisses += stats.ssmStats.misses
                 ssmReDerives += stats.ssmStats.reDerives
+            }
+            for usage in diskRoots.values {
+                diskL2PayloadBytes = Self.saturatingSum(diskL2PayloadBytes, usage.bytes)
+                diskL2MaxBytes = Self.saturatingSum(diskL2MaxBytes, usage.cap)
             }
             for (modelName, engine) in entries {
                 let capacity = await engine.capacitySnapshot
