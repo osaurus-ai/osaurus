@@ -79,9 +79,8 @@ struct PluginSupersededSkipTests {
             #expect(PluginManager.nativeSettingsTab(forSupersededPlugin: pluginId) == .agents, Comment(rawValue: pluginId))
         }
         // Every AppleApp with a plugin ancestor is in the skip list; the two
-        // net-new families (weather, shortcuts) have no plugin to supersede.
+        // net-new families (shortcuts) have no plugin to supersede.
         #expect(Set(AppleApp.allCases.compactMap(\.supersededPluginId)) == Set(appleIds))
-        #expect(AppleApp.weather.supersededPluginId == nil)
         #expect(AppleApp.shortcuts.supersededPluginId == nil)
     }
 }

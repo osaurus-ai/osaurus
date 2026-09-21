@@ -336,7 +336,7 @@ public struct AgentCapabilitiesEntry: Codable, Equatable, Sendable {
     public var relayEnabled: Bool?
     /// Built-in Apple app tool families enabled on this agent
     /// (`AgentSettings.enabledAppleApps`): `calendar`, `reminders`,
-    /// `contacts`, `notes`, `mail`, `messages`, `maps`, `weather`, `music`,
+    /// `contacts`, `notes`, `mail`, `messages`, `maps`, `music`,
     /// `shortcuts`. The provided list REPLACES the set (`[]` disables all).
     /// Custom agents only — the Orchestrator configures these, never calls
     /// them.

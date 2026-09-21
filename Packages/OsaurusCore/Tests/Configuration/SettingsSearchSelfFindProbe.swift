@@ -156,7 +156,6 @@ struct SettingsSearchSelfFindProbe {
             ("Mail", "agents.appleApps.mail"),
             ("Messages", "agents.appleApps.messages"),
             ("Maps & Location", "agents.appleApps.maps"),
-            ("Weather", "agents.appleApps.weather"),
             ("Music", "agents.appleApps.music"),
             ("Shortcuts", "agents.appleApps.shortcuts"),
             ("imessage", "agents.appleApps.messages"),

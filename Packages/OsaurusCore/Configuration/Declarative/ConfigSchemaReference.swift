@@ -61,7 +61,7 @@ enum ConfigSchemaReference {
         computer_use_enabled, browser_use_enabled and the built-in Apple app
         tools under `apple_apps`) stay under `agents[].capabilities`. Apple
         app access (Calendar, Reminders, Contacts, Notes, Mail, Messages,
-        Maps, Weather, Music, Shortcuts) is a custom-agent capability: the
+        Maps, Music, Shortcuts) is a custom-agent capability: the
         Orchestrator never calls those tools itself — it enables them on an
         agent (or creates one with them) and dispatches that work there.
         """

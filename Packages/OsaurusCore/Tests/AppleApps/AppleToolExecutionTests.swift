@@ -43,10 +43,12 @@ private final class FakeCalendarService: CalendarServicing, @unchecked Sendable 
         if let error { throw error }
         return calendars
     }
-    func events(_ query: CalendarEventQuery) async throws -> [CalendarEventInfo] {
+    var clampEnd = false
+    func events(_ query: CalendarEventQuery) async throws -> CalendarEventsResult {
         if let error { throw error }
         lastQuery = query
-        return events
+        let effectiveEnd = clampEnd ? (Calendar.current.date(byAdding: .year, value: 4, to: query.start) ?? query.end) : query.end
+        return CalendarEventsResult(events: events, effectiveEnd: effectiveEnd, endWasClamped: clampEnd && effectiveEnd < query.end)
     }
     func event(id: String, occurrenceStart: Date?) async throws -> CalendarEventInfo {
         if let error { throw error }
@@ -69,18 +71,19 @@ private final class FakeCalendarService: CalendarServicing, @unchecked Sendable 
         return e
     }
 
-    static func event(id: String, title: String, start: Date, end: Date, allDay: Bool = false) -> CalendarEventInfo {
+    static func event(id: String, title: String, start: Date, end: Date, allDay: Bool = false, recurring: Bool = false) -> CalendarEventInfo {
         CalendarEventInfo(
             id: id, calendarId: "cal-1", calendarTitle: "Work", title: title, start: start, end: end, isAllDay: allDay,
+            allDayDates: allDay ? CalendarArgs.allDayRange(start: start, end: end) : nil,
             location: nil, notes: nil, url: nil, status: "confirmed", availability: "busy", organizer: nil,
-            attendees: [], alarms: [], recurrence: nil, isRecurring: false, isDetached: false, lastModified: nil,
+            attendees: [], alarms: [], recurrence: nil, isRecurring: recurring, isDetached: false, lastModified: nil,
             openURL: "ical://ekevent/\(id)"
         )
     }
 }
 
 private final class FakeShortcutsService: ShortcutsServicing, @unchecked Sendable {
-    var shortcuts = [ShortcutInfo(name: "Morning Brief", folder: nil), ShortcutInfo(name: "Log Water", folder: nil)]
+    var shortcuts = [ShortcutInfo(name: "Morning Brief", identifier: "0F0F0F0F-0000-4000-8000-000000000001", folder: nil), ShortcutInfo(name: "Log Water", identifier: nil, folder: nil)]
     var runError: AppleToolError?
     private(set) var lastRun: (name: String, input: String?, timeout: TimeInterval)?
 
@@ -88,7 +91,7 @@ private final class FakeShortcutsService: ShortcutsServicing, @unchecked Sendabl
     func run(name: String, input: String?, timeout: TimeInterval) async throws -> ShortcutRunResult {
         lastRun = (name, input, timeout)
         if let runError { throw runError }
-        return ShortcutRunResult(name: name, output: "ran \(name) with \(input ?? "-")", outputIsEmpty: false, durationSeconds: 0.5)
+        return ShortcutRunResult(name: name, output: "ran \(name) with \(input ?? "-")", outputIsEmpty: false, outputIsBinary: false, outputBytes: 10, outputTruncated: false, durationSeconds: 0.5)
     }
 }
 
@@ -316,9 +319,9 @@ struct MessagesServiceHelperTests {
             func read(_ query: MessagesReadQuery) async throws -> [MessagesMessage] { [] }
             func unread(limit: Int) async throws -> [MessagesMessage] { [] }
             func search(_ text: String, limit: Int) async throws -> [MessagesMessage] { [] }
-            func send(to recipient: String?, chatId: String?, text: String, service: MessagesSendService) async throws -> (service: String, target: String) {
+            func send(to recipient: String?, chatId: String?, text: String, service: MessagesSendService) async throws -> MessagesSendResult {
                 sent = (recipient, chatId, text, service)
-                return ("iMessage", recipient ?? chatId ?? "")
+                return MessagesSendResult(service: "iMessage", target: recipient ?? chatId ?? "", delivered: true)
             }
         }
         let fake = Fake()
@@ -431,6 +434,36 @@ struct MapsToolArgumentContractTests {
         #expect(fake.lastSearch?.near?.radiusMeters == 50_000)
         _ = try result(await validated(tool, #"{"query":"coffee"}"#))
         #expect(fake.lastSearch?.near == nil)
+    }
+
+    @Test("out-of-range \"lat,lng\" strings and objects are invalid_args, never a MapKit region crash")
+    func coordinateRangeValidation() async throws {
+        let fake = FakeMapsService()
+        let eta = MapsETATool(service: fake)
+        let bad = try envelope(await validated(eta, #"{"from":"500,900","to":"San Jose, CA"}"#))
+        #expect(bad["ok"] as? Bool == false)
+        #expect(bad["kind"] as? String == "invalid_args")
+        #expect(bad["field"] as? String == "from")
+        #expect(fake.lastETA == nil)
+
+        let badObject = try envelope(await validated(eta, #"{"from":{"latitude":91,"longitude":0},"to":"San Jose, CA"}"#))
+        #expect(badObject["kind"] as? String == "invalid_args")
+
+        let search = MapsSearchTool(service: fake)
+        let badNear = try envelope(await validated(search, #"{"query":"coffee","near":{"latitude":37,"longitude":-181}}"#))
+        #expect(badNear["kind"] as? String == "invalid_args")
+        #expect(fake.lastSearch == nil)
+    }
+
+    @Test("maps_open uses dirflg=c for cycling and d/w/r for the others")
+    func dirflg() throws {
+        for (mode, flag) in [("cycling", "c"), ("driving", "d"), ("walking", "w"), ("transit", "r"), ("automobile", "d")] {
+            let url = try MapsOpenTool.buildURL(["directions_to": "Cupertino", "mode": mode]).absoluteString
+            #expect(url.contains("dirflg=\(flag)"), "\(mode) → \(url)")
+            #expect(url.contains("daddr=Cupertino"))
+        }
+        let pin = try MapsOpenTool.buildURL(["latitude": 37.33, "longitude": -122.0]).absoluteString
+        #expect(pin.contains("ll=37.33,-122.0"))
     }
 }
 

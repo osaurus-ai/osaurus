@@ -25,11 +25,11 @@ enum MapsToolFactory {
     }
 
     static let nearSchema = AppleSchema.nested(
-        "Bias results around a point.",
+        "Restrict results to the area around a point; results are sorted by distance from it.",
         [
             "latitude": AppleSchema.number("Latitude."),
             "longitude": AppleSchema.number("Longitude."),
-            "radius_meters": AppleSchema.number("Search radius in meters (default 2000, max 50000)."),
+            "radius_meters": AppleSchema.number("Search radius in meters (default 2000, max 50000). Widen it when a search near a point returns nothing."),
         ],
         required: ["latitude", "longitude"]
     )
@@ -56,8 +56,16 @@ enum MapsToolFactory {
         guard let lat, let lng else {
             throw AppleToolError.invalidArgs("Provide both `\(latKey)` and `\(lngKey)`.", field: lat == nil ? latKey : lngKey)
         }
-        guard (-90...90).contains(lat), (-180...180).contains(lng) else {
-            throw AppleToolError.invalidArgs("Coordinates out of range: \(lat), \(lng).", field: latKey, expected: "lat −90…90, lng −180…180")
+        return try validated(latitude: lat, longitude: lng, field: latKey)
+    }
+
+    /// Range check shared by the object and `"lat,lng"` string forms. An
+    /// out-of-range pair used to reach `MKCoordinateRegion`, which aborts
+    /// with an uncatchable `Invalid Region` exception.
+    static func validated(latitude lat: Double, longitude lng: Double, field: String) throws -> GeoCoordinate {
+        guard lat.isFinite, lng.isFinite, (-90...90).contains(lat), (-180...180).contains(lng) else {
+            throw AppleToolError.invalidArgs(
+                "Coordinates out of range: \(lat), \(lng).", field: field, expected: "lat −90…90, lng −180…180")
         }
         return GeoCoordinate(latitude: lat, longitude: lng)
     }
@@ -84,10 +92,11 @@ enum MapsToolFactory {
                 if allowCurrent { return .currentLocation }
                 throw AppleToolError.invalidArgs("`\(key)` must not be empty.", field: key)
             }
-            // "lat,lng" strings are accepted too.
+            // "lat,lng" strings are accepted too (range-checked like the
+            // object form — "500,900" is an argument error, not a crash).
             let parts = t.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
             if parts.count == 2, let lat = Double(parts[0]), let lng = Double(parts[1]) {
-                return .coordinate(GeoCoordinate(latitude: lat, longitude: lng))
+                return .coordinate(try validated(latitude: lat, longitude: lng, field: key))
             }
             return .query(t)
         }
@@ -134,7 +143,7 @@ final class LocationCurrentTool: AppleToolBase, @unchecked Sendable {
         self.service = service
         super.init(
             app: .maps, name: "location_current",
-            description: "Get the Mac's current location (coordinates, accuracy, and the nearest address). macOS asks for Location access the first time.",
+            description: "Get the Mac's current location (coordinates, accuracy, and the nearest address). The first call shows the macOS Location permission dialog and waits for the user's answer; tell the user to click Allow.",
             parameters: AppleSchema.object([:]), isWrite: false, requirements: [.location]
         )
     }
@@ -194,7 +203,7 @@ final class MapsSearchTool: AppleToolBase, @unchecked Sendable {
         self.service = service
         super.init(
             app: .maps, name: "maps_search",
-            description: "Search Apple Maps for places by free text (\"coffee near Union Square\", a business name, an address). Optionally bias to a `near` point. Results include coordinates, address, phone, URL, and a `mapsURL` for maps_open.",
+            description: "Search Apple Maps for places by free text (\"coffee near Union Square\", a business name, an address). With `near`, only places inside that radius are returned, closest first. Results include coordinates, address, phone, URL, and a `mapsURL` for maps_open.",
             parameters: AppleSchema.object(
                 [
                     "query": AppleSchema.string("What to look for."),
@@ -317,6 +326,15 @@ final class MapsOpenTool: AppleToolBase, @unchecked Sendable {
         )
     }
     override func run(args: [String: Any]) async throws -> AppleToolPayload {
+        let url = try Self.buildURL(args)
+        let opened = await MainActor.run { NSWorkspace.shared.open(url) }
+        guard opened else { throw AppleToolError.unavailable("Maps could not be opened.", retryable: true) }
+        return AppleToolPayload(["opened": true, "url": url.absoluteString])
+    }
+
+    /// `maps://` URL for the given arguments (Apple Map Links scheme;
+    /// `dirflg`: d driving, w walking, r transit, c cycling).
+    static func buildURL(_ args: [String: Any]) throws -> URL {
         var comps = URLComponents(string: "maps://")!
         var items: [URLQueryItem] = []
         if let destRaw = try AppleArgs.string(args, "directions_to") {
@@ -326,7 +344,8 @@ final class MapsOpenTool: AppleToolBase, @unchecked Sendable {
             switch mode {
             case .walking: flag = "w"
             case .transit: flag = "r"
-            case .automobile, .cycling: flag = "d"
+            case .cycling: flag = "c"
+            case .automobile: flag = "d"
             }
             items.append(URLQueryItem(name: "dirflg", value: flag))
         } else if let c = try MapsToolFactory.coordinate(args) {
@@ -339,8 +358,6 @@ final class MapsOpenTool: AppleToolBase, @unchecked Sendable {
         }
         comps.queryItems = items
         guard let url = comps.url else { throw AppleToolError.execution("Could not build a Maps URL.") }
-        let opened = await MainActor.run { NSWorkspace.shared.open(url) }
-        guard opened else { throw AppleToolError.unavailable("Maps could not be opened.", retryable: true) }
-        return AppleToolPayload(["opened": true, "url": url.absoluteString])
+        return url
     }
 }

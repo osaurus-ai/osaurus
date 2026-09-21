@@ -86,6 +86,50 @@ struct AppleAppsDeclarativeConfigTests {
         }
     }
 
+    @Test("enabling Mail / Messages / Shortcuts carries a ConfigRisk; organiser apps do not")
+    func appleAppRisks() async throws {
+        try await withSeededAgent { agent in
+            @MainActor func plan(_ apps: [String]) throws -> ConfigPlanAction? {
+                var entry = AgentEntry(name: agent.name)
+                var caps = AgentCapabilitiesEntry()
+                caps.appleApps = apps
+                entry.capabilities = caps
+                var document = OsaurusConfigDocument()
+                document.agents = [entry]
+                return try ConfigPlanner.plan(document: document, prune: false).actions
+                    .first { $0.section == "agents" && $0.target == agent.name }
+            }
+            let risky = try #require(try plan(["mail", "messages", "shortcuts", "calendar"]))
+            #expect(risky.risks.count == 3, "\(risky.risks)")
+            #expect(risky.risks.contains { $0.contains("Mail") && $0.contains("send") })
+            #expect(risky.risks.contains { $0.contains("Messages") })
+            #expect(risky.risks.contains { $0.contains("Shortcuts") })
+            #expect(!risky.risks.contains { $0.contains("Calendar") })
+
+            let safe = try #require(try plan(["calendar", "reminders", "contacts"]))
+            #expect(safe.risks.isEmpty, "\(safe.risks)")
+
+            // Already-enabled risky apps are not re-flagged.
+            var updated = try #require(current(agent.id))
+            updated.settings.enabledAppleApps = [.mail]
+            AgentManager.shared.update(updated)
+            let unchanged = try #require(try plan(["mail", "notes"]))
+            #expect(unchanged.risks.isEmpty, "\(unchanged.risks)")
+
+            // Creating an agent with a risky app flags it too.
+            var created = AgentEntry(name: "Risk Probe \(UUID().uuidString.prefix(6))")
+            var caps = AgentCapabilitiesEntry()
+            caps.appleApps = ["messages"]
+            created.capabilities = caps
+            var document = OsaurusConfigDocument()
+            document.agents = [created]
+            let createPlan = try ConfigPlanner.plan(document: document, prune: false)
+            let createAction = createPlan.actions.first { $0.section == "agents" && $0.target == created.name }
+            #expect(createAction?.kind == .create)
+            #expect(createAction?.risks.contains { $0.contains("Messages") } == true)
+        }
+    }
+
     @Test("plan renders enable/disable rows; identical sets plan no change")
     func planDiff() async throws {
         try await withSeededAgent { agent in
@@ -227,12 +271,12 @@ struct AppleAppsSettingsCodableTests {
     @Test("round-trips, encodes in stable order, and defaults to empty when absent")
     func roundTrip() throws {
         var settings = AgentSettings.defaultDisabled
-        settings.enabledAppleApps = [.weather, .calendar]
+        settings.enabledAppleApps = [.music, .calendar]
         let data = try JSONEncoder().encode(settings)
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        #expect(json["enabledAppleApps"] as? [String] == ["calendar", "weather"])
+        #expect(json["enabledAppleApps"] as? [String] == ["calendar", "music"])
         let decoded = try JSONDecoder().decode(AgentSettings.self, from: data)
-        #expect(decoded.enabledAppleApps == [.weather, .calendar])
+        #expect(decoded.enabledAppleApps == [.music, .calendar])
 
         // Legacy payload without the key.
         var legacy = json
@@ -245,6 +289,14 @@ struct AppleAppsSettingsCodableTests {
         future["enabledAppleApps"] = ["calendar", "vision_pro"]
         let tolerant = try JSONDecoder().decode(AgentSettings.self, from: JSONSerialization.data(withJSONObject: future))
         #expect(tolerant.enabledAppleApps == [.calendar])
+
+        // The removed Weather app: agents persisted before its removal still load.
+        var removed = json
+        removed["enabledAppleApps"] = ["calendar", "weather"]
+        let afterRemoval = try JSONDecoder().decode(AgentSettings.self, from: JSONSerialization.data(withJSONObject: removed))
+        #expect(afterRemoval.enabledAppleApps == [.calendar])
+        #expect(AppleApp(rawValue: "weather") == nil)
+        #expect(AppleApp.allCases.count == 9)
     }
 
     @Test("an Agent with enabled apps survives a full encode/decode")

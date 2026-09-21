@@ -58,6 +58,13 @@ struct SettingsSearchIndexTests {
                     MemoryTab(rawValue: subTab) != nil,
                     "\(entry.id): \(subTab) is not a MemoryTab raw value"
                 )
+            case .agents:
+                // Routed by `AgentsView.routeSettingsLanding` from the landing
+                // id; the subTab must still be a real detail tab raw value.
+                #expect(
+                    AgentDetailTabRoute.resolve(subTab) != nil,
+                    "\(entry.id): \(subTab) is not an agent detail tab raw value"
+                )
             default:
                 Issue.record(
                     "\(entry.id) declares subTab \(subTab) but \(entry.tab.rawValue) has no sub-tab routing in ManagementView.handleResultSelected"

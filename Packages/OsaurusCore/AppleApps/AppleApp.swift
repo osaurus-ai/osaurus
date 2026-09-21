@@ -25,7 +25,6 @@ public enum AppleApp: String, CaseIterable, Codable, Sendable, Hashable {
     case mail
     case messages
     case maps
-    case weather
     case music
     case shortcuts
 
@@ -39,7 +38,6 @@ public enum AppleApp: String, CaseIterable, Codable, Sendable, Hashable {
         case .mail: return L("Mail")
         case .messages: return L("Messages")
         case .maps: return L("Maps & Location")
-        case .weather: return L("Weather")
         case .music: return L("Music")
         case .shortcuts: return L("Shortcuts")
         }
@@ -55,7 +53,6 @@ public enum AppleApp: String, CaseIterable, Codable, Sendable, Hashable {
         case .mail: return "envelope"
         case .messages: return "message"
         case .maps: return "map"
-        case .weather: return "cloud.sun"
         case .music: return "music.note"
         case .shortcuts: return "square.stack.3d.up"
         }
@@ -74,7 +71,6 @@ public enum AppleApp: String, CaseIterable, Codable, Sendable, Hashable {
         case .mail: return [.automationMail]
         case .messages: return [.disk, .automationMessages]
         case .maps: return [.location]
-        case .weather: return []
         case .music: return [.automationMusic]
         case .shortcuts: return []
         }
@@ -119,8 +115,6 @@ public enum AppleApp: String, CaseIterable, Codable, Sendable, Hashable {
                 "location_current", "location_geocode", "location_reverse_geocode",
                 "maps_search", "maps_explore", "maps_directions", "maps_eta", "maps_open",
             ]
-        case .weather:
-            return ["weather_current", "weather_daily", "weather_hourly"]
         case .music:
             return [
                 "music_now_playing", "music_playback", "music_set_volume",
@@ -182,73 +176,91 @@ public enum AppleApp: String, CaseIterable, Codable, Sendable, Hashable {
         case .messages: return "osaurus.messages"
         case .maps: return "osaurus.maps"
         case .music: return "osaurus.music"
-        case .weather, .shortcuts: return nil
+        case .shortcuts: return nil
         }
     }
 
-    /// Legacy plugin tool names → the native tool that replaces each. Used
-    /// by the one-time `manualToolNames` migration and to keep the Personal
-    /// Organizer skill text honest.
-    public static let legacyPluginToolNames: [String: (app: AppleApp, native: String)] = [
-        // osaurus.calendar
-        "list_calendars": (.calendar, "calendar_list"),
-        "get_events": (.calendar, "calendar_events"),
-        "search_events": (.calendar, "calendar_events"),
-        "create_event": (.calendar, "calendar_create_event"),
-        "open_event": (.calendar, "calendar_open_event"),
-        // osaurus.reminders
-        "get_reminders": (.reminders, "reminders_fetch"),
-        "search_reminders": (.reminders, "reminders_fetch"),
-        "create_reminder": (.reminders, "reminders_create"),
-        "get_lists": (.reminders, "reminders_lists"),
-        "open_reminder": (.reminders, "reminders_open"),
-        // osaurus.contacts
-        "find_contact_by_name": (.contacts, "contacts_search"),
-        "find_contact_by_phone": (.contacts, "contacts_search"),
-        "find_number": (.contacts, "contacts_search"),
-        "get_all_numbers": (.contacts, "contacts_list"),
-        // osaurus.notes
-        "list_notes": (.notes, "notes_list"),
-        "search_notes": (.notes, "notes_search"),
-        "create_note": (.notes, "notes_create"),
-        // osaurus.mail
-        "list_mailboxes": (.mail, "mail_mailboxes"),
-        "list_messages": (.mail, "mail_list"),
-        "read_message": (.mail, "mail_read"),
-        "compose_message": (.mail, "mail_compose"),
-        "reply_to_message": (.mail, "mail_reply"),
-        "move_message": (.mail, "mail_move"),
-        "set_message_status": (.mail, "mail_set_status"),
-        "get_thread": (.mail, "mail_thread"),
-        // osaurus.messages (`search_messages` collided between mail + messages;
-        // the mail one wins here because the mail plugin shipped it first).
-        "search_messages": (.mail, "mail_search"),
-        "send_message": (.messages, "messages_send"),
-        "read_messages": (.messages, "messages_read"),
-        "get_unread_messages": (.messages, "messages_unread"),
-        "list_conversations": (.messages, "messages_conversations"),
-        "detect_spam": (.messages, "messages_unread"),
-        // osaurus.maps
-        "maps_search_locations": (.maps, "maps_search"),
-        "maps_get_directions": (.maps, "maps_directions"),
-        "maps_drop_pin": (.maps, "maps_open"),
-        "maps_get_current_location": (.maps, "location_current"),
-        "maps_save_location": (.maps, "maps_open"),
-        "maps_list_guides": (.maps, "maps_open"),
-        "maps_add_to_guide": (.maps, "maps_open"),
-        "maps_create_guide": (.maps, "maps_open"),
-        // osaurus.music
-        "open_music": (.music, "music_playback"),
-        "play": (.music, "music_playback"),
-        "pause": (.music, "music_playback"),
-        "next_track": (.music, "music_playback"),
-        "previous_track": (.music, "music_playback"),
-        "set_volume": (.music, "music_set_volume"),
-        "get_current_track": (.music, "music_now_playing"),
-        "get_library_stats": (.music, "music_playlists"),
-        "list_playlists": (.music, "music_playlists"),
-        "search_songs": (.music, "music_search"),
-        "play_song": (.music, "music_play"),
-        "play_playlist": (.music, "music_play"),
+    /// Legacy osaurus-tools plugin tool names → the native tool that replaces
+    /// each, keyed by the superseded plugin id (the owning app is implied by
+    /// the id; see `supersededPluginId`). Used by the one-time
+    /// `manualToolNames` migration, which applies a plugin's map ONLY when
+    /// that plugin's folder is actually installed — these names (`play`,
+    /// `send_message`, `create_note`, …) are common in unrelated plugins and
+    /// MCP servers and must never be hijacked. `search_messages` shipped in
+    /// both the Mail and Messages plugins and appears under both.
+    public static let legacyPluginToolNamesByPlugin: [String: [String: String]] = [
+        "osaurus.calendar": [
+            "list_calendars": "calendar_list",
+            "get_events": "calendar_events",
+            "search_events": "calendar_events",
+            "create_event": "calendar_create_event",
+            "open_event": "calendar_open_event",
+        ],
+        "osaurus.reminders": [
+            "get_reminders": "reminders_fetch",
+            "search_reminders": "reminders_fetch",
+            "create_reminder": "reminders_create",
+            "get_lists": "reminders_lists",
+            "open_reminder": "reminders_open",
+        ],
+        "osaurus.contacts": [
+            "find_contact_by_name": "contacts_search",
+            "find_contact_by_phone": "contacts_search",
+            "find_number": "contacts_search",
+            "get_all_numbers": "contacts_list",
+        ],
+        "osaurus.notes": [
+            "list_notes": "notes_list",
+            "search_notes": "notes_search",
+            "create_note": "notes_create",
+        ],
+        "osaurus.mail": [
+            "list_mailboxes": "mail_mailboxes",
+            "list_messages": "mail_list",
+            "read_message": "mail_read",
+            "search_messages": "mail_search",
+            "compose_message": "mail_compose",
+            "reply_to_message": "mail_reply",
+            "move_message": "mail_move",
+            "set_message_status": "mail_set_status",
+            "get_thread": "mail_thread",
+        ],
+        "osaurus.messages": [
+            "search_messages": "messages_search",
+            "send_message": "messages_send",
+            "read_messages": "messages_read",
+            "get_unread_messages": "messages_unread",
+            "list_conversations": "messages_conversations",
+            "detect_spam": "messages_unread",
+        ],
+        "osaurus.maps": [
+            "maps_search_locations": "maps_search",
+            "maps_get_directions": "maps_directions",
+            "maps_drop_pin": "maps_open",
+            "maps_get_current_location": "location_current",
+            "maps_save_location": "maps_open",
+            "maps_list_guides": "maps_open",
+            "maps_add_to_guide": "maps_open",
+            "maps_create_guide": "maps_open",
+        ],
+        "osaurus.music": [
+            "open_music": "music_playback",
+            "play": "music_playback",
+            "pause": "music_playback",
+            "next_track": "music_playback",
+            "previous_track": "music_playback",
+            "set_volume": "music_set_volume",
+            "get_current_track": "music_now_playing",
+            "get_library_stats": "music_playlists",
+            "list_playlists": "music_playlists",
+            "search_songs": "music_search",
+            "play_song": "music_play",
+            "play_playlist": "music_play",
+        ],
     ]
+
+    /// The app that owned a superseded plugin id, when one existed.
+    public static func app(forSupersededPlugin pluginId: String) -> AppleApp? {
+        allCases.first { $0.supersededPluginId == pluginId }
+    }
 }

@@ -40,6 +40,18 @@ enum AppleSchema {
         return .object(dict)
     }
 
+    /// String property that also accepts JSON `null` — the "clear this
+    /// field" signal. (An empty string is stripped by the argument
+    /// normalizer before the tool sees it, so it cannot mean "clear".)
+    static func nullableString(_ description: String) -> JSONValue {
+        .object(["type": .string("string"), "nullable": .bool(true), "description": .string(description)])
+    }
+
+    /// Date property that also accepts JSON `null` ("clear").
+    static func nullableDate(_ lead: String) -> JSONValue {
+        nullableString(lead + " " + AppleDateParsing.contractDescription)
+    }
+
     static func integer(_ description: String) -> JSONValue {
         .object(["type": .string("integer"), "description": .string(description)])
     }
@@ -88,8 +100,11 @@ enum AppleSchema {
                 "frequency": string("How often it repeats.", enum: ["daily", "weekly", "monthly", "yearly"]),
                 "interval": integer("Every N periods (default 1)."),
                 "days_of_week": stringArray(
-                    "For weekly rules: weekday names to repeat on (e.g. [\"monday\", \"wednesday\"]).",
-                    enum: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+                    "For weekly rules: weekday names to repeat on (e.g. [\"monday\", \"wednesday\"]); three-letter forms (mon, tue, …) are accepted too.",
+                    enum: [
+                        "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+                        "mon", "tue", "wed", "thu", "fri", "sat", "sun",
+                    ]
                 ),
                 "end_date": date("Stop repeating after this date (optional)."),
                 "occurrence_count": integer("Stop after this many occurrences (optional; ignored when end_date is set)."),

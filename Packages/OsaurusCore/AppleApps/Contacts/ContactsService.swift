@@ -95,6 +95,8 @@ protocol ContactsServicing: Sendable {
 // MARK: - Contacts.framework implementation
 
 final class CNContactsService: ContactsServicing, @unchecked Sendable {
+    /// Serial queue for this service.
+    private let queue = AppleServiceQueue(label: "contacts")
     /// Confined to `AppleServiceQueue`; created on first use so registering
     /// the tools never touches contactsd.
     nonisolated(unsafe) private lazy var store = CNContactStore()
@@ -130,14 +132,46 @@ final class CNContactsService: ContactsServicing, @unchecked Sendable {
         CNContactEmailAddressesKey as CNKeyDescriptor,
     ]
 
+    /// One formatter per service (creating `CNContactFormatter` per row is
+    /// measurably slow on large address books); confined to `queue`.
+    nonisolated(unsafe) private static let nameFormatter: CNContactFormatter = {
+        let f = CNContactFormatter()
+        f.style = .fullName
+        return f
+    }()
+    nonisolated(unsafe) private static let postalFormatter = CNPostalAddressFormatter()
+
     private func requireAccess() throws {
         guard CNContactStore.authorizationStatus(for: .contacts) == .authorized else {
             throw AppleToolError.permissionDenied(.contacts)
         }
     }
 
+    /// Type a Contacts.framework failure: authorization and validation
+    /// problems get their own kinds instead of a generic `execution` (or a
+    /// misleading `notFound` from `fetchOne`).
+    static func contactsError(_ error: Error, verb: String) -> AppleToolError {
+        let ns = error as NSError
+        guard ns.domain == CNErrorDomain, let code = CNError.Code(rawValue: ns.code) else {
+            return .execution("\(verb) failed: \(ns.localizedDescription)")
+        }
+        switch code {
+        case .authorizationDenied:
+            return .permissionDenied(.contacts, detail: ns.localizedDescription)
+        case .recordDoesNotExist, .recordIdentifierInvalid:
+            return .notFound("\(verb) failed: \(ns.localizedDescription)")
+        case .validationMultipleErrors, .validationTypeMismatch, .validationConfigurationError, .insertedRecordAlreadyExists,
+            .predicateInvalid, .policyViolation:
+            let details = (ns.userInfo[CNErrorUserInfoValidationErrorsKey] as? [NSError])?.map(\.localizedDescription) ?? []
+            let detailText = details.isEmpty ? ns.localizedDescription : details.joined(separator: " ")
+            return .invalidArgs("\(verb) rejected the values: \(detailText)")
+        default:
+            return .execution("\(verb) failed: \(ns.localizedDescription)")
+        }
+    }
+
     func me() async throws -> ContactInfo? {
-        try await AppleServiceQueue.run { [self] in
+        try await queue.run { [self] in
             try self.requireAccess()
             do {
                 let contact = try self.store.unifiedMeContactWithKeys(toFetch: Self.fullKeys)
@@ -151,7 +185,7 @@ final class CNContactsService: ContactsServicing, @unchecked Sendable {
     }
 
     func search(query: String, field: ContactSearchField) async throws -> [ContactSummary] {
-        try await AppleServiceQueue.run { [self] in
+        try await queue.run { [self] in
             try self.requireAccess()
             let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
             var results: [CNContact] = []
@@ -180,8 +214,10 @@ final class CNContactsService: ContactsServicing, @unchecked Sendable {
             }
             // Organization + nickname + partial phone/email fall back to a
             // scan of the unified contacts (the predicates above are exact
-            // or prefix matches only).
-            if results.isEmpty || field == .organization || field == .any {
+            // or prefix matches only). `.any` skips the full scan when a
+            // predicate already hit — the scan only adds fuzzy matches and
+            // costs seconds on a large address book.
+            if results.isEmpty || field == .organization {
                 let all = try self.allContacts(keys: Self.summaryKeys)
                 let digits = Self.digits(trimmed)
                 add(all.filter { c in
@@ -190,7 +226,7 @@ final class CNContactsService: ContactsServicing, @unchecked Sendable {
                         return AppleServiceSupport.matches(c.organizationName, query: trimmed)
                     case .name:
                         return AppleServiceSupport.matches(c.nickname, query: trimmed)
-                            || AppleServiceSupport.matches(CNContactFormatter.string(from: c, style: .fullName), query: trimmed)
+                            || AppleServiceSupport.matches(Self.nameFormatter.string(from: c), query: trimmed)
                     case .phone:
                         return !digits.isEmpty && c.phoneNumbers.contains { Self.digits($0.value.stringValue).contains(digits) }
                     case .email:
@@ -198,7 +234,7 @@ final class CNContactsService: ContactsServicing, @unchecked Sendable {
                     case .any:
                         if AppleServiceSupport.matches(c.organizationName, query: trimmed) { return true }
                         if AppleServiceSupport.matches(c.nickname, query: trimmed) { return true }
-                        if AppleServiceSupport.matches(CNContactFormatter.string(from: c, style: .fullName), query: trimmed) { return true }
+                        if AppleServiceSupport.matches(Self.nameFormatter.string(from: c), query: trimmed) { return true }
                         if looksLikeEmail, c.emailAddresses.contains(where: { AppleServiceSupport.matches($0.value as String, query: trimmed) }) { return true }
                         if !digits.isEmpty, digits.count >= 4,
                             c.phoneNumbers.contains(where: { Self.digits($0.value.stringValue).contains(digits) })
@@ -212,7 +248,7 @@ final class CNContactsService: ContactsServicing, @unchecked Sendable {
     }
 
     func list(offset: Int, limit: Int) async throws -> (contacts: [ContactSummary], total: Int) {
-        try await AppleServiceQueue.run { [self] in
+        try await queue.run { [self] in
             try self.requireAccess()
             let all = try self.allContacts(keys: Self.summaryKeys)
                 .map(Self.summary)
@@ -224,14 +260,14 @@ final class CNContactsService: ContactsServicing, @unchecked Sendable {
     }
 
     func contact(id: String) async throws -> ContactInfo {
-        try await AppleServiceQueue.run { [self] in
+        try await queue.run { [self] in
             try self.requireAccess()
             return Self.info(try self.fetchOne(id: id, keys: Self.fullKeys))
         }
     }
 
     func create(_ draft: ContactDraft) async throws -> ContactInfo {
-        try await AppleServiceQueue.run { [self] in
+        try await queue.run { [self] in
             try self.requireAccess()
             let contact = CNMutableContact()
             Self.apply(draft, to: contact, replaceLabeledValues: true)
@@ -240,14 +276,14 @@ final class CNContactsService: ContactsServicing, @unchecked Sendable {
             do {
                 try self.store.execute(request)
             } catch {
-                throw AppleToolError.execution("Contacts refused to create the contact: \(error.localizedDescription)")
+                throw Self.contactsError(error, verb: "Contacts create")
             }
             return Self.info(try self.fetchOne(id: contact.identifier, keys: Self.fullKeys))
         }
     }
 
     func update(id: String, draft: ContactDraft, replaceLabeledValues: Bool) async throws -> ContactInfo {
-        try await AppleServiceQueue.run { [self] in
+        try await queue.run { [self] in
             try self.requireAccess()
             guard let mutable = try self.fetchOne(id: id, keys: Self.fullKeys).mutableCopy() as? CNMutableContact else {
                 throw AppleToolError.execution("Contact `\(id)` could not be edited.")
@@ -258,7 +294,7 @@ final class CNContactsService: ContactsServicing, @unchecked Sendable {
             do {
                 try self.store.execute(request)
             } catch {
-                throw AppleToolError.execution("Contacts refused to update the contact: \(error.localizedDescription)")
+                throw Self.contactsError(error, verb: "Contacts update")
             }
             return Self.info(try self.fetchOne(id: id, keys: Self.fullKeys))
         }
@@ -270,7 +306,7 @@ final class CNContactsService: ContactsServicing, @unchecked Sendable {
         do {
             return try store.unifiedContacts(matching: predicate, keysToFetch: keys)
         } catch {
-            throw AppleToolError.execution("Contacts search failed: \(error.localizedDescription)")
+            throw Self.contactsError(error, verb: "Contacts search")
         }
     }
 
@@ -278,9 +314,15 @@ final class CNContactsService: ContactsServicing, @unchecked Sendable {
         do {
             return try store.unifiedContact(withIdentifier: id, keysToFetch: keys)
         } catch {
-            throw AppleToolError.notFound(
-                "No contact with identifier `\(id)`. Call `contacts_search` and pass one of its `id` values."
-            )
+            let ns = error as NSError
+            if ns.domain == CNErrorDomain,
+                ns.code == CNError.recordDoesNotExist.rawValue || ns.code == CNError.recordIdentifierInvalid.rawValue
+            {
+                throw AppleToolError.notFound(
+                    "No contact with identifier `\(id)`. Call `contacts_search` and pass one of its `id` values."
+                )
+            }
+            throw Self.contactsError(error, verb: "Contacts lookup")
         }
     }
 
@@ -292,7 +334,7 @@ final class CNContactsService: ContactsServicing, @unchecked Sendable {
         do {
             try store.enumerateContacts(with: request) { contact, _ in out.append(contact) }
         } catch {
-            throw AppleToolError.execution("Contacts enumeration failed: \(error.localizedDescription)")
+            throw Self.contactsError(error, verb: "Contacts enumeration")
         }
         return out
     }
@@ -352,8 +394,10 @@ final class CNContactsService: ContactsServicing, @unchecked Sendable {
     /// Map friendly labels (home / work / mobile / main / other / custom) to
     /// the CN constants; anything else is kept as a custom label.
     static func label(_ raw: String?) -> String? {
-        guard let raw = raw?.trimmingCharacters(in: .whitespaces).lowercased(), !raw.isEmpty else { return nil }
-        switch raw {
+        guard let raw = raw?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else { return nil }
+        // Match the well-known labels case-insensitively but keep the
+        // user's casing for custom labels ("Assistant", not "assistant").
+        switch raw.lowercased() {
         case "home": return CNLabelHome
         case "work": return CNLabelWork
         case "other": return CNLabelOther
@@ -385,7 +429,7 @@ final class CNContactsService: ContactsServicing, @unchecked Sendable {
     }
 
     private static func displayName(_ c: CNContact) -> String {
-        if let name = CNContactFormatter.string(from: c, style: .fullName), !name.isEmpty { return name }
+        if let name = nameFormatter.string(from: c), !name.isEmpty { return name }
         if c.isKeyAvailable(CNContactNicknameKey), !c.nickname.isEmpty { return c.nickname }
         if c.isKeyAvailable(CNContactOrganizationNameKey), !c.organizationName.isEmpty { return c.organizationName }
         if let email = c.emailAddresses.first?.value as String? { return email }
@@ -394,7 +438,7 @@ final class CNContactsService: ContactsServicing, @unchecked Sendable {
     }
 
     private static func info(_ c: CNContact) -> ContactInfo {
-        let postal = CNPostalAddressFormatter()
+        let postal = postalFormatter
         var birthday: String?
         if let b = c.birthday {
             if let y = b.year, let m = b.month, let d = b.day {
@@ -433,7 +477,7 @@ final class CNContactsService: ContactsServicing, @unchecked Sendable {
                 LabeledValue(label: $0.value.service, value: $0.value.username.isEmpty ? $0.value.urlString : $0.value.username)
             },
             hasImage: c.imageDataAvailable,
-            openURL: "addressbook://\(c.identifier)"
+            openURL: "addressbook://\(AppleServiceSupport.pathEncoded(c.identifier))"
         )
     }
 }

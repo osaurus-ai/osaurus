@@ -2836,15 +2836,18 @@ public struct SystemPromptComposer: Sendable {
                     byName.removeValue(forKey: name)
                 }
             }
-            // Built-in Apple apps: every tool of an app the agent has NOT
-            // enabled is stripped. A ticked manual name / session load keeps
-            // it for custom agents (same carve-out as the gates above); the
-            // Default agent is additionally excluded wholesale by
-            // `orchestratorExcludedToolNames`.
-            for name in AppleApp.disabledToolNames(enabled: snapshot.enabledAppleApps)
-            where !keep.contains(name) {
-                byName.removeValue(forKey: name)
-            }
+        }
+
+        // Built-in Apple apps: authoritative per-agent gate. Every tool of an
+        // app the agent has NOT enabled is stripped in BOTH auto and manual
+        // mode, with no `additionalToolNames` / ticked-manual-name bypass —
+        // the Abilities → Tools toggle is the only switch (a stale
+        // `manualToolNames` entry or a session `capabilities_load` must not
+        // resurrect a tool the user turned off). `ToolRegistry.execute`
+        // enforces the same gate at call time. The Default agent is
+        // additionally excluded wholesale by `orchestratorExcludedToolNames`.
+        for name in AppleApp.disabledToolNames(enabled: snapshot.enabledAppleApps) {
+            byName.removeValue(forKey: name)
         }
 
         // Authoritative per-agent subagent gates, driven by ONE loop over the

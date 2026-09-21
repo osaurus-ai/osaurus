@@ -66,6 +66,27 @@ struct AppleDateParsingTests {
         #expect(AppleDateParsing.parse("42") == nil)
     }
 
+    @Test("an invalid day-of-month is rejected instead of rolling into the next month")
+    func invalidDayOfMonth() {
+        #expect(AppleDateParsing.parse("2026-02-31", calendar: calendar) == nil)
+        #expect(AppleDateParsing.parse("2026-02-31 10:00", calendar: calendar) == nil)
+        #expect(AppleDateParsing.parse("2026-04-31T09:00", calendar: calendar) == nil)
+        #expect(AppleDateParsing.parse("2026-02-29", calendar: calendar) == nil)  // not a leap year
+        #expect(AppleDateParsing.parse("2028-02-29", calendar: calendar) != nil)  // leap year
+        #expect(AppleDateParsing.parse("2026-01-31", calendar: calendar) != nil)
+    }
+
+    @Test("formatters are cached and still produce identical output across zones")
+    func formatterCacheIsStable() {
+        let date = Date(timeIntervalSince1970: 1_789_000_000)
+        let tz = TimeZone(identifier: "Europe/Berlin")!
+        let first = AppleDateParsing.format(date, timeZone: tz)
+        for _ in 0 ..< 50 { #expect(AppleDateParsing.format(date, timeZone: tz) == first) }
+        #expect(first.hasSuffix("+02:00") || first.hasSuffix("+01:00"))
+        let tokyo = AppleDateParsing.format(date, timeZone: TimeZone(identifier: "Asia/Tokyo")!)
+        #expect(tokyo != first)
+    }
+
     @Test("output is ISO 8601 with the local offset, not Z")
     func outputCarriesLocalOffset() {
         let date = Date(timeIntervalSince1970: 1_789_000_000)

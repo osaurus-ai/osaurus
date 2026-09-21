@@ -200,6 +200,7 @@ struct AgentsView: View {
             }
             consumeDeeplinkIfPossible()
             applyPendingRemoteAgentDetail()
+            routeSettingsLanding(highlightCoordinator.pending)
         }
         .onChange(of: agentManager.agents) { _, _ in
             // Agent list may load asynchronously after the view appears.
@@ -225,14 +226,7 @@ struct AgentsView: View {
             isCreating = true
         }
         .onChange(of: highlightCoordinator.pending) { _, pending in
-            // Settings-search landings target the grid (header / agent
-            // cards); pop any open detail so the anchored control is
-            // actually on screen to glow.
-            guard let pending, pending.hasPrefix("agents.") else { return }
-            withAnimation(Self.navTransition) {
-                selectedAgent = nil
-                selectedRemoteAgentId = nil
-            }
+            routeSettingsLanding(pending)
         }
         .onReceive(NotificationCenter.default.publisher(for: .agentDetailDeeplink)) { note in
             // Notification-tap deep-link router (spec §3.3). Resolves
@@ -259,6 +253,62 @@ struct AgentsView: View {
                 selectedAgent = target
             }
         }
+    }
+
+    /// Settings-search landing router. Also invoked from `onAppear`: the
+    /// coordinator publishes the id BEFORE the Management tab switches, so a
+    /// cold-mounted Agents tab never sees the `onChange`.
+    private func routeSettingsLanding(_ pending: String?) {
+        guard let pending, pending.hasPrefix("agents.") else { return }
+        if pending.hasPrefix("agents.appleApps") {
+            // The Apple app groups live inside a custom agent's
+            // Abilities → Tools picker, not on the grid: route into the
+            // first custom agent's Tools tab (or keep the currently open
+            // custom agent) so the anchored group can scroll and glow.
+            // With no custom agent yet there is nothing to land on; the
+            // grid's onboarding CTA is the right place to be.
+            guard let target = Self.appleAppsLandingAgent(open: detailAgent, all: agentManager.agents) else {
+                withAnimation(Self.navTransition) {
+                    selectedAgent = nil
+                    selectedRemoteAgentId = nil
+                }
+                return
+            }
+            deeplinkTab = (target.id, Self.appleAppsLandingTabRaw)
+            if detailAgent?.id == target.id {
+                // Already mounted: the detail view flips its own tab via
+                // the deeplink notification, same as the What's New CTA.
+                NotificationCenter.default.post(
+                    name: .agentDetailDeeplink, object: nil,
+                    userInfo: ["agentId": target.id, "tab": Self.appleAppsLandingTabRaw]
+                )
+            } else {
+                withAnimation(Self.navTransition) {
+                    selectedRemoteAgentId = nil
+                    selectedAgent = target
+                }
+            }
+            return
+        }
+        // Other settings-search landings target the grid (header /
+        // agent cards); pop any open detail so the anchored control is
+        // actually on screen to glow.
+        withAnimation(Self.navTransition) {
+            selectedAgent = nil
+            selectedRemoteAgentId = nil
+        }
+    }
+
+    /// Detail tab raw value the `agents.appleApps*` landings open.
+    static let appleAppsLandingTabRaw = "capabilities"
+
+    /// Which custom agent an `agents.appleApps*` settings-search landing
+    /// should open: the custom agent already on screen, else the first
+    /// custom (non-built-in) agent in display order. `nil` when there is no
+    /// custom agent (the Default agent has no Apple app groups).
+    static func appleAppsLandingAgent(open: Agent?, all: [Agent]) -> Agent? {
+        if let open, !open.isBuiltIn { return open }
+        return all.first { !$0.isBuiltIn }
     }
 
     // MARK: - Grid Content
@@ -3359,6 +3409,9 @@ struct AgentDetailView: View {
 
     /// On/off values behind the hero's "N of M abilities on" counter, in
     /// card order. Working Folder counts as on when the agent has a folder.
+    /// Apple apps are deliberately NOT counted: they have no Overview card
+    /// (they are groups in the Tools tab), so counting them made the
+    /// denominator disagree with the cards on screen.
     private var abilityFlagValues: [Bool] {
         var flags = [toolsEnabled]
         if agent.id != Agent.defaultId {
@@ -3369,7 +3422,6 @@ struct AgentDetailView: View {
                 searchMemoryEnabled,
                 knowledgeEnabled,
                 webSearchEnabled,
-                !(abilityPreviewAppleApps ?? currentAgent.settings.enabledAppleApps).isEmpty,
                 selfSchedulingEnabled,
                 dbEnabled,
                 abilityPreviewAutonomousConfig?.enabled

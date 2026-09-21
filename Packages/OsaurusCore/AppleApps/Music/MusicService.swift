@@ -69,16 +69,26 @@ final class AppleScriptMusicService: MusicServicing, @unchecked Sendable {
     static let bundleIdentifier = "com.apple.Music"
     static let appName = "Music"
 
-    private func run(_ body: String, timeout: TimeInterval = AppleScriptBridge.defaultTimeout) async throws -> String {
+    /// `isWrite` scripts (transport, volume, queueing) are never retried after
+    /// a -600/-609 and report an unknown outcome on timeout; reads are retried
+    /// once if Music vanished mid-call. `with timeout` keeps AppleScript's
+    /// 60s per-event cap from lying about the Swift budget.
+    private func run(_ body: String, timeout: TimeInterval = AppleScriptBridge.defaultTimeout, isWrite: Bool = false) async throws -> String {
         guard await AppleScriptBridge.ensureRunning(bundleIdentifier: Self.bundleIdentifier, appName: Self.appName) else {
             throw AppleToolError.unavailable("Music could not be launched on this Mac.", retryable: true)
         }
         let source = """
             \(AppleScriptBridge.separatorPrelude)
             \(Self.helperHandlers)
+            with timeout of \(Int(timeout)) seconds
             \(body)
+            end timeout
             """
-        return try await AppleScriptBridge.run(source, permission: .automationMusic, appName: Self.appName, timeout: timeout)
+        return try await AppleScriptBridge.runRetryingIfAppGone(
+            bundleIdentifier: Self.bundleIdentifier, appName: Self.appName, isWrite: isWrite
+        ) {
+            try await AppleScriptBridge.run(source, permission: .automationMusic, appName: Self.appName, timeout: timeout, isWrite: isWrite)
+        }
     }
 
     private static let helperHandlers = """
@@ -194,7 +204,8 @@ final class AppleScriptMusicService: MusicServicing, @unchecked Sendable {
             end tell
             delay 0.2
             return my encodeState(FS)
-            """
+            """,
+            isWrite: true
         )
         return Self.decodeState(out)
     }
@@ -207,7 +218,8 @@ final class AppleScriptMusicService: MusicServicing, @unchecked Sendable {
                 set sound volume to \(clamped)
                 return (sound volume as string)
             end tell
-            """
+            """,
+            isWrite: true
         )
         return Int(out.trimmingCharacters(in: .whitespacesAndNewlines)) ?? clamped
     }
@@ -229,7 +241,9 @@ final class AppleScriptMusicService: MusicServicing, @unchecked Sendable {
                     set end of rows to (persistent ID of p) & FS & (name of p) & FS & ((count of tracks of p) as string) & FS & durationText & FS & kindText
                 end repeat
                 set AppleScript's text item delimiters to RS
-                return rows as text
+                set joined to rows as text
+                set AppleScript's text item delimiters to ""
+                return joined
             end tell
             """,
             timeout: 120
@@ -247,7 +261,9 @@ final class AppleScriptMusicService: MusicServicing, @unchecked Sendable {
         let only: String
         switch field {
         case .any: only = ""
-        case .title: only = " only songs"
+        // Music's search `only` enumeration is albums / all / artists /
+        // composers / displayed / names (track names) — there is no `songs`.
+        case .title: only = " only names"
         case .artist: only = " only artists"
         case .album: only = " only albums"
         }
@@ -263,22 +279,31 @@ final class AppleScriptMusicService: MusicServicing, @unchecked Sendable {
                     if n ≥ \(limit) then exit repeat
                 end repeat
                 set AppleScript's text item delimiters to RS
-                return rows as text
+                set joined to rows as text
+                set AppleScript's text item delimiters to ""
+                return joined
             end tell
             """
         )
         return AppleScriptBridge.parseRecords(out).compactMap(Self.decodeTrack)
     }
 
-    func play(_ request: MusicPlayRequest) async throws -> MusicNowPlaying {
+    /// AppleScript body for `play`. Every user-supplied value goes through
+    /// `AppleScriptBridge.literal` — including the ones inside `error "…"`
+    /// strings, which previously interpolated raw text and let a playlist
+    /// name like `" & (system attribute "HOME") & "` break out of the
+    /// literal. Shuffle is only touched when the caller asked for it; the
+    /// resulting state reports the effective value.
+    static func playScriptBody(_ request: MusicPlayRequest) -> String {
         var body = ""
         if let shuffle = request.shuffle {
             body += "set shuffle enabled to \(shuffle)\n"
         }
         if let trackId = request.trackId, !trackId.isEmpty {
+            let lit = AppleScriptBridge.literal(trackId)
             body += """
-                set matches to (tracks of (first library playlist) whose persistent ID is \(AppleScriptBridge.literal(trackId)))
-                if (count of matches) is 0 then error "No track with persistent ID \(trackId)" number -1728
+                set matches to (tracks of (first library playlist) whose persistent ID is \(lit))
+                if (count of matches) is 0 then error ("No track with persistent ID " & \(lit)) number -1728
                 play (item 1 of matches)
                 """
         } else if let playlist = request.playlist, !playlist.isEmpty {
@@ -286,26 +311,32 @@ final class AppleScriptMusicService: MusicServicing, @unchecked Sendable {
             body += """
                 set matches to (playlists whose persistent ID is \(lit))
                 if (count of matches) is 0 then set matches to (playlists whose name is \(lit))
-                if (count of matches) is 0 then error "No playlist named or with ID \(playlist)" number -1728
+                if (count of matches) is 0 then error ("No playlist named or with ID " & \(lit)) number -1728
                 play (item 1 of matches)
                 """
         } else if let query = request.query, !query.isEmpty {
+            let lit = AppleScriptBridge.literal(query)
             body += """
-                set found to search (first library playlist) for \(AppleScriptBridge.literal(query))
-                if (count of found) is 0 then error "No tracks match \(query.replacingOccurrences(of: "\"", with: "'"))" number -1728
+                set found to search (first library playlist) for \(lit)
+                if (count of found) is 0 then error ("No tracks match " & \(lit)) number -1728
                 play (item 1 of found)
                 """
         } else {
             body += "play"
         }
+        return body
+    }
+
+    func play(_ request: MusicPlayRequest) async throws -> MusicNowPlaying {
         let out = try await run(
             """
             tell application "Music"
-                \(body)
+                \(Self.playScriptBody(request))
             end tell
             delay 0.3
             return my encodeState(FS)
-            """
+            """,
+            isWrite: true
         )
         return Self.decodeState(out)
     }

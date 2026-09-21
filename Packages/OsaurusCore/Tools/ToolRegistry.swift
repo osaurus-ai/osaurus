@@ -347,7 +347,7 @@ public final class ToolRegistry: ObservableObject {
             MacQueryTool(),
         ]
         // Built-in Apple app tools (Calendar, Reminders, Contacts, Notes,
-        // Mail, Messages, Maps/Location, Weather, Music, Shortcuts) — the
+        // Mail, Messages, Maps/Location, Music, Shortcuts) — the
         // native replacement for the osaurus-tools Apple plugins. Always
         // registered so the runtime can execute them; the composer strips
         // every app the agent has not enabled (`enabledAppleApps`) and the
@@ -566,8 +566,11 @@ public final class ToolRegistry: ObservableObject {
     /// `agent_channel_*` tool automatically keeps it off external surfaces.
     /// These names refuse with a structured envelope regardless of
     /// registration state and are hidden from `/mcp/tools` listings.
+    /// Built-in Apple app tools are denied as a family too: they read and
+    /// write the user's personal data and are gated per agent, so the
+    /// unauthenticated loopback bridge must never reach them.
     nonisolated public static let externallyDeniedToolNames: Set<String> =
-        externallyDeniedHostToolNames.union(agentChannelToolNames)
+        externallyDeniedHostToolNames.union(agentChannelToolNames).union(AppleApp.allToolNames)
 
     /// Subset of `externallyDeniedToolNames` that an AUTHENTICATED,
     /// folder-bounded remote agent run may use (gated on
@@ -622,6 +625,42 @@ public final class ToolRegistry: ObservableObject {
                 "'\(tool)' is not available to external callers. This tool can only run from the Osaurus app.",
             tool: tool
         )
+    }
+
+    /// Whether the current execution may run a tool of `app`: a custom agent
+    /// with the app enabled in its Abilities. The Default agent and calls
+    /// without an agent context are refused.
+    static func isAppleAppEnabledForCurrentAgent(_ app: AppleApp) -> Bool {
+        guard let agentId = ChatExecutionContext.currentAgentId, agentId != Agent.defaultId else { return false }
+        return AgentManager.shared.effectiveCapabilities(for: agentId).enabledAppleApps.contains(app)
+    }
+
+    /// Envelope for an Apple tool whose app is off for the calling agent
+    /// (or that was called without an agent). Names the one real switch.
+    nonisolated static func appleAppOffEnvelope(tool: String, app: AppleApp, agentId: UUID?) -> String {
+        let message: String
+        if agentId == nil {
+            message =
+                "'\(tool)' belongs to the built-in \(app.displayName) app and only runs inside an Osaurus agent that has \(app.displayName) enabled."
+        } else if agentId == Agent.defaultId {
+            message =
+                "'\(tool)' belongs to the built-in \(app.displayName) app. The Default agent never uses Apple app tools; enable \(app.displayName) on a custom agent (`osaurus_config` → capabilities.apple_apps) and delegate to it."
+        } else {
+            message =
+                "'\(tool)' belongs to the built-in \(app.displayName) app, which is off for this agent. It cannot be loaded with capabilities_load. Ask the user to turn on \(app.displayName) under this agent's Abilities → Tools → Apple Apps (or have the Orchestrator set capabilities.apple_apps), then retry."
+        }
+        return ToolEnvelope.failure(
+            kind: .rejected, message: message, tool: tool, retryable: false,
+            metadata: ["apple_app": app.rawValue]
+        )
+    }
+
+    private func appleAppGateRefusal(for tool: AppleToolBase) -> String? {
+        if Self.isAppleAppEnabledForCurrentAgent(tool.app) { return nil }
+        ToolRegistryLogger.registry.error(
+            "refusing '\(tool.name, privacy: .public)': \(tool.app.rawValue, privacy: .public) is not enabled for the current agent"
+        )
+        return Self.appleAppOffEnvelope(tool: tool.name, app: tool.app, agentId: ChatExecutionContext.currentAgentId)
     }
 
     /// Resolve the permission gate (missing system permissions, ask/deny
@@ -687,6 +726,10 @@ public final class ToolRegistry: ObservableObject {
         return target
     }
 
+    /// `userInfo` keys on the code-7 (missing system permission) error.
+    nonisolated static let missingPermissionUserInfoKey = "ai.osaurus.toolRegistry.permission"
+    nonisolated static let missingPermissionSettingsURLUserInfoKey = "ai.osaurus.toolRegistry.systemSettingsURL"
+
     /// The permission gate shared by `execute` and `resolvePermissionGate`:
     /// system-permission prompts, the per-tool ask/deny/auto policy
     /// (including the user approval prompt), and `.auto` grant backfill.
@@ -720,14 +763,22 @@ public final class ToolRegistry: ObservableObject {
                     FeatureTelemetry.computerUseRefused(stage: .permissionAccessibility)
                 }
                 let missingNames = stillMissing.map { $0.displayName }.joined(separator: ", ")
-                throw NSError(
-                    domain: "ToolRegistry",
-                    code: 7,
-                    userInfo: [
-                        NSLocalizedDescriptionKey:
-                            "Missing system permissions for tool: \(name). Required: \(missingNames). Please grant these permissions in the Permissions tab or System Settings."
-                    ]
-                )
+                // Typed like `AppleToolError.permissionDenied`: the first
+                // missing permission's stable name and its System Settings
+                // pane ride along so the envelope tells the model exactly
+                // which grant is missing and where it lives (the Apple app
+                // tools hit this gate before their body runs).
+                var userInfo: [String: Any] = [
+                    NSLocalizedDescriptionKey:
+                        "Missing system permissions for tool: \(name). Required: \(missingNames). Ask the user to grant it in System Settings → Privacy & Security (or the Osaurus Permissions tab), then try again."
+                ]
+                if let first = stillMissing.first {
+                    userInfo[Self.missingPermissionUserInfoKey] = first.rawValue
+                    if let url = first.systemSettingsURL?.absoluteString {
+                        userInfo[Self.missingPermissionSettingsURLUserInfoKey] = url
+                    }
+                }
+                throw NSError(domain: "ToolRegistry", code: 7, userInfo: userInfo)
             }
 
             let defaultPolicy = permissioned.defaultPermissionPolicy
@@ -759,6 +810,8 @@ public final class ToolRegistry: ObservableObject {
                 // a delete later in the same run.
                 let perCallApproval =
                     (tool as? PerCallApprovalTool)?.requiresApprovalEveryCall == true
+                    || (tool as? ArgumentAwarePerCallApprovalTool)?
+                        .requiresApprovalEveryCall(argumentsJSON: argumentsJSON) == true
                 if permissioned.handlesOwnApproval {
                     // The tool runs its own purpose-built interactive
                     // approval in its body (osaurus_config's plan-review
@@ -1040,6 +1093,11 @@ public final class ToolRegistry: ObservableObject {
                     retryable: false
                 ).toJSONString()
             }
+            // Built-in Apple app tools: name the real switch instead of an
+            // opaque refusal or a loader hint that would be rejected.
+            if let app = AppleApp.app(forTool: name) {
+                return Self.appleAppOffEnvelope(tool: name, app: app, agentId: ChatExecutionContext.currentAgentId)
+            }
             let toolAvailability = availability(forTool: name, agentAllowedNames: agentAllowed)
             // The default agent's capabilities_load is gated to the configure
             // write tools, so the hint would only steer it into a rejected
@@ -1121,6 +1179,14 @@ public final class ToolRegistry: ObservableObject {
                     + "before answering that it can't be done).",
                 toolName: name
             ).toJSONString()
+        }
+        // Built-in Apple app tools: authoritative per-agent gate at call
+        // time. The composer strips these from the schema when the owning
+        // app is off; this is the matching execution-side check so no
+        // surface (a stale loaded name, a direct call, a worker) can run
+        // one for an agent — or no agent — that has not enabled the app.
+        if let apple = tool as? AppleToolBase, let refusal = appleAppGateRefusal(for: apple) {
+            return refusal
         }
         if let invalidArguments = Self.invalidToolArgumentsEnvelope(
             argumentsJSON,
@@ -1931,6 +1997,7 @@ public final class ToolRegistry: ObservableObject {
     /// are immediately usable; subsequent registrations preserve the user's choice.
     /// Strips any pre-existing MCP / plugin bucket flag — live registration wins.
     func registerSandboxTool(_ tool: OsaurusTool, runtimeManaged: Bool = false) {
+        if !runtimeManaged, refusesBuiltInCollision(name: tool.name, source: "sandbox plugin") { return }
         let firstTime =
             toolsByName[tool.name] == nil
             && !configuration.enabled.keys.contains(tool.name)
@@ -2031,6 +2098,7 @@ public final class ToolRegistry: ObservableObject {
     /// subsequent registrations preserve the user's choice.
     func registerMCPTool(_ tool: MCPProviderTool) {
         let name = tool.name
+        if refusesBuiltInCollision(name: name, source: "MCP provider '\(tool.providerName)'") { return }
         if let existing = toolsByName[name] as? MCPProviderTool,
             existing.providerId != tool.providerId
         {
@@ -2075,6 +2143,7 @@ public final class ToolRegistry: ObservableObject {
     /// system-owned dynamic surfaces such as Agent Channels; plugin-owned tools
     /// must use `registerPluginTool(_:)` so ownership diagnostics stay correct.
     func registerNativeDynamicTool(_ tool: OsaurusTool) {
+        if refusesBuiltInCollision(name: tool.name, source: "native dynamic") { return }
         let firstTime =
             toolsByName[tool.name] == nil
             && !configuration.enabled.keys.contains(tool.name)
@@ -2101,6 +2170,7 @@ public final class ToolRegistry: ObservableObject {
     /// Auto-enables the tool on first registration so it is immediately usable;
     /// subsequent registrations (e.g. hot-reload) preserve the user's choice.
     func registerPluginTool(_ tool: OsaurusTool) {
+        if refusesBuiltInCollision(name: tool.name, source: "plugin") { return }
         let firstTime =
             toolsByName[tool.name] == nil
             && !configuration.enabled.keys.contains(tool.name)
@@ -2121,6 +2191,19 @@ public final class ToolRegistry: ObservableObject {
                 parameters: tool.parameters
             )
         }
+    }
+
+    /// A built-in name is never overwritten by an MCP or plugin tool: a
+    /// remote `calendar_events` would otherwise be governed by the Calendar
+    /// toggle, skip TCC, and run under the built-in's permission policy.
+    /// Refused registrations are logged and dropped; the external tool stays
+    /// reachable only under a non-colliding name.
+    private func refusesBuiltInCollision(name: String, source: String) -> Bool {
+        guard builtInToolNames.contains(name) else { return false }
+        ToolRegistryLogger.registry.error(
+            "refusing \(source, privacy: .public) tool '\(name, privacy: .public)': the name belongs to a built-in tool"
+        )
+        return true
     }
 
     /// Whether a tool was registered from a native dylib plugin.
@@ -2745,7 +2828,7 @@ public final class ToolRegistry: ObservableObject {
         "update_skill"
     ]
 
-    static let nonDiscoverableBuiltInToolNames: Set<String> = [
+    static let nonDiscoverableBuiltInToolNames: Set<String> = Set([
         ComputerUseTool.toolName,
         BrowserUseTool.toolName,
         // Same authoritative per-agent contract as the pair above: the
@@ -2755,7 +2838,11 @@ public final class ToolRegistry: ObservableObject {
         // discover→load dead loop ("gated built-in and cannot be enabled").
         "spawn_agent",
         "applescript", "mac_query",
-    ]
+    ])
+    // Built-in Apple app tools follow the same contract (per-app toggle on
+    // the agent, no load carve-out) — discovering `mail_list` on an agent
+    // with Mail off only sent the model into the same dead loop.
+    .union(AppleApp.allToolNames)
 
     /// Always-loaded tool specs: built-in + runtime-managed tools.
     /// These are always included when registered — mode exclusions handle

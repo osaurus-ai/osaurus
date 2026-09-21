@@ -272856,8 +272856,9 @@
     "Permissions needed": {},
     "Shortcuts": {},
     "Unnamed contact": {},
-    "Weather": {},
-    "macOS has not granted: %@. Click to grant or open System Settings.": {}
+    "macOS has not granted: %@. Click to grant or open System Settings.": {},
+    "Apple apps are now built into Osaurus": {},
+    "%@ no longer need a plugin. Turn each app on per agent under Agents → Abilities → Tools → Apple Apps.": {}
   },
   "version": "1.1"
 }

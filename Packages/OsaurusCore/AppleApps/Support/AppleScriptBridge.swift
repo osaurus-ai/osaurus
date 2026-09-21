@@ -44,15 +44,36 @@ enum AppleScriptBridge {
     /// Run `source`, mapping failures to `AppleToolError`. On success returns
     /// the coerced textual output (empty string when the script returned
     /// nothing).
+    ///
+    /// `isWrite` marks scripts that mutate or send: when the executor gives
+    /// up on one of those (`.timedOut`), the script may still complete inside
+    /// the app, so the error explicitly says the outcome is unknown and is
+    /// flagged non-retryable — a blind retry could send twice.
     @discardableResult
     static func run(
         _ source: String,
         permission: SystemPermission,
         appName: String,
-        timeout: TimeInterval = defaultTimeout
+        timeout: TimeInterval = defaultTimeout,
+        isWrite: Bool = false
     ) async throws -> String {
         try Task.checkCancellation()
-        let result = await AppleScriptExecutor.run(source: source, timeout: timeout)
+        // A run queued behind another script must not start once the caller's
+        // task is cancelled (the user pressed Stop): for writes that would be
+        // a send nobody asked for any more. The executor checks the flag on
+        // the serial queue right before executing; an already-running script
+        // cannot be interrupted and is governed by `timeout`.
+        let cancelled = CancellationFlag()
+        let result = await withTaskCancellationHandler {
+            await AppleScriptExecutor.run(source: source, timeout: timeout, skipIf: { cancelled.isSet })
+        } onCancel: {
+            cancelled.set()
+        }
+        if cancelled.isSet, result.status == .timedOut,
+            result.errorMessage == AppleScriptExecutor.skippedBeforeStartMessage
+        {
+            throw CancellationError()
+        }
         switch result.status {
         case .success:
             // A successful send proves the Automation grant; keep the
@@ -70,6 +91,12 @@ enum AppleScriptBridge {
                 detail: "macOS shows the \"Osaurus wants access to control \(appName)\" dialog on the first attempt; if it was dismissed, re-enable it under Automation → Osaurus → \(appName)."
             )
         case .timedOut:
+            if isWrite {
+                throw AppleToolError.timeout(
+                    "\(appName) did not confirm the change within \(Int(timeout))s. The outcome is unknown — it may still complete inside \(appName). Check \(appName) before retrying; do not repeat a send blindly.",
+                    outcomeUnknown: true
+                )
+            }
             throw AppleToolError.timeout(
                 result.errorMessage ?? "\(appName) did not respond within \(Int(timeout))s."
             )
@@ -81,6 +108,23 @@ enum AppleScriptBridge {
             throw mapRuntimeError(
                 number: result.errorNumber, message: result.errorMessage, appName: appName, timeout: timeout
             )
+        }
+    }
+
+    /// Lock-free-enough flag shared between the cancellation handler and the
+    /// executor's serial queue.
+    private final class CancellationFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+        var isSet: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return value
+        }
+        func set() {
+            lock.lock()
+            value = true
+            lock.unlock()
         }
     }
 
@@ -99,12 +143,13 @@ enum AppleScriptBridge {
         case ErrorNumber.noSuchObject?:
             return .notFound("\(appName) could not find the requested item (\(text)).")
         default:
+            // Only -1728 is a not-found. "Can't get …" also covers wrong
+            // property names and coercion failures, which must surface as
+            // execution errors so a script bug is not mistaken for a
+            // missing item.
             let lowered = text.lowercased()
             if lowered.contains("isn't running") || lowered.contains("is not running") {
                 return .unavailable("\(appName) is not running (\(text)). Open \(appName) and try again.", retryable: true)
-            }
-            if lowered.contains("can't get") || lowered.contains("can’t get") {
-                return .notFound("\(appName) could not find the requested item (\(text)).")
             }
             let suffix = number.map { " [\($0)]" } ?? ""
             return .execution("\(appName) error\(suffix): \(text)")
@@ -145,6 +190,28 @@ enum AppleScriptBridge {
         return false
     }
 
+    /// Whether `error` is the "app went away" family (-600 / -609) worth one
+    /// relaunch-and-retry from services that already called `ensureRunning`.
+    static func isAppGoneError(_ error: Error) -> Bool {
+        guard let apple = error as? AppleToolError, case .unavailable(_, let retryable) = apple else { return false }
+        return retryable
+    }
+
+    /// Run `body` once; if the app vanished mid-call (-600 / -609), relaunch
+    /// it and retry exactly once. Writes are never retried (they may have
+    /// landed) — callers pass `isWrite: true` to opt out.
+    static func runRetryingIfAppGone<T>(
+        bundleIdentifier: String, appName: String, isWrite: Bool, _ body: () async throws -> T
+    ) async throws -> T {
+        do {
+            return try await body()
+        } catch where !isWrite && isAppGoneError(error) {
+            try Task.checkCancellation()
+            guard await ensureRunning(bundleIdentifier: bundleIdentifier, appName: appName) else { throw error }
+            return try await body()
+        }
+    }
+
     /// Whether the app is currently running (no launch).
     static func isRunning(bundleIdentifier: String) -> Bool {
         NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == bundleIdentifier }
@@ -153,17 +220,23 @@ enum AppleScriptBridge {
     // MARK: - Literals
 
     /// Escape `value` for embedding inside an AppleScript double-quoted string.
+    ///
+    /// Iterates Unicode scalars, not `Character`s: a quote or backslash fused
+    /// with a following combining mark forms one grapheme cluster, so a
+    /// `Character` loop would append it unescaped and let the string break out
+    /// of the literal. AppleScript strings are UTF-16 code units, so escaping
+    /// per scalar is the correct granularity.
     static func literal(_ value: String) -> String {
         var out = "\""
-        out.reserveCapacity(value.count + 2)
-        for ch in value {
-            switch ch {
+        out.reserveCapacity(value.utf8.count + 2)
+        for scalar in value.unicodeScalars {
+            switch scalar {
             case "\\": out += "\\\\"
             case "\"": out += "\\\""
             case "\n": out += "\\n"
             case "\r": out += "\\r"
             case "\t": out += "\\t"
-            default: out.append(ch)
+            default: out.unicodeScalars.append(scalar)
             }
         }
         out += "\""
@@ -190,10 +263,16 @@ enum AppleScriptBridge {
         """
 
     /// Split a script's output into rows of fields. Empty output → `[]`.
+    ///
+    /// Splits on Unicode scalars: a separator control character immediately
+    /// followed by a combining mark would otherwise merge into one
+    /// `Character` and vanish as a boundary, shifting every later field.
     static func parseRecords(_ output: String) -> [[String]] {
         guard !output.isEmpty else { return [] }
-        return output.split(separator: recordSeparator, omittingEmptySubsequences: true).map { row in
-            row.split(separator: fieldSeparator, omittingEmptySubsequences: false).map(String.init)
+        let rs = recordSeparator.unicodeScalars.first!
+        let fs = fieldSeparator.unicodeScalars.first!
+        return output.unicodeScalars.split(separator: rs, omittingEmptySubsequences: true).map { row in
+            row.split(separator: fs, omittingEmptySubsequences: false).map { String(String.UnicodeScalarView($0)) }
         }
     }
 

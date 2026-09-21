@@ -213,7 +213,7 @@ public enum ConfigManifest {
                                 comment: "built-in Apple app tools this agent may use; list REPLACES the set",
                                 moreComments: [
                                     "(calendar | reminders | contacts | notes | mail | messages |",
-                                    " maps | weather | music | shortcuts; [] disables all;",
+                                    " maps | music | shortcuts; [] disables all;",
                                     " macOS asks the user for the app's permission on first use)",
                                 ]),
                         ]),

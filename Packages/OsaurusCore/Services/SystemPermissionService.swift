@@ -412,8 +412,8 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         case .microphone:
             granted = await AVCaptureDevice.requestAccess(for: .audio)
         case .location:
-            requestLocationPermission()
-            return checkLocationPermission()
+            let status = await requestLocationAuthorizationAndWait()
+            return Self.isLocationAuthorized(status)
         case .automation, .automationCalendar, .automationMail, .automationMessages, .automationMusic, .notes,
             .maps:
             return await requestAutomationPermissionAndWait(permission)
@@ -521,20 +521,72 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
 
     // MARK: - Location Permission
 
+    /// Longest `requestLocationAuthorizationAndWait` waits for the user to
+    /// answer the system dialog. The dialog has no timeout of its own; this
+    /// only bounds a caller whose user walked away.
+    static let locationDialogTimeout: TimeInterval = 120
+
+    /// `.authorized` is macOS's legacy spelling of `.authorizedAlways`.
+    static func isLocationAuthorized(_ status: CLAuthorizationStatus) -> Bool {
+        status == .authorizedAlways || status == .authorized
+    }
+
+    /// Current Location authorization via the single shared manager (no
+    /// fresh `CLLocationManager()` — each one is a synchronous locationd
+    /// handshake on the calling thread).
+    var locationAuthorizationStatus: CLAuthorizationStatus {
+        if RuntimeEnvironment.isUnderTests { return .denied }
+        return locationManager.authorizationStatus
+    }
+
     private func checkLocationPermission() -> Bool {
-        let status = locationManager.authorizationStatus
-        return status == .authorizedAlways
+        Self.isLocationAuthorized(locationManager.authorizationStatus)
     }
 
     private func requestLocationPermission() {
         locationManager.requestAlwaysAuthorization()
     }
 
+    /// Pending `requestLocationAuthorizationAndWait` callers, resumed by
+    /// `locationManagerDidChangeAuthorization` once the status leaves
+    /// `.notDetermined` (or by their own timeout).
+    private var locationAuthorizationWaiters: [UUID: CheckedContinuation<CLAuthorizationStatus, Never>] = [:]
+
+    /// Show the Location permission dialog (when the status is still
+    /// `.notDetermined`) and wait for the user's answer instead of sampling
+    /// the status right away. Returns the status after the user responded,
+    /// or the current status when `timeout` elapsed with the dialog still
+    /// open. Already-decided statuses return immediately.
+    func requestLocationAuthorizationAndWait(timeout: TimeInterval = locationDialogTimeout) async -> CLAuthorizationStatus {
+        if RuntimeEnvironment.isUnderTests { return .denied }
+        let current = locationManager.authorizationStatus
+        guard current == .notDetermined else { return current }
+        let token = UUID()
+        let status: CLAuthorizationStatus = await withCheckedContinuation { continuation in
+            locationAuthorizationWaiters[token] = continuation
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(max(timeout, 0) * 1_000_000_000))
+                guard let self, let pending = self.locationAuthorizationWaiters.removeValue(forKey: token) else { return }
+                pending.resume(returning: self.locationManager.authorizationStatus)
+            }
+            requestLocationPermission()
+        }
+        setPermission(.location, isGranted: Self.isLocationAuthorized(status))
+        return status
+    }
+
+    private func resumeLocationWaiters(with status: CLAuthorizationStatus) {
+        guard status != .notDetermined, !locationAuthorizationWaiters.isEmpty else { return }
+        let pending = locationAuthorizationWaiters
+        locationAuthorizationWaiters.removeAll()
+        for continuation in pending.values { continuation.resume(returning: status) }
+    }
+
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         let status = manager.authorizationStatus
         Task { @MainActor in
-            let granted = status == .authorizedAlways
-            self.setPermission(.location, isGranted: granted)
+            self.setPermission(.location, isGranted: Self.isLocationAuthorized(status))
+            self.resumeLocationWaiters(with: status)
         }
     }
 

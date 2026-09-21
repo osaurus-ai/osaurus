@@ -402,11 +402,18 @@ public enum ToolEnvelope {
                     retryable: false
                 )
             case 7:  // missing system permissions
+                var metadata: [String: Any] = [:]
+                if let permission = nserr.userInfo[ToolRegistry.missingPermissionUserInfoKey] as? String {
+                    metadata["permission"] = permission
+                    metadata["system_settings_url"] =
+                        (nserr.userInfo[ToolRegistry.missingPermissionSettingsURLUserInfoKey] as? String) ?? ""
+                }
                 return failure(
                     kind: .permissionDenied,
                     message: nserr.localizedDescription,
                     tool: tool,
-                    retryable: false
+                    retryable: false,
+                    metadata: metadata.isEmpty ? nil : metadata
                 )
             default:
                 break

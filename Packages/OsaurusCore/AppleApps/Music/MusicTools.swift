@@ -46,7 +46,7 @@ final class MusicPlaybackTool: AppleToolBase, @unchecked Sendable {
                 ["action": AppleSchema.string("Playback command.", enum: MusicPlaybackAction.allCases.map(\.rawValue))],
                 required: ["action"]
             ),
-            isWrite: false
+            isWrite: true
         )
     }
     override func run(args: [String: Any]) async throws -> AppleToolPayload {
@@ -66,7 +66,7 @@ final class MusicSetVolumeTool: AppleToolBase, @unchecked Sendable {
             app: .music, name: "music_set_volume",
             description: "Set Music's own volume (0–100). This is the app volume, not the system volume.",
             parameters: AppleSchema.object(["level": AppleSchema.integer("Volume from 0 (mute) to 100.")], required: ["level"]),
-            isWrite: false
+            isWrite: true
         )
     }
     override func run(args: [String: Any]) async throws -> AppleToolPayload {
@@ -144,9 +144,9 @@ final class MusicPlayTool: AppleToolBase, @unchecked Sendable {
                 "track_id": AppleSchema.string("Track id from music_search."),
                 "playlist": AppleSchema.string("Playlist id or exact name from music_playlists."),
                 "query": AppleSchema.string("Free-text search; plays the first matching track."),
-                "shuffle": AppleSchema.boolean("Turn shuffle on/off before playing."),
+                "shuffle": AppleSchema.boolean("Turn shuffle on/off before playing. Omit to leave the user's current shuffle setting alone; this changes Music's own setting and stays in effect afterwards."),
             ]),
-            isWrite: false
+            isWrite: true
         )
     }
     override func run(args: [String: Any]) async throws -> AppleToolPayload {

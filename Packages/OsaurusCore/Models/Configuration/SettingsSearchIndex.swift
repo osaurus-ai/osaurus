@@ -1363,8 +1363,9 @@ public enum SettingsSearchIndex {
             keywords: [
                 "apple apps", "apple", "native apps", "mac apps", "built-in apps", "apple tools",
                 "calendar", "reminders", "contacts", "notes", "mail", "messages", "imessage",
-                "maps", "location", "weather", "music", "shortcuts", "apple_apps",
+                "maps", "location", "music", "shortcuts", "apple_apps",
             ],
+            subTab: "capabilities",
             disambiguation:
                 "Per-custom-agent groups in Abilities → Tools for the built-in Apple app tools (off by default, toggled per app). The Orchestrator never uses them directly; it enables them on a custom agent via osaurus_config capabilities.apple_apps.",
             declarativeSection: "agents"
@@ -1508,6 +1509,7 @@ public enum SettingsSearchIndex {
             section: "Abilities → Tools",
             title: app.displayName,
             keywords: appleAppKeywords(app),
+            subTab: "capabilities",
             disambiguation:
                 "Abilities → Tools group on a custom agent; the master checkbox (or any row switch) turns all \(app.displayName) tools on or off together (off by default). Not the \(app.displayName) plugin, which is built in now; not the macOS Permissions tab. Declarative: capabilities.apple_apps includes \"\(app.rawValue)\".",
             declarativeSection: "agents"
@@ -1525,7 +1527,6 @@ public enum SettingsSearchIndex {
         case .mail: words += ["email", "inbox", "mailbox", "compose", "reply", "apple mail"]
         case .messages: words += ["imessage", "sms", "text message", "chat.db", "conversations"]
         case .maps: words += ["maps & location", "location", "directions", "geocode", "eta", "places", "nearby", "current location"]
-        case .weather: words += ["forecast", "weatherkit", "temperature", "hourly", "daily", "conditions"]
         case .music: words += ["apple music", "now playing", "playlist", "play", "pause", "volume", "itunes"]
         case .shortcuts: words += ["shortcut", "run shortcut", "automation", "workflow"]
         }

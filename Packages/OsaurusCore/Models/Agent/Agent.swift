@@ -1184,7 +1184,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// nothing reads it, and writing follows the collection grant instead.
     public var knowledgeCuratorEnabled: Bool
     /// Per-agent opt-in for the built-in Apple app tools (Calendar,
-    /// Reminders, Contacts, Notes, Mail, Messages, Maps, Weather, Music,
+    /// Reminders, Contacts, Notes, Mail, Messages, Maps, Music,
     /// Shortcuts). Empty by default; each enabled app gates its
     /// `AppleApp.toolNames` into the model-visible schema. The Default agent
     /// ignores this (it never calls Apple tools directly).

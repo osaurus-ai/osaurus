@@ -27,9 +27,9 @@
 	<key>NSRemindersFullAccessUsageDescription</key>
 	<string>Osaurus reads, creates, and completes reminders only for agents you have given Reminders access to.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Osaurus uses your location for nearby places, directions, and weather only for agents you have given Maps &amp; Location access to.</string>
+	<string>Osaurus uses your location for nearby places and directions only for agents you have given Maps &amp; Location access to.</string>
 	<key>NSLocationUsageDescription</key>
-	<string>Osaurus uses your location for nearby places, directions, and weather only for agents you have given Maps &amp; Location access to.</string>
+	<string>Osaurus uses your location for nearby places and directions only for agents you have given Maps &amp; Location access to.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Osaurus uses the microphone for on-device voice transcription with FluidAudio.</string>
 	<key>NSScreenCaptureUsageDescription</key>

@@ -16,16 +16,6 @@
 	<true/>
 	<key>com.apple.security.personal-information.reminders</key>
 	<true/>
-	<!--
-	  WeatherKit (com.apple.developer.weatherkit) is a restricted entitlement:
-	  it must first be enabled on the Osaurus App ID in the Apple Developer
-	  portal and the Developer ID / development provisioning regenerated, or
-	  automatic signing fails. Until that is done the built-in weather_* tools
-	  return a typed `unavailable` error (see AppleApps/Weather/WeatherService).
-	  Add when the portal capability exists:
-	    <key>com.apple.developer.weatherkit</key>
-	    <true/>
-	-->
 	<key>com.apple.security.personal-information.location</key>
 	<true/>
 	<key>com.apple.security.device.audio-input</key>

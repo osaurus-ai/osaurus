@@ -142,20 +142,35 @@ final class MapKitMapsService: MapsServicing, @unchecked Sendable {
 
     // MARK: Current location
 
-    /// One-shot CLLocationManager wrapper (main-actor confined; CoreLocation
-    /// delivers on the thread that created the manager).
+    /// Process-wide one-shot locator. ONE `CLLocationManager` for the whole
+    /// app (each construction is a synchronous locationd XPC handshake on
+    /// the calling thread — building one per call on the main actor was an
+    /// app-hang risk), main-actor confined because CoreLocation delivers on
+    /// the thread that created the manager. Concurrent callers share the
+    /// in-flight fix instead of starting a second request.
     @MainActor
-    private final class OneShotLocator: NSObject, CLLocationManagerDelegate {
-        private let manager = CLLocationManager()
-        private var continuation: CheckedContinuation<CLLocation, Error>?
+    final class CurrentLocationProvider: NSObject, CLLocationManagerDelegate {
+        static let shared = CurrentLocationProvider()
+
+        private lazy var manager: CLLocationManager = {
+            let m = CLLocationManager()
+            m.delegate = self
+            m.desiredAccuracy = kCLLocationAccuracyHundredMeters
+            return m
+        }()
+        private var waiters: [UUID: CheckedContinuation<CLLocation, Error>] = [:]
         private var timeoutTask: Task<Void, Never>?
 
-        func locate(timeout: TimeInterval) async throws -> CLLocation {
-            manager.delegate = self
-            manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
-            let location: CLLocation = try await withCheckedThrowingContinuation { c in
-                self.continuation = c
-                self.timeoutTask = Task { @MainActor [weak self] in
+        /// Default budget for the fix itself (after authorization).
+        static let fixTimeout: TimeInterval = 20
+
+        func locate(timeout: TimeInterval = fixTimeout) async throws -> CLLocation {
+            let token = UUID()
+            return try await withCheckedThrowingContinuation { (c: CheckedContinuation<CLLocation, Error>) in
+                let isFirst = waiters.isEmpty
+                waiters[token] = c
+                guard isFirst else { return }
+                timeoutTask = Task { @MainActor [weak self] in
                     try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
                     guard !Task.isCancelled else { return }
                     self?.finish(
@@ -166,17 +181,16 @@ final class MapKitMapsService: MapsServicing, @unchecked Sendable {
                         )
                     )
                 }
-                self.manager.requestLocation()
+                manager.requestLocation()
             }
-            return location
         }
 
         private func finish(_ result: Result<CLLocation, Error>) {
             timeoutTask?.cancel()
             timeoutTask = nil
-            guard let c = continuation else { return }
-            continuation = nil
-            c.resume(with: result)
+            let pending = waiters
+            waiters.removeAll()
+            for c in pending.values { c.resume(with: result) }
         }
 
         nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
@@ -195,6 +209,10 @@ final class MapKitMapsService: MapsServicing, @unchecked Sendable {
             let mapped: AppleToolError
             if ns.domain == kCLErrorDomain, ns.code == CLError.denied.rawValue {
                 mapped = .permissionDenied(.location)
+            } else if ns.domain == kCLErrorDomain, ns.code == CLError.locationUnknown.rawValue {
+                // CoreLocation keeps trying after kCLErrorLocationUnknown;
+                // let the fix timeout decide.
+                return
             } else {
                 mapped = .unavailable("Location lookup failed: \(ns.localizedDescription)", retryable: true)
             }
@@ -202,38 +220,37 @@ final class MapKitMapsService: MapsServicing, @unchecked Sendable {
         }
     }
 
+    /// Authorization gate: an undecided status shows the system dialog and
+    /// WAITS for the user's answer (`SystemPermissionService` owns the
+    /// shared manager + delegate); a "denied" is only reported after the
+    /// user actually said no or walked away from the dialog.
     @MainActor
     private func ensureLocationAuthorized() async throws {
-        let status = CLLocationManager().authorizationStatus
-        switch status {
-        case .authorizedAlways, .authorized:
-            return
-        case .notDetermined:
-            let granted = await SystemPermissionService.shared.requestPermissionAndWait(.location)
-            // The delegate may deliver the grant a moment after the dialog closes.
-            if !granted {
-                for _ in 0 ..< 20 {
-                    try await Task.sleep(nanoseconds: 250_000_000)
-                    let s = CLLocationManager().authorizationStatus
-                    if s == .authorizedAlways || s == .authorized { return }
-                    if s == .denied || s == .restricted { break }
-                }
-                throw AppleToolError.permissionDenied(.location)
-            }
-        default:
-            throw AppleToolError.permissionDenied(.location)
+        let service = SystemPermissionService.shared
+        var status = service.locationAuthorizationStatus
+        if status == .notDetermined {
+            status = await service.requestLocationAuthorizationAndWait()
         }
+        if SystemPermissionService.isLocationAuthorized(status) { return }
+        if status == .notDetermined {
+            throw AppleToolError.permissionDenied(
+                .location,
+                detail: "The Location permission dialog was not answered within \(Int(SystemPermissionService.locationDialogTimeout))s. Ask the user to click Allow, then try again."
+            )
+        }
+        throw AppleToolError.permissionDenied(.location)
     }
 
     private func resolvedCurrentLocation() async throws -> CLLocation {
+        // `locationServicesEnabled()` can block briefly; keep it off the main
+        // actor (this method is not main-actor bound).
         guard CLLocationManager.locationServicesEnabled() else {
             throw AppleToolError.unavailable(
                 "Location Services are turned off in System Settings → Privacy & Security → Location Services.", retryable: false
             )
         }
         try await ensureLocationAuthorized()
-        let locator = await OneShotLocator()
-        return try await locator.locate(timeout: 20)
+        return try await CurrentLocationProvider.shared.locate()
     }
 
     func currentLocation() async throws -> CurrentLocationInfo {
@@ -310,7 +327,17 @@ final class MapKitMapsService: MapsServicing, @unchecked Sendable {
         let search = MKLocalSearch(request: request)
         do {
             let response = try await search.start()
-            return Array(response.mapItems.compactMap(Self.place(from:)).prefix(limit))
+            var places = response.mapItems.compactMap(Self.place(from:))
+            if let near {
+                // The region is authoritative (see above); order what came
+                // back by distance so "closest first" holds.
+                let center = CLLocation(latitude: near.center.latitude, longitude: near.center.longitude)
+                places.sort {
+                    CLLocation(latitude: $0.coordinate.latitude, longitude: $0.coordinate.longitude).distance(from: center)
+                        < CLLocation(latitude: $1.coordinate.latitude, longitude: $1.coordinate.longitude).distance(from: center)
+                }
+            }
+            return Array(places.prefix(limit))
         } catch {
             throw Self.mapSearchError(error, context: "Searching Maps for `\(query)`")
         }

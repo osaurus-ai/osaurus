@@ -64,7 +64,7 @@ final class NotesListTool: AppleToolBase, @unchecked Sendable {
             app: .notes, name: "notes_list",
             description: "List notes, newest modified first, optionally within one folder. Each row has a stable `id` for notes_read / notes_append / notes_open and a short text preview.",
             parameters: AppleSchema.object([
-                "folder": AppleSchema.string("Folder name to restrict to (from notes_folders). Omit for all folders."),
+                "folder": AppleSchema.string("Folder name or folder id (from notes_folders) to restrict to. Omit for all folders (Recently Deleted is never included)."),
                 "limit": AppleSchema.limit(default: Self.defaultLimit, max: 200),
             ]),
             isWrite: false
@@ -89,7 +89,7 @@ final class NotesSearchTool: AppleToolBase, @unchecked Sendable {
             parameters: AppleSchema.object(
                 [
                     "query": AppleSchema.string("Text to look for."),
-                    "folder": AppleSchema.string("Restrict to one folder name."),
+                    "folder": AppleSchema.string("Restrict to one folder (name or id from notes_folders)."),
                     "include_body": AppleSchema.boolean("Also match note body text (slower on large libraries; default true)."),
                     "limit": AppleSchema.limit(default: Self.defaultLimit, max: 200),
                 ],
@@ -128,7 +128,7 @@ final class NotesReadTool: AppleToolBase, @unchecked Sendable {
         self.service = service
         super.init(
             app: .notes, name: "notes_read",
-            description: "Read one note's full plain text by `id` (from notes_list / notes_search).",
+            description: "Read one note's full plain text by `id` (from notes_list / notes_search), including its attachment names.",
             parameters: AppleSchema.object(["id": AppleSchema.string("Note id.")], required: ["id"]),
             isWrite: false
         )
@@ -150,7 +150,7 @@ final class NotesCreateTool: AppleToolBase, @unchecked Sendable {
                 [
                     "title": AppleSchema.string("Note title (first line)."),
                     "body": AppleSchema.string("Plain-text body. Use newlines for paragraphs."),
-                    "folder": AppleSchema.string("Folder name; created when missing."),
+                    "folder": AppleSchema.string("Folder name (created when missing) or folder id from notes_folders."),
                 ],
                 required: ["title"]
             ),
@@ -172,7 +172,7 @@ final class NotesAppendTool: AppleToolBase, @unchecked Sendable {
         self.service = service
         super.init(
             app: .notes, name: "notes_append",
-            description: "Append plain text to the end of an existing note by `id`. Returns the updated note.",
+            description: "Append plain text to the end of an existing text-only note by `id`. Notes with attachments (images, files, drawings, tables) are refused because rewriting them would drop the attachments — use notes_create or notes_open instead. Returns the updated note.",
             parameters: AppleSchema.object(
                 [
                     "id": AppleSchema.string("Note id."),
@@ -197,9 +197,11 @@ final class NotesOpenTool: AppleToolBase, @unchecked Sendable {
         self.service = service
         super.init(
             app: .notes, name: "notes_open",
-            description: "Open a note in the Notes app by `id`.",
+            description: "Open a note in the Notes app by `id`. Brings Notes to the front, so ask before using it mid-task.",
             parameters: AppleSchema.object(["id": AppleSchema.string("Note id.")], required: ["id"]),
-            isWrite: false
+            // Not a data write, but it steals focus — gate it behind the
+            // same ask-first policy as writes.
+            isWrite: true
         )
     }
     override func run(args: [String: Any]) async throws -> AppleToolPayload {

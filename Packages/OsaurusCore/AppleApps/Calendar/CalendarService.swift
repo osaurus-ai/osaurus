@@ -54,6 +54,10 @@ struct CalendarEventInfo: Codable, Equatable, Sendable {
     let start: Date
     let end: Date
     let isAllDay: Bool
+    /// For all-day events: the inclusive first and last calendar day as bare
+    /// `YYYY-MM-DD` strings (EventKit stores all-day ends as the last day's
+    /// 23:59:59; `start`/`end` carry those raw instants). Nil otherwise.
+    let allDayDates: AppleDayRange?
     let location: String?
     let notes: String?
     let url: String?
@@ -102,6 +106,34 @@ struct CalendarEventPatch: Sendable {
     }
 }
 
+struct AppleDayRange: Codable, Equatable, Sendable {
+    let start: String
+    let end: String
+}
+
+/// Shared EventKit alarm helpers (Calendar + Reminders).
+enum AppleAlarms {
+    /// Longest relative alert EventKit/Calendar meaningfully honours; also
+    /// keeps `Int * 60` from trapping on absurd model output.
+    static let maxMinutesBefore = 4 * 7 * 24 * 60
+
+    /// Clamp a minutes-before value to `0...maxMinutesBefore`.
+    static func clampMinutes(_ minutes: Int) -> Int { max(0, min(maxMinutesBefore, minutes)) }
+
+    /// Relative-offset alarm `minutes` before the start (clamped).
+    static func relative(minutesBefore minutes: Int) -> EKAlarm {
+        EKAlarm(relativeOffset: -Double(clampMinutes(minutes)) * 60)
+    }
+
+    /// Absolute alarm `minutes` before `anchor` (clamped).
+    static func absolute(minutesBefore minutes: Int, of anchor: Date) -> EKAlarm {
+        EKAlarm(absoluteDate: anchor.addingTimeInterval(-Double(clampMinutes(minutes)) * 60))
+    }
+
+    /// Minutes-before values that were clamped, for a warning.
+    static func clamped(_ minutes: [Int]) -> [Int] { minutes.filter { clampMinutes($0) != $0 } }
+}
+
 /// Raw values match the tool-facing `span` enum so input and output agree.
 enum CalendarEditSpan: String, Sendable {
     case thisEvent = "this_event"
@@ -118,9 +150,18 @@ struct CalendarEventQuery: Sendable {
 
 // MARK: - Protocol
 
+/// `events(_:)` result: the matches plus the end actually searched (EventKit
+/// caps one predicate at four years; when the clamp applies the tool
+/// reports it instead of silently returning a shorter range).
+struct CalendarEventsResult: Sendable, Equatable {
+    let events: [CalendarEventInfo]
+    let effectiveEnd: Date
+    let endWasClamped: Bool
+}
+
 protocol CalendarServicing: Sendable {
     func calendars() async throws -> [CalendarInfo]
-    func events(_ query: CalendarEventQuery) async throws -> [CalendarEventInfo]
+    func events(_ query: CalendarEventQuery) async throws -> CalendarEventsResult
     func event(id: String, occurrenceStart: Date?) async throws -> CalendarEventInfo
     func create(_ draft: CalendarEventDraft) async throws -> CalendarEventInfo
     func update(id: String, occurrenceStart: Date?, span: CalendarEditSpan, patch: CalendarEventPatch)
@@ -131,22 +172,71 @@ protocol CalendarServicing: Sendable {
 // MARK: - EventKit implementation
 
 final class EventKitCalendarService: CalendarServicing, @unchecked Sendable {
-    /// Confined to `AppleServiceQueue`; the class is `@unchecked Sendable`
-    /// because every access happens on that serial queue. Created on first
-    /// use: `EKEventStore()` opens an XPC session to the calendar daemon,
-    /// which must not happen at tool registration (app launch / test boot).
-    nonisolated(unsafe) private lazy var store = EKEventStore()
+    /// Serial queue for this service (EventKit objects are not Sendable).
+    private let queue = AppleServiceQueue(label: "calendar")
+    /// Confined to `queue`; the class is `@unchecked Sendable` because every
+    /// access happens on that serial queue. Created on first use — after the
+    /// access check — because `EKEventStore()` opens an XPC session to the
+    /// calendar daemon, which must not happen at tool registration (app
+    /// launch / test boot) nor before the user has granted access. Reset
+    /// when the authorization status changes so a store created under one
+    /// grant never serves stale data under another.
+    nonisolated(unsafe) private var storeBox: EKEventStore?
+    nonisolated(unsafe) private var storeStatus: EKAuthorizationStatus?
+
+    private var store: EKEventStore {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        if let existing = storeBox, storeStatus == status { return existing }
+        storeBox?.reset()
+        let fresh = EKEventStore()
+        storeBox = fresh
+        storeStatus = status
+        return fresh
+    }
 
     private func requireAccess() throws {
         guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else {
-            throw AppleToolError.permissionDenied(.calendar)
+            throw AppleToolError.permissionDenied(
+                .calendar, detail: "Calendar needs Full Access (not Add Only) for these tools.")
+        }
+    }
+
+    /// Wrap an EventKit save/remove failure in a typed error. `EKError`
+    /// codes name the real cause (read-only calendar, inverted dates, …).
+    static func eventKitError(_ error: Error, verb: String, noun: String) -> AppleToolError {
+        let ns = error as NSError
+        guard ns.domain == EKErrorDomain, let code = EKError.Code(rawValue: ns.code) else {
+            return .execution("\(verb) refused: \(ns.localizedDescription)")
+        }
+        let detail = ns.localizedDescription
+        switch code {
+        case .calendarReadOnly, .calendarIsImmutable, .eventNotMutable, .calendarDoesNotAllowEvents,
+            .calendarDoesNotAllowReminders, .sourceDoesNotAllowEvents, .sourceDoesNotAllowReminders:
+            return .invalidArgs(
+                "The \(noun) is in a calendar that does not allow this change (\(detail)). Pick an editable calendar or list.",
+                field: "calendar")
+        case .noCalendar, .calendarHasNoSource:
+            return .invalidArgs("The \(noun) has no calendar; pass `calendar`/`list` with an id from the list tool.", field: "calendar")
+        case .datesInverted, .startDateTooFarInFuture, .startDateCollidesWithOtherOccurrence, .noStartDate, .noEndDate:
+            return .invalidArgs("\(noun.capitalized) dates are not valid: \(detail)", field: "start")
+        case .durationGreaterThanRecurrence, .alarmGreaterThanRecurrence, .alarmProximityNotSupported,
+            .recurringReminderRequiresDueDate, .priorityIsInvalid, .invalidSpan, .reminderAlarmContainsEmailOrUrl:
+            return .invalidArgs(detail)
+        case .invitesCannotBeMoved, .invalidInviteReplyCalendar:
+            return .invalidArgs("Invitations cannot be moved between calendars: \(detail)", field: "calendar")
+        case .eventStoreNotAuthorized:
+            return .permissionDenied(noun == "reminder" ? .reminders : .calendar, detail: detail)
+        case .objectBelongsToDifferentStore, .sourceMismatch:
+            return .execution("\(verb) refused (stale object; retry the call): \(detail)")
+        default:
+            return .execution("\(verb) refused: \(detail)")
         }
     }
 
     func calendars() async throws -> [CalendarInfo] {
-        try await AppleServiceQueue.run { [self] in
-            let store = self.store
+        try await queue.run { [self] in
             try self.requireAccess()
+            let store = self.store
             let defaultId = store.defaultCalendarForNewEvents?.calendarIdentifier
             return store.calendars(for: .event)
                 .map { Self.info($0, defaultId: defaultId) }
@@ -154,10 +244,10 @@ final class EventKitCalendarService: CalendarServicing, @unchecked Sendable {
         }
     }
 
-    func events(_ query: CalendarEventQuery) async throws -> [CalendarEventInfo] {
-        try await AppleServiceQueue.run { [self] in
-            let store = self.store
+    func events(_ query: CalendarEventQuery) async throws -> CalendarEventsResult {
+        try await queue.run { [self] in
             try self.requireAccess()
+            let store = self.store
             let calendars = try self.resolveCalendars(query.calendarIds)
             // EventKit caps a single predicate at four years.
             let maxEnd = Calendar.current.date(byAdding: .year, value: 4, to: query.start) ?? query.end
@@ -176,27 +266,30 @@ final class EventKitCalendarService: CalendarServicing, @unchecked Sendable {
                 }
             }
             events.sort { $0.startDate < $1.startDate }
-            return events.map(Self.info)
+            return CalendarEventsResult(events: events.map(Self.info), effectiveEnd: end, endWasClamped: end < query.end)
         }
     }
 
     func event(id: String, occurrenceStart: Date?) async throws -> CalendarEventInfo {
-        try await AppleServiceQueue.run {
+        try await queue.run {
             try self.requireAccess()
             return Self.info(try self.fetch(id: id, occurrenceStart: occurrenceStart))
         }
     }
 
     func create(_ draft: CalendarEventDraft) async throws -> CalendarEventInfo {
-        try await AppleServiceQueue.run { [self] in
-            let store = self.store
+        try await queue.run { [self] in
             try self.requireAccess()
+            let store = self.store
             let event = EKEvent(eventStore: store)
+            let writable = store.calendars(for: .event).filter(\.allowsContentModifications)
             if let calendarId = draft.calendarId {
                 event.calendar = try self.resolveCalendar(calendarId)
-            } else if let defaultCalendar = store.defaultCalendarForNewEvents {
+            } else if let defaultCalendar = store.defaultCalendarForNewEvents, defaultCalendar.allowsContentModifications {
                 event.calendar = defaultCalendar
-            } else if let first = store.calendars(for: .event).first(where: { $0.allowsContentModifications }) {
+            } else if let first = writable.first {
+                // The default calendar is read-only (e.g. a subscribed one):
+                // fall back to the first writable calendar.
                 event.calendar = first
             } else {
                 throw AppleToolError.unavailable("No writable calendar is available in Calendar.")
@@ -215,7 +308,7 @@ final class EventKitCalendarService: CalendarServicing, @unchecked Sendable {
             event.notes = draft.notes
             event.url = draft.url.flatMap(URL.init(string:))
             if let alarms = draft.alarmsMinutesBefore {
-                event.alarms = alarms.map { EKAlarm(relativeOffset: TimeInterval(-$0 * 60)) }
+                event.alarms = alarms.map(AppleAlarms.relative(minutesBefore:))
             }
             if let recurrence = draft.recurrence {
                 event.recurrenceRules = [try Self.rule(from: recurrence)]
@@ -231,7 +324,7 @@ final class EventKitCalendarService: CalendarServicing, @unchecked Sendable {
     func update(
         id: String, occurrenceStart: Date?, span: CalendarEditSpan, patch: CalendarEventPatch
     ) async throws -> CalendarEventInfo {
-        try await AppleServiceQueue.run {
+        try await queue.run {
             try self.requireAccess()
             let event = try self.fetch(id: id, occurrenceStart: occurrenceStart)
             guard event.calendar.allowsContentModifications else {
@@ -240,14 +333,34 @@ final class EventKitCalendarService: CalendarServicing, @unchecked Sendable {
                 )
             }
             if let title = patch.title, let title { event.title = title }
+            let wasAllDay = event.isAllDay
             if let isAllDay = patch.isAllDay { event.isAllDay = isAllDay }
             if let start = patch.start {
-                // Keep the duration when only the start moves.
-                let duration = event.endDate.timeIntervalSince(event.startDate)
-                event.startDate = start
-                if patch.end == nil { event.endDate = start.addingTimeInterval(duration) }
+                if event.isAllDay {
+                    // All-day duration is a whole number of calendar days, not
+                    // raw seconds (a 23h/25h DST day would otherwise shift the
+                    // end onto the wrong day).
+                    let cal = Calendar.current
+                    let days = max(0, cal.dateComponents([.day], from: cal.startOfDay(for: event.startDate), to: cal.startOfDay(for: event.endDate)).day ?? 0)
+                    event.startDate = start
+                    if patch.end == nil {
+                        event.endDate = cal.date(byAdding: .day, value: days, to: start) ?? start
+                    }
+                } else {
+                    // Keep the duration when only the start moves.
+                    let duration = event.endDate.timeIntervalSince(event.startDate)
+                    event.startDate = start
+                    if patch.end == nil { event.endDate = start.addingTimeInterval(duration) }
+                }
             }
             if let end = patch.end { event.endDate = end }
+            if event.isAllDay, patch.isAllDay == true || patch.start != nil || patch.end != nil || !wasAllDay {
+                // Normalize to EventKit's inclusive all-day convention
+                // (start at local midnight, end at the last day's 23:59:59).
+                let (s, e) = Self.normalizeAllDay(start: event.startDate, end: event.endDate)
+                event.startDate = s
+                event.endDate = e
+            }
             guard event.endDate >= event.startDate else {
                 throw AppleToolError.invalidArgs("`end` must not be before `start`.", field: "end")
             }
@@ -256,7 +369,7 @@ final class EventKitCalendarService: CalendarServicing, @unchecked Sendable {
             if let notes = patch.notes { event.notes = notes }
             if let url = patch.url { event.url = url.flatMap(URL.init(string:)) }
             if let alarms = patch.alarmsMinutesBefore {
-                event.alarms = alarms?.map { EKAlarm(relativeOffset: TimeInterval(-$0 * 60)) }
+                event.alarms = alarms?.map(AppleAlarms.relative(minutesBefore:))
             }
             if let recurrence = patch.recurrence {
                 event.recurrenceRules = try recurrence.map { [try Self.rule(from: $0)] }
@@ -270,15 +383,15 @@ final class EventKitCalendarService: CalendarServicing, @unchecked Sendable {
     }
 
     func delete(id: String, occurrenceStart: Date?, span: CalendarEditSpan) async throws -> CalendarEventInfo {
-        try await AppleServiceQueue.run { [self] in
-            let store = self.store
+        try await queue.run { [self] in
             try self.requireAccess()
+            let store = self.store
             let event = try self.fetch(id: id, occurrenceStart: occurrenceStart)
             let snapshot = Self.info(event)
             do {
                 try store.remove(event, span: span == .futureEvents ? .futureEvents : .thisEvent, commit: true)
             } catch {
-                throw AppleToolError.execution("Calendar refused to delete the event: \(error.localizedDescription)")
+                throw Self.eventKitError(error, verb: "Calendar delete", noun: "event")
             }
             return snapshot
         }
@@ -286,11 +399,27 @@ final class EventKitCalendarService: CalendarServicing, @unchecked Sendable {
 
     // MARK: Helpers (queue-confined)
 
+    /// EventKit's inclusive all-day convention: start at local midnight of
+    /// the first day, end at 23:59:59 of the last day. An `end` at exactly
+    /// midnight is read as an exclusive bound (the previous day is the last
+    /// day) so both "2026-09-19 → 2026-09-20T00:00" and "→ 2026-09-19T23:59:59"
+    /// describe a one-day event.
+    static func normalizeAllDay(start: Date, end: Date, calendar cal: Calendar = .current) -> (Date, Date) {
+        let s = cal.startOfDay(for: start)
+        var lastDayStart = cal.startOfDay(for: end)
+        if end == lastDayStart, lastDayStart > s {
+            lastDayStart = cal.date(byAdding: .day, value: -1, to: lastDayStart) ?? s
+        }
+        if lastDayStart < s { lastDayStart = s }
+        let nextMidnight = cal.date(byAdding: .day, value: 1, to: lastDayStart) ?? lastDayStart.addingTimeInterval(86400)
+        return (s, nextMidnight.addingTimeInterval(-1))
+    }
+
     private func save(_ event: EKEvent, span: EKSpan) throws {
         do {
             try store.save(event, span: span, commit: true)
         } catch {
-            throw AppleToolError.execution("Calendar refused to save the event: \(error.localizedDescription)")
+            throw Self.eventKitError(error, verb: "Calendar save", noun: "event")
         }
     }
 
@@ -299,7 +428,13 @@ final class EventKitCalendarService: CalendarServicing, @unchecked Sendable {
         if let byId = all.first(where: { $0.calendarIdentifier == idOrTitle }) { return byId }
         let matches = all.filter { $0.title.compare(idOrTitle, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }
         if matches.count == 1 { return matches[0] }
-        if matches.count > 1, let writable = matches.first(where: { $0.allowsContentModifications }) { return writable }
+        if matches.count > 1 {
+            let candidates = matches.map { "\($0.calendarIdentifier) (\($0.source?.title ?? "?")\($0.allowsContentModifications ? "" : ", read-only"))" }
+            throw AppleToolError.invalidArgs(
+                "`\(idOrTitle)` matches \(matches.count) calendars; pass one of these ids instead: \(candidates.joined(separator: "; ")).",
+                field: "calendar"
+            )
+        }
         throw AppleToolError.notFound(
             "No calendar with id or title `\(idOrTitle)`. Call `calendar_list` and pass one of its `id` values."
         )
@@ -359,6 +494,11 @@ final class EventKitCalendarService: CalendarServicing, @unchecked Sendable {
             start: event.startDate,
             end: event.endDate,
             isAllDay: event.isAllDay,
+            allDayDates: event.isAllDay
+                ? AppleDayRange(
+                    start: AppleDateParsing.formatDateOnly(event.startDate),
+                    end: AppleDateParsing.formatDateOnly(event.endDate))
+                : nil,
             location: event.location.flatMap { $0.isEmpty ? nil : $0 },
             notes: event.notes.flatMap { $0.isEmpty ? nil : $0 },
             url: event.url?.absoluteString,
@@ -383,7 +523,7 @@ final class EventKitCalendarService: CalendarServicing, @unchecked Sendable {
             isRecurring: event.hasRecurrenceRules,
             isDetached: event.isDetached,
             lastModified: event.lastModifiedDate,
-            openURL: "ical://ekevent/\(event.eventIdentifier ?? "")"
+            openURL: "ical://ekevent/\(AppleServiceSupport.pathEncoded(event.eventIdentifier ?? ""))"
         )
     }
 

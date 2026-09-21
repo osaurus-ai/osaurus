@@ -99,18 +99,32 @@ protocol RemindersServicing: Sendable {
 // MARK: - EventKit implementation
 
 final class EventKitRemindersService: RemindersServicing, @unchecked Sendable {
-    /// Confined to `AppleServiceQueue`; created on first use (see
-    /// `EventKitCalendarService.store`).
-    nonisolated(unsafe) private lazy var store = EKEventStore()
+    /// Serial queue for this service.
+    private let queue = AppleServiceQueue(label: "reminders")
+    /// Confined to `queue`; created on first use after the access check and
+    /// reset on authorization changes (see `EventKitCalendarService.store`).
+    nonisolated(unsafe) private var storeBox: EKEventStore?
+    nonisolated(unsafe) private var storeStatus: EKAuthorizationStatus?
+
+    private var store: EKEventStore {
+        let status = EKEventStore.authorizationStatus(for: .reminder)
+        if let existing = storeBox, storeStatus == status { return existing }
+        storeBox?.reset()
+        let fresh = EKEventStore()
+        storeBox = fresh
+        storeStatus = status
+        return fresh
+    }
 
     private func requireAccess() throws {
         guard EKEventStore.authorizationStatus(for: .reminder) == .fullAccess else {
-            throw AppleToolError.permissionDenied(.reminders)
+            throw AppleToolError.permissionDenied(
+                .reminders, detail: "Reminders needs Full Access for these tools.")
         }
     }
 
     func lists() async throws -> [ReminderListInfo] {
-        try await AppleServiceQueue.run { [self] in
+        try await queue.run { [self] in
             try self.requireAccess()
             let defaultId = self.store.defaultCalendarForNewReminders()?.calendarIdentifier
             return self.store.calendars(for: .reminder)
@@ -129,9 +143,10 @@ final class EventKitRemindersService: RemindersServicing, @unchecked Sendable {
     }
 
     func reminders(_ query: ReminderQuery) async throws -> [ReminderInfo] {
-        try requireAccess()
-        let all = try await fetchReminders(listIds: query.listIds)
+        let all = try await fetchReminders(query)
         var items = all
+        // The predicate already selects by status; keep the filter for the
+        // `.all` path and as a guard against stale completion flags.
         switch query.status {
         case .incomplete: items = items.filter { !$0.isCompleted }
         case .completed: items = items.filter { $0.isCompleted }
@@ -157,19 +172,19 @@ final class EventKitRemindersService: RemindersServicing, @unchecked Sendable {
     }
 
     func reminder(id: String) async throws -> ReminderInfo {
-        try await AppleServiceQueue.run { [self] in
+        try await queue.run { [self] in
             try self.requireAccess()
             return Self.info(try self.fetch(id: id))
         }
     }
 
     func create(_ draft: ReminderDraft) async throws -> ReminderInfo {
-        try await AppleServiceQueue.run { [self] in
+        try await queue.run { [self] in
             try self.requireAccess()
             let reminder = EKReminder(eventStore: self.store)
             if let listId = draft.listId {
                 reminder.calendar = try self.resolveList(listId)
-            } else if let defaultList = self.store.defaultCalendarForNewReminders() {
+            } else if let defaultList = self.store.defaultCalendarForNewReminders(), defaultList.allowsContentModifications {
                 reminder.calendar = defaultList
             } else if let first = self.store.calendars(for: .reminder).first(where: { $0.allowsContentModifications }) {
                 reminder.calendar = first
@@ -186,11 +201,14 @@ final class EventKitRemindersService: RemindersServicing, @unchecked Sendable {
             if let priority = draft.priority { reminder.priority = priority }
             var alarms: [EKAlarm] = []
             if let minutes = draft.alarmsMinutesBefore, let due = draft.due {
-                alarms += minutes.map { EKAlarm(absoluteDate: due.date.addingTimeInterval(TimeInterval(-$0 * 60))) }
+                alarms += minutes.map { AppleAlarms.absolute(minutesBefore: $0, of: due.date) }
             }
             if let at = draft.alarmAt { alarms.append(EKAlarm(absoluteDate: at)) }
             if !alarms.isEmpty { reminder.alarms = alarms }
             if let recurrence = draft.recurrence {
+                guard draft.due != nil else {
+                    throw AppleToolError.invalidArgs("A repeating reminder needs a `due` date.", field: "recurrence")
+                }
                 reminder.recurrenceRules = [try EventKitCalendarService.rule(from: recurrence)]
             }
             try self.save(reminder)
@@ -199,14 +217,24 @@ final class EventKitRemindersService: RemindersServicing, @unchecked Sendable {
     }
 
     func update(id: String, patch: ReminderPatch) async throws -> ReminderInfo {
-        try await AppleServiceQueue.run { [self] in
+        try await queue.run { [self] in
             try self.requireAccess()
             let reminder = try self.fetch(id: id)
             if let title = patch.title { reminder.title = title }
             if let listId = patch.listId { reminder.calendar = try self.resolveList(listId) }
             if let notes = patch.notes { reminder.notes = notes }
             if let url = patch.url { reminder.url = url.flatMap(URL.init(string:)) }
+            // Alarms are absolute dates derived from `due`; remember their
+            // offsets so a due-date change re-derives them instead of
+            // leaving alerts pinned to the old time.
+            let previousDue = AppleDateParsing.date(from: reminder.dueDateComponents)
+            let previousOffsets: [Int] = (reminder.alarms ?? []).compactMap { alarm in
+                guard let previousDue, let at = alarm.absoluteDate else { return nil }
+                return Int((previousDue.timeIntervalSince(at) / 60).rounded())
+            }
+            var dueChanged = false
             if let due = patch.due {
+                dueChanged = true
                 if let due {
                     reminder.dueDateComponents = Self.components(for: due)
                     reminder.startDateComponents = reminder.dueDateComponents
@@ -216,14 +244,29 @@ final class EventKitRemindersService: RemindersServicing, @unchecked Sendable {
                 }
             }
             if let priority = patch.priority { reminder.priority = priority }
+            let newDue = AppleDateParsing.date(from: reminder.dueDateComponents)
             if let alarms = patch.alarmsMinutesBefore {
-                if let alarms, let due = AppleDateParsing.date(from: reminder.dueDateComponents) {
-                    reminder.alarms = alarms.map { EKAlarm(absoluteDate: due.addingTimeInterval(TimeInterval(-$0 * 60))) }
+                if let alarms, !alarms.isEmpty {
+                    guard let newDue else {
+                        throw AppleToolError.invalidArgs(
+                            "`alarms_minutes_before` needs a `due` date to count back from (this reminder has none).",
+                            field: "alarms_minutes_before")
+                    }
+                    reminder.alarms = alarms.map { AppleAlarms.absolute(minutesBefore: $0, of: newDue) }
+                } else {
+                    reminder.alarms = nil
+                }
+            } else if dueChanged, !previousOffsets.isEmpty {
+                if let newDue {
+                    reminder.alarms = previousOffsets.map { AppleAlarms.absolute(minutesBefore: $0, of: newDue) }
                 } else {
                     reminder.alarms = nil
                 }
             }
             if let recurrence = patch.recurrence {
+                if recurrence != nil, newDue == nil {
+                    throw AppleToolError.invalidArgs("A repeating reminder needs a `due` date.", field: "recurrence")
+                }
                 reminder.recurrenceRules = try recurrence.map { [try EventKitCalendarService.rule(from: $0)] }
             }
             if let completed = patch.isCompleted {
@@ -236,14 +279,14 @@ final class EventKitRemindersService: RemindersServicing, @unchecked Sendable {
     }
 
     func delete(id: String) async throws -> ReminderInfo {
-        try await AppleServiceQueue.run { [self] in
+        try await queue.run { [self] in
             try self.requireAccess()
             let reminder = try self.fetch(id: id)
             let snapshot = Self.info(reminder)
             do {
                 try self.store.remove(reminder, commit: true)
             } catch {
-                throw AppleToolError.execution("Reminders refused to delete the reminder: \(error.localizedDescription)")
+                throw EventKitCalendarService.eventKitError(error, verb: "Reminders delete", noun: "reminder")
             }
             return snapshot
         }
@@ -251,19 +294,29 @@ final class EventKitRemindersService: RemindersServicing, @unchecked Sendable {
 
     // MARK: Helpers
 
-    /// `fetchReminders(matching:)` is callback-based; bridge it and map on
-    /// the callback thread before crossing back into async land.
-    private func fetchReminders(listIds: [String]?) async throws -> [ReminderInfo] {
-        let store = self.store
-        return try await withCheckedThrowingContinuation { continuation in
-            do {
-                let lists = try self.resolveLists(listIds)
-                let predicate = store.predicateForReminders(in: lists)
-                _ = store.fetchReminders(matching: predicate) { reminders in
-                    continuation.resume(returning: (reminders ?? []).map(Self.info))
-                }
-            } catch {
-                continuation.resume(throwing: error)
+    /// `fetchReminders(matching:)` is callback-based. Everything that touches
+    /// the store — access check, list resolution, predicate construction —
+    /// runs on the service queue; the callback maps to value types before
+    /// crossing back into async land. The predicate is status-based so
+    /// EventKit does the completed/incomplete split instead of a full scan.
+    private func fetchReminders(_ query: ReminderQuery) async throws -> [ReminderInfo] {
+        try await queue.bridge { [self] complete in
+            try self.requireAccess()
+            let store = self.store
+            let lists = try self.resolveLists(query.listIds)
+            let predicate: NSPredicate
+            switch query.status {
+            case .incomplete:
+                predicate = store.predicateForIncompleteReminders(
+                    withDueDateStarting: query.dueAfter, ending: query.dueBefore, calendars: lists)
+            case .completed:
+                predicate = store.predicateForCompletedReminders(
+                    withCompletionDateStarting: nil, ending: nil, calendars: lists)
+            case .all:
+                predicate = store.predicateForReminders(in: lists)
+            }
+            _ = store.fetchReminders(matching: predicate) { reminders in
+                complete(.success((reminders ?? []).map(Self.info)))
             }
         }
     }
@@ -272,7 +325,7 @@ final class EventKitRemindersService: RemindersServicing, @unchecked Sendable {
         do {
             try store.save(reminder, commit: true)
         } catch {
-            throw AppleToolError.execution("Reminders refused to save the reminder: \(error.localizedDescription)")
+            throw EventKitCalendarService.eventKitError(error, verb: "Reminders save", noun: "reminder")
         }
     }
 
@@ -292,7 +345,13 @@ final class EventKitRemindersService: RemindersServicing, @unchecked Sendable {
             $0.title.compare(idOrTitle, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
         }
         if matches.count == 1 { return matches[0] }
-        if matches.count > 1, let writable = matches.first(where: { $0.allowsContentModifications }) { return writable }
+        if matches.count > 1 {
+            let candidates = matches.map { "\($0.calendarIdentifier) (\($0.source?.title ?? "?")\($0.allowsContentModifications ? "" : ", read-only"))" }
+            throw AppleToolError.invalidArgs(
+                "`\(idOrTitle)` matches \(matches.count) lists; pass one of these ids instead: \(candidates.joined(separator: "; ")).",
+                field: "list"
+            )
+        }
         throw AppleToolError.notFound(
             "No reminders list with id or title `\(idOrTitle)`. Call `reminders_lists` and pass one of its `id` values."
         )
@@ -341,7 +400,7 @@ final class EventKitRemindersService: RemindersServicing, @unchecked Sendable {
             },
             recurrence: reminder.recurrenceRules?.first.map(EventKitCalendarService.recurrence),
             lastModified: reminder.lastModifiedDate,
-            openURL: "x-apple-reminderkit://REMCDReminder/\(reminder.calendarItemIdentifier)"
+            openURL: "x-apple-reminderkit://REMCDReminder/\(AppleServiceSupport.pathEncoded(reminder.calendarItemIdentifier))"
         )
     }
 

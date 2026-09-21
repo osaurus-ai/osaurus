@@ -320,7 +320,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Osaurus uses your location for nearby places, directions, and weather only for agents you have given Maps & Location access to."
+            "value" : "Osaurus uses your location for nearby places and directions only for agents you have given Maps & Location access to."
           }
         },
         "ko" : {
@@ -362,7 +362,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Osaurus uses your location for nearby places, directions, and weather only for agents you have given Maps & Location access to."
+            "value" : "Osaurus uses your location for nearby places and directions only for agents you have given Maps & Location access to."
           }
         },
         "ko" : {

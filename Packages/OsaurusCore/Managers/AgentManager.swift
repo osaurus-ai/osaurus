@@ -1484,7 +1484,11 @@ extension AgentManager {
     }
 
     /// Update the agent's enabled tool allowlist (used by the capability picker).
+    /// Built-in Apple tool names are never stored here: their only switch is
+    /// `settings.enabledAppleApps` (per app), so a stale allowlist entry can
+    /// never disagree with the Abilities toggle.
     public func updateEnabledToolNames(_ names: [String], for agentId: UUID) {
+        let names = Self.strippingAppleToolNames(names)
         if agentId == Agent.defaultId {
             var config = DefaultAgentConfigurationStore.load()
             config.manualToolNames = names
@@ -1497,16 +1501,25 @@ extension AgentManager {
         update(agent)
     }
 
+    /// Drop built-in Apple tool names from a manual allowlist.
+    static func strippingAppleToolNames(_ names: [String]) -> [String] {
+        names.filter { !AppleApp.allToolNames.contains($0) }
+    }
+
     /// Replace the built-in Apple app families a custom agent may use. Written
     /// by the Tools picker's Apple groups (per app, never per tool). The
     /// Default agent never carries Apple tools, so it is refused here like
-    /// every other built-in.
+    /// every other built-in. Any Apple tool name that leaked into the manual
+    /// allowlist (older builds, hand-edited config) is removed at the same
+    /// time so the toggle stays the single source of truth.
     public func updateEnabledAppleApps(_ apps: Set<AppleApp>, for agentId: UUID) {
         guard agentId != Agent.defaultId,
-            var agent = agent(for: agentId), !agent.isBuiltIn,
-            agent.settings.enabledAppleApps != apps
+            var agent = agent(for: agentId), !agent.isBuiltIn
         else { return }
+        let cleaned = agent.manualToolNames.map(Self.strippingAppleToolNames)
+        guard agent.settings.enabledAppleApps != apps || cleaned != agent.manualToolNames else { return }
         agent.settings.enabledAppleApps = apps
+        agent.manualToolNames = cleaned
         update(agent)
     }
 

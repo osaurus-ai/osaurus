@@ -45,11 +45,8 @@ enum AppleDateParsing {
         }
 
         // Full ISO8601 with offset / Z (with or without fractional seconds).
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = iso.date(from: s) { return AppleParsedDate(date: d, isDateOnly: false) }
-        iso.formatOptions = [.withInternetDateTime]
-        if let d = iso.date(from: s) { return AppleParsedDate(date: d, isDateOnly: false) }
+        if let d = isoFractional.date(from: s) { return AppleParsedDate(date: d, isDateOnly: false) }
+        if let d = isoPlain.date(from: s) { return AppleParsedDate(date: d, isDateOnly: false) }
 
         // Local-time shapes without an offset.
         let localFormats = [
@@ -59,13 +56,12 @@ enum AppleDateParsing {
             "yyyy-MM-dd HH:mm:ss",
             "yyyy-MM-dd HH:mm",
         ]
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "en_US_POSIX")
-        fmt.calendar = calendar
-        fmt.timeZone = calendar.timeZone
         for pattern in localFormats {
-            fmt.dateFormat = pattern
-            if let d = fmt.date(from: s) { return AppleParsedDate(date: d, isDateOnly: false) }
+            // Non-lenient: `2026-02-31 10:00` is rejected instead of rolling
+            // over into March.
+            if let d = formatter(pattern, calendar: calendar).date(from: s) {
+                return AppleParsedDate(date: d, isDateOnly: false)
+            }
         }
 
         // Offset without colon (`2026-09-19T14:30:00-0700`) or short offsets.
@@ -76,8 +72,9 @@ enum AppleDateParsing {
             "yyyy-MM-dd HH:mmZ",
         ]
         for pattern in offsetFormats {
-            fmt.dateFormat = pattern
-            if let d = fmt.date(from: s) { return AppleParsedDate(date: d, isDateOnly: false) }
+            if let d = formatter(pattern, calendar: calendar).date(from: s) {
+                return AppleParsedDate(date: d, isDateOnly: false)
+            }
         }
 
         // Unix seconds (a number) — some models fall back to epochs.
@@ -102,7 +99,51 @@ enum AppleDateParsing {
         comps.hour = 0
         comps.minute = 0
         comps.second = 0
-        return calendar.date(from: comps)
+        // `Calendar.date(from:)` rolls an invalid day over into the next
+        // month (`2026-02-31` → Mar 3). Reject instead: a model that asked for
+        // the 31st of February should hear `invalid_args`, not get a silent
+        // date in March.
+        guard let date = calendar.date(from: comps) else { return nil }
+        let back = calendar.dateComponents([.year, .month, .day], from: date)
+        guard back.year == y, back.month == m, back.day == d else { return nil }
+        return date
+    }
+
+    // MARK: - Formatter cache
+
+    /// `DateFormatter` construction is expensive (ICU tables) and the Apple
+    /// tools format hundreds of dates per listing. Formatters are immutable
+    /// after creation and safe to share across threads, so they are cached
+    /// per (pattern, calendar, time zone).
+    private static let cacheLock = NSLock()
+    nonisolated(unsafe) private static var formatterCache: [String: DateFormatter] = [:]
+
+    nonisolated(unsafe) private static let isoFractional: ISO8601DateFormatter = {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return iso
+    }()
+
+    nonisolated(unsafe) private static let isoPlain: ISO8601DateFormatter = {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime]
+        return iso
+    }()
+
+    private static func formatter(_ pattern: String, calendar: Calendar, timeZone: TimeZone? = nil) -> DateFormatter {
+        let tz = timeZone ?? calendar.timeZone
+        let key = "\(pattern)|\(calendar.identifier)|\(tz.identifier)"
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        if let cached = formatterCache[key] { return cached }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = calendar
+        f.timeZone = tz
+        f.isLenient = false
+        f.dateFormat = pattern
+        formatterCache[key] = f
+        return f
     }
 
     // MARK: - Formatting
@@ -112,11 +153,7 @@ enum AppleDateParsing {
     /// `DateFormatter`'s `XXXXX` emit `Z` when the offset is zero, which
     /// the contract forbids — so the offset is written by hand.
     static func format(_ date: Date, timeZone: TimeZone = .current) -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.calendar = Calendar(identifier: .gregorian)
-        f.timeZone = timeZone
-        f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        let f = formatter("yyyy-MM-dd'T'HH:mm:ss", calendar: Calendar(identifier: .gregorian), timeZone: timeZone)
         let body = f.string(from: date)
         let seconds = timeZone.secondsFromGMT(for: date)
         let sign = seconds >= 0 ? "+" : "-"
@@ -128,12 +165,7 @@ enum AppleDateParsing {
 
     /// `yyyy-MM-dd` in the local calendar (for all-day events / due dates).
     static func formatDateOnly(_ date: Date, calendar: Calendar = .current) -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.calendar = calendar
-        f.timeZone = calendar.timeZone
-        f.dateFormat = "yyyy-MM-dd"
-        return f.string(from: date)
+        formatter("yyyy-MM-dd", calendar: calendar).string(from: date)
     }
 
     /// Optional-friendly formatter.

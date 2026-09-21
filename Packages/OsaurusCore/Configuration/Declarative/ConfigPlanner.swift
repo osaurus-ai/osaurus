@@ -35,6 +35,24 @@ enum ConfigRisk {
     static func browserUse(_ agent: String) -> String {
         "Gives agent `\(agent)` browser automation."
     }
+    /// Apple apps whose tools can act on the user's behalf outside Osaurus
+    /// (send mail / iMessages, run arbitrary Shortcuts). Reads and the
+    /// organiser apps stay risk-free; the model still gets a per-call
+    /// approval prompt for each send.
+    static let riskyAppleApps: Set<AppleApp> = [.mail, .messages, .shortcuts]
+    static func appleApp(_ agent: String, _ app: AppleApp) -> String {
+        switch app {
+        case .mail: return "Lets agent `\(agent)` read and send email as the user (Mail)."
+        case .messages: return "Lets agent `\(agent)` read and send iMessages/SMS as the user (Messages)."
+        case .shortcuts: return "Lets agent `\(agent)` run the user's Shortcuts (arbitrary automations)."
+        default: return "Gives agent `\(agent)` access to \(app.displayName)."
+        }
+    }
+    /// Risk lines for the Apple apps newly turned on (present in `desired`,
+    /// absent from `current`) that are in `riskyAppleApps`.
+    static func appleAppRisks(_ agent: String, current: Set<AppleApp>, desired: Set<AppleApp>) -> [String] {
+        AppleApp.sorted(desired.subtracting(current).intersection(riskyAppleApps)).map { appleApp(agent, $0) }
+    }
     static func relayEnabled(_ agent: String) -> String {
         "Exposes agent `\(agent)` through the relay tunnel (reachable from outside this Mac)."
     }
@@ -1149,6 +1167,7 @@ enum ConfigPlanner {
                     if let apps = Self.appleApps(from: caps), !apps.isEmpty {
                         changes.append(
                             "apple_apps: enable " + AppleApp.sorted(apps).map(\.displayName).joined(separator: ", "))
+                        risks.append(contentsOf: ConfigRisk.appleAppRisks(entry.name, current: [], desired: apps))
                     }
                 }
                 actions.append(
@@ -1221,6 +1240,7 @@ enum ConfigPlanner {
             let current = agent.settings.enabledAppleApps
             if desiredApps != current {
                 changes.append(contentsOf: appleAppsChangeLines(current: current, desired: desiredApps))
+                risks.append(contentsOf: ConfigRisk.appleAppRisks(agent.name, current: current, desired: desiredApps))
             }
         }
         if caps.computerUseEnabled == true && !agent.settings.computerUseEnabled {

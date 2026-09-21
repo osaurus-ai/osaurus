@@ -21,7 +21,6 @@ enum AppleAppToolCatalog {
         tools += MailToolFactory.makeTools()
         tools += MessagesToolFactory.makeTools()
         tools += MapsToolFactory.makeTools()
-        tools += WeatherToolFactory.makeTools()
         tools += MusicToolFactory.makeTools()
         tools += ShortcutsToolFactory.makeTools()
         return tools

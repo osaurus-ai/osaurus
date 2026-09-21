@@ -1008,13 +1008,16 @@ public enum SystemPromptTemplates {
     public static func appleAppsGuidance(apps: [AppleApp]) -> String {
         guard !apps.isEmpty else { return "" }
         let names = apps.map(\.displayName).joined(separator: ", ")
+        // Tool-name prefixes come from the real tool names, not the app raw
+        // value, so Maps & Location renders `location_*` as well as `maps_*`.
+        let prefixes = appleToolPrefixes(for: apps).map { "`\($0)_*`" }.joined(separator: ", ")
         var lines: [String] = [
             "## Apple apps",
             "",
-            "- You can work directly with the user's \(names) through the `\(apps.map(\.rawValue).joined(separator: "_*`, `"))_*` tools. Use them instead of saying you cannot access these apps.",
+            "- You can work directly with the user's \(names) through the \(prefixes) tools. Use them instead of saying you cannot access these apps.",
             "- Call `get_current_time` before resolving relative dates (\"tomorrow\", \"next Monday\", \"this week\"); pass dates as ISO 8601 with the local offset. A bare `YYYY-MM-DD` means local midnight and an end date is inclusive.",
             "- Read before you write: look the item up first (its `id`, list, calendar, or mailbox) and reuse the returned identifiers instead of guessing names.",
-            "- Creating or updating pauses for the user to approve; sending or deleting always does. State exactly what you will change and let that gate handle confirmation — do not ask for permission yourself first.",
+            "- Creating or updating pauses for the user to approve unless they allowed it for this run; sending a message or email and deleting show an approval card every single time and cannot be pre-approved. State exactly what you will change and let that gate handle confirmation — do not ask for permission yourself first.",
             "- After a change, report back the exact title, date/time, recipient, or list the tool returned so the user can verify it.",
             "- If a tool returns `permission_denied`, tell the user which macOS permission to grant (the message names the System Settings pane) and stop; do not retry in a loop.",
         ]
@@ -1039,6 +1042,20 @@ public enum SystemPromptTemplates {
             )
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// Distinct `<prefix>` values of `<prefix>_<verb>` across the apps' tool
+    /// names, in catalog order (`location`, `maps`, …).
+    static func appleToolPrefixes(for apps: [AppleApp]) -> [String] {
+        var seen: Set<String> = []
+        var out: [String] = []
+        for app in apps {
+            for name in app.toolNames {
+                let prefix = name.split(separator: "_", maxSplits: 1).first.map(String.init) ?? name
+                if seen.insert(prefix).inserted { out.append(prefix) }
+            }
+        }
+        return out
     }
 
     // MARK: - Knowledge

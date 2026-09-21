@@ -996,18 +996,24 @@ struct AgentCapabilityManagerView: View {
         commit(nextTools: next)
     }
 
-    /// "Permission needed" badge: re-ask macOS for the promptable grants;
-    /// when only manual grants remain (Full Disk Access, Automation that
-    /// was denied) open System Settings on the first one.
+    /// "Permission needed" badge: re-ask macOS for the promptable grants,
+    /// then deep-link System Settings for whatever is still missing after
+    /// the probes — a denied Automation grant never re-prompts (the probe
+    /// just fails), and Full Disk Access is manual-only, so both need the
+    /// pane opened in the same tap or the badge is a dead end.
     private func handleGroupStatusTap(_ groupId: String) {
         guard let app = CapabilitySource.appleApp(fromGroupId: groupId) else { return }
         let missing = app.systemPermissions.filter { !permissionService.cachedIsGranted($0) }
         guard !missing.isEmpty else { return }
-        if missing.contains(where: { !Self.isManualOnlyPermission($0) }) {
-            requestAppleAppPermissions(app)
-        } else if let first = missing.first(where: { $0.systemSettingsURL != nil }) {
-            permissionService.openSystemSettings(for: first)
-        }
+        requestAppleAppPermissions(app, openSettingsForRemaining: true)
+    }
+
+    /// System Settings pane to open for the grants still missing after the
+    /// promptable requests ran: Full Disk Access first (it is never
+    /// promptable), then the first denied Automation / other grant.
+    static func settingsTarget(forStillMissing missing: [SystemPermission]) -> SystemPermission? {
+        if missing.contains(.disk) { return .disk }
+        return missing.first { $0.systemSettingsURL != nil }
     }
 
     // MARK: - Apple apps
@@ -1028,9 +1034,10 @@ struct AgentCapabilityManagerView: View {
         case .draft(_, _, let appleApps):
             appleApps.wrappedValue = next
         }
-        if enabled, case .live = source {
-            requestAppleAppPermissions(app)
-        }
+        // macOS grants are process-wide, not per agent, so the Create Agent
+        // draft asks right away too — otherwise the guide's "turning an app on
+        // asks macOS" promise held only for saved agents.
+        if enabled { requestAppleAppPermissions(app) }
     }
 
     /// Grants without a system dialog; the only path is System Settings.
@@ -1041,7 +1048,12 @@ struct AgentCapabilityManagerView: View {
     /// Ask macOS for every permission the app needs that is not yet granted.
     /// Sequential so two TCC dialogs never stack; automation grants are
     /// probed via the background pre-launch path (no focus steal).
-    private func requestAppleAppPermissions(_ app: AppleApp) {
+    ///
+    /// `openSettingsForRemaining` (the badge tap) opens the System Settings
+    /// pane for the first grant still missing once the probes finish; the
+    /// toggle-on path leaves it `false` so flipping a switch never yanks the
+    /// user into System Settings.
+    private func requestAppleAppPermissions(_ app: AppleApp, openSettingsForRemaining: Bool = false) {
         let missing = app.systemPermissions.filter { !permissionService.cachedIsGranted($0) }
         guard !missing.isEmpty, !appleAppPermissionRequests.contains(app) else { return }
         appleAppPermissionRequests.insert(app)
@@ -1051,6 +1063,11 @@ struct AgentCapabilityManagerView: View {
                 _ = await permissionService.requestPermissionAndWait(permission)
             }
             permissionService.refreshAllPermissions()
+            guard openSettingsForRemaining else { return }
+            let stillMissing = app.systemPermissions.filter { !permissionService.cachedIsGranted($0) }
+            if let target = Self.settingsTarget(forStillMissing: stillMissing) {
+                permissionService.openSystemSettings(for: target)
+            }
         }
     }
 

@@ -7,8 +7,9 @@
 //   * OFF by default: with `enabledAppleApps` empty no Apple tool reaches
 //     the schema (auto and manual mode).
 //   * Per-app: enabling Calendar exposes exactly the calendar_* family.
-//   * Manual-pick carve-out: a ticked manual name survives the strip on a
-//     custom agent (same rule as the Web Search gate).
+//   * Authoritative OFF: a ticked manual name or a session
+//     `capabilities_load` does NOT resurrect a tool of an app that is off —
+//     the Abilities toggle is the only switch (unlike the Web Search gate).
 //   * The Default agent NEVER carries an Apple tool — not via the snapshot
 //     flag, not via a manual pick, not via `additionalToolNames`.
 //   * The Apple guidance block renders only when an Apple tool resolved.
@@ -67,18 +68,22 @@ struct AppleAppsComposerGatingTests {
         #expect(!two.contains("calendar_events"))
     }
 
-    @Test("a ticked manual name survives the strip on a custom agent")
-    func manualPickCarveOut() {
-        let resolved = names(makeSnapshot(toolMode: .manual, manualToolNames: ["notes_read"]))
-        #expect(resolved.contains("notes_read"))
-        #expect(!resolved.contains("notes_create"), "only the ticked name is kept, not the whole family")
+    @Test("a ticked manual name does NOT resurrect a tool of an app that is off (auto and manual)")
+    func manualPickIsNotABypass() {
+        let manual = names(makeSnapshot(toolMode: .manual, manualToolNames: ["notes_read", "web_search"]))
+        #expect(!manual.contains("notes_read"), "stale manual name kept notes_read alive with Notes off")
+        // The gate is per app: enabling Notes exposes the family regardless
+        // of the manual list.
+        let on = names(makeSnapshot(toolMode: .manual, manualToolNames: ["web_search"], enabledAppleApps: [.notes]))
+        #expect(AppleApp.notes.toolNames.isSubset(of: on))
     }
 
-    @Test("a session capabilities_load keeps an Apple tool on a custom agent")
-    func additionalNamesCarveOut() {
+    @Test("a session capabilities_load does NOT resurrect a tool of an app that is off")
+    func additionalNamesIsNotABypass() {
         let resolved = names(makeSnapshot(), additional: ["mail_list"])
-        #expect(resolved.contains("mail_list"))
-        #expect(!resolved.contains("mail_compose"))
+        #expect(!resolved.contains("mail_list"))
+        let on = names(makeSnapshot(enabledAppleApps: [.mail]), additional: ["mail_list"])
+        #expect(on.contains("mail_list"))
     }
 
     @Test("the Default agent never carries an Apple tool, even with every bypass tried")
@@ -122,11 +127,11 @@ struct AppleAppsComposerGatingTests {
                 name: "Apple Snapshot Probe \(UUID().uuidString.prefix(6))",
                 agentAddress: "test-apple-snapshot-\(UUID().uuidString)"
             )
-            agent.settings.enabledAppleApps = [.contacts, .weather]
+            agent.settings.enabledAppleApps = [.contacts, .maps]
             manager.add(agent)
 
             let caps = manager.effectiveCapabilities(for: agent.id)
-            #expect(caps.enabledAppleApps == [.contacts, .weather])
+            #expect(caps.enabledAppleApps == [.contacts, .maps])
             #expect(manager.effectiveCapabilities(for: Agent.defaultId).enabledAppleApps.isEmpty)
             _ = await manager.delete(id: agent.id)
         }

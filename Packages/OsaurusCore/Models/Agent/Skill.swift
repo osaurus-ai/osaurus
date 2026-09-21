@@ -255,7 +255,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     - **Mail**: `mail_list`, `mail_read`, `mail_search`, `mail_compose`, `mail_reply`
                     - **Messages**: `messages_conversations`, `messages_read`, `messages_unread`, `messages_send`
 
-                    These are built into Osaurus but OFF until the app is enabled for this agent. If a tool is missing, use `capabilities_discover` to check what is available, and tell the user to turn the app on for this agent under Management → Agents → this agent → Abilities → Tools (each Apple app is a group there; or ask the Orchestrator to enable it). Calendar, Reminders, and Contacts ask macOS for access on first use; Mail and Messages ask to allow automation.
+                    These are built into Osaurus but OFF until the app is enabled for this agent. Apple app tools are never found by `capabilities_discover` and cannot be loaded with `capabilities_load` — if one you need is not in your tool list, do not search for it: tell the user to turn the app on for this agent under Management → Agents → this agent → Abilities → Tools (each Apple app is a group there; or ask the Orchestrator to enable it), then continue once it appears. Calendar and Reminders ask macOS for Full Access on first use; Mail and Messages ask to allow automation (reading Messages also needs Full Disk Access). Contacts is a separate Apple app (`contacts_*`) — it is not part of this skill's tool list and needs its own group turned on.
 
                     ## Working with dates
                     - Call `get_current_time` before computing any relative date ("tomorrow", "next Tuesday") — never guess today's date

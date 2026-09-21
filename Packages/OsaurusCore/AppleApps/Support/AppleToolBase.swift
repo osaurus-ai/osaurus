@@ -33,8 +33,10 @@ enum AppleToolError: Error, Sendable, Equatable {
     /// The backing app / framework cannot serve the request right now
     /// (app not running, entitlement missing, database unreadable).
     case unavailable(String, retryable: Bool = false)
-    /// The request exceeded its time budget.
-    case timeout(String)
+    /// The request exceeded its time budget. `outcomeUnknown` marks a
+    /// write/send that may still have completed inside the app — the model
+    /// must not blindly retry it.
+    case timeout(String, outcomeUnknown: Bool = false)
     /// Anything else that went wrong at runtime.
     case execution(String)
 
@@ -62,7 +64,7 @@ enum AppleToolError: Error, Sendable, Equatable {
             if let detail, !detail.isEmpty { text += " \(detail)" }
             return text
         case .unavailable(let m, _): return m
-        case .timeout(let m): return m
+        case .timeout(let m, _): return m
         case .execution(let m): return m
         }
     }
@@ -87,6 +89,11 @@ enum AppleToolError: Error, Sendable, Equatable {
             )
         case .unavailable(_, let retryable):
             return ToolEnvelope.failure(kind: kind, message: message, tool: tool, retryable: retryable)
+        case .timeout(_, let outcomeUnknown):
+            return ToolEnvelope.failure(
+                kind: kind, message: message, tool: tool, retryable: outcomeUnknown ? false : nil,
+                metadata: outcomeUnknown ? ["outcome": "unknown"] : nil
+            )
         default:
             return ToolEnvelope.failure(kind: kind, message: message, tool: tool)
         }
@@ -98,7 +105,7 @@ enum AppleToolError: Error, Sendable, Equatable {
 /// Base class for Apple app tools. `@unchecked Sendable` because subclasses
 /// hold only immutable configuration and service references that are
 /// themselves thread-safe.
-class AppleToolBase: OsaurusTool, PermissionedTool, @unchecked Sendable {
+class AppleToolBase: OsaurusTool, PermissionedTool, CapabilityToolGroupDeclaring, @unchecked Sendable {
     /// Which app family this tool belongs to (drives per-agent gating).
     let app: AppleApp
     let name: String
@@ -129,6 +136,16 @@ class AppleToolBase: OsaurusTool, PermissionedTool, @unchecked Sendable {
 
     /// The `SystemPermission`s this tool needs at execution time.
     var systemPermissions: [SystemPermission] { requirementOverride ?? app.systemPermissions }
+
+    /// Tools catalog / diagnostics group: one per app (`apple:calendar`).
+    var capabilityGroupId: String { "apple:\(app.rawValue)" }
+
+    /// Spawned children of an agent with the app enabled carry these tools
+    /// (parity with direct chat). Cancellation is owned end to end: queued
+    /// AppleScript runs are skipped once the task is cancelled, in-flight
+    /// ones are bounded by `with timeout`, EventKit/Contacts work runs on
+    /// per-service queues, and `shortcuts` children are killed on cancel.
+    var canExposeToSpawnedOperation: Bool { true }
 
     // MARK: PermissionedTool
 
@@ -313,9 +330,16 @@ enum AppleJSON {
         switch value {
         case let s as String: return s
         case let b as Bool: return b
-        case let n as NSNumber: return n
+        // `Double` bridges to `NSNumber`, so the finite check has to come
+        // before the NSNumber case or NaN/±inf slip through and
+        // `JSONSerialization` throws on the whole envelope.
         case let i as Int: return i
         case let d as Double: return d.isFinite ? d : NSNull()
+        case let f as Float: return f.isFinite ? Double(f) : NSNull()
+        case let n as NSNumber:
+            // Any other numeric bridge (CGFloat, Decimal, ...): reject
+            // non-finite values here too.
+            return n.doubleValue.isFinite ? n : NSNull()
         case let date as Date: return AppleDateParsing.format(date)
         case let url as URL: return url.absoluteString
         case is NSNull: return NSNull()

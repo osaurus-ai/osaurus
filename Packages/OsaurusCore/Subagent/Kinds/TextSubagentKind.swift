@@ -1464,6 +1464,10 @@ final class TextSubagentKind:
                 names.formUnion(SystemPromptComposer.knowledgeCuratorToolNames)
             }
         }
+        // Apple app families are a capability toggle like the others: a
+        // spawned Mail agent must carry `mail_*` exactly as it does in direct
+        // chat (the execution gate re-checks the owning app per call).
+        names.formUnion(AppleApp.toolNames(for: caps.enabledAppleApps))
         return names.filter { !isExcludedChildTool($0) }.sorted()
     }
 

@@ -108,13 +108,16 @@ final class MessagesSearchTool: AppleToolBase, @unchecked Sendable {
     }
 }
 
-final class MessagesSendTool: AppleToolBase, @unchecked Sendable {
+/// Sending an iMessage/SMS as the user is per-call approval only: a run
+/// lease or "Always Allow" taken for another Messages write must never cover
+/// an outgoing message, and the guidance promises the user every send pauses.
+final class MessagesSendTool: AppleToolBase, PerCallApprovalTool, @unchecked Sendable {
     private let service: MessagesServicing
     init(service: MessagesServicing) {
         self.service = service
         super.init(
             app: .messages, name: "messages_send",
-            description: "Send a message. Provide `to` (phone number or email; iMessage first, SMS fallback) or `chat_id` for an existing conversation or group. Confirm the recipient and text with the user before sending.",
+            description: "Send a message. Provide `to` (phone number or email; iMessage first, SMS fallback only when iMessage reports an error) or `chat_id` for an existing conversation or group. Confirm the recipient and text with the user before sending; never resend when `delivered` is null.",
             parameters: AppleSchema.object(
                 [
                     "to": AppleSchema.string("Recipient phone number (E.164 preferred) or email."),
@@ -137,6 +140,15 @@ final class MessagesSendTool: AppleToolBase, @unchecked Sendable {
         let serviceRaw = try AppleArgs.enumeration(args, "service", allowed: MessagesSendService.allCases.map(\.rawValue), default: "auto") ?? "auto"
         let sendService = MessagesSendService(rawValue: serviceRaw) ?? .auto
         let result = try await service.send(to: to, chatId: chatId, text: text, service: sendService)
-        return AppleToolPayload(["sent": true, "service": result.service, "target": result.target, "text": text])
+        var payload: [String: Any] = ["sent": true, "service": result.service, "target": result.target, "text": text]
+        var warnings: [String] = []
+        if let delivered = result.delivered {
+            payload["delivered"] = delivered
+            if !delivered { warnings.append("Messages stored the message with a send error; it may not have reached the recipient.") }
+        } else {
+            payload["delivered"] = NSNull()
+            warnings.append("Delivery could not be verified (Messages database not readable or no confirmation yet). Do not resend blindly.")
+        }
+        return AppleToolPayload(payload, warnings: warnings)
     }
 }

@@ -6,22 +6,44 @@
 //  framework calls are synchronous XPC round-trips that must not run on the
 //  main actor. Every Apple app service funnels its framework work through
 //  one serial background queue and hands plain value types back to the
-//  async tool body.
+//  async tool body. Each service owns its own queue so a slow Contacts scan
+//  never blocks a Calendar read (one global queue used to serialize them all).
 //
 
 import CoreGraphics
 import Foundation
 
-enum AppleServiceQueue {
-    private static let queue = DispatchQueue(label: "ai.osaurus.apple-apps.services", qos: .userInitiated)
+struct AppleServiceQueue: Sendable {
+    private let queue: DispatchQueue
 
-    /// Run `work` on the serial service queue and return its result.
-    static func run<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+    init(label: String) {
+        queue = DispatchQueue(label: "ai.osaurus.apple-apps.\(label)", qos: .userInitiated)
+    }
+
+    /// Run `work` on this service's serial queue and return its result.
+    func run<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
         try Task.checkCancellation()
         return try await withCheckedThrowingContinuation { continuation in
             queue.async {
                 do {
                     continuation.resume(returning: try work())
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// Bridge a callback-style framework API on this queue: `body` receives
+    /// a completion it must call exactly once (from any thread).
+    func bridge<T: Sendable>(
+        _ body: @escaping @Sendable (@escaping @Sendable (Result<T, Error>) -> Void) throws -> Void
+    ) async throws -> T {
+        try Task.checkCancellation()
+        return try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                do {
+                    try body { result in continuation.resume(with: result) }
                 } catch {
                     continuation.resume(throwing: error)
                 }
@@ -46,6 +68,18 @@ enum AppleServiceSupport {
     static func matches(_ text: String?, query: String) -> Bool {
         guard let text, !text.isEmpty else { return false }
         return text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+    }
+
+    /// Percent-encode an identifier for use as one path component of a
+    /// deep link (`ical://`, `x-apple-reminderkit://`, `addressbook://`).
+    /// `:` stays literal — EventKit ids (`A1B2:C3D4`) and Contacts ids
+    /// (`UUID:ABPerson`) are matched by the apps in that form — while `/`,
+    /// spaces, `?`, `#` and `%` (which would split or break the URL) are
+    /// encoded.
+    static func pathEncoded(_ id: String) -> String {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/%")
+        return id.addingPercentEncoding(withAllowedCharacters: allowed) ?? id
     }
 
     /// Truncate a list and report `total` / `truncated`.

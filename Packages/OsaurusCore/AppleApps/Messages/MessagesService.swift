@@ -9,6 +9,11 @@
 //  chat GUIDs returned everywhere, `attributedBody`-only messages decoded so
 //  modern macOS messages do not come back empty, and no `activate`.
 //
+//  Search decodes `attributedBody` in Swift: on current macOS most bodies
+//  live only in that typedstream blob, and `CAST(attributedBody AS TEXT)`
+//  stops at the first NUL byte (a few bytes in), so a SQL `LIKE` on it never
+//  matched recent messages. Rows are paged out of SQLite and matched here.
+//
 //  This is self-contained; the iMessage *channel* (inbound routing through
 //  `imsg rpc`) is a separate feature with its own allowlists.
 //
@@ -52,19 +57,38 @@ enum MessagesSendService: String, CaseIterable, Sendable {
     case auto, imessage, sms
 }
 
+/// Outcome of `messages_send`.
+struct MessagesSendResult: Sendable, Equatable {
+    /// `iMessage`, `SMS`, or `chat` (sent into an existing conversation).
+    let service: String
+    /// Normalised handle or chat guid the message went to.
+    let target: String
+    /// `true` when chat.db shows the message stored without an error,
+    /// `false` when it shows a send error, `nil` when delivery could not be
+    /// verified (no Full Disk Access, or the row did not appear in time).
+    let delivered: Bool?
+}
+
 protocol MessagesServicing: Sendable {
     func conversations(limit: Int) async throws -> [MessagesConversation]
     func read(_ query: MessagesReadQuery) async throws -> [MessagesMessage]
     func unread(limit: Int) async throws -> [MessagesMessage]
     func search(_ text: String, limit: Int) async throws -> [MessagesMessage]
-    func send(to recipient: String?, chatId: String?, text: String, service: MessagesSendService) async throws -> (
-        service: String, target: String
-    )
+    func send(to recipient: String?, chatId: String?, text: String, service: MessagesSendService) async throws
+        -> MessagesSendResult
 }
 
 final class ChatDBMessagesService: MessagesServicing, @unchecked Sendable {
-    static var databaseURL: URL {
+    /// Serial queue for this service.
+    private let queue = AppleServiceQueue(label: "messages")
+    static var defaultDatabaseURL: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Messages/chat.db")
+    }
+
+    let databaseURL: URL
+
+    init(databaseURL: URL = ChatDBMessagesService.defaultDatabaseURL) {
+        self.databaseURL = databaseURL
     }
 
     // MARK: SQLite
@@ -79,11 +103,9 @@ final class ChatDBMessagesService: MessagesServicing, @unchecked Sendable {
             let rc = sqlite3_open_v2(uri, &handle, flags, nil)
             guard rc == SQLITE_OK, let handle else {
                 let message = handle.map { String(cString: sqlite3_errmsg($0)) } ?? "sqlite error \(rc)"
+                let extended = handle.map { sqlite3_extended_errcode($0) } ?? rc
                 if let handle { sqlite3_close(handle) }
-                if rc == SQLITE_CANTOPEN || rc == SQLITE_AUTH || rc == SQLITE_PERM
-                    || message.localizedCaseInsensitiveContains("unable to open")
-                    || message.localizedCaseInsensitiveContains("authorization")
-                {
+                if ChatDBMessagesService.isPermissionCode(extended) || ChatDBMessagesService.isPermissionMessage(message) {
                     throw AppleToolError.permissionDenied(
                         .disk, detail: "Reading Messages requires Full Disk Access for Osaurus (chat.db could not be opened: \(message))."
                     )
@@ -96,15 +118,23 @@ final class ChatDBMessagesService: MessagesServicing, @unchecked Sendable {
 
         deinit { sqlite3_close(db) }
 
+        private func mapError(_ context: String) -> AppleToolError {
+            let message = String(cString: sqlite3_errmsg(db))
+            let extended = sqlite3_extended_errcode(db)
+            if ChatDBMessagesService.isPermissionCode(extended) || ChatDBMessagesService.isPermissionMessage(message) {
+                return .permissionDenied(.disk, detail: "chat.db is not readable: \(message).")
+            }
+            if extended & 0xFF == SQLITE_BUSY || extended & 0xFF == SQLITE_LOCKED {
+                return .unavailable("The Messages database is busy (\(message)). Try again in a moment.", retryable: true)
+            }
+            return .execution("\(context): \(message)")
+        }
+
         /// Run `sql` with `?` bindings and map every row.
         func query<T>(_ sql: String, bind: [Any?] = [], map: (OpaquePointer) -> T) throws -> [T] {
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
-                let message = String(cString: sqlite3_errmsg(db))
-                if message.localizedCaseInsensitiveContains("authorization") || message.localizedCaseInsensitiveContains("not a database") {
-                    throw AppleToolError.permissionDenied(.disk, detail: "chat.db is not readable: \(message).")
-                }
-                throw AppleToolError.execution("Messages query failed to prepare: \(message)")
+                throw mapError("Messages query failed to prepare")
             }
             defer { sqlite3_finalize(stmt) }
             for (i, value) in bind.enumerated() {
@@ -122,15 +152,31 @@ final class ChatDBMessagesService: MessagesServicing, @unchecked Sendable {
             while true {
                 let rc = sqlite3_step(stmt)
                 if rc == SQLITE_ROW { rows.append(map(stmt)) } else if rc == SQLITE_DONE { break } else {
-                    let message = String(cString: sqlite3_errmsg(db))
-                    if message.localizedCaseInsensitiveContains("authorization") {
-                        throw AppleToolError.permissionDenied(.disk, detail: "chat.db is not readable: \(message).")
-                    }
-                    throw AppleToolError.execution("Messages query failed: \(message)")
+                    throw mapError("Messages query failed")
                 }
             }
             return rows
         }
+    }
+
+    /// SQLite result codes that mean "the file is there but macOS will not
+    /// let this process read it" (Full Disk Access missing).
+    static func isPermissionCode(_ code: Int32) -> Bool {
+        let primary = code & 0xFF
+        // Extended codes (the macro forms are not imported into Swift):
+        // SQLITE_IOERR_READ = IOERR | (1<<8), SQLITE_IOERR_ACCESS = IOERR | (13<<8),
+        // SQLITE_READONLY_DIRECTORY = READONLY | (6<<8).
+        let ioerrRead = SQLITE_IOERR | (1 << 8)
+        let ioerrAccess = SQLITE_IOERR | (13 << 8)
+        let readonlyDirectory = SQLITE_READONLY | (6 << 8)
+        return primary == SQLITE_AUTH || primary == SQLITE_PERM || primary == SQLITE_CANTOPEN
+            || code == ioerrAccess || code == ioerrRead || code == readonlyDirectory
+    }
+
+    static func isPermissionMessage(_ message: String) -> Bool {
+        message.localizedCaseInsensitiveContains("unable to open")
+            || message.localizedCaseInsensitiveContains("authorization")
+            || message.localizedCaseInsensitiveContains("not permitted")
     }
 
     private static func text(_ stmt: OpaquePointer, _ col: Int32) -> String? {
@@ -144,16 +190,34 @@ final class ChatDBMessagesService: MessagesServicing, @unchecked Sendable {
         return Data(bytes: p, count: n)
     }
 
+    /// Distinguish "no database" (Messages never set up) from "database
+    /// present but unreadable" (no Full Disk Access): `stat` on the file
+    /// fails with EPERM/EACCES in the latter case and ENOENT in the former.
     private func open() throws -> Connection {
-        let url = Self.databaseURL
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            // Without Full Disk Access `fileExists` itself is false for ~/Library/Messages.
-            if !FileManager.default.isReadableFile(atPath: url.deletingLastPathComponent().path) {
-                throw AppleToolError.permissionDenied(.disk, detail: "Reading Messages requires Full Disk Access for Osaurus.")
+        var info = stat()
+        if stat(databaseURL.path, &info) != 0 {
+            switch errno {
+            case EPERM, EACCES:
+                throw AppleToolError.permissionDenied(
+                    .disk, detail: "Reading Messages requires Full Disk Access for Osaurus (\(databaseURL.path) is not readable)."
+                )
+            case ENOENT:
+                throw AppleToolError.unavailable(
+                    "No Messages database found at \(databaseURL.path). Has Messages been set up on this Mac?", retryable: false
+                )
+            default:
+                throw AppleToolError.unavailable(
+                    "Could not access the Messages database (\(String(cString: strerror(errno)))).", retryable: true
+                )
             }
-            throw AppleToolError.unavailable("No Messages database found at \(url.path). Has Messages been set up on this Mac?", retryable: false)
         }
-        return try Connection(url: url)
+        return try Connection(url: databaseURL)
+    }
+
+    /// Whether chat.db is readable right now (used to decide whether a send
+    /// can be verified).
+    private func canReadDatabase() -> Bool {
+        (try? open()) != nil
     }
 
     // MARK: Dates
@@ -193,19 +257,56 @@ final class ChatDBMessagesService: MessagesServicing, @unchecked Sendable {
         return String(data: data[i ..< i + length], encoding: .utf8)
     }
 
+    /// Body text for a row: `text`, else the decoded `attributedBody`, with
+    /// the U+FFFC attachment placeholders removed. Attachment-only messages
+    /// read `[attachment]` instead of an empty string.
+    static func bodyText(text: String?, attributedBody: Data?, hasAttachments: Bool) -> String {
+        var body = text ?? decodeAttributedBody(attributedBody) ?? ""
+        body = body.replacingOccurrences(of: "\u{FFFC}", with: "")
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return hasAttachments ? "[attachment]" : "" }
+        return body
+    }
+
+    /// Escape `%`, `_` and the escape character for a `LIKE ? ESCAPE '\'`.
+    static func likePattern(_ text: String) -> String {
+        var out = "%"
+        for ch in text {
+            switch ch {
+            case "%", "_", "\\": out.append("\\"); out.append(ch)
+            default: out.append(ch)
+            }
+        }
+        out.append("%")
+        return out
+    }
+
     // MARK: Queries
 
+    /// Real conversation content only: `item_type = 0` drops group
+    /// renames / joins / leaves; `associated_message_type` 2000–3999 are
+    /// tapbacks (and their removals) that only reference another message.
+    static let contentPredicate =
+        "m.item_type = 0 AND (m.associated_message_type IS NULL OR m.associated_message_type = 0 OR m.associated_message_type < 2000 OR m.associated_message_type >= 4000)"
+
+    /// Unread = incoming, unread, real content.
+    static let unreadPredicate = "m.is_read = 0 AND m.is_from_me = 0 AND " + contentPredicate
+
     private static let messageSelect = """
-        SELECT m.guid, c.guid, h.id, m.is_from_me, m.date, m.text, m.attributedBody, m.is_read, m.service, m.cache_has_attachments
+        SELECT m.guid, c.guid, h.id, m.is_from_me, m.date, m.text, m.attributedBody, m.is_read, m.service, m.cache_has_attachments, m.error
         FROM message m
         LEFT JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
         LEFT JOIN chat c ON c.ROWID = cmj.chat_id
         LEFT JOIN handle h ON h.ROWID = m.handle_id
         """
 
+    /// A message joined to more than one chat would otherwise repeat.
+    private static let messageGroupBy = " GROUP BY m.ROWID"
+
     private static func message(_ stmt: OpaquePointer) -> MessagesMessage? {
         let guid = text(stmt, 0) ?? ""
-        let body = text(stmt, 5) ?? decodeAttributedBody(blob(stmt, 6)) ?? ""
+        let hasAttachments = int(stmt, 9) == 1
+        let body = bodyText(text: text(stmt, 5), attributedBody: blob(stmt, 6), hasAttachments: hasAttachments)
         let date = date(fromAppleTime: int(stmt, 4))
         return MessagesMessage(
             id: guid,
@@ -216,59 +317,62 @@ final class ChatDBMessagesService: MessagesServicing, @unchecked Sendable {
             text: body,
             isRead: int(stmt, 7) == 1 || int(stmt, 3) == 1,
             service: text(stmt, 8),
-            hasAttachments: int(stmt, 9) == 1
+            hasAttachments: hasAttachments
         )
     }
 
     func conversations(limit: Int) async throws -> [MessagesConversation] {
-        try await AppleServiceQueue.run { [self] in
+        try await queue.run { [self] in
             let db = try open()
-            struct Row { let rowid: Int64; let guid: String; let identifier: String; let display: String?; let service: String?; let style: Int64 }
-            let chats: [Row] = try db.query(
+            // One statement: participants via group_concat, unread count and
+            // the newest message via correlated subqueries.
+            return try db.query(
                 """
-                SELECT c.ROWID, c.guid, c.chat_identifier, c.display_name, c.service_name, c.style,
-                       (SELECT MAX(m.date) FROM message m JOIN chat_message_join j ON j.message_id = m.ROWID WHERE j.chat_id = c.ROWID) AS last_date
+                SELECT c.guid, c.chat_identifier, c.display_name, c.service_name, c.style,
+                       (SELECT group_concat(h.id, char(31)) FROM handle h JOIN chat_handle_join chj ON chj.handle_id = h.ROWID WHERE chj.chat_id = c.ROWID) AS participants,
+                       (SELECT COUNT(*) FROM message m JOIN chat_message_join j ON j.message_id = m.ROWID WHERE j.chat_id = c.ROWID AND \(Self.unreadPredicate)) AS unread,
+                       lm.date, lm.text, lm.attributedBody, lm.cache_has_attachments
                 FROM chat c
-                ORDER BY last_date DESC
+                LEFT JOIN message lm ON lm.ROWID = (
+                    SELECT m.ROWID FROM message m JOIN chat_message_join j ON j.message_id = m.ROWID
+                    WHERE j.chat_id = c.ROWID AND \(Self.contentPredicate)
+                    ORDER BY m.date DESC LIMIT 1
+                )
+                ORDER BY (lm.date IS NULL), lm.date DESC
                 LIMIT ?
                 """,
                 bind: [limit]
             ) { s in
-                Row(rowid: Self.int(s, 0), guid: Self.text(s, 1) ?? "", identifier: Self.text(s, 2) ?? "", display: Self.text(s, 3), service: Self.text(s, 4), style: Self.int(s, 5))
-            }
-            return try chats.map { chat in
-                let participants: [String] = try db.query(
-                    "SELECT h.id FROM handle h JOIN chat_handle_join chj ON chj.handle_id = h.ROWID WHERE chj.chat_id = ? ORDER BY h.id",
-                    bind: [chat.rowid]
-                ) { Self.text($0, 0) ?? "" }
-                let last: [MessagesMessage] = try db.query(
-                    Self.messageSelect + " WHERE cmj.chat_id = ? ORDER BY m.date DESC LIMIT 1", bind: [chat.rowid]
-                ) { Self.message($0) }.compactMap { $0 }
-                let unread: Int = try db.query(
-                    "SELECT COUNT(*) FROM message m JOIN chat_message_join j ON j.message_id = m.ROWID WHERE j.chat_id = ? AND m.is_read = 0 AND m.is_from_me = 0",
-                    bind: [chat.rowid]
-                ) { Int(Self.int($0, 0)) }.first ?? 0
-                let display = chat.display?.isEmpty == false ? chat.display : nil
+                let participants = (Self.text(s, 5) ?? "").split(separator: "\u{1F}").map(String.init).sorted()
+                let display = Self.text(s, 2).flatMap { $0.isEmpty ? nil : $0 }
+                let style = Self.int(s, 4)
+                let lastDate = Self.date(fromAppleTime: Self.int(s, 7))
+                let hasLast = sqlite3_column_type(s, 7) != SQLITE_NULL
+                let preview = hasLast
+                    ? Self.bodyText(text: Self.text(s, 8), attributedBody: Self.blob(s, 9), hasAttachments: Self.int(s, 10) == 1)
+                    : nil
                 return MessagesConversation(
-                    id: chat.guid, chatIdentifier: chat.identifier, displayName: display, participants: participants,
-                    service: chat.service, isGroup: chat.style == 43 || participants.count > 1,
-                    lastMessageDate: last.first?.date, lastMessagePreview: last.first.map { String($0.text.prefix(120)) },
-                    unreadCount: unread
+                    id: Self.text(s, 0) ?? "", chatIdentifier: Self.text(s, 1) ?? "", displayName: display,
+                    participants: participants, service: Self.text(s, 3),
+                    isGroup: style == 43 || participants.count > 1,
+                    lastMessageDate: lastDate.map { AppleDateParsing.format($0) },
+                    lastMessagePreview: preview.map { String($0.prefix(120)) },
+                    unreadCount: Int(Self.int(s, 6))
                 )
             }
         }
     }
 
     func read(_ query: MessagesReadQuery) async throws -> [MessagesMessage] {
-        try await AppleServiceQueue.run { [self] in
+        try await queue.run { [self] in
             let db = try open()
-            var clauses: [String] = []
+            var clauses: [String] = [Self.contentPredicate]
             var binds: [Any?] = []
-            if let chatId = query.chatId, !chatId.isEmpty {
+            if let chatId = query.chatId?.trimmingCharacters(in: .whitespacesAndNewlines), !chatId.isEmpty {
                 clauses.append("(c.guid = ? OR c.chat_identifier = ?)")
                 binds += [chatId, chatId]
             }
-            if let handle = query.handle, !handle.isEmpty {
+            if let handle = query.handle?.trimmingCharacters(in: .whitespacesAndNewlines), !handle.isEmpty {
                 let normalized = IMessageConnectionConfiguration.normalizedId(handle)
                 let digits = normalized.filter(\.isNumber)
                 if digits.count >= 7, !normalized.contains("@") {
@@ -283,58 +387,128 @@ final class ChatDBMessagesService: MessagesServicing, @unchecked Sendable {
                 clauses.append("m.date > ?")
                 binds.append(Self.appleTime(from: since))
             }
-            let whereSQL = clauses.isEmpty ? "" : " WHERE " + clauses.joined(separator: " AND ")
+            let whereSQL = " WHERE " + clauses.joined(separator: " AND ")
             binds.append(query.limit)
             let rows: [MessagesMessage] = try db.query(
-                Self.messageSelect + whereSQL + " ORDER BY m.date DESC LIMIT ?", bind: binds
+                Self.messageSelect + whereSQL + Self.messageGroupBy + " ORDER BY m.date DESC LIMIT ?", bind: binds
             ) { Self.message($0) }.compactMap { $0 }
             return rows.reversed()
         }
     }
 
     func unread(limit: Int) async throws -> [MessagesMessage] {
-        try await AppleServiceQueue.run { [self] in
+        try await queue.run { [self] in
             let db = try open()
             return try db.query(
-                Self.messageSelect + " WHERE m.is_read = 0 AND m.is_from_me = 0 AND m.item_type = 0 ORDER BY m.date DESC LIMIT ?",
+                Self.messageSelect + " WHERE " + Self.unreadPredicate + Self.messageGroupBy + " ORDER BY m.date DESC LIMIT ?",
                 bind: [limit]
             ) { Self.message($0) }.compactMap { $0 }
         }
     }
 
+    /// Rows fetched per page while searching.
+    static let searchPageSize = 400
+    /// Upper bound on rows examined per search (newest first) so a rare
+    /// term in a huge library still returns in bounded time.
+    static let searchScanCap = 40_000
+
     func search(_ text: String, limit: Int) async throws -> [MessagesMessage] {
-        try await AppleServiceQueue.run { [self] in
+        let needle = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return [] }
+        return try await queue.run { [self] in
             let db = try open()
-            let pattern = "%\(text)%"
-            let rows: [MessagesMessage] = try db.query(
-                Self.messageSelect + " WHERE (m.text LIKE ? OR CAST(m.attributedBody AS TEXT) LIKE ?) ORDER BY m.date DESC LIMIT ?",
-                bind: [pattern, pattern, limit * 3]
-            ) { Self.message($0) }.compactMap { $0 }
-            return Array(rows.filter { AppleServiceSupport.matches($0.text, query: text) }.prefix(limit))
+            // SQL pre-filter: plain-text rows must LIKE-match (cheap, ASCII
+            // case-insensitive); attributedBody-only rows all come through
+            // and are decoded + matched in Swift.
+            let sql =
+                Self.messageSelect
+                + " WHERE \(Self.contentPredicate) AND ((m.text IS NOT NULL AND m.text LIKE ? ESCAPE '\\') OR (m.text IS NULL AND m.attributedBody IS NOT NULL))"
+                + Self.messageGroupBy + " ORDER BY m.date DESC LIMIT ? OFFSET ?"
+            var hits: [MessagesMessage] = []
+            var offset = 0
+            while hits.count < limit, offset < Self.searchScanCap {
+                try Task.checkCancellation()
+                let page: [MessagesMessage] = try db.query(
+                    sql, bind: [Self.likePattern(needle), Self.searchPageSize, offset]
+                ) { Self.message($0) }.compactMap { $0 }
+                for row in page where AppleServiceSupport.matches(row.text, query: needle) {
+                    hits.append(row)
+                    if hits.count >= limit { break }
+                }
+                if page.count < Self.searchPageSize { break }
+                offset += Self.searchPageSize
+            }
+            return hits
         }
     }
 
     // MARK: Send
 
-    func send(to recipient: String?, chatId: String?, text: String, service: MessagesSendService) async throws -> (
-        service: String, target: String
-    ) {
+    /// Resolve a `chat_id` argument to the chat GUID Messages' `chat id`
+    /// specifier expects. `chat_identifier` values (`chat123…`, a bare
+    /// handle) are looked up in chat.db when readable; otherwise the value
+    /// is used as given.
+    private func resolveChatGuid(_ chatId: String) -> String {
+        if chatId.contains(";") { return chatId }
+        guard let db = try? open() else { return chatId }
+        let rows: [String] = (try? db.query(
+            "SELECT guid FROM chat WHERE chat_identifier = ? OR guid = ? ORDER BY ROWID DESC LIMIT 1", bind: [chatId, chatId]
+        ) { Self.text($0, 0) ?? "" }) ?? []
+        return rows.first.flatMap { $0.isEmpty ? nil : $0 } ?? chatId
+    }
+
+    /// Poll chat.db for the just-sent outgoing message. Returns `true` /
+    /// `false` when a matching row appeared (and whether it carries an
+    /// error), `nil` when nothing showed up within the window or the
+    /// database is not readable.
+    private func verifyDelivery(text: String, sentAfter: Date, timeout: TimeInterval = 6) async -> Bool? {
+        guard canReadDatabase() else { return nil }
+        let deadline = Date().addingTimeInterval(timeout)
+        let since = Self.appleTime(from: sentAfter.addingTimeInterval(-2))
+        while Date() < deadline {
+            if Task.isCancelled { return nil }
+            let outcome: Bool? = try? await queue.run { [self] in
+                let db = try open()
+                // Newest outgoing rows since the send; attributedBody-only
+                // rows are decoded for the comparison.
+                let errors: [Int64] = try db.query(
+                    "SELECT m.error, m.text, m.attributedBody FROM message m WHERE m.is_from_me = 1 AND m.date > ? ORDER BY m.date DESC LIMIT 10",
+                    bind: [since]
+                ) { s in
+                    let body = Self.bodyText(text: Self.text(s, 1), attributedBody: Self.blob(s, 2), hasAttachments: false)
+                    return body == text ? Self.int(s, 0) : -1
+                }.filter { $0 >= 0 }
+                if let error = errors.first { return error == 0 }
+                return nil
+            }
+            if let outcome { return outcome }
+            try? await Task.sleep(nanoseconds: 400_000_000)
+        }
+        return nil
+    }
+
+    func send(to recipient: String?, chatId: String?, text: String, service: MessagesSendService) async throws
+        -> MessagesSendResult
+    {
         guard await AppleScriptBridge.ensureRunning(bundleIdentifier: "com.apple.MobileSMS", appName: "Messages") else {
             throw AppleToolError.unavailable("Messages could not be launched on this Mac.", retryable: true)
         }
         let literalText = AppleScriptBridge.literal(text)
-        if let chatId, !chatId.isEmpty {
+        if let chatId = chatId?.trimmingCharacters(in: .whitespacesAndNewlines), !chatId.isEmpty {
+            let guid = resolveChatGuid(chatId)
+            let started = Date()
             _ = try await AppleScriptBridge.run(
                 """
                 tell application "Messages"
-                    send \(literalText) to chat id \(AppleScriptBridge.literal(chatId))
+                    send \(literalText) to chat id \(AppleScriptBridge.literal(guid))
                 end tell
                 """,
-                permission: .automationMessages, appName: "Messages"
+                permission: .automationMessages, appName: "Messages", isWrite: true
             )
-            return ("chat", chatId)
+            let delivered = await verifyDelivery(text: text, sentAfter: started)
+            return MessagesSendResult(service: "chat", target: guid, delivered: delivered)
         }
-        guard let recipient, !recipient.isEmpty else {
+        guard let recipient = recipient?.trimmingCharacters(in: .whitespacesAndNewlines), !recipient.isEmpty else {
             throw AppleToolError.invalidArgs("Provide `to` (phone number or email) or `chat_id`.", field: "to")
         }
         let handle = IMessageConnectionConfiguration.normalizedId(recipient)
@@ -345,7 +519,8 @@ final class ChatDBMessagesService: MessagesServicing, @unchecked Sendable {
         case .auto: order = ["iMessage", "SMS"]
         }
         var lastError: AppleToolError?
-        for serviceType in order {
+        for (index, serviceType) in order.enumerated() {
+            let started = Date()
             do {
                 _ = try await AppleScriptBridge.run(
                     """
@@ -355,13 +530,26 @@ final class ChatDBMessagesService: MessagesServicing, @unchecked Sendable {
                         send \(literalText) to targetBuddy
                     end tell
                     """,
-                    permission: .automationMessages, appName: "Messages"
+                    permission: .automationMessages, appName: "Messages", isWrite: true
                 )
-                return (serviceType, handle)
             } catch let error as AppleToolError {
                 if case .permissionDenied = error { throw error }
+                if case .timeout(_, let unknown) = error, unknown { throw error }
                 lastError = error
+                continue
             }
+            // Messages accepts the Apple Event even when the recipient is
+            // not reachable on this service (the bubble turns red a moment
+            // later). Verify through chat.db before falling back so the
+            // user does not get the same text twice, and never fall back
+            // when the outcome is unknown.
+            let delivered = await verifyDelivery(text: text, sentAfter: started)
+            let hasFallback = index + 1 < order.count
+            if delivered == false, hasFallback {
+                lastError = .execution("Messages reported an error sending to \(handle) over \(serviceType).")
+                continue
+            }
+            return MessagesSendResult(service: serviceType, target: handle, delivered: delivered)
         }
         throw lastError ?? AppleToolError.execution("Messages could not send to \(handle).")
     }

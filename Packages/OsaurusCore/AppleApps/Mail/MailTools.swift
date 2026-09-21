@@ -23,7 +23,7 @@ enum MailToolFactory {
     }
 
     static let mailboxPathSchema = AppleSchema.string(
-        "Mailbox path exactly as returned by mail_mailboxes (`Account/Mailbox[/Sub]`), or INBOX / Drafts / Sent / Trash / Junk. Defaults to the unified INBOX."
+        "Mailbox path exactly as returned by mail_mailboxes (`Account/Mailbox[/Sub]`; On My Mac mailboxes are `Local/Mailbox`), or INBOX / Drafts / Sent / Trash / Junk for the unified mailboxes. Defaults to the unified INBOX."
     )
     static let idSchema = AppleSchema.string("Message `id` from mail_list / mail_search / mail_read.")
 
@@ -39,7 +39,7 @@ final class MailMailboxesTool: AppleToolBase, @unchecked Sendable {
         self.service = service
         super.init(
             app: .mail, name: "mail_mailboxes",
-            description: "List every account's mailboxes with unread and total counts. The `path` values are what mail_list / mail_move / mail_read accept as `mailbox_path`.",
+            description: "List every account's mailboxes (nested folders included, plus On My Mac under `Local/`) with unread counts. The `path` values are what mail_list / mail_move / mail_read accept as `mailbox_path`.",
             parameters: AppleSchema.object([:]), isWrite: false
         )
     }
@@ -108,11 +108,11 @@ final class MailSearchTool: AppleToolBase, @unchecked Sendable {
         self.service = service
         super.init(
             app: .mail, name: "mail_search",
-            description: "Search a mailbox by subject and/or sender (case-insensitive substring; message bodies are not searched). Defaults to the unified INBOX.",
+            description: "Search a mailbox by subject and/or sender (case-insensitive substring; message bodies and recipients are not searched). Newest first. Defaults to the unified INBOX.",
             parameters: AppleSchema.object(
                 [
                     "query": AppleSchema.string("Text to match."),
-                    "field": AppleSchema.string("Which header to match (default any = subject or sender).", enum: ["any", "subject", "sender", "recipient"]),
+                    "field": AppleSchema.string("Which header to match (default any = subject or sender).", enum: ["any", "subject", "sender"]),
                     "mailbox_path": MailToolFactory.mailboxPathSchema,
                     "limit": AppleSchema.limit(default: Self.defaultLimit, max: 200),
                 ],
@@ -123,7 +123,7 @@ final class MailSearchTool: AppleToolBase, @unchecked Sendable {
     }
     override func run(args: [String: Any]) async throws -> AppleToolPayload {
         let text = try AppleArgs.requiredString(args, "query", expected: "search text")
-        let fieldRaw = try AppleArgs.enumeration(args, "field", allowed: ["any", "subject", "sender", "recipient"], default: "any") ?? "any"
+        let fieldRaw = try AppleArgs.enumeration(args, "field", allowed: ["any", "subject", "sender"], default: "any") ?? "any"
         var query = MailSearchQuery(text: text)
         query.field = MailSearchQuery.Field(rawValue: fieldRaw) ?? .any
         query.mailboxPath = try AppleArgs.string(args, "mailbox_path")
@@ -136,7 +136,7 @@ final class MailSearchTool: AppleToolBase, @unchecked Sendable {
     }
 }
 
-final class MailComposeTool: AppleToolBase, @unchecked Sendable {
+final class MailComposeTool: AppleToolBase, ArgumentAwarePerCallApprovalTool, @unchecked Sendable {
     private let service: MailServicing
     init(service: MailServicing) {
         self.service = service
@@ -176,7 +176,7 @@ final class MailComposeTool: AppleToolBase, @unchecked Sendable {
     }
 }
 
-final class MailReplyTool: AppleToolBase, @unchecked Sendable {
+final class MailReplyTool: AppleToolBase, ArgumentAwarePerCallApprovalTool, @unchecked Sendable {
     private let service: MailServicing
     init(service: MailServicing) {
         self.service = service
@@ -215,12 +215,12 @@ final class MailMoveTool: AppleToolBase, @unchecked Sendable {
         self.service = service
         super.init(
             app: .mail, name: "mail_move",
-            description: "Move a message by `id` to another mailbox (`to_mailbox_path` from mail_mailboxes, or Trash / Junk / Archive-style paths).",
+            description: "Move a message by `id` to another mailbox. `to_mailbox_path` is a path from mail_mailboxes (for example `Account/Archive`) or the unified Trash / Junk.",
             parameters: AppleSchema.object(
                 [
                     "id": MailToolFactory.idSchema,
                     "mailbox_path": MailToolFactory.mailboxPathSchema,
-                    "to_mailbox_path": AppleSchema.string("Destination mailbox path (from mail_mailboxes) or Trash / Junk."),
+                    "to_mailbox_path": AppleSchema.string("Destination mailbox path from mail_mailboxes (e.g. `Account/Archive`), or Trash / Junk."),
                 ],
                 required: ["id", "to_mailbox_path"]
             ),
@@ -296,4 +296,26 @@ final class MailThreadTool: AppleToolBase, @unchecked Sendable {
         let messages = try await service.thread(id: id, mailboxPath: path, limit: limit)
         return AppleToolPayload(["messages": messages, "count": messages.count, "root_id": id])
     }
+}
+
+// MARK: - Per-call approval for sends
+
+/// `send: true` on `mail_compose` / `mail_reply` turns a draft into an
+/// outgoing email, which must show its approval card every time (no run
+/// lease, no "Always Allow"). Drafts stay pre-grantable.
+enum MailSendApproval {
+    static func sends(argumentsJSON: String) -> Bool {
+        guard let data = argumentsJSON.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return (try? AppleArgs.bool(dict, "send")) ?? false
+    }
+}
+
+extension MailComposeTool {
+    func requiresApprovalEveryCall(argumentsJSON: String) -> Bool { MailSendApproval.sends(argumentsJSON: argumentsJSON) }
+}
+
+extension MailReplyTool {
+    func requiresApprovalEveryCall(argumentsJSON: String) -> Bool { MailSendApproval.sends(argumentsJSON: argumentsJSON) }
 }
