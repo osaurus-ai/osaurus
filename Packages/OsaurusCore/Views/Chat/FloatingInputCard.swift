@@ -475,13 +475,6 @@ struct FloatingInputCard: View {
     /// that is actually saved rather than a local guess.
     @State private var nativeMTPSelection: String = "off"
 
-    // MARK: - SSD Cache Quota Notice
-
-    @State private var ssdWarningSnapshot: DiskCacheQuotaSnapshot?
-    @State private var ssdWarningModel: String?
-    @AppStorage(DiskCacheQuotaNoticeSuppression.defaultsKey) private var ssdNoticesSuppressed = false
-    @State private var ssdCacheSettings = ServerRuntimeSettingsStore.snapshot().cache
-
     // MARK: - MTP Bundle-Layout Advisory State
 
     /// Non-nil when the selected LOCAL bundle is a Qwen 3.8 Flash-Next JANG
@@ -806,7 +799,6 @@ struct FloatingInputCard: View {
         VStack(spacing: 12) {
             if !showVoiceOverlay {
                 mtpLayoutAdvisoryRow
-                ssdQuotaWarningRow
                 modelSwitchContinuityRow
             }
 
@@ -956,52 +948,6 @@ struct FloatingInputCard: View {
             .overlay(alignment: .top) {
                 configContextErrorOverlay
             }
-            .onReceive(
-                NotificationCenter.default.publisher(for: ServerRuntimeSettingsStore.didSaveNotification)
-                    .receive(on: DispatchQueue.main)
-            ) { _ in
-                let latest = ServerRuntimeSettingsStore.snapshot().cache
-                if ssdCacheSettings != latest {
-                    if ssdCacheSettings.requiresModelReload(comparedTo: latest) {
-                        ssdWarningSnapshot = nil
-                    }
-                    ssdCacheSettings = latest
-                }
-            }
-            .task(id: ssdQuotaNoticePollContext) {
-                if ssdWarningModel != selectedModel
-                    || ssdWarningSnapshot?.usage.pressureAffects(session: inputHistoryKey?.uuidString) != true {
-                    ssdWarningSnapshot = nil
-                }
-                while !Task.isCancelled {
-                    if canPresentSSDQuotaNotice {
-                        let snapshots = await ModelRuntime.shared.diskCacheQuotaSnapshots(
-                            matching: ssdCacheSettings, modelName: selectedModel,
-                            session: inputHistoryKey?.uuidString
-                        )
-                        guard !Task.isCancelled else { return }
-                        if canPresentSSDQuotaNotice,
-                            let session = ssdQuotaNoticePollContext.session?.uuidString,
-                            let observed = snapshots.first(where: { $0.usage.pressureAffects(session: session) })
-                                ?? snapshots.first
-                        {
-                            // Missing during reload/save is not evidence that
-                            // the loss resolved. A known root with no current
-                            // pressure retires the notice. Its process-lifetime
-                            // presentation survives switching away and back.
-                            let current = DiskCacheQuotaNotices.shared.presentation(for: observed, session: session)
-                            if ssdWarningModel != selectedModel
-                                || current?.usage.pressureSeq != ssdWarningSnapshot?.usage.pressureSeq
-                                || current?.usage.maxBytes != ssdWarningSnapshot?.usage.maxBytes
-                            {
-                                ssdWarningModel = selectedModel
-                                ssdWarningSnapshot = current
-                            }
-                        }
-                    }
-                    try? await Task.sleep(for: .seconds(3))
-                }
-            }
             .overlay(alignment: .top) {
                 // Cache-only lookup: this is a view body, and the blocking
                 // `findInstalledModel(named:)` parks on the cold-cache disk
@@ -1044,7 +990,6 @@ struct FloatingInputCard: View {
                 )
             )
             .onChange(of: selectedModel) { _, _ in
-                ssdWarningSnapshot = nil
                 refreshMTPLayoutAdvisory()
             }
             .onAppear {
@@ -4430,70 +4375,6 @@ extension FloatingInputCard {
     private func rearmMTPLayoutAdvisory() {
         mtpAdvisoryEvaluatedForModel = nil
         refreshMTPLayoutAdvisory()
-    }
-
-    /// SwiftUI tasks retain the view values from their launch. Restart when a
-    /// same-model chat or presentation gate changes, not just the model name.
-    private var ssdQuotaNoticePollContext: SSDQuotaNoticePollContext {
-        SSDQuotaNoticePollContext(
-            model: selectedModel,
-            session: inputHistoryKey,
-            eligible: canPresentSSDQuotaNotice,
-            cacheSettings: ssdCacheSettings
-        )
-    }
-
-    private var canPresentSSDQuotaNotice: Bool {
-        guard !ssdNoticesSuppressed,
-            ModelRuntime.cacheDiskDirectoryOverride(for: ssdCacheSettings) != nil,
-            isSelectedModelLocal, !isRemoteAgentRun, !isStreaming,
-            !configContextTooSmall, modelSwitchContinuityWarning == nil,
-            mtpLayoutAdvisory == nil, !ThemedAlertCenter.shared.hasAnyActiveAlert,
-            let windowId, ChatWindowManager.shared.isChatWindowActive(id: windowId),
-            ChatWindowManager.shared.windowState(id: windowId)?.session.sessionId == inputHistoryKey
-        else { return false }
-        return alignmentPreparation.progress(
-            modelID: selectedModel.flatMap { ModelManager.findInstalledModelFromCache(named: $0)?.id },
-            sessionID: inputHistoryKey
-        ) == nil
-    }
-
-    @ViewBuilder
-    private var ssdQuotaWarningRow: some View {
-        if canPresentSSDQuotaNotice, let snapshot = ssdWarningSnapshot,
-            ssdWarningModel == selectedModel,
-            snapshot.usage.pressureAffects(session: inputHistoryKey?.uuidString)
-        {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("More SSD cache space would help this chat", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-                Text(verbatim: snapshot.usage.pressureText)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .fixedSize(horizontal: false, vertical: true)
-                bannerPrimaryButton(
-                    String(localized: "Increase Cache Size", bundle: .module),
-                    tint: .orange
-                ) {
-                    ManagementStateManager.shared.serverSectionRequest = "cache"
-                    SettingsHighlightCoordinator.shared.request("settings.server.diskCacheSize")
-                    AppDelegate.shared?.showManagementWindow(initialTab: .server)
-                }
-                bannerTextButton(String(localized: "Don't show this again", bundle: .module)) {
-                    DiskCacheQuotaNoticeSuppression.suppress()
-                    ssdWarningSnapshot = nil
-                }
-                .padding(.vertical, 4)
-                .frame(maxWidth: .infinity)
-            }
-            .padding(14)
-            .background(RAMBannerShape(pointerCenterX: 28).fill(.regularMaterial))
-            .overlay(RAMBannerShape(pointerCenterX: 28).stroke(Color.orange.opacity(0.45), lineWidth: 1))
-            .frame(width: Self.ramBannerWidth, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.leading, 20)
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("ssd-quota-warning")
-        }
     }
 
     /// The model-switch notice takes precedence over the bundle-layout advisory.

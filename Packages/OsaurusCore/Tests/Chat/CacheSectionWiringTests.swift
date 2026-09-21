@@ -20,15 +20,19 @@
 import XCTest
 
 final class CacheSectionWiringTests: XCTestCase {
-    func testQuotaPollingAndVisibleNoticeFollowCurrentChatEligibility() throws {
+    /// Cache pressure is never announced in the chat: no card, no poller, no
+    /// suppression preference. The state stays where the user goes looking
+    /// for it — the context-budget popover and Live Activity.
+    func testNoCachePressurePopupInTheChat() throws {
         let src = try source("Views/Chat/FloatingInputCard.swift")
-        XCTAssertTrue(src.contains(".task(id: ssdQuotaNoticePollContext)"))
-        XCTAssertTrue(src.contains("session: inputHistoryKey,\n            eligible: canPresentSSDQuotaNotice"))
-        XCTAssertTrue(src.contains("if canPresentSSDQuotaNotice, let snapshot = ssdWarningSnapshot"))
-        XCTAssertTrue(src.contains("ssdWarningModel == selectedModel"))
-        XCTAssertTrue(src.contains("session: inputHistoryKey?.uuidString"))
+        XCTAssertFalse(src.contains("ssd-quota-warning"))
+        XCTAssertFalse(src.contains("ssdQuotaWarningRow"))
+        XCTAssertFalse(src.contains("DiskCacheQuotaNotices"))
+        XCTAssertFalse(src.contains("DiskCacheQuotaNoticeSuppression"))
+        // The popover's disk-cache row is still fed by the runtime's snapshots.
         XCTAssertTrue(src.contains("matching: settings.cache, modelName: model, session: session"))
-        XCTAssertTrue(src.contains("DiskCacheQuotaNoticeSuppression.suppress()"))
+        let cache = try source("Views/Settings/ServerSettings/CacheSection.swift")
+        XCTAssertFalse(cache.contains("Show SSD Cache Capacity Notices"))
     }
 
     func testMTPBannerPreservesIndividualButtonAccessibility() throws {

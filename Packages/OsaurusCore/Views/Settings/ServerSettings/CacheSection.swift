@@ -23,7 +23,6 @@ struct CacheSection: View {
     @State private var isClearingDiskCache = false
     @State private var clearedCacheSummary: String?
     @State private var diskCacheResolution: DiskCacheCapPolicy.Resolution?
-    @AppStorage(DiskCacheQuotaNoticeSuppression.defaultsKey) private var ssdNoticesSuppressed = false
 
     var body: some View {
         ServerSettingsCard(
@@ -352,16 +351,6 @@ struct CacheSection: View {
                 value: $draft.cache.blockDisk.directory
             )
             .settingsLandingAnchor("settings.server.diskCacheDirectory")
-
-            SettingsToggle(
-                title: L("Show SSD Cache Capacity Notices"),
-                description: "Show one notice per chat per app launch when its latest saved progress exceeds the SSD cache limit. Changes apply immediately.",
-                isOn: Binding(
-                    get: { !ssdNoticesSuppressed },
-                    set: { ssdNoticesSuppressed = !$0 }
-                )
-            )
-            .settingsLandingAnchor("settings.server.diskCacheNotices")
         }
     }
 

@@ -79,7 +79,6 @@ struct SettingsSearchSelfFindProbe {
             ("Disk Cache Size (% of disk)", "settings.server.diskCacheSize"),
             ("Increase Cache Size", "settings.server.diskCacheSize"),
             ("Use Automatic Cache Size", "settings.server.diskCacheAutomatic"),
-            ("Show SSD Cache Capacity Notices", "settings.server.diskCacheNotices"),
             ("clear ssd cache", "server.cache"),
             ("gpu cache", "server.cache"),
             ("context window cap", "settings.chat.contextLength"),
