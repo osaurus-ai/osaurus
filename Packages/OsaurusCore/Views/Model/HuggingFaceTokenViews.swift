@@ -179,7 +179,10 @@ struct HuggingFaceTokenCard: View {
         .onReceive(managementState.$pendingHuggingFaceTokenPrompt) { requested in
             guard requested else { return }
             managementState.pendingHuggingFaceTokenPrompt = false
-            showAddSheet = true
+            // Presenting from inside the publisher callback is silently
+            // dropped (replay lands mid-render; the warm case lands while the
+            // link handler's alert is still tearing down), so hop a turn.
+            DispatchQueue.main.async { showAddSheet = true }
         }
     }
 

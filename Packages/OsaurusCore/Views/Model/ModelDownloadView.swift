@@ -1914,7 +1914,23 @@ struct ModelDownloadView: View {
         guard let pendingId = managementState.pendingModelDetailId else { return }
         guard let model = modelManager.resolveModel(byRepoId: pendingId) else { return }
         managementState.pendingModelDetailId = nil
-        modelToShowDetails = model
+        presentDetailSheet(for: model)
+    }
+
+    /// Presents the detail sheet for `model`. When another model's sheet is
+    /// already up (a second Hub link while the first is open), swapping the
+    /// `.sheet(item:)` value in place leaves the old content on screen, so
+    /// dismiss first and present again once the dismissal has run.
+    private func presentDetailSheet(for model: MLXModel) {
+        guard let current = modelToShowDetails else {
+            modelToShowDetails = model
+            return
+        }
+        if current.id == model.id { return }
+        modelToShowDetails = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            modelToShowDetails = model
+        }
     }
 
     private func chooseInitialTabIfNeeded() {
