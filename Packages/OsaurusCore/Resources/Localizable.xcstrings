@@ -273779,6 +273779,461 @@
           }
         }
       }
+    },
+    "Use with Codex CLI": {
+      "comment": "Title of the Server → Overview card that configures OpenAI's Codex CLI to use this Osaurus.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mit Codex CLI verwenden"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex CLI와 함께 사용"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Использовать с Codex CLI"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "与 Codex CLI 一起使用"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "與 Codex CLI 一起使用"
+          }
+        }
+      }
+    },
+    "Run OpenAI's Codex CLI against your local models. Osaurus registers itself as a Codex model provider and adds an `osaurus` profile; nothing else in your Codex config is touched.": {
+      "comment": "Description under the Use with Codex CLI card title.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Führe OpenAIs Codex CLI mit deinen lokalen Modellen aus. Osaurus registriert sich als Codex-Modellanbieter und fügt ein `osaurus`-Profil hinzu; alles andere in deiner Codex-Konfiguration bleibt unverändert."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "로컬 모델로 OpenAI의 Codex CLI를 실행하세요. Osaurus가 Codex 모델 제공자로 등록되고 `osaurus` 프로필이 추가되며, Codex 설정의 다른 부분은 변경되지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запускайте Codex CLI от OpenAI на своих локальных моделях. Osaurus регистрируется как поставщик моделей Codex и добавляет профиль `osaurus`; остальная конфигурация Codex не затрагивается."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "让 OpenAI 的 Codex CLI 使用你的本地模型。Osaurus 会将自己注册为 Codex 模型提供方并添加一个 `osaurus` 配置档；你的 Codex 配置中的其他内容不会被更改。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "讓 OpenAI 的 Codex CLI 使用你的本機模型。Osaurus 會將自己註冊為 Codex 模型提供者並新增一個 `osaurus` 設定檔；你的 Codex 設定中的其他內容不會被更動。"
+          }
+        }
+      }
+    },
+    "No local models installed. Download one from the Models manager first.": {
+      "comment": "Shown in the Use with Codex CLI card when the model picker has nothing to list.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keine lokalen Modelle installiert. Lade zuerst eines im Modell-Manager herunter."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설치된 로컬 모델이 없습니다. 먼저 모델 관리자에서 하나를 다운로드하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Локальные модели не установлены. Сначала загрузите модель в менеджере моделей."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未安装本地模型。请先在模型管理器中下载一个。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚未安裝本機模型。請先在模型管理器中下載一個。"
+          }
+        }
+      }
+    },
+    "%@ context": {
+      "comment": "Context window badge next to the Codex CLI model picker. %@ is a formatted token count, e.g. 262,144.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ Kontext"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "컨텍스트 %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Контекст %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 上下文"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 上下文"
+          }
+        }
+      }
+    },
+    "Copy both files and the command": {
+      "comment": "Tooltip for the Copy button in the Use with Codex CLI card.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beide Dateien und den Befehl kopieren"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "두 파일과 명령을 복사"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Скопировать оба файла и команду"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "复制两个文件和命令"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "複製兩個檔案和指令"
+          }
+        }
+      }
+    },
+    "Add to %@": {
+      "comment": "Primary button in the Use with Codex CLI card. %@ is the Codex home directory, e.g. ~/.codex.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zu %@ hinzufügen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@에 추가"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавить в %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加到 %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加入到 %@"
+          }
+        }
+      }
+    },
+    "Write config.toml and osaurus.config.toml": {
+      "comment": "Tooltip for the Add to ~/.codex button in the Use with Codex CLI card.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "config.toml und osaurus.config.toml schreiben"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "config.toml 및 osaurus.config.toml 작성"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Записать config.toml и osaurus.config.toml"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写入 config.toml 和 osaurus.config.toml"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "寫入 config.toml 和 osaurus.config.toml"
+          }
+        }
+      }
+    },
+    "Network exposure is on, so Codex must send an access key even from this Mac. Create one under Access Keys and export %@ in the shell that runs codex.": {
+      "comment": "Warning footer in the Use with Codex CLI card when Expose to Network is on. %@ is the environment variable name OSAURUS_API_KEY.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Netzwerkfreigabe ist aktiv, daher muss Codex auch von diesem Mac einen Zugangsschlüssel senden. Erstelle einen unter Zugangsschlüssel und exportiere %@ in der Shell, die codex ausführt."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "네트워크 노출이 켜져 있어 이 Mac에서도 Codex가 액세스 키를 보내야 합니다. 액세스 키에서 하나를 만들고 codex를 실행하는 셸에서 %@를 export하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Доступ из сети включён, поэтому Codex должен передавать ключ доступа даже с этого Mac. Создайте ключ в разделе «Ключи доступа» и экспортируйте %@ в оболочке, где запускается codex."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已开启网络暴露，因此即使在这台 Mac 上 Codex 也必须发送访问密钥。请在“访问密钥”中创建一个，并在运行 codex 的 shell 中导出 %@。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已開啟網路公開，因此即使在這台 Mac 上 Codex 也必須傳送存取金鑰。請在「存取金鑰」中建立一個，並在執行 codex 的 shell 中匯出 %@。"
+          }
+        }
+      }
+    },
+    "Updated %@ and wrote %@. Run `%@`.": {
+      "comment": "Success status after re-writing an existing Osaurus block. First %@ is config.toml path, second is the profile path, third is the codex command to run.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ aktualisiert und %2$@ geschrieben. Führe `%3$@` aus."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@을(를) 업데이트하고 %2$@을(를) 작성했습니다. `%3$@`을(를) 실행하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Обновлён %1$@, записан %2$@. Запустите `%3$@`."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已更新 %1$@ 并写入 %2$@。运行 `%3$@`。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已更新 %1$@ 並寫入 %2$@。執行 `%3$@`。"
+          }
+        }
+      }
+    },
+    "Added the provider to %@ and wrote %@. Run `%@`.": {
+      "comment": "Success status after the first write. First %@ is config.toml path, second is the profile path, third is the codex command to run.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anbieter zu %1$@ hinzugefügt und %2$@ geschrieben. Führe `%3$@` aus."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@에 제공자를 추가하고 %2$@을(를) 작성했습니다. `%3$@`을(를) 실행하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Поставщик добавлен в %1$@, записан %2$@. Запустите `%3$@`."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已将提供方添加到 %1$@ 并写入 %2$@。运行 `%3$@`。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已將提供者加入 %1$@ 並寫入 %2$@。執行 `%3$@`。"
+          }
+        }
+      }
+    },
+    "%@ already defines model_providers.osaurus outside the Osaurus-managed block. Remove that definition (or move it between the markers) and try again.": {
+      "comment": "Write refusal when the user's config.toml has an unmanaged [model_providers.osaurus] table. %@ is the config.toml path.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ definiert model_providers.osaurus bereits außerhalb des von Osaurus verwalteten Blocks. Entferne diese Definition (oder verschiebe sie zwischen die Markierungen) und versuche es erneut."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@에 Osaurus 관리 블록 밖에서 model_providers.osaurus가 이미 정의되어 있습니다. 해당 정의를 제거하거나 마커 사이로 옮긴 뒤 다시 시도하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ уже определяет model_providers.osaurus вне блока, управляемого Osaurus. Удалите это определение (или перенесите его между маркерами) и повторите попытку."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 已在 Osaurus 托管块之外定义了 model_providers.osaurus。请删除该定义（或将其移到标记之间）后重试。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 已在 Osaurus 管理區塊之外定義了 model_providers.osaurus。請移除該定義（或將其移到標記之間）後再試一次。"
+          }
+        }
+      }
+    },
+    "Couldn't write Codex configuration: %@": {
+      "comment": "Failure status in the Use with Codex CLI card. %@ is the underlying error.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex-Konfiguration konnte nicht geschrieben werden: %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex 설정을 쓸 수 없습니다: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось записать конфигурацию Codex: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法写入 Codex 配置：%@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法寫入 Codex 設定：%@"
+          }
+        }
+      }
+    },
+    "%@ is not readable as UTF-8 text.": {
+      "comment": "Write failure when the existing config.toml is not UTF-8. %@ is the file path.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ kann nicht als UTF-8-Text gelesen werden."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@을(를) UTF-8 텍스트로 읽을 수 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ не читается как текст в кодировке UTF-8."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 无法作为 UTF-8 文本读取。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 無法作為 UTF-8 文字讀取。"
+          }
+        }
+      }
     }
   },
   "version": "1.1"
