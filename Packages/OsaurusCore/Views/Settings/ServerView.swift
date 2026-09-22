@@ -987,7 +987,15 @@ private struct CodexCLISetupSection: View {
         }
         let resolved: Int? = await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
-                continuation.resume(returning: ContextSizeResolverBridge.contextLength(modelId: modelId))
+                // What the server will actually retain, not what the bundle
+                // declares: past the KV retention cap the engine rolls the
+                // window silently, so that cap is the number Codex must
+                // compact against.
+                let bundle = ContextSizeResolverBridge.contextLength(modelId: modelId)
+                let cap = ServerRuntimeSettingsStore.resolvedKVRetentionCap()
+                continuation.resume(
+                    returning: CodexCLIConfiguration.effectiveContextWindow(
+                        bundleContextLength: bundle, kvRetentionCap: cap))
             }
         }
         guard modelId == selectedModelId else { return }

@@ -110,6 +110,23 @@ public enum CodexCLIConfiguration {
         return lines.joined(separator: "\n") + "\n"
     }
 
+    /// The context window to advertise to Codex: the bundle's declared length
+    /// bounded by the server's KV retention cap. The engine keeps at most
+    /// `kvRetentionCap` tokens of KV and rolls the window silently past it, so
+    /// telling Codex the bundle's 131k–262k would make it compact far too
+    /// late and lose its instructions and early turns without any signal.
+    /// `nil` when neither side knows.
+    public static func effectiveContextWindow(bundleContextLength: Int?, kvRetentionCap: Int?) -> Int? {
+        let bundle = bundleContextLength.flatMap { $0 > 0 ? $0 : nil }
+        let cap = kvRetentionCap.flatMap { $0 > 0 ? $0 : nil }
+        switch (bundle, cap) {
+        case (let b?, let c?): return min(b, c)
+        case (let b?, nil): return b
+        case (nil, let c?): return c
+        case (nil, nil): return nil
+        }
+    }
+
     /// The whole `osaurus.config.toml` profile file.
     public static func profileFile(modelId: String, contextWindow: Int?) -> String {
         var lines = [

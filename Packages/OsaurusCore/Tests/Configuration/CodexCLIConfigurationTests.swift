@@ -284,4 +284,29 @@ struct CodexCLIConfigurationTests {
         #expect(try String(contentsOf: configURL, encoding: .utf8) == manual)
         #expect(!FileManager.default.fileExists(atPath: CodexCLIConfiguration.profileURL(codexHome: home).path))
     }
+
+    @Test("the advertised window is the bundle length bounded by the server's KV retention cap")
+    func effectiveWindowIsBoundedByTheRetentionCap() {
+        // Raptor declares 131 072; the Memory Safety plan retains 65 536 and the
+        // engine rolls silently past it — Codex must compact against 65 536.
+        #expect(
+            CodexCLIConfiguration.effectiveContextWindow(bundleContextLength: 131_072, kvRetentionCap: 65_536)
+                == 65_536)
+        // A small bundle stays its own size.
+        #expect(
+            CodexCLIConfiguration.effectiveContextWindow(bundleContextLength: 8_192, kvRetentionCap: 65_536)
+                == 8_192)
+        // Unlimited retention: the bundle length.
+        #expect(
+            CodexCLIConfiguration.effectiveContextWindow(bundleContextLength: 262_144, kvRetentionCap: nil)
+                == 262_144)
+        // Unknown bundle length: the cap is still a true statement about the server.
+        #expect(
+            CodexCLIConfiguration.effectiveContextWindow(bundleContextLength: nil, kvRetentionCap: 65_536)
+                == 65_536)
+        #expect(CodexCLIConfiguration.effectiveContextWindow(bundleContextLength: nil, kvRetentionCap: nil) == nil)
+        // Non-positive values are "unknown", never a 0 window.
+        #expect(CodexCLIConfiguration.effectiveContextWindow(bundleContextLength: 0, kvRetentionCap: 0) == nil)
+        #expect(CodexCLIConfiguration.effectiveContextWindow(bundleContextLength: 0, kvRetentionCap: 65_536) == 65_536)
+    }
 }
