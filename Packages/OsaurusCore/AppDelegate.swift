@@ -1311,14 +1311,29 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         /// re-persists seen; pick this item again to test another pass.
         @objc private func dockResetProductHuntTeaser() {
             ProductHuntLaunchCampaign.shared.resetForDebugTesting(phase: .teaser)
-            presentProductHuntLaunchDialogIfEligible()
+            debugReportProductHuntDeferral(presentProductHuntLaunchDialogIfEligible(), phase: .teaser)
         }
 
         /// Same as above for the launch-day dialog. The teaser's flag is
         /// left alone so the teaser → launch-day handoff can be exercised.
         @objc private func dockResetProductHuntLaunchDay() {
             ProductHuntLaunchCampaign.shared.resetForDebugTesting(phase: .launch)
-            presentProductHuntLaunchDialogIfEligible()
+            debugReportProductHuntDeferral(presentProductHuntLaunchDialogIfEligible(), phase: .launch)
+        }
+
+        /// The production presenter defers silently by design (the next
+        /// activation rechecks). For the dock test items that reads as
+        /// "nothing happened", so name the gate in a toast + log. The
+        /// flag stays cleared, so fixing the blocker and picking the item
+        /// again (or just re-activating the app) shows the dialog.
+        private func debugReportProductHuntDeferral(_ reason: String?, phase: ProductHuntLaunchCampaign.Phase) {
+            guard let reason else { return }
+            NSLog("[ProductHunt] \(phase.rawValue) dialog deferred: \(reason)")
+            ToastManager.shared.warning(
+                "PH \(phase.rawValue) dialog deferred",
+                message: "\(reason). Resolve it and pick the dock item again, or re-activate the app.",
+                timeout: 8
+            )
         }
 
         /// Clear the import prompt's seen flag and run the normal
@@ -2783,15 +2798,25 @@ extension AppDelegate {
     /// rechecks while the phase remains open. On launch day the same
     /// rechecks are what surface the second dialog to users who already
     /// dismissed the teaser.
+    ///
+    /// Returns `nil` when a dialog was presented, otherwise a short,
+    /// developer-facing token naming the gate that deferred it. Production
+    /// callers ignore it; the DEBUG dock items surface it so a silent
+    /// deferral is diagnosable instead of looking like a no-op.
     @MainActor
-    func presentProductHuntLaunchDialogIfEligible() {
+    @discardableResult
+    func presentProductHuntLaunchDialogIfEligible() -> String? {
         // Headless keychain-free live-proof launches never show UI; the
         // keychain-free UI-proof mode (`OSAURUS_KEYCHAIN_FREE_SHOW_UI=1`)
         // does, and is how this dialog is exercised without a signed build.
-        guard !keychainDisabledTestMode || keychainDisabledUIPresentationMode else { return }
+        guard !keychainDisabledTestMode || keychainDisabledUIPresentationMode else {
+            return "keychain-free headless mode"
+        }
 
         let campaign = ProductHuntLaunchCampaign.shared
-        guard let phase = campaign.eligiblePhase else { return }
+        guard let phase = campaign.eligiblePhase else {
+            return campaign.isPresenting ? "already presenting" : "no eligible phase (outside window or already seen)"
+        }
 
         // Defer instead of stacking: onboarding flow (fresh installs see the
         // dialog after it completes, via the onboarding-completion recheck),
@@ -2799,29 +2824,31 @@ extension AppDelegate {
         // sheet, any themed alert anywhere, a blocking in-chat or Computer
         // Use prompt awaiting the user, a streaming chat turn, or an active
         // background agent task (the current Work Mode equivalent).
-        guard !OnboardingService.shared.shouldShowOnboarding else { return }
-        guard !TelemetryService.shared.needsConsentDecision else { return }
-        guard NSApp.modalWindow == nil else { return }
-        guard !NSApp.windows.contains(where: { $0.attachedSheet != nil }) else { return }
-        guard !ThemedAlertCenter.shared.hasAnyActiveAlert else { return }
+        guard !OnboardingService.shared.shouldShowOnboarding else { return "onboarding pending" }
+        guard !TelemetryService.shared.needsConsentDecision else { return "telemetry consent pending" }
+        guard NSApp.modalWindow == nil else { return "AppKit modal window up" }
+        guard !NSApp.windows.contains(where: { $0.attachedSheet != nil }) else { return "attached sheet up" }
+        guard !ThemedAlertCenter.shared.hasAnyActiveAlert else { return "another themed alert is active" }
         // The layout tour's coachmark overlay owns the chat window while it
         // runs; a dialog landing underneath it would be unreachable.
-        guard !ChatLayoutTour.shared.isActive else { return }
+        guard !ChatLayoutTour.shared.isActive else { return "layout tour active" }
         guard ComputerUsePromptQueue.shared.pending.isEmpty,
             ComputerUsePromptQueue.shared.pendingConsent.isEmpty
-        else { return }
-        guard !ChatWindowManager.shared.isAnySessionStreaming else { return }
-        guard !ChatWindowManager.shared.hasAnyBlockingPromptOverlay else { return }
+        else { return "Computer Use prompt pending" }
+        guard !ChatWindowManager.shared.isAnySessionStreaming else { return "a chat session is streaming" }
+        guard !ChatWindowManager.shared.hasAnyBlockingPromptOverlay else { return "blocking in-chat prompt up" }
         guard !BackgroundTaskManager.shared.backgroundTasks.values.contains(where: { $0.status.isActive })
-        else { return }
+        else { return "background agent task active" }
 
         // Host in the user's landing window (same routing as the telemetry
         // consent prompt) so the dialog behaves like an app modal and recedes
-        // when Osaurus deactivates; the screen-level toast overlay is only a
-        // last-resort fallback when no app window is up.
+        // when Osaurus deactivates. A chat window that exists but is hidden
+        // (Esc / hotkey toggle orders it out) must not host it — the alert
+        // would sit invisibly until the user happened to reopen that window
+        // — so fall through to the screen-level toast overlay instead.
         let scope: ThemedAlertScope
         if let chatId = ChatWindowManager.shared.lastFocusedWindowId,
-            ChatWindowManager.shared.windowExists(id: chatId) {
+            ChatWindowManager.shared.getNSWindow(id: chatId)?.isVisible == true {
             scope = .chat(chatId)
         } else if WindowManager.shared.isVisible(.management) {
             scope = .management
@@ -2913,6 +2940,7 @@ extension AppDelegate {
             ),
             scope: scope
         )
+        return nil
     }
 }
 
