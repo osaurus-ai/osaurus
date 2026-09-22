@@ -1253,7 +1253,16 @@ extension OpenResponsesRequest {
             n: nil,
             tools: openAITools,
             tool_choice: openAIToolChoice,
-            session_id: nil
+            // Codex CLI sends its thread id as `prompt_cache_key` on every
+            // turn of a thread. That is the conversation identity the local
+            // runtime keys on: the disk-cache chain (so a thread's own resume
+            // rows outlive other chats' rows under a tight cap), frozen
+            // memory prefixes, and tool-state scoping. Without it every turn
+            // was its own chat and a Codex thread had no chain at all.
+            session_id: prompt_cache_key.flatMap { key in
+                let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
         )
         request.reasoning_effort = reasoning?.effort
         return request

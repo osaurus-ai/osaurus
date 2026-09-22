@@ -1172,6 +1172,22 @@ struct RemoteChatRequestEncodingTests {
     /// the whole `input` array fail to decode ("wrong type at input —
     /// expected OpenResponsesInput"), so Codex could never get past its first
     /// tool call or resume a thread.
+    @Test func openResponsesRequest_promptCacheKeyBecomesTheSessionId() throws {
+        // Codex CLI's thread id rides in `prompt_cache_key`; the local runtime
+        // keys the disk-cache chain and memory prefixes on `session_id`.
+        let keyed = try JSONDecoder().decode(
+            OpenResponsesRequest.self,
+            from: Data(
+                #"{"model":"m","input":"hi","prompt_cache_key":"01a0c717-a8a2-74a1-9434-3d7c54e37a0b"}"#.utf8))
+        #expect(keyed.toChatCompletionRequest().session_id == "01a0c717-a8a2-74a1-9434-3d7c54e37a0b")
+        let blank = try JSONDecoder().decode(
+            OpenResponsesRequest.self, from: Data(#"{"model":"m","input":"hi","prompt_cache_key":"  "}"#.utf8))
+        #expect(blank.toChatCompletionRequest().session_id == nil)
+        let absent = try JSONDecoder().decode(
+            OpenResponsesRequest.self, from: Data(#"{"model":"m","input":"hi"}"#.utf8))
+        #expect(absent.toChatCompletionRequest().session_id == nil)
+    }
+
     @Test func openResponsesRequest_decodesCodexCLIToolFollowUpTurn() throws {
         let data = Data(
             #"""
