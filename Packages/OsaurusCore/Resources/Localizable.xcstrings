@@ -274234,6 +274234,391 @@
           }
         }
       }
+    },
+    "Hugging Face token needed": {
+      "comment": "Alert title when a Hugging Face model link was refused with 401/403 (private or gated repo, or mistyped id) and no usable token is configured.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging-Face-Token erforderlich"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要 Hugging Face 令牌"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要 Hugging Face 權杖"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face 토큰이 필요합니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Требуется токен Hugging Face"
+          }
+        }
+      }
+    },
+    "Hugging Face would not show %@ without a token. If it is a private or gated repository, add a Hugging Face token for an account that has access and Osaurus will open the model. If you did not expect that, check the repository id.": {
+      "comment": "Alert body for a 401/403 model link. %@ is the repository id.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face zeigt %@ ohne Token nicht an. Wenn es sich um ein privates oder zugangsbeschränktes Repository handelt, füge ein Hugging-Face-Token eines Kontos mit Zugriff hinzu, und Osaurus öffnet das Modell. Falls das unerwartet ist, prüfe die Repository-ID."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有令牌时 Hugging Face 不会显示 %@。如果这是私有或受限仓库，请添加一个有访问权限账户的 Hugging Face 令牌，Osaurus 会打开该模型。如果这不在预期之内，请检查仓库 ID。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "沒有權杖時 Hugging Face 不會顯示 %@。如果這是私有或受限的儲存庫，請加入具有存取權帳號的 Hugging Face 權杖，Osaurus 會開啟該模型。如果這不在預期之內，請檢查儲存庫 ID。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "토큰이 없으면 Hugging Face에서 %@을(를) 표시하지 않습니다. 비공개 또는 접근 제한 저장소라면 접근 권한이 있는 계정의 Hugging Face 토큰을 추가하세요. 그러면 Osaurus가 모델을 엽니다. 예상하지 못한 상황이라면 저장소 ID를 확인하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face не показывает %@ без токена. Если это приватный или закрытый репозиторий, добавьте токен Hugging Face от учётной записи с доступом, и Osaurus откроет модель. Если это неожиданно, проверьте идентификатор репозитория."
+          }
+        }
+      }
+    },
+    "Add Token…": {
+      "comment": "Alert button that opens the Hugging Face token sheet.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Token hinzufügen …"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加令牌…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加入權杖…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "토큰 추가…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавить токен…"
+          }
+        }
+      }
+    },
+    "Model not found": {
+      "comment": "Alert title when Hugging Face answered 404 for a model link.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modell nicht gefunden"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未找到模型"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "找不到模型"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모델을 찾을 수 없음"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Модель не найдена"
+          }
+        }
+      }
+    },
+    "Hugging Face has no repository called %@.": {
+      "comment": "Alert body for a 404 model link. %@ is the repository id.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face hat kein Repository namens %@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face 上没有名为 %@ 的仓库。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face 上沒有名為 %@ 的儲存庫。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face에 %@ 저장소가 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "На Hugging Face нет репозитория с именем %@."
+          }
+        }
+      }
+    },
+    "Hugging Face rate limit": {
+      "comment": "Alert title when Hugging Face answered 429 for a model link.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging-Face-Ratenlimit"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face 速率限制"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face 速率限制"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face 요청 제한"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ограничение запросов Hugging Face"
+          }
+        }
+      }
+    },
+    "Hugging Face is rate-limiting anonymous requests from this Mac. Add a free Hugging Face token under Local Models, or try again in a minute.": {
+      "comment": "Alert body for a 429 model link.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face begrenzt anonyme Anfragen von diesem Mac. Füge unter „Lokale Modelle“ ein kostenloses Hugging-Face-Token hinzu oder versuche es in einer Minute erneut."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face 正在限制来自这台 Mac 的匿名请求。请在“本地模型”中添加免费的 Hugging Face 令牌，或稍后再试。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face 正在限制來自這台 Mac 的匿名請求。請在「本機模型」中加入免費的 Hugging Face 權杖，或稍後再試。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face가 이 Mac의 익명 요청을 제한하고 있습니다. 로컬 모델에서 무료 Hugging Face 토큰을 추가하거나 잠시 후 다시 시도하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face ограничивает анонимные запросы с этого Mac. Добавьте бесплатный токен Hugging Face в разделе «Локальные модели» или повторите попытку через минуту."
+          }
+        }
+      }
+    },
+    "Hugging Face unreachable": {
+      "comment": "Alert title when huggingface.co could not be reached to check a model link.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face nicht erreichbar"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法连接 Hugging Face"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法連線至 Hugging Face"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face에 연결할 수 없음"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face недоступен"
+          }
+        }
+      }
+    },
+    "Osaurus could not reach huggingface.co to check %@. Check your connection and open the link again.": {
+      "comment": "Alert body when the Hub was unreachable. %@ is the repository id.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus konnte huggingface.co nicht erreichen, um %@ zu prüfen. Prüfe deine Verbindung und öffne den Link erneut."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus 无法连接 huggingface.co 来检查 %@。请检查网络连接后重新打开链接。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus 無法連線至 huggingface.co 來檢查 %@。請檢查網路連線後重新開啟連結。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus가 %@을(를) 확인하기 위해 huggingface.co에 연결할 수 없습니다. 연결을 확인한 후 링크를 다시 여세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus не удалось подключиться к huggingface.co, чтобы проверить %@. Проверьте подключение и откройте ссылку снова."
+          }
+        }
+      }
+    },
+    "Not in the Osaurus catalog": {
+      "comment": "Alert title when a model link points at a public OsaurusAI repository that is not part of the language-model catalog.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nicht im Osaurus-Katalog"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不在 Osaurus 目录中"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不在 Osaurus 目錄中"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus 카탈로그에 없음"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нет в каталоге Osaurus"
+          }
+        }
+      }
+    },
+    "%@ is an OsaurusAI repository that is not part of the language-model catalog, so it cannot be opened here.": {
+      "comment": "Alert body for a registry-gated OsaurusAI repository. %@ is the repository id.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ ist ein OsaurusAI-Repository, das nicht zum Sprachmodell-Katalog gehört und daher hier nicht geöffnet werden kann."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 是 OsaurusAI 的仓库，但不属于语言模型目录，因此无法在此打开。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 是 OsaurusAI 的儲存庫，但不屬於語言模型目錄，因此無法在此開啟。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@은(는) 언어 모델 카탈로그에 속하지 않는 OsaurusAI 저장소이므로 여기에서 열 수 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ — репозиторий OsaurusAI, не входящий в каталог языковых моделей, поэтому здесь его открыть нельзя."
+          }
+        }
+      }
     }
   },
   "version": "1.1"
