@@ -110,6 +110,8 @@ struct SettingsSearchSelfFindProbe {
             ("enable memory", "memory.settings.enabled"),
             ("consolidation interval", "memory.settings.consolidation"),
             ("share my models", "server.peerInference"),
+            ("use with codex", "server.codexCLI"),
+            ("codex cli", "server.codexCLI"),
             ("schedules", "schedules.overview"),
             ("sandbox", "sandbox.overview"),
             ("macos permissions", "permissions.tools"),

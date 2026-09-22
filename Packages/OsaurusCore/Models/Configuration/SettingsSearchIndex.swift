@@ -828,6 +828,17 @@ public enum SettingsSearchIndex {
             keywords: ["peer inference", "share models", "lan inference", "expose models"]
         ),
         .init(
+            id: "server.codexCLI",
+            tab: .server,
+            title: "Use with Codex CLI",
+            keywords: [
+                "codex", "codex cli", "openai codex", "config.toml", "model_providers",
+                "codex profile", "external client", "coding agent",
+            ],
+            disambiguation:
+                "Points OpenAI's Codex CLI at this Osaurus as a local model provider. Not the \"OpenAI Codex\" remote provider under Providers, which is Osaurus using a ChatGPT subscription."
+        ),
+        .init(
             id: "computerUse.enable",
             tab: .computerUse,
             title: "Computer Use",
