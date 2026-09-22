@@ -6,8 +6,8 @@
 //  Decides which dialog — if any — may be shown right now:
 //
 //  - `teaser`: any time before the launch window opens (i.e. as soon as
-//    the build that ships it is installed). "We're launching in N hours,
-//    come support us."
+//    the build that ships it is installed). "Raptor launches in N hours,
+//    we'll remind you." Acknowledge-only; no launch page exists yet.
 //  - `launch`: inside the absolute 24-hour UTC launch window. "We're live."
 //
 //  Each phase has its own persisted seen flag, so a user who dismissed the
@@ -44,9 +44,8 @@ public final class ProductHuntLaunchCampaign {
     /// (`open <= now < close`), so this instant itself is closed.
     nonisolated public static let launchClosesAt = Date(timeIntervalSince1970: 1_790_233_260)
 
-    /// Single short link used by both dialogs. Points at the Product Hunt
-    /// "coming soon" page before launch and is repointed to the live
-    /// launch page at open.
+    /// Product Hunt launch page, opened by the launch-day dialog's primary
+    /// button. The teaser is acknowledge-only (no page exists yet).
     nonisolated public static let launchURL = URL(string: "https://links.osaurus.ai/ph-raptor")!
 
     /// Telemetry token distinguishing this campaign from the July 2026 one

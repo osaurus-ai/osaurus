@@ -2861,53 +2861,57 @@ extension AppDelegate {
         campaign.willPresent(phase)
         FeatureTelemetry.productHuntLaunchDialogShown(phase: phase)
 
-        // `open` makes a synchronous XPC round-trip to LaunchServices that
-        // can block for seconds while the browser cold-launches and hang the
-        // main thread; NSWorkspace is thread-safe, so fire it off main.
-        let openLaunchPage = {
-            DispatchQueue.global(qos: .userInitiated).async {
-                NSWorkspace.shared.open(ProductHuntLaunchCampaign.launchURL)
+        // The dismiss button carries the cancel role so Escape and an outside
+        // click follow the same permanent-dismiss path. Alone (teaser) it
+        // renders in the primary style and also takes Return.
+        let dismissButton = { (label: String) -> AlertButtonConfig in
+            .cancel(label) {
+                campaign.markSeen(phase)
+                FeatureTelemetry.productHuntLaunchDialogClicked(phase: phase, action: "later")
             }
         }
 
         let title: String
         let message: String
-        let cancelLabel: String
-        let primaryLabel: String
-        let primaryAction: String
-        let width: CGFloat
+        let buttons: [AlertButtonConfig]
         switch phase {
         case .teaser:
+            // No launch page exists yet, so the teaser is acknowledge-only.
             let countdown = ProductHuntLaunchCampaign.countdownDescription(from: Date())
-            title = L("A note from the Osaurus Team")
+            title = L("A note from the Osaurus team")
             message = L(
                 """
-                Hey! Osaurus Team here. We just want to say thank you for using our product, we hope you are finding value in what we do. We believe that everyone should be able to own their AI, and our goal is to make that as easy as possible.
+                Thanks for using Osaurus. We believe everyone should be able to own their AI, and we're trying to make that as easy as possible.
 
-                We realized through feedback not everyone has the best hardware, so we've done our best to launch Raptor, our flagship model for agentic tasks locally. It's less than 4GB in size, and it can do a lot of awesome things.
+                We heard from a lot of you that not everyone has a high-end Mac. So we built Raptor: our model for agentic tasks that runs locally in under 4GB.
 
-                We're going to be launching on Product Hunt in \(countdown), please come support us. We will show another reminder when it's live!
-
-                Thank you for being part of the community. We're grateful for your support. Let's bring Local AI to everyone!
+                Raptor launches on Product Hunt in \(countdown). We'll remind you when it's live. Your support means a lot.
                 """
             )
-            cancelLabel = L("Got it")
-            primaryLabel = L("Come support us")
-            primaryAction = "notify"
-            width = 440
+            buttons = [dismissButton(L("Got it"))]
         case .launch:
-            title = L("We're live on Product Hunt with Raptor")
+            title = L("Raptor is live on Product Hunt")
             message = L(
                 """
-                Hey! Today's the day — Raptor is live on Product Hunt.
+                Today's the day. Raptor, our local model for agentic tasks, runs in under 4GB and is built for Macs with 16GB of memory or less.
 
-                We built this one for you — for Macs with 16GB of memory or less. If Osaurus has been useful to you, come support the launch and share your feedback. It means a lot to us.
+                If Osaurus has been useful to you, come support the launch and leave your feedback. It means a lot to us.
                 """
             )
-            cancelLabel = L("Maybe later")
-            primaryLabel = L("Check out the launch")
-            primaryAction = "launch"
-            width = 400
+            buttons = [
+                dismissButton(L("Maybe later")),
+                .primary(L("Support the launch")) {
+                    campaign.markSeen(phase)
+                    FeatureTelemetry.productHuntLaunchDialogClicked(phase: phase, action: "launch")
+                    // `open` makes a synchronous XPC round-trip to
+                    // LaunchServices that can block for seconds while the
+                    // browser cold-launches and hang the main thread;
+                    // NSWorkspace is thread-safe, so fire it off main.
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        NSWorkspace.shared.open(ProductHuntLaunchCampaign.launchURL)
+                    }
+                },
+            ]
         }
 
         let requestId = UUID()
@@ -2919,20 +2923,8 @@ extension AppDelegate {
                 headerImageNames: ["osaurus-thanks", "ph-cat"],
                 headerImageAccessibilityLabel: L(
                     "Osaurus dinosaur and the Product Hunt kitty saying thank you"),
-                buttons: [
-                    // The dismiss button carries the cancel role so Escape and
-                    // an outside click follow the same permanent-dismiss path.
-                    .cancel(cancelLabel) {
-                        campaign.markSeen(phase)
-                        FeatureTelemetry.productHuntLaunchDialogClicked(phase: phase, action: "later")
-                    },
-                    .primary(primaryLabel) {
-                        campaign.markSeen(phase)
-                        FeatureTelemetry.productHuntLaunchDialogClicked(phase: phase, action: primaryAction)
-                        openLaunchPage()
-                    },
-                ],
-                width: width,
+                buttons: buttons,
+                width: 400,
                 onDismiss: {
                     campaign.didDismiss()
                     ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)

@@ -685,9 +685,9 @@ enum FeatureTelemetry {
     }
 
     /// The user dismissed a Product Hunt campaign dialog. `action` is a
-    /// closed enum token: `later` (cancel button, Escape, outside click),
-    /// `launch` (launch-day primary, opened the PH page), or `notify`
-    /// (teaser primary, opened the coming-soon page).
+    /// closed enum token: `later` (dismiss button, Escape, outside click —
+    /// the teaser's only button) or `launch` (launch-day primary, opened
+    /// the PH page).
     static func productHuntLaunchDialogClicked(
         phase: ProductHuntLaunchCampaign.Phase,
         action: String,
