@@ -153,6 +153,7 @@ final class FrameScrubberTests: XCTestCase {
         let frame = await FrameScrubber.scrub(cu, mode: .pii)
         XCTAssertNotNil(frame)
         XCTAssertEqual(frame?.image.mimeType, "image/jpeg")
+        XCTAssertEqual(frame?.report.ocrSucceeded, true)
     }
 
     func testAllTextMasksAtLeastAsMuchAsPII() async {
@@ -162,10 +163,36 @@ final class FrameScrubberTests: XCTestCase {
         guard let pii = await FrameScrubber.scrub(cgImage: image, mode: .pii),
             let all = await FrameScrubber.scrub(cgImage: image, mode: .allText)
         else { return XCTFail("scrub returned nil") }
+        XCTAssertTrue(pii.1.ocrSucceeded)
+        XCTAssertTrue(all.1.ocrSucceeded)
         XCTAssertGreaterThanOrEqual(all.1.maskedRegions, pii.1.maskedRegions)
         // If OCR ran at all, allText masks exactly the recognized regions.
         if all.1.textRegions > 0 {
             XCTAssertEqual(all.1.maskedRegions, all.1.textRegions)
+        }
+    }
+
+    func testMaskRectsClampToImageAndDropInvalidBoxes() {
+        let rects = FrameScrubber.maskRects(
+            for: [
+                CGRect(x: 0.1, y: 0.2, width: 0.3, height: 0.4),
+                CGRect(x: -0.1, y: 0.9, width: 0.2, height: 0.3),
+                CGRect(x: 1.2, y: 0.1, width: 0.1, height: 0.1),
+                CGRect(x: CGFloat.nan, y: 0, width: 0.1, height: 0.1),
+                CGRect(x: 0.5, y: 0.5, width: 0, height: 0.1),
+            ],
+            imageWidth: 200,
+            imageHeight: 100
+        )
+
+        XCTAssertEqual(rects.count, 2)
+        for rect in rects {
+            XCTAssertGreaterThan(rect.width, 0)
+            XCTAssertGreaterThan(rect.height, 0)
+            XCTAssertGreaterThanOrEqual(rect.minX, 0)
+            XCTAssertGreaterThanOrEqual(rect.minY, 0)
+            XCTAssertLessThanOrEqual(rect.maxX, 200)
+            XCTAssertLessThanOrEqual(rect.maxY, 100)
         }
     }
 }
