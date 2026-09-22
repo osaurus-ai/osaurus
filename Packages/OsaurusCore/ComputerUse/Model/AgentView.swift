@@ -129,10 +129,12 @@ public struct AgentView: Sendable, Equatable {
         var consumed: [String: Int] = [:]  // how many of each key we've matched
         let windowsById = Dictionary(uniqueKeysWithValues: snapshot.windows.map { ($0.id, $0) })
 
+        let publicMarks = SnapshotIdFormat.publicMarks(for: snapshot.elements.map(\.id))
         for (index, element) in snapshot.elements.enumerated() {
             let key = matchKey(windowId: element.windowId, role: element.role, label: element.label)
             let window = element.windowId.flatMap { windowsById[$0] }
             let visibleValue = visibleValue(for: element)
+            let mark = publicMarks[index]
             let changed: Bool
             if previous == nil {
                 changed = false
@@ -152,7 +154,7 @@ public struct AgentView: Sendable, Equatable {
 
             items.append(
                 AgentViewItem(
-                    mark: index + 1,
+                    mark: mark,
                     elementId: element.id,
                     windowId: element.windowId,
                     windowTitle: window?.title,

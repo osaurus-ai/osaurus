@@ -17,10 +17,10 @@ import Foundation
 //             with rich AX trees.
 //   .vision — screenshot only, no AX tree. Smallest payload for
 //             vision-first VLMs that ground on pixels.
-//   .som    — set-of-mark: AX tree + screenshot, with element-id
+//   .som    — set-of-mark: AX tree + screenshot, with public mark
 //             numbers drawn on every actionable element. Default: lets
 //             pixel-grounded models reason visually while still using
-//             stable element ids for clicks.
+//             stable public marks for clicks.
 
 enum CaptureMode: String, Codable, Sendable {
     case ax
@@ -37,13 +37,13 @@ enum CaptureMode: String, Codable, Sendable {
 
 // MARK: - SOM Result
 //
-// `elementIndex` is the cua-style addressing layer: a stable integer per
-// element in display order, useful for vision-first agents that don't want to
-// parse `s7-42` ids.
+// `elementIndex` is the CUA-style public mark: a snapshot-scoped stable integer
+// derived from the snapshot id when available, useful for vision-first agents
+// that don't want to parse `s7-42` ids.
 
-/// One actionable element annotated with both its snapshot id and its
-/// SOM-mode index. The agent can use either to address the element in
-/// follow-up clicks.
+/// One actionable element annotated with its snapshot id and public SOM mark.
+/// The agent addresses the element by mark; the raw id is an internal resolver
+/// handle and must not be rendered into model text or screenshot pixels.
 struct SOMElementRef: Sendable {
     let elementIndex: Int
     let id: String
@@ -84,9 +84,10 @@ func buildCapture(
         return AccessibilityManager.shared.traverse(filter: filter)
     }
 
+    let publicMarks = SnapshotIdFormat.publicMarks(for: snapshot.elements.map(\.id))
     let elementRefs: [SOMElementRef] = snapshot.elements.enumerated().map { idx, info in
         SOMElementRef(
-            elementIndex: idx + 1,
+            elementIndex: publicMarks[idx],
             id: info.id,
             role: info.role,
             label: info.label,
@@ -102,9 +103,8 @@ func buildCapture(
         var opts = ScreenshotOptions()
         opts.pid = pid
         if let wid = windowId { opts.windowId = CGWindowID(wid) }
-        // SOM annotation reuses the existing element-id overlay; the agent
-        // gets both the numeric index in `elements[]` and the visual id label
-        // burned onto the image.
+        // SOM annotation burns the same public numeric mark shown in
+        // `elements[]` onto the image. Internal AX ids stay out of pixels.
         opts.annotate = (mode == .som)
         imageContent = await ScreenshotController.shared.capture(options: opts)
     }
