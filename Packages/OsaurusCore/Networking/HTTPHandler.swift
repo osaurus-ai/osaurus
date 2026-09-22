@@ -12289,44 +12289,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
         }
 
-        struct CallBody: Codable {
+        struct CallBody: Decodable {
             let name: String
-            let arguments: AnyCodable?
-        }
-
-        // Lightweight AnyCodable for arguments passthrough
-        struct AnyCodable: Codable {
-            let value: Any
-            init(from decoder: Decoder) throws {
-                let container = try decoder.singleValueContainer()
-                if let b = try? container.decode(Bool.self) { value = b; return }
-                if let i = try? container.decode(Int.self) { value = i; return }
-                if let d = try? container.decode(Double.self) { value = d; return }
-                if let s = try? container.decode(String.self) { value = s; return }
-                if let arr = try? container.decode([AnyCodable].self) { value = arr.map { $0.value }; return }
-                if let dict = try? container.decode([String: AnyCodable].self) {
-                    value = dict.mapValues { $0.value }
-                    return
-                }
-                value = NSNull()
-            }
-            func encode(to encoder: Encoder) throws {
-                var container = encoder.singleValueContainer()
-                switch value {
-                case let b as Bool: try container.encode(b)
-                case let i as Int: try container.encode(i)
-                case let d as Double: try container.encode(d)
-                case let s as String: try container.encode(s)
-                case let arr as [Any]:
-                    let enc = try JSONSerialization.data(withJSONObject: arr, options: .osaurusCanonical)
-                    try container.encode(String(decoding: enc, as: UTF8.self))
-                case let dict as [String: Any]:
-                    let enc = try JSONSerialization.data(withJSONObject: dict, options: .osaurusCanonical)
-                    try container.encode(String(decoding: enc, as: UTF8.self))
-                default:
-                    try container.encodeNil()
-                }
-            }
+            let arguments: [String: JSONValue]?
         }
 
         guard let req = try? JSONDecoder().decode(CallBody.self, from: data) else {
@@ -12349,14 +12314,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        let argsJSON: String = {
-            if let a = req.arguments?.value,
-                let d = try? JSONSerialization.data(withJSONObject: a, options: .osaurusCanonical)
-            {
-                return String(decoding: d, as: UTF8.self)
-            }
-            return "{}"
-        }()
+        let argsData = try? JSONEncoder.osaurusCanonical().encode(req.arguments ?? [:])
+        let argsJSON = argsData.map { String(decoding: $0, as: UTF8.self) } ?? "{}"
 
         // External deny list: app-only tool classes are never invocable
         // through the MCP bridge (they're also hidden from `/mcp/tools`).

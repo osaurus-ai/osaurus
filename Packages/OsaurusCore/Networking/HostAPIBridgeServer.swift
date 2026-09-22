@@ -732,7 +732,7 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
     }
 
     private func jsonEscape(_ string: String) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: string),
+        guard let data = try? JSONEncoder.osaurusCanonical().encode(string),
             let escaped = String(data: data, encoding: .utf8)
         else { return "\"\(string)\"" }
         return escaped

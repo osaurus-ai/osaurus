@@ -269,7 +269,8 @@ extension MCPProviderTool {
             return .null
         default:
             // Try to encode as JSON string
-            if let jsonData = try? JSONSerialization.data(withJSONObject: value, options: .osaurusCanonical),
+            if JSONSerialization.isValidJSONObject(value),
+                let jsonData = try? JSONSerialization.data(withJSONObject: value, options: .osaurusCanonical),
                 let jsonString = String(data: jsonData, encoding: .utf8)
             {
                 return .string(jsonString)
