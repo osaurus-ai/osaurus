@@ -22,12 +22,40 @@ actor HuggingFaceService {
         let tags: [String]?
         let siblings: [RepoFile]?
         let isPrivate: Bool?
+        /// The Hub reports `gated` as `false` or as the approval mode
+        /// (`"auto"` / `"manual"`). Either non-false form means file
+        /// downloads need a token whose account was granted access.
+        let isGated: Bool
 
         enum CodingKeys: String, CodingKey {
             case id
             case tags
             case siblings
             case isPrivate = "private"
+            case gated
+        }
+
+        init(id: String, tags: [String]?, siblings: [RepoFile]?, isPrivate: Bool?, isGated: Bool = false) {
+            self.id = id
+            self.tags = tags
+            self.siblings = siblings
+            self.isPrivate = isPrivate
+            self.isGated = isGated
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            tags = try c.decodeIfPresent([String].self, forKey: .tags)
+            siblings = try c.decodeIfPresent([RepoFile].self, forKey: .siblings)
+            isPrivate = try c.decodeIfPresent(Bool.self, forKey: .isPrivate)
+            if let flag = try? c.decodeIfPresent(Bool.self, forKey: .gated) {
+                isGated = flag
+            } else if let mode = try? c.decodeIfPresent(String.self, forKey: .gated) {
+                isGated = !mode.isEmpty && mode.lowercased() != "false"
+            } else {
+                isGated = false
+            }
         }
     }
 
@@ -35,9 +63,45 @@ actor HuggingFaceService {
     /// Visibility matters because unknown public OsaurusAI repos remain
     /// registry-gated, while private repos owned by the token holder cannot
     /// appear in the public registry and must be importable directly.
-    struct MLXCompatibility: Sendable {
+    struct MLXCompatibility: Sendable, Equatable {
+        /// Why a repository could not be offered. Drives the wording of the
+        /// import/deep-link alert so a private repo without a token is not
+        /// reported as "not MLX".
+        enum Failure: Sendable, Equatable {
+            /// 401/403: private or gated repo and the request had no token,
+            /// or a token without access.
+            case unauthorized(status: Int)
+            /// 404: no such repository.
+            case notFound
+            /// 429: anonymous rate limit.
+            case rateLimited
+            /// Transport failure or a 5xx from the Hub.
+            case unreachable
+            /// Metadata was readable but the bundle is not an MLX bundle.
+            case notMLX
+        }
+
         let isCompatible: Bool
         let isPrivate: Bool
+        let isGated: Bool
+        let failure: Failure?
+
+        init(isCompatible: Bool, isPrivate: Bool, isGated: Bool = false, failure: Failure? = nil) {
+            self.isCompatible = isCompatible
+            self.isPrivate = isPrivate
+            self.isGated = isGated
+            self.failure = failure
+        }
+
+        /// Maps a non-2xx Hub status to the failure a caller should show.
+        static func failure(forHTTPStatus status: Int) -> Failure {
+            switch status {
+            case 401, 403: return .unauthorized(status: status)
+            case 404: return .notFound
+            case 429: return .rateLimited
+            default: return .unreachable
+            }
+        }
     }
 
     // MARK: - Rich Model Details
@@ -650,15 +714,27 @@ actor HuggingFaceService {
         let lower = trimmed.lowercased()
 
         // Fetch model metadata with tags and top-level file listing
-        guard let meta = await fetchModelMeta(repoId: trimmed) else {
-            // Network failure: conservative allowance for mlx-community repos
+        switch await fetchModelMetaResult(repoId: trimmed) {
+        case .meta(let meta):
+            return evaluateMLXCompatibility(repoId: trimmed, meta: meta)
+        case .http(let status):
+            // The Hub answers 401 for private AND for non-existent repos when
+            // the request carries no token, so both land on `.unauthorized`
+            // and the caller says "add a token or check the id".
             return MLXCompatibility(
-                isCompatible: lower.hasPrefix("mlx-community/"),
-                isPrivate: false
+                isCompatible: false,
+                isPrivate: false,
+                failure: MLXCompatibility.failure(forHTTPStatus: status)
+            )
+        case .unreachable:
+            // Network failure: conservative allowance for mlx-community repos
+            let allowed = lower.hasPrefix("mlx-community/")
+            return MLXCompatibility(
+                isCompatible: allowed,
+                isPrivate: false,
+                failure: allowed ? nil : .unreachable
             )
         }
-
-        return evaluateMLXCompatibility(repoId: trimmed, meta: meta)
     }
 
     /// Pure metadata evaluation kept separate from the network probe so the
@@ -666,11 +742,12 @@ actor HuggingFaceService {
     func evaluateMLXCompatibility(repoId: String, meta: ModelMeta) -> MLXCompatibility {
         let lower = repoId.lowercased()
         let isPrivate = meta.isPrivate == true
+        let compatible = MLXCompatibility(isCompatible: true, isPrivate: isPrivate, isGated: meta.isGated)
 
         // Strong signal: tags explicitly indicate MLX
         if let tags = meta.tags?.map({ $0.lowercased() }) {
             if tags.contains("mlx") || tags.contains("apple-mlx") || tags.contains("library:mlx") {
-                return MLXCompatibility(isCompatible: true, isPrivate: isPrivate)
+                return compatible
             }
         }
 
@@ -678,22 +755,22 @@ actor HuggingFaceService {
         // artifacts and core files exist. This covers JANG/JANGTQ/MXFP repos
         // whose display names may not include the literal `MLX` token.
         if Self.repoIdHasMLXArtifactHint(lower) && hasRequiredFiles(meta: meta) {
-            return MLXCompatibility(isCompatible: true, isPrivate: isPrivate)
+            return compatible
         }
 
         // As a last resort, trust curated org with required files
         if lower.hasPrefix("mlx-community/") && hasRequiredFiles(meta: meta) {
-            return MLXCompatibility(isCompatible: true, isPrivate: isPrivate)
+            return compatible
         }
 
         // Private repos are intentionally absent from public discovery and
         // often omit Hub card tags. The authenticated file listing is the
         // authoritative signal for a directly imported private bundle.
         if isPrivate && hasRequiredFiles(meta: meta) {
-            return MLXCompatibility(isCompatible: true, isPrivate: true)
+            return compatible
         }
 
-        return MLXCompatibility(isCompatible: false, isPrivate: isPrivate)
+        return MLXCompatibility(isCompatible: false, isPrivate: isPrivate, isGated: meta.isGated, failure: .notMLX)
     }
 
     /// Fetch comprehensive model details from Hugging Face
@@ -929,25 +1006,32 @@ actor HuggingFaceService {
         return path == directoryPath || path.hasPrefix(directoryPath + "/")
     }
 
-    private func fetchModelMeta(repoId: String) async -> ModelMeta? {
+    /// Outcome of the metadata probe. The status is kept so the import path
+    /// can tell "needs a token" apart from "not on the Hub" and "not MLX".
+    enum MetaFetch: Sendable {
+        case meta(ModelMeta)
+        case http(Int)
+        case unreachable
+    }
+
+    private func fetchModelMetaResult(repoId: String) async -> MetaFetch {
         var comps = URLComponents()
         comps.scheme = "https"
         comps.host = "huggingface.co"
         comps.path = "/api/models/\(repoId)"
         comps.queryItems = [URLQueryItem(name: "full", value: "1")]
-        guard let url = comps.url else { return nil }
+        guard let url = comps.url else { return .unreachable }
 
         var req = URLRequest(url: url)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         HuggingFaceAuth.authorize(&req)
         do {
             let (data, response) = try await GlobalProxySettings.sharedSession().data(for: req)
-            guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
-                return nil
-            }
-            return try JSONDecoder().decode(ModelMeta.self, from: data)
+            guard let http = response as? HTTPURLResponse else { return .unreachable }
+            guard (200 ..< 300).contains(http.statusCode) else { return .http(http.statusCode) }
+            return .meta(try JSONDecoder().decode(ModelMeta.self, from: data))
         } catch {
-            return nil
+            return .unreachable
         }
     }
 

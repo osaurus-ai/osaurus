@@ -115,6 +115,16 @@ public final class ManagementStateManager: ObservableObject {
     /// `ModelDownloadView` observes this and resets it to nil after applying.
     @Published public var pendingModelDetailId: String?
 
+    /// One-shot request to pop the Hugging Face token sheet on the Models
+    /// tab. Set by the deep-link handler when the Hub answered 401/403 for
+    /// the linked repo. `HuggingFaceTokenCard` observes this and resets it.
+    @Published public var pendingHuggingFaceTokenPrompt: Bool = false
+
+    /// Repo id to re-resolve once a token has been saved from that prompt,
+    /// so the user lands on the model they clicked instead of an empty
+    /// search. Cleared by `HuggingFaceTokenCard` after the retry.
+    @Published public var pendingDeepLinkRetryModelId: String?
+
     /// One-shot request to pop the "Add Collection" sheet on the Knowledge
     /// tab — e.g. from the project page's Add Collection shortcut, so the
     /// user isn't dropped on the tab just to click the same button again.

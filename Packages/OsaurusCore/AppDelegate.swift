@@ -2283,12 +2283,52 @@ extension AppDelegate {
 
         // Resolve to ensure it appears in the UI; enforce MLX-only via metadata
         Task { @MainActor in
-            if await ModelManager.shared.resolveModelIfMLXCompatible(byRepoId: modelId) == nil {
+            switch await ModelManager.shared.resolveModelForDeepLink(byRepoId: modelId) {
+            case .model:
+                // Open Model Manager in its own window for deeplinks, with the
+                // linked model's detail sheet (and its Download button) up.
+                ManagementStateManager.shared.pendingModelDetailId = modelId
+                showManagementWindow(initialTab: .models, deeplinkModelId: modelId, deeplinkFile: file)
+
+            case .unsupported(.unauthorized):
+                // Private (or mistyped) repo and no usable token. Offer the
+                // token sheet instead of calling the repo "not MLX".
                 let alert = NSAlert()
-                alert.messageText = L("Unsupported model")
+                alert.messageText = L("Hugging Face token needed")
                 alert.informativeText = L(
-                    "Osaurus supports MLX-compatible Hugging Face repositories, including MLX, MXFP, JANG, JANGTQ, and TurboQuant artifacts when required files are present."
+                    "Hugging Face would not show \(modelId) without a token. If it is a private or gated repository, add a Hugging Face token for an account that has access and Osaurus will open the model. If you did not expect that, check the repository id."
                 )
+                alert.alertStyle = .informational
+                alert.addButton(withTitle: L("Add Token…"))
+                alert.addButton(withTitle: L("Cancel"))
+                let response = CrashReportingService.shared.withAppHangTrackingPaused { alert.runModal() }
+                guard response == .alertFirstButtonReturn else { return }
+                ManagementStateManager.shared.pendingDeepLinkRetryModelId = modelId
+                ManagementStateManager.shared.pendingHuggingFaceTokenPrompt = true
+                showManagementWindow(initialTab: .models, deeplinkModelId: modelId, deeplinkFile: file)
+
+            case .unsupported(let failure):
+                let alert = NSAlert()
+                switch failure {
+                case .notFound:
+                    alert.messageText = L("Model not found")
+                    alert.informativeText = L("Hugging Face has no repository called \(modelId).")
+                case .rateLimited:
+                    alert.messageText = L("Hugging Face rate limit")
+                    alert.informativeText = L(
+                        "Hugging Face is rate-limiting anonymous requests from this Mac. Add a free Hugging Face token under Local Models, or try again in a minute."
+                    )
+                case .unreachable:
+                    alert.messageText = L("Hugging Face unreachable")
+                    alert.informativeText = L(
+                        "Osaurus could not reach huggingface.co to check \(modelId). Check your connection and open the link again."
+                    )
+                case .notMLX, .unauthorized:
+                    alert.messageText = L("Unsupported model")
+                    alert.informativeText = L(
+                        "Osaurus supports MLX-compatible Hugging Face repositories, including MLX, MXFP, JANG, JANGTQ, and TurboQuant artifacts when required files are present."
+                    )
+                }
                 alert.alertStyle = .warning
                 alert.addButton(withTitle: "OK")
                 // `runModal` intentionally blocks the main run loop until the
@@ -2297,11 +2337,19 @@ extension AppDelegate {
                 CrashReportingService.shared.withAppHangTrackingPaused {
                     _ = alert.runModal()
                 }
-                return
-            }
 
-            // Open Model Manager in its own window for deeplinks
-            showManagementWindow(initialTab: .models, deeplinkModelId: modelId, deeplinkFile: file)
+            case .registryGated:
+                let alert = NSAlert()
+                alert.messageText = L("Not in the Osaurus catalog")
+                alert.informativeText = L(
+                    "\(modelId) is an OsaurusAI repository that is not part of the language-model catalog, so it cannot be opened here."
+                )
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                CrashReportingService.shared.withAppHangTrackingPaused {
+                    _ = alert.runModal()
+                }
+            }
         }
     }
 }

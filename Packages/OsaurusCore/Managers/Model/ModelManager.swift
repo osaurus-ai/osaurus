@@ -491,18 +491,36 @@ public final class ModelManager: NSObject, ObservableObject {
     ///     Private repos may use their actual file layout instead of a public
     ///     naming/tag convention.
     func resolveModelIfMLXCompatible(byRepoId repoId: String) async -> MLXModel? {
-        let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
+        if case .model(let model) = await resolveModelForDeepLink(byRepoId: repoId) { return model }
+        return nil
+    }
 
-        if let existing = findExistingModel(id: trimmed).model { return existing }
+    /// Outcome of resolving a repo id that arrived from outside the catalog
+    /// (a `huggingface://` / `osaurus://open_from_hf` link or a pasted id).
+    enum DeepLinkResolution {
+        case model(MLXModel)
+        /// The Hub or the bundle rejected the repo; see the failure for why.
+        case unsupported(HuggingFaceService.MLXCompatibility.Failure)
+        /// A public OsaurusAI repo that is not in the curated registry. Other
+        /// product bundles live in that org and must not enter this catalog.
+        case registryGated
+    }
+
+    /// Resolves a repo id for the import flow, inserting it into the catalog
+    /// when the Hub says it is an MLX bundle the user can read.
+    func resolveModelForDeepLink(byRepoId repoId: String) async -> DeepLinkResolution {
+        let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .unsupported(.notFound) }
+
+        if let existing = findExistingModel(id: trimmed).model { return .model(existing) }
 
         let lower = trimmed.lowercased()
         let compatibility = await HuggingFaceService.shared.mlxCompatibility(repoId: trimmed)
-        guard compatibility.isCompatible else { return nil }
+        guard compatibility.isCompatible else {
+            return .unsupported(compatibility.failure ?? .notMLX)
+        }
         if lower.hasPrefix("osaurusai/"), !compatibility.isPrivate {
-            // Unknown public OsaurusAI repos remain registry-gated so other
-            // product bundles do not leak into the language-model catalog.
-            return nil
+            return .registryGated
         }
 
         let model = MLXModel(
@@ -512,7 +530,7 @@ public final class ModelManager: NSObject, ObservableObject {
             downloadURL: "https://huggingface.co/\(trimmed)"
         )
         insertModel(model)
-        return model
+        return .model(model)
     }
 
     // MARK: - Model Lookup

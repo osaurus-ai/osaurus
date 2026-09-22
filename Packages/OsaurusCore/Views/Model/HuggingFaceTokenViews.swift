@@ -142,6 +142,7 @@ struct HuggingFaceTokenCard: View {
     @State private var showAddSheet = false
     @State private var isReplacing = false
     @State private var replaceInput: String = ""
+    @ObservedObject private var managementState = ManagementStateManager.shared
 
     init() {
         _hasToken = State(initialValue: HuggingFaceAuth.cachedTokenPresence ?? false)
@@ -168,10 +169,30 @@ struct HuggingFaceTokenCard: View {
         .sheet(isPresented: $showAddSheet) {
             HuggingFaceTokenPromptSheet {
                 hasToken = true
+                retryPendingDeepLink()
             }
             .environment(\.theme, theme)
         }
         .task { await resolvePresence() }
+        // `$pendingHuggingFaceTokenPrompt` replays its current value on
+        // subscribe, so a request set before this card existed still lands.
+        .onReceive(managementState.$pendingHuggingFaceTokenPrompt) { requested in
+            guard requested else { return }
+            managementState.pendingHuggingFaceTokenPrompt = false
+            showAddSheet = true
+        }
+    }
+
+    /// A deep link that failed with 401/403 parks its repo id; now that a
+    /// token exists, resolve it again and open its detail sheet.
+    private func retryPendingDeepLink() {
+        guard let repoId = managementState.pendingDeepLinkRetryModelId else { return }
+        managementState.pendingDeepLinkRetryModelId = nil
+        Task { @MainActor in
+            if case .model = await ModelManager.shared.resolveModelForDeepLink(byRepoId: repoId) {
+                managementState.pendingModelDetailId = repoId
+            }
+        }
     }
 
     // MARK: Disconnected
@@ -197,7 +218,9 @@ struct HuggingFaceTokenCard: View {
 
                 Spacer(minLength: 8)
 
-                Button { showAddSheet = true } label: {
+                Button {
+                    showAddSheet = true
+                } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "plus.circle")
                             .font(.system(size: 12, weight: .semibold))
