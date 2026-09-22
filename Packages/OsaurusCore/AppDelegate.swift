@@ -2287,8 +2287,12 @@ extension AppDelegate {
             case .model:
                 // Open Model Manager in its own window for deeplinks, with the
                 // linked model's detail sheet (and its Download button) up.
-                ManagementStateManager.shared.pendingModelDetailId = modelId
+                // The detail request is set AFTER the window call: when the
+                // window already exists, that call swaps in a new SwiftUI
+                // graph, and a request set beforehand is consumed by the old
+                // graph on its way out (the publisher replays to subscribers).
                 showManagementWindow(initialTab: .models, deeplinkModelId: modelId, deeplinkFile: file)
+                ManagementStateManager.shared.pendingModelDetailId = modelId
 
             case .unsupported(.unauthorized):
                 // Private (or mistyped) repo and no usable token. Offer the
@@ -2303,9 +2307,12 @@ extension AppDelegate {
                 alert.addButton(withTitle: L("Cancel"))
                 let response = CrashReportingService.shared.withAppHangTrackingPaused { alert.runModal() }
                 guard response == .alertFirstButtonReturn else { return }
+                showManagementWindow(initialTab: .models, deeplinkModelId: modelId, deeplinkFile: file)
+                // Set after the window rebuild so the token card in the NEW
+                // view is the one that consumes the prompt (the publisher
+                // replays its current value to a fresh subscriber).
                 ManagementStateManager.shared.pendingDeepLinkRetryModelId = modelId
                 ManagementStateManager.shared.pendingHuggingFaceTokenPrompt = true
-                showManagementWindow(initialTab: .models, deeplinkModelId: modelId, deeplinkFile: file)
 
             case .unsupported(let failure):
                 let alert = NSAlert()
