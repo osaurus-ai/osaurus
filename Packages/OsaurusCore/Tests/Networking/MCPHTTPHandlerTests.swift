@@ -41,16 +41,22 @@ struct MCPHTTPHandlerTests {
     ]
 
     @Test func mcp_call_rejects_non_object_arguments_without_executing() async throws {
-        let server = try await startTestServer()
-        defer { Task { await server.shutdown() } }
-        for value in ["5", "true", #""text""#, "[]"] {
-            var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/call")!)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.authenticate()
-            request.httpBody = Data("{\"name\":\"unused\",\"arguments\":\(value)}".utf8)
-            let (_, response) = try await URLSession.shared.data(for: request)
-            #expect((response as? HTTPURLResponse)?.statusCode == 400)
+        try await DynamicCatalogTestLock.shared.run {
+            let name = "json_shape_invalid_probe"
+            ToolRegistry.shared.register(NamedEchoTool(name: name))
+            ToolRegistry.shared.setEnabled(true, for: name)
+            defer { ToolRegistry.shared.unregister(names: [name]) }
+            let server = try await startTestServer()
+            defer { Task { await server.shutdown() } }
+            for value in ["5", "true", #""text""#, "[]"] {
+                var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/call")!)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.authenticate()
+                request.httpBody = Data("{\"name\":\"\(name)\",\"arguments\":\(value)}".utf8)
+                let (_, response) = try await URLSession.shared.data(for: request)
+                #expect((response as? HTTPURLResponse)?.statusCode == 400)
+            }
         }
     }
 
