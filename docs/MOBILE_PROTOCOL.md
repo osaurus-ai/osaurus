@@ -1122,3 +1122,25 @@ abandons the send — nothing reaches the provider.
 
 `404 review_not_pending` when the review is already answered or its run
 ended.
+
+---
+
+## 20. Voice calls
+
+A voice call is a chat the phone conducts by ear: it transcribes the user on
+the device, sends the transcript as an ordinary turn, and reads the reply
+aloud as it streams. Speech never crosses the wire in either direction —
+recognition (Parakeet EOU) and synthesis (PocketTTS) both run on the phone,
+via the same FluidAudio models the Mac uses for its own dictation and read-
+aloud.
+
+So there is no call API. Each spoken turn is `POST /agents/{id}/run` (§6.3)
+with the transcript as the user message, in the same session as the chat it
+was started from, and the phone feeds the `text` stream events to the
+synthesiser sentence by sentence. Thinking and tool blocks are not spoken.
+
+Anything the Mac asks mid-run — an approval card (§14), a Privacy Filter
+review (§19) — arrives the way it always does, and the phone pauses the
+call's listening while it is shown, since a card cannot be answered by voice
+yet. A call ends nothing on the Mac: hanging up cancels the in-flight run
+exactly as tapping stop in the chat does.
