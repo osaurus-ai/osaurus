@@ -189,8 +189,14 @@ struct HuggingFaceTokenCard: View {
         guard let repoId = managementState.pendingDeepLinkRetryModelId else { return }
         managementState.pendingDeepLinkRetryModelId = nil
         Task { @MainActor in
-            if case .model = await ModelManager.shared.resolveModelForDeepLink(byRepoId: repoId) {
+            let resolution = await ModelManager.shared.resolveModelForDeepLink(byRepoId: repoId)
+            if case .model = resolution {
                 managementState.pendingModelDetailId = repoId
+            } else {
+                // Still refused with the new token: say why, the same way the
+                // link handler would, instead of leaving the user on a
+                // search with no result.
+                HuggingFaceDeepLinkAlert.present(resolution, modelId: repoId)
             }
         }
     }

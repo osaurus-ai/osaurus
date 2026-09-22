@@ -201,6 +201,13 @@ struct ModelDownloadView: View {
             Task { await modelManager.refreshModelUpdates() }
             DispatchQueue.main.async { applyPendingModelDetail() }
         }
+        // Replays on subscribe, so a link that arrived before this view
+        // existed (cold launch) is applied on first render too.
+        .onReceive(managementState.$pendingModelDeepLink) { request in
+            guard let request else { return }
+            managementState.pendingModelDeepLink = nil
+            applyModelDeepLink(request)
+        }
         .onReceive(managementState.$pendingModelDetailId) { _ in
             // `$pendingModelDetailId` replays its current value the moment the
             // subscription is set up, i.e. mid-body during the first render.
@@ -1889,6 +1896,20 @@ struct ModelDownloadView: View {
     /// CTA). Mirrors `AgentsView.applyPendingRemoteAgentDetail`: resolves the
     /// repo id against the catalog, then opens the sheet and clears the
     /// request.
+    /// Applies a `pendingModelDeepLink`: same effect as opening the view with
+    /// `deeplinkModelId`, but on the live view so no hosting-controller swap
+    /// is needed when the window is already open.
+    private func applyModelDeepLink(_ request: ManagementStateManager.ModelDeepLinkRequest) {
+        let modelId = request.modelId
+        searchText = modelId.split(separator: "/").last.map(String.init) ?? modelId
+        debouncedSearchText = searchText
+        _ = modelManager.resolveModel(byRepoId: modelId)
+        selectedTab = .all
+        didChooseInitialTab = true
+        modelManager.fetchRemoteMLXModels(searchText: searchText)
+        refreshGridLists()
+    }
+
     private func applyPendingModelDetail() {
         guard let pendingId = managementState.pendingModelDetailId else { return }
         guard let model = modelManager.resolveModel(byRepoId: pendingId) else { return }

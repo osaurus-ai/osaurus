@@ -79,3 +79,36 @@ struct HuggingFaceModelDeepLinkTests {
         #expect(HuggingFaceModelDeepLink.parse(try url("https://huggingface.co/org/repo?model=org/repo")) == nil)
     }
 }
+
+/// Source-level guard: the model link handler must never route through the
+/// hosting-controller rebuild (`showManagementWindow(deeplinkModelId:)`) on a
+/// window that may have a SwiftUI sheet up. Two consecutive Hub links crashed
+/// the app that way (SheetPresentationWindow.parentWindowSizeChanged trap,
+/// Sentry APPLE-MACOS-EF) before the shared-state route was introduced.
+struct HuggingFaceModelDeepLinkRouteSourceTests {
+    private static func source(_ relative: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // Model
+            .deletingLastPathComponent()  // Tests
+            .deletingLastPathComponent()  // OsaurusCore
+        return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
+    }
+
+    @Test func modelLinkHandlerUsesSharedStateNotControllerRebuild() throws {
+        let appDelegate = try Self.source("AppDelegate.swift")
+        let start = try #require(appDelegate.range(of: "fileprivate func handleHuggingFaceDeepLink(_ url: URL)"))
+        let end = try #require(
+            appDelegate.range(of: "// MARK: - Popover Helper", range: start.upperBound ..< appDelegate.endIndex)
+        )
+        let body = String(appDelegate[start.lowerBound ..< end.lowerBound])
+        #expect(!body.contains("deeplinkModelId: modelId"), "model links must not rebuild the management window")
+        #expect(body.contains("pendingModelDeepLink = .init(modelId: modelId, file: file)"))
+        #expect(body.contains("pendingModelDetailId = modelId"))
+    }
+
+    @Test func notificationModelLinkUsesSharedState() throws {
+        let service = try Self.source("Services/NotificationService.swift")
+        #expect(!service.contains("deeplinkModelId: modelId"))
+        #expect(service.contains("pendingModelDeepLink = .init(modelId: modelId, file: nil)"))
+    }
+}
