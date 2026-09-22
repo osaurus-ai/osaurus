@@ -32,6 +32,11 @@ final class NativeTypingIndicatorView: NSView {
     private let prefillTitleLabel = NSTextField(labelWithString: "Prefill")
     private let prefillCountLabel = NSTextField(labelWithString: "")
     private let loadingLabel = NSTextField(labelWithString: "")
+    /// "Finishing up…" caption shown beside the dots in the `.finishing`
+    /// phase: the model's output is complete, the run is still open on the
+    /// engine's post-generation tail (Stop live, input locked). Replaces the
+    /// RAM / prefill indicators, which describe generation, not the tail.
+    private let statusLabel = NSTextField(labelWithString: "")
 
     // MARK: Animation
 
@@ -44,6 +49,11 @@ final class NativeTypingIndicatorView: NSView {
 
     private var theme: (any ThemeProtocol)?
     private var isShowingLoadingLabel = false
+    /// Which wait this row stands for (see `TypingIndicatorPhase`). Set by
+    /// the cell from the block; `.finishing` overrides every global loading
+    /// phase, because once THIS step's output is done any model load or
+    /// prefill in flight belongs to another request and must not relabel it.
+    private var phase: TypingIndicatorPhase = .generating
 
     /// Latest prefill state, captured from the Combine stream's emitted value
     /// rather than re-read from the singleton. Prefill updates can arrive in a
@@ -83,7 +93,11 @@ final class NativeTypingIndicatorView: NSView {
         }
     }
 
-    func configure(theme: any ThemeProtocol) {
+    func configure(theme: any ThemeProtocol, phase: TypingIndicatorPhase = .generating) {
+        if phase != self.phase {
+            self.phase = phase
+            refreshLoadingPhase()
+        }
         guard self.theme == nil || !isSameTheme(theme) else { return }
         self.theme = theme
         updateColors(theme)
@@ -131,6 +145,18 @@ final class NativeTypingIndicatorView: NSView {
         NSLayoutConstraint.activate([
             loadingLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
             loadingLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+
+        // "Finishing up…" caption beside the dots (hidden unless `.finishing`).
+        // Sits where the RAM indicator does in the generating phase.
+        statusLabel.stringValue = L("Finishing up…")
+        statusLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.isHidden = true
+        addSubview(statusLabel)
+        NSLayoutConstraint.activate([
+            statusLabel.leadingAnchor.constraint(equalTo: dotStack.trailingAnchor, constant: 10),
+            statusLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
 
         // height is controlled by the parent cell — no fixed height constraint here
@@ -217,7 +243,18 @@ final class NativeTypingIndicatorView: NSView {
     /// Recompute and apply the current loading phase. Must be called on
     /// the main thread — caller is responsible for hopping there.
     private func refreshLoadingPhase() {
+        // Finishing wins outright: no replacement label, no prefill badge,
+        // no RAM indicator — dots + the status caption only.
+        if phase == .finishing {
+            applyLoadingPhase(nil)
+            memoryStack?.isHidden = true
+            statusLabel.isHidden = false
+            return
+        }
+        statusLabel.isHidden = true
         applyLoadingPhase(currentLoadingPhase())
+        // The RAM indicator (hidden by a prior finishing phase on a reused
+        // cell) comes back on the next memory poll tick.
     }
 
     private func currentLoadingPhase() -> LoadingPhase? {
@@ -298,7 +335,7 @@ final class NativeTypingIndicatorView: NSView {
     }
 
     private func updateMemoryLabel(monitor: SystemMonitorService) {
-        guard monitor.totalMemoryGB > 0, !isShowingLoadingLabel else {
+        guard monitor.totalMemoryGB > 0, !isShowingLoadingLabel, phase != .finishing else {
             memoryStack?.isHidden = true
             return
         }
@@ -374,6 +411,7 @@ final class NativeTypingIndicatorView: NSView {
             dot.backgroundColor = (i == currentDot ? primary : secondary).cgColor
         }
         loadingLabel.textColor = NSColor(theme.secondaryText)
+        statusLabel.textColor = NSColor(theme.secondaryText)
         applyPrefillBadgeColors()
     }
 

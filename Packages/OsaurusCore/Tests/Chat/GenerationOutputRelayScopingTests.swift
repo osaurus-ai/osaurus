@@ -162,9 +162,133 @@ struct GenerationOutputRelaySessionScopingTests {
             )
             try await waitUntil(timeout: Self.asyncTimeout) { session.outputComplete }
 
+            // Output complete but the stream (engine tail) is still open: the
+            // run is live, so the turn must keep a progress row — now in the
+            // `.finishing` phase — instead of rendering header-only.
+            #expect(session.isStreaming)
+            #expect(
+                Self.typingPhases(in: session.visibleBlocks) == [.finishing],
+                "the engine tail must be labelled, not blank"
+            )
+
             await engine.finish(with: "done")
             try await waitUntil(timeout: Self.asyncTimeout) { !session.isSendActiveForComposer }
             #expect(session.turns.last?.content == "done")
+            // Run closed: no indicator of either phase remains.
+            #expect(Self.typingPhases(in: session.visibleBlocks).isEmpty)
+        }
+    }
+
+    /// Stop pressed while the engine tail is draining (output complete, run
+    /// open, finishing indicator up): the indicator must clear with the run
+    /// and the turn must finalize as cancelled — no lingering progress row.
+    @Test
+    func stopDuringEngineTailClearsFinishingIndicator() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            session.toolsDisabledForTestingOverride = true
+            session.forceChatEngineRouteForTests = true
+            session.selectedModel = "relay-scoping-test"
+            let engine = GatedChatEngine()
+            session.chatEngineFactory = { _ in engine }
+
+            session.send("hello")
+            try await waitUntilAsync(timeout: Self.asyncTimeout) { await engine.requestCount == 1 }
+            try await waitUntil(timeout: Self.asyncTimeout) {
+                session.isStreaming && session.turns.last?.role == .assistant
+            }
+            let ownSessionId = try #require(session.sessionId?.uuidString)
+
+            GenerationOutputRelay.shared.announce(
+                modelName: "local/model", generationTokens: 3,
+                sessionId: ownSessionId, activitySource: .chatUI, auxiliary: false
+            )
+            try await waitUntil(timeout: Self.asyncTimeout) { session.outputComplete }
+            #expect(Self.typingPhases(in: session.visibleBlocks) == [.finishing])
+
+            session.stop()
+            try await waitUntil(timeout: Self.asyncTimeout) { !session.isSendActiveForComposer }
+            #expect(!session.isStreaming)
+            #expect(Self.typingPhases(in: session.visibleBlocks).isEmpty)
+            #expect(session.turns.last?.role == .assistant)
+            #expect(session.turns.last?.terminalStopReason == "cancelled")
+
+            // Release the gated engine so the harness does not leak the stream.
+            await engine.finish(with: "")
+        }
+    }
+
+    /// Stop while a local tool step sits on the engine tail: the model has
+    /// named the tool (pending chip up), output is complete, but the parsed
+    /// invocation is still withheld. The chip must go with the run AND the
+    /// cancelled turn must render its "Interrupted" record — the ephemeral
+    /// `pendingToolName` used to survive the stop and suppress that notice,
+    /// leaving a header-only row until a reload.
+    @Test("Stop during a pending-tool engine tail clears the chip and renders the cancelled record")
+    func stopDuringPendingToolTailRendersInterruptedNotice() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            session.toolsDisabledForTestingOverride = true
+            session.forceChatEngineRouteForTests = true
+            session.selectedModel = "relay-scoping-test"
+            let engine = GatedChatEngine()
+            session.chatEngineFactory = { _ in engine }
+
+            session.send("inspect")
+            try await waitUntilAsync(timeout: Self.asyncTimeout) { await engine.requestCount == 1 }
+            try await waitUntil(timeout: Self.asyncTimeout) {
+                session.isStreaming && session.turns.last?.role == .assistant
+            }
+            let ownSessionId = try #require(session.sessionId?.uuidString)
+
+            await engine.yield(StreamingToolHint.encode("osaurus_inspect"))
+            try await waitUntil(timeout: Self.asyncTimeout) {
+                session.turns.last?.pendingToolName == "osaurus_inspect"
+                    && Self.hasPendingToolChip(session.visibleBlocks)
+            }
+
+            GenerationOutputRelay.shared.announce(
+                modelName: "local/model", generationTokens: 3,
+                sessionId: ownSessionId, activitySource: .chatUI, auxiliary: false
+            )
+            try await waitUntil(timeout: Self.asyncTimeout) { session.outputComplete }
+            // The chip owns the tail for a tool step — no finishing row on top.
+            #expect(Self.hasPendingToolChip(session.visibleBlocks))
+            #expect(Self.typingPhases(in: session.visibleBlocks).isEmpty)
+
+            session.stop()
+            try await waitUntil(timeout: Self.asyncTimeout) { !session.isSendActiveForComposer }
+            #expect(!session.isStreaming)
+            let last = try #require(session.turns.last)
+            #expect(last.role == .assistant)
+            #expect(last.terminalStopReason == "cancelled")
+            #expect(last.pendingToolName == nil)
+            #expect(!Self.hasPendingToolChip(session.visibleBlocks))
+            #expect(Self.typingPhases(in: session.visibleBlocks).isEmpty)
+            #expect(
+                session.visibleBlocks.contains { block in
+                    if case let .paragraph(_, text, _, _) = block.kind {
+                        return text.hasPrefix("Interrupted")
+                    }
+                    return false
+                }
+            )
+
+            await engine.finish(with: "")
+        }
+    }
+
+    private static func hasPendingToolChip(_ blocks: [ContentBlock]) -> Bool {
+        blocks.contains { block in
+            if case .pendingToolCall = block.kind { return true }
+            return false
+        }
+    }
+
+    private static func typingPhases(in blocks: [ContentBlock]) -> [TypingIndicatorPhase] {
+        blocks.compactMap { block in
+            guard case let .typingIndicator(phase) = block.kind else { return nil }
+            return phase
         }
     }
 }
@@ -180,6 +304,11 @@ private actor GatedChatEngine: ChatEngineProtocol {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         self.continuation = continuation
         return stream
+    }
+
+    /// Push one delta while keeping the stream open.
+    func yield(_ text: String) {
+        continuation?.yield(text)
     }
 
     func finish(with text: String) {

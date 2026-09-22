@@ -1936,6 +1936,11 @@ final class ChatSession: ObservableObject {
         // the thread; otherwise fall back to the local agent's name.
         let displayName = threadAgentDisplayName ?? localName
         var streamingTurnId = (isStreaming && !outputComplete) ? turns.last?.id : nil
+        // The run-open id: stays on the last turn through `outputComplete`, so
+        // the pending tool chip / finishing indicator survive the engine tail
+        // (see `ContentBlock.generateBlocks(activeTurnId:)`). Nil once the
+        // run closes and Stop disappears.
+        let activeTurnId = isStreaming ? turns.last?.id : nil
 
         // While a send waits on the pre-send warm-up handshake there is no
         // assistant turn yet; render a placeholder typing-indicator group so
@@ -1972,6 +1977,7 @@ final class ChatSession: ObservableObject {
                 into: blockMemoizer.blocks(
                     from: effectiveTurns,
                     streamingTurnId: streamingTurnId,
+                    activeTurnId: activeTurnId,
                     agentName: displayName,
                     sessionSource: source
                 )
@@ -4567,6 +4573,17 @@ final class ChatSession: ObservableObject {
     private func markUnfinishedToolCallsInterrupted() {
         guard stopRequested || lastStreamError != nil else { return }
         for turn in turns where turn.role == .assistant {
+            // A tool the model was still naming/arguing (or whose parsed
+            // invocation was withheld by the engine tail) never became a
+            // call. Drop the ephemeral placeholder: with the run closed the
+            // pending chip no longer renders, and leaving the name set also
+            // suppressed the cancelled turn's "Interrupted" notice — a
+            // header-only row until a reload (which never restores this
+            // field) made the record visible.
+            if turn.pendingToolName != nil {
+                turn.pendingToolName = nil
+                turn.clearPendingToolArgs()
+            }
             guard let calls = turn.toolCalls, !calls.isEmpty else { continue }
             for call in calls where turn.toolResults[call.id] == nil {
                 // `setToolResult` also records the elapsed-until-stop duration.
@@ -5008,8 +5025,11 @@ final class ChatSession: ObservableObject {
                         if turn.lastOutputAt == nil { turn.lastOutputAt = at }
                     }
                     self.outputComplete = true
+                    // The rebuild keeps the last turn "active" (pending tool
+                    // chip / finishing indicator) while the engine tail
+                    // drains — only the cursor and live-content path end here.
                     self.rebuildVisibleBlocks()
-                    print("[Osaurus][UI] output complete at \(String(format: "%.2f", at.timeIntervalSince(streamStartTime)))s (engine done at \(String(format: "%.2f", completion.at.timeIntervalSince(streamStartTime)))s; run end pending on the engine tail)")
+                    print("[Osaurus][UI] output complete at \(String(format: "%.2f", at.timeIntervalSince(streamStartTime)))s (engine done at \(String(format: "%.2f", completion.at.timeIntervalSince(streamStartTime)))s; run end pending on the engine tail, finishing indicator shown)")
                 }
             }
         defer { outputCompleteSub.cancel() }
