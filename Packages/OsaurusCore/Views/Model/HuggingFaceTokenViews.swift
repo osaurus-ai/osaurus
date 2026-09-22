@@ -142,7 +142,6 @@ struct HuggingFaceTokenCard: View {
     @State private var showAddSheet = false
     @State private var isReplacing = false
     @State private var replaceInput: String = ""
-    @ObservedObject private var managementState = ManagementStateManager.shared
 
     init() {
         _hasToken = State(initialValue: HuggingFaceAuth.cachedTokenPresence ?? false)
@@ -169,39 +168,10 @@ struct HuggingFaceTokenCard: View {
         .sheet(isPresented: $showAddSheet) {
             HuggingFaceTokenPromptSheet {
                 hasToken = true
-                retryPendingDeepLink()
             }
             .environment(\.theme, theme)
         }
         .task { await resolvePresence() }
-        // `$pendingHuggingFaceTokenPrompt` replays its current value on
-        // subscribe, so a request set before this card existed still lands.
-        .onReceive(managementState.$pendingHuggingFaceTokenPrompt) { requested in
-            guard requested else { return }
-            managementState.pendingHuggingFaceTokenPrompt = false
-            // Presenting from inside the publisher callback is silently
-            // dropped (replay lands mid-render; the warm case lands while the
-            // link handler's alert is still tearing down), so hop a turn.
-            DispatchQueue.main.async { showAddSheet = true }
-        }
-    }
-
-    /// A deep link that failed with 401/403 parks its repo id; now that a
-    /// token exists, resolve it again and open its detail sheet.
-    private func retryPendingDeepLink() {
-        guard let repoId = managementState.pendingDeepLinkRetryModelId else { return }
-        managementState.pendingDeepLinkRetryModelId = nil
-        Task { @MainActor in
-            let resolution = await ModelManager.shared.resolveModelForDeepLink(byRepoId: repoId)
-            if case .model = resolution {
-                managementState.pendingModelDetailId = repoId
-            } else {
-                // Still refused with the new token: say why, the same way the
-                // link handler would, instead of leaving the user on a
-                // search with no result.
-                HuggingFaceDeepLinkAlert.present(resolution, modelId: repoId)
-            }
-        }
     }
 
     // MARK: Disconnected
@@ -227,9 +197,7 @@ struct HuggingFaceTokenCard: View {
 
                 Spacer(minLength: 8)
 
-                Button {
-                    showAddSheet = true
-                } label: {
+                Button { showAddSheet = true } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "plus.circle")
                             .font(.system(size: 12, weight: .semibold))

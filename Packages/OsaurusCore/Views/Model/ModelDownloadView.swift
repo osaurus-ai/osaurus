@@ -98,6 +98,11 @@ struct ModelDownloadView: View {
 
     /// Model to show in the detail sheet
     @State private var modelToShowDetails: MLXModel? = nil
+    /// Token sheet requested by a Hugging Face model link the Hub refused
+    /// with 401/403. Hosted here rather than on the catalog's token card:
+    /// the card is not rendered while the search (now prefilled with the
+    /// refused repo) has no results, so a request parked on it never fires.
+    @State private var showTokenPromptForDeepLink = false
 
     /// Drives the "model can't be used" alert shown when a greyed (non-MLX)
     /// card is tapped, instead of opening its detail sheet.
@@ -253,6 +258,20 @@ struct ModelDownloadView: View {
                 if Task.isCancelled { return }
                 modelManager.fetchRemoteMLXModels(searchText: newValue)
             }
+        }
+        .sheet(isPresented: $showTokenPromptForDeepLink) {
+            HuggingFaceTokenPromptSheet {
+                retryDeepLinkAfterTokenSaved()
+            }
+            .environment(\.theme, themeManager.currentTheme)
+        }
+        .onReceive(managementState.$pendingHuggingFaceTokenPrompt) { requested in
+            guard requested else { return }
+            managementState.pendingHuggingFaceTokenPrompt = false
+            // Presenting from inside the publisher callback is silently
+            // dropped (replay lands mid-render; the warm case lands while the
+            // link handler's alert is still tearing down), so hop a turn.
+            DispatchQueue.main.async { showTokenPromptForDeepLink = true }
         }
         .sheet(item: $modelToShowDetails) { model in
             // Family cards open with their full variant list so the sheet
@@ -1915,6 +1934,25 @@ struct ModelDownloadView: View {
         guard let model = modelManager.resolveModel(byRepoId: pendingId) else { return }
         managementState.pendingModelDetailId = nil
         presentDetailSheet(for: model)
+    }
+
+    /// A link that failed with 401/403 parked its repo id; now that a token
+    /// exists, resolve it again and open its detail sheet, or say why it is
+    /// still refused the same way the link handler would.
+    private func retryDeepLinkAfterTokenSaved() {
+        guard let repoId = managementState.pendingDeepLinkRetryModelId else { return }
+        managementState.pendingDeepLinkRetryModelId = nil
+        Task { @MainActor in
+            let resolution = await ModelManager.shared.resolveModelForDeepLink(byRepoId: repoId)
+            if case .model(let model) = resolution {
+                // The token sheet is still dismissing when `onSaved` runs.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                    presentDetailSheet(for: model)
+                }
+            } else {
+                HuggingFaceDeepLinkAlert.present(resolution, modelId: repoId)
+            }
+        }
     }
 
     /// Presents the detail sheet for `model`. When another model's sheet is
