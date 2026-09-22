@@ -540,7 +540,10 @@ public struct OpenResponsesTool: Codable, Sendable {
         try container.encode(type, forKey: .type)
         try container.encodeIfPresent(name, forKey: .name)
         try container.encodeIfPresent(description, forKey: .description)
-        try container.encodeIfPresent(parameters, forKey: .parameters)
+        let parameters =
+            parameters?.withEmptyPropertiesIfMissing
+            ?? .object(["type": .string("object"), "properties": .object([:])])
+        try container.encode(parameters, forKey: .parameters)
         try container.encodeIfPresent(strict, forKey: .strict)
     }
 }
