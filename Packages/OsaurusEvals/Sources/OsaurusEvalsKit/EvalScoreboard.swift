@@ -70,6 +70,7 @@ public struct EvalScoreboardBundle: Sendable, Codable, Equatable {
             kind: .eval,
             source: Self.evidenceSource,
             artifactPath: scoreboardPath,
+            artifactLocator: URL(fileURLWithPath: scoreboardPath).lastPathComponent,
             status: hasBlockingRegressions || hasRunFailures ? .failed : .passed,
             counts: evidenceCounts,
             startedAt: parseEvalScoreboardEvidenceDate(generatedAt),
@@ -349,9 +350,11 @@ public struct EvalReleaseCandidateScoreSummary: Sendable, Codable, Equatable {
     public let artifactPath: String
     public let baselinePath: String?
     public let verdict: String
+    // swiftlint:disable discouraged_optional_boolean
     /// Suite-derived run failure state. Optional so previously written
     /// scoreboard artifacts remain decodable.
     public let hasRunFailures: Bool?
+    // swiftlint:enable discouraged_optional_boolean
     public let noRegressionAllowed: Int
     public let noRegressionObserved: Int
     public let noRegressionPassed: Bool
@@ -424,6 +427,12 @@ public struct EvalScoreboardComparisonSummary: Sendable, Codable, Equatable {
 }
 
 public enum EvalScoreboardBuilder {
+    private struct LocatedEvidenceSummary {
+        let summary: EvidenceReportSummary
+        let artifactURL: URL
+        let registryURL: URL
+    }
+
     public static func build(
         generatedAt: String? = nil,
         sourceRoots: [URL],
@@ -476,7 +485,7 @@ public enum EvalScoreboardBuilder {
     public static func loadBundlesRecursively(from roots: [URL]) throws -> [EvalScoreboardInput] {
         let summaries = try loadEvidenceSummariesRecursively(from: roots)
             .filter {
-                $0.kind == .eval && $0.source == EvalReviewReportBundle.evidenceSource
+                $0.summary.kind == .eval && $0.summary.source == EvalReviewReportBundle.evidenceSource
             }
         guard !summaries.isEmpty else {
             throw EvalScoreboardError.noBundles(roots.map(\.path).joined(separator: ", "))
@@ -485,8 +494,9 @@ public enum EvalScoreboardBuilder {
         let fm = FileManager.default
         let decoder = JSONDecoder()
         var inputs: [EvalScoreboardInput] = []
-        for summary in summaries.sorted(by: evidenceSummarySort) {
-            let url = URL(fileURLWithPath: summary.artifact.path)
+        for located in summaries.sorted(by: locatedEvidenceSummarySort) {
+            let summary = located.summary
+            let url = located.artifactURL
             guard summary.artifact.availability == .available,
                   fm.fileExists(atPath: url.path)
             else {
@@ -518,15 +528,11 @@ public enum EvalScoreboardBuilder {
         return inputs
     }
 
-    private static func loadEvidenceSummariesRecursively(from roots: [URL]) throws -> [EvidenceReportSummary] {
+    private static func loadEvidenceSummariesRecursively(from roots: [URL]) throws -> [LocatedEvidenceSummary] {
         let fm = FileManager.default
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        var registeredAt = Date.distantPast
-        let registry = EvidenceReportRegistryService(
-            fileManager: fm,
-            now: { registeredAt }
-        )
+        var summariesByID: [String: LocatedEvidenceSummary] = [:]
         for root in roots {
             var isDirectory: ObjCBool = false
             guard fm.fileExists(atPath: root.path, isDirectory: &isDirectory) else {
@@ -567,36 +573,78 @@ public enum EvalScoreboardBuilder {
                 do {
                     let snapshot = try decoder.decode(EvidenceReportRegistrySnapshot.self, from: data)
                     for summary in snapshot.reports {
-                        registeredAt = summary.registeredAt
-                        let artifactError =
-                            summary.artifact.availability == .error
-                            ? summary.artifact.message ?? "registered artifact error"
-                            : nil
-                        registry.register(
-                            EvidenceReportDescriptor(
-                                id: summary.id,
-                                kind: summary.kind,
-                                source: summary.source,
-                                artifactPath: summary.artifact.path,
-                                status: summary.status,
-                                counts: summary.counts,
-                                startedAt: summary.startedAt,
-                                completedAt: summary.completedAt,
-                                metadata: summary.metadata,
-                                artifactError: artifactError
+                        guard let artifactURL = summary.artifact.resolvedURL(
+                            relativeTo: url.deletingLastPathComponent()
+                        ) else {
+                            throw EvalScoreboardError.invalidEvidenceRegistry(
+                                url.path,
+                                "report '\(summary.id)' has an invalid artifact locator"
                             )
+                        }
+                        let located = LocatedEvidenceSummary(
+                            summary: summary,
+                            artifactURL: artifactURL,
+                            registryURL: url
                         )
+                        if let existing = summariesByID[summary.id] {
+                            if prefers(located, over: existing, fileManager: fm) {
+                                summariesByID[summary.id] = located
+                            }
+                        } else {
+                            summariesByID[summary.id] = located
+                        }
                     }
                 } catch {
+                    if let error = error as? EvalScoreboardError {
+                        throw error
+                    }
                     throw EvalScoreboardError.invalidEvidenceRegistry(url.path, error.localizedDescription)
                 }
             }
         }
-        let summaries = registry.list()
+        let summaries = Array(summariesByID.values)
         guard !summaries.isEmpty else {
             throw EvalScoreboardError.noEvidenceRegistries(roots.map(\.path).joined(separator: ", "))
         }
         return summaries
+    }
+
+    private static func prefers(
+        _ incoming: LocatedEvidenceSummary,
+        over existing: LocatedEvidenceSummary,
+        fileManager: FileManager
+    ) -> Bool {
+        let incomingDate = incoming.summary.completedAt ?? incoming.summary.registeredAt
+        let existingDate = existing.summary.completedAt ?? existing.summary.registeredAt
+        if incomingDate != existingDate {
+            return incomingDate > existingDate
+        }
+        if incoming.summary.registeredAt != existing.summary.registeredAt {
+            return incoming.summary.registeredAt > existing.summary.registeredAt
+        }
+        if incoming.summary.generation != existing.summary.generation {
+            return incoming.summary.generation > existing.summary.generation
+        }
+
+        let incomingExists = fileManager.fileExists(atPath: incoming.artifactURL.path)
+        let existingExists = fileManager.fileExists(atPath: existing.artifactURL.path)
+        if incomingExists != existingExists {
+            return incomingExists
+        }
+        return incoming.registryURL.path > existing.registryURL.path
+    }
+
+    private static func locatedEvidenceSummarySort(
+        _ lhs: LocatedEvidenceSummary,
+        _ rhs: LocatedEvidenceSummary
+    ) -> Bool {
+        if evidenceSummarySort(lhs.summary, rhs.summary) {
+            return true
+        }
+        if evidenceSummarySort(rhs.summary, lhs.summary) {
+            return false
+        }
+        return lhs.artifactURL.path < rhs.artifactURL.path
     }
 
     private static func evidenceSummarySort(
