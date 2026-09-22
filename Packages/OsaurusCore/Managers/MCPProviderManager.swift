@@ -1342,12 +1342,14 @@ public final class MCPProviderManager: ObservableObject {
     ) -> [MCPProviderTool] {
         var tools: [MCPProviderTool] = []
         var reservedNames = Set(ToolRegistry.shared.registeredToolNames())
+        let siblingToolNames = mcpTools.map(\.name)
         for mcpTool in mcpTools {
             let tool = MCPProviderTool(
                 mcpTool: mcpTool,
                 providerId: providerId,
                 providerName: provider.name,
-                reservedNames: reservedNames
+                reservedNames: reservedNames,
+                siblingToolNames: siblingToolNames
             )
             tools.append(tool)
             reservedNames.insert(tool.name)

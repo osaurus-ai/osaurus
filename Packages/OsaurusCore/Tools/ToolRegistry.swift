@@ -717,13 +717,70 @@ public final class ToolRegistry: ObservableObject {
     /// the bare target is. This preserves the (unusual but valid) possibility
     /// of a plugin whose literal registered name starts with `tool/`.
     private func resolvedRegisteredName(for rawName: String) -> String {
-        guard toolsByName[rawName] == nil,
-            let target = Self.deferredToolAliasTarget(rawName),
-            toolsByName[target] != nil
-        else {
-            return rawName
+        guard toolsByName[rawName] == nil else { return rawName }
+        if let target = Self.deferredToolAliasTarget(rawName), toolsByName[target] != nil {
+            return target
         }
-        return target
+        // An MCP server's own instructions and tool descriptions name its
+        // tools canonically (`abc`), while the registry exposes them prefixed
+        // (`xyz_abc`). A model following the server's documented workflow
+        // calls the canonical name; resolve it within the originating
+        // provider instead of dead-ending on tool_not_found (#2856). The
+        // scope and permission gates then run on the resolved name, exactly
+        // as they would for a `tool/` alias — nothing becomes callable that
+        // was not already.
+        if let exposed = uniqueMCPToolName(forCanonical: rawName) {
+            ToolRegistryLogger.registry.notice(
+                "resolving canonical MCP tool '\(rawName, privacy: .public)' to '\(exposed, privacy: .public)'"
+            )
+            return exposed
+        }
+        return rawName
+    }
+
+    /// Registered MCP wrappers whose server-side (canonical) name is `name`.
+    func mcpTools(forCanonical name: String) -> [MCPProviderTool] {
+        toolsByName.values
+            .compactMap { $0 as? MCPProviderTool }
+            .filter { $0.mcpToolName == name }
+            .sorted { $0.name < $1.name }
+    }
+
+    /// The one exposed name a canonical MCP tool name maps to: the sole
+    /// provider publishing it, or, when several do, the sole one exposed to
+    /// this request. nil when nothing matches or the choice would be a guess.
+    func uniqueMCPToolName(forCanonical name: String) -> String? {
+        guard !keepsDedicatedNotFoundHandling(name) else { return nil }
+        let matches = mcpTools(forCanonical: name)
+        guard !matches.isEmpty else { return nil }
+        let exposed: [MCPProviderTool]
+        if let scope = ChatExecutionContext.toolExecutionScope {
+            exposed = matches.filter { scope.permits($0.name) }
+        } else {
+            exposed = matches
+        }
+        // A universal fetch name (`fetch`, `web_fetch`) keeps its
+        // search_and_extract steer unless the server's tool of that name is
+        // actually in the model's schema; an unexposed MCP `fetch` must not
+        // turn a working steer into a loader round-trip.
+        if Self.isHallucinatedFetchToolName(name), exposed.isEmpty { return nil }
+        if exposed.count == 1 { return exposed[0].name }
+        if exposed.isEmpty, matches.count == 1 { return matches[0].name }
+        return nil
+    }
+
+    /// Names `execute` answers with a dedicated, actionable message when they
+    /// are unregistered — attach a folder, enable the Apple app, the sandbox
+    /// is still starting — or that belong to a built-in. Resolving one of
+    /// these into an MCP provider would replace that message with a generic
+    /// loader hint, so a same-named remote tool stays reachable only under
+    /// its exposed name.
+    private func keepsDedicatedNotFoundHandling(_ name: String) -> Bool {
+        builtInToolNames.contains(name)
+            || Self.coreWorkspaceToolNames.contains(name)
+            || Self.redactionToolNames.contains(name)
+            || name.hasPrefix("sandbox_")
+            || AppleApp.app(forTool: name) != nil
     }
 
     /// `userInfo` keys on the code-7 (missing system permission) error.
@@ -998,6 +1055,15 @@ public final class ToolRegistry: ObservableObject {
         // plugin GROUP that happens to share an alias name (`plugin/fetch`)
         // keeps its own load rescue instead of being steered away from the
         // capability the user deliberately installed.
+        // A canonical MCP tool name that several connected servers publish,
+        // more than one of them exposed here: `resolvedRegisteredName` could
+        // not pick, so name the exposed candidates by provider rather than
+        // refuse opaquely. These are tools already in the model's schema,
+        // not rumors, so the no-"did you mean" rule does not apply (#2856).
+        if toolsByName[name] == nil, let ambiguous = ambiguousCanonicalMCPEnvelope(for: name) {
+            return ambiguous
+        }
+
         // A prefix-dropped plugin tool name: the Exa plugin registers
         // `exa_search_web_fetch_exa`; the model (Ornith, 2026-09-05 report)
         // called `web_fetch_exa`. When exactly ONE tool exposed to THIS
@@ -2789,6 +2855,26 @@ public final class ToolRegistry: ObservableObject {
                 && (scope?.permits(registered) ?? false)
         }
         return candidates.count == 1 ? candidates[0] : nil
+    }
+
+    /// The steer for a canonical MCP name that two or more exposed providers
+    /// publish; nil unless at least two are exposed to this request.
+    func ambiguousCanonicalMCPEnvelope(for name: String) -> String? {
+        guard let scope = ChatExecutionContext.toolExecutionScope else { return nil }
+        let exposed = mcpTools(forCanonical: name).filter { scope.permits($0.name) }
+        guard exposed.count > 1 else { return nil }
+        let choices = exposed.map { "'\($0.name)' (\($0.providerName))" }.joined(separator: ", ")
+        ToolRegistryLogger.registry.notice(
+            "canonical MCP tool '\(name, privacy: .public)' is published by \(exposed.count) exposed providers"
+        )
+        return ToolErrorEnvelope(
+            kind: .toolNotFound,
+            reason:
+                "There is no '\(name)' tool. More than one connected MCP server publishes '\(name)': "
+                + choices + ". Call the one you mean by its exact exposed name.",
+            toolName: name,
+            retryable: true
+        ).toJSONString()
     }
 
     /// " and its own arguments: required <a, b>; optional <c>" for the

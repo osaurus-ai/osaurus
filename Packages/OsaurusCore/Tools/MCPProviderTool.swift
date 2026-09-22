@@ -37,25 +37,40 @@ final class MCPProviderTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
         providerId: UUID,
         providerName: String,
         prefixWithProvider: Bool = true,
-        reservedNames: Set<String> = []
+        reservedNames: Set<String> = [],
+        siblingToolNames: [String] = []
     ) {
         self.providerId = providerId
         self.providerName = providerName
         self.mcpToolName = mcpTool.name
 
+        let exposedName: String
         if prefixWithProvider {
-            self.name = Self.exposedName(
+            exposedName = Self.exposedName(
                 providerId: providerId,
                 providerName: providerName,
                 mcpToolName: mcpTool.name,
                 reservedNames: reservedNames
             )
         } else {
-            self.name = mcpTool.name
+            exposedName = mcpTool.name
         }
+        self.name = exposedName
 
         let desc = mcpTool.description ?? "Tool from \(providerName)"
-        self.description = Self.truncatedDescription(desc)
+        // Server-authored descriptions refer to tools by their canonical MCP
+        // names, but the model can only call the prefixed name (#2856). Tell
+        // it the exposed name up front and map any sibling it cites, so a
+        // documented multi-tool workflow resolves without a guess.
+        self.description =
+            Self.namingHint(
+                exposedName: exposedName,
+                mcpToolName: mcpTool.name,
+                providerId: providerId,
+                providerName: providerName,
+                description: desc,
+                siblingToolNames: siblingToolNames
+            ) + Self.truncatedDescription(desc)
 
         // Convert MCP input schema to JSONValue
         self.parameters = Self.convertInputSchema(mcpTool.inputSchema)
@@ -113,6 +128,68 @@ final class MCPProviderTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
         if out.isEmpty { out = "tool_unnamed" }
         if out.count > 64 { out = String(out.prefix(64)) }
         return out
+    }
+
+    /// "Exposed as `xyz_abc` (server name `abc`). Tools this server names
+    /// are exposed with the same prefix: `def` is `xyz_def`. " — empty when
+    /// the tool is registered under its canonical name. Prepended rather
+    /// than appended so `maxDescriptionLength` truncation can never eat it.
+    /// Sibling mappings use the undisambiguated exposed name: a collision
+    /// suffix is rare, and `ToolRegistry` still resolves the canonical name
+    /// at call time when the hint is off.
+    static func namingHint(
+        exposedName: String,
+        mcpToolName: String,
+        providerId: UUID,
+        providerName: String,
+        description: String,
+        siblingToolNames: [String]
+    ) -> String {
+        guard exposedName != mcpToolName else { return "" }
+        var hint = "Exposed as `\(exposedName)` (server name `\(mcpToolName)`)."
+        let cited = siblingToolNames
+            .filter { $0 != mcpToolName && Self.mentionsWholeWord($0, in: description) }
+            .prefix(maxCitedSiblings)
+        if !cited.isEmpty {
+            let mappings = cited.map { sibling in
+                let exposed = Self.exposedName(
+                    providerId: providerId,
+                    providerName: providerName,
+                    mcpToolName: sibling
+                )
+                return "`\(sibling)` is `\(exposed)`"
+            }
+            hint +=
+                " Tools this server names are exposed with the same prefix: "
+                + mappings.joined(separator: ", ") + "."
+        }
+        return hint + " "
+    }
+
+    /// Cap on sibling mappings per description so a hub tool that lists the
+    /// whole catalog does not double its own token cost.
+    static let maxCitedSiblings = 8
+
+    /// Whole-word (identifier-boundary) match, so `search` inside
+    /// `search_issues` or `researched` does not count as a citation.
+    static func mentionsWholeWord(_ word: String, in text: String) -> Bool {
+        guard !word.isEmpty else { return false }
+        var searchStart = text.startIndex
+        while let found = text.range(of: word, range: searchStart..<text.endIndex) {
+            let boundedBefore =
+                found.lowerBound == text.startIndex
+                || !isIdentifierCharacter(text[text.index(before: found.lowerBound)])
+            let boundedAfter =
+                found.upperBound == text.endIndex
+                || !isIdentifierCharacter(text[found.upperBound])
+            if boundedBefore, boundedAfter { return true }
+            searchStart = found.upperBound
+        }
+        return false
+    }
+
+    private static func isIdentifierCharacter(_ ch: Character) -> Bool {
+        ch.isLetter || ch.isNumber || ch == "_"
     }
 
     static func truncatedDescription(_ raw: String) -> String {
