@@ -1130,7 +1130,7 @@ ended.
 A voice call is a chat the phone conducts by ear: it transcribes the user on
 the device, sends the transcript as an ordinary turn, and reads the reply
 aloud as it streams. Speech never crosses the wire in either direction —
-recognition (Parakeet EOU) and synthesis (PocketTTS) both run on the phone,
+recognition (Parakeet EOU) and synthesis (Kokoro) both run on the phone,
 via the same FluidAudio models the Mac uses for its own dictation and read-
 aloud.
 
