@@ -133,12 +133,14 @@ final class MCPProviderTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
     // MARK: - Schema Conversion
 
     /// Convert MCP Value schema to Osaurus JSONValue
-    private static func convertInputSchema(_ schema: MCP.Value?) -> JSONValue? {
+    static func convertInputSchema(_ schema: MCP.Value?) -> JSONValue? {
         guard let schema = schema else {
             // Return a basic object schema if none provided
-            return .object(["type": .string("object")])
+            return .object(["type": .string("object"), "properties": .object([:])])
         }
-        return convertMCPValue(schema)
+        // MCP no-arg tools may omit `properties`; fill it in at ingest so the
+        // stored spec is valid for OpenAI-style tool validators.
+        return convertMCPValue(schema).withEmptyPropertiesIfMissing
     }
 
     /// Convert MCP.Value to JSONValue recursively

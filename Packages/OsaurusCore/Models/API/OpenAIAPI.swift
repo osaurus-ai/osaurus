@@ -1278,7 +1278,9 @@ struct ToolFunction: Codable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(name, forKey: .name)
         try container.encodeIfPresent(description, forKey: .description)
-        let params = parameters ?? .object(["type": .string("object"), "properties": .object([:])])
+        let params =
+            parameters?.withEmptyPropertiesIfMissing
+            ?? .object(["type": .string("object"), "properties": .object([:])])
         try container.encode(params, forKey: .parameters)
     }
 
@@ -1430,6 +1432,23 @@ public enum JSONValue: Codable, Sendable, Equatable {
 // MARK: - JSONValue Conversions
 
 extension JSONValue {
+    /// MCP allows an object schema to omit `properties` (common for no-arg
+    /// tools), but OpenAI-style validators reject a tool whose
+    /// `parameters.properties` is missing. Fills in `properties: {}` on a
+    /// top-level object schema; every other shape is returned unchanged.
+    var withEmptyPropertiesIfMissing: JSONValue {
+        guard case .object(var schema) = self,
+            case .string("object")? = schema["type"]
+        else { return self }
+        switch schema["properties"] {
+        case nil, .null?:
+            schema["properties"] = .object([:])
+            return .object(schema)
+        default:
+            return self
+        }
+    }
+
     /// Convert JSON Schema into the shape expected by local chat templates.
     ///
     /// Some local templates, notably Gemma-4's native tool template, treat

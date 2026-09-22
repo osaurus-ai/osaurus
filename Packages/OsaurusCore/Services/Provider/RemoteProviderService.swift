@@ -5042,7 +5042,7 @@ struct RemoteChatRequest: Encodable {
                 AnthropicTool(
                     name: tool.function.name,
                     description: tool.function.description,
-                    input_schema: tool.function.parameters ?? emptySchema,
+                    input_schema: tool.function.parameters?.withEmptyPropertiesIfMissing ?? emptySchema,
                     // GA Anthropic contract: stream large parameter values as
                     // generated so file-write calls do not sit entirely in an
                     // upstream buffer until the value closes.
