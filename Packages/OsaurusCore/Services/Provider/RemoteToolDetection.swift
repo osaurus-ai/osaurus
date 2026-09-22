@@ -121,6 +121,7 @@ enum RemoteToolDetection {
         if let function = obj["function"] as? [String: Any], let name = function["name"] as? String {
             if let argsString = function["arguments"] as? String { return (name, argsString) }
             if let argsObj = function["arguments"],
+                JSONSerialization.isValidJSONObject(argsObj),
                 let argsData = try? JSONSerialization.data(withJSONObject: argsObj, options: .osaurusCanonical),
                 let argsJSON = String(data: argsData, encoding: .utf8)
             {
@@ -130,6 +131,7 @@ enum RemoteToolDetection {
         if let name = obj["tool_name"] as? String {
             if let argsString = obj["arguments"] as? String { return (name, argsString) }
             if let argsObj = obj["arguments"],
+                JSONSerialization.isValidJSONObject(argsObj),
                 let argsData = try? JSONSerialization.data(withJSONObject: argsObj, options: .osaurusCanonical),
                 let argsJSON = String(data: argsData, encoding: .utf8)
             {
@@ -142,6 +144,7 @@ enum RemoteToolDetection {
             guard obj["ok"] == nil, obj["result"] == nil else { return nil }
             if let argsString = obj["arguments"] as? String { return (name, argsString) }
             if let argsObj = obj["arguments"] ?? obj["parameters"],
+                JSONSerialization.isValidJSONObject(argsObj),
                 let argsData = try? JSONSerialization.data(withJSONObject: argsObj, options: .osaurusCanonical),
                 let argsJSON = String(data: argsData, encoding: .utf8)
             {
@@ -158,6 +161,7 @@ enum RemoteToolDetection {
         if let name = obj["name"] as? String {
             if let argsString = obj["arguments"] as? String { return (name, argsString) }
             if let argsObj = obj["arguments"],
+                JSONSerialization.isValidJSONObject(argsObj),
                 let argsData = try? JSONSerialization.data(withJSONObject: argsObj, options: .osaurusCanonical),
                 let argsJSON = String(data: argsData, encoding: .utf8)
             {
