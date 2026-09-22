@@ -272972,7 +272972,6 @@
     "Apple apps are now built into Osaurus": {},
     "%@ no longer need a plugin. Turn each app on per agent under Agents → Abilities → Tools → Apple Apps.": {},
     "%@ no longer need a plugin. Already turned on for %@; for other agents use Agents → Abilities → Tools → Apple Apps.": {},
-
     "More SSD cache space would help this chat": {
       "extractionState": "manual",
       "localizations": {
@@ -273510,6 +273509,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Использовать автоматический размер кэша"
+          }
+        }
+      }
+    },
+    "Finishing up…": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wird abgeschlossen…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "마무리 중…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Завершение…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在完成…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在完成…"
           }
         }
       }
