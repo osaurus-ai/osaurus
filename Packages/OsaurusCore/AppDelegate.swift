@@ -2217,7 +2217,15 @@ extension AppDelegate {
     /// `osaurus://settings?tab=<tab>` — open the management window on a tab
     /// (used by the in-chat osaurus_config result card's "Open in Settings"
     /// links for rows the user must finish by hand).
+    /// `osaurus://open_from_hf?model=<org/repo>[&file=<path>]` — the link
+    /// Hugging Face's "Use this model" menu generates for Osaurus; same
+    /// handling as `huggingface://?model=…` (see `HuggingFaceModelDeepLink`).
     fileprivate func handleOsaurusDeepLink(_ url: URL) {
+        if HuggingFaceModelDeepLink.matches(url) {
+            handleHuggingFaceDeepLink(url)
+            return
+        }
+
         Task { @MainActor in
             NSApp.activate(ignoringOtherApps: true)
 
@@ -2262,19 +2270,16 @@ extension AppDelegate {
         showManagementWindow(initialTab: .tools)
     }
 
+    /// `huggingface://?model=<org/repo>[&file=<path>]` and
+    /// `osaurus://open_from_hf?model=<org/repo>[&file=<path>]` — open the
+    /// Model Manager on that repository after checking it is MLX-compatible.
     fileprivate func handleHuggingFaceDeepLink(_ url: URL) {
-        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
-        let items = components.queryItems ?? []
-        let modelId = items.first(where: { $0.name.lowercased() == "model" })?.value?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let file = items.first(where: { $0.name.lowercased() == "file" })?.value?.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-
-        guard let modelId, !modelId.isEmpty else {
+        guard let link = HuggingFaceModelDeepLink.parse(url) else {
             // No model id provided; ignore silently
             return
         }
+        let modelId = link.modelId
+        let file = link.file
 
         // Resolve to ensure it appears in the UI; enforce MLX-only via metadata
         Task { @MainActor in
