@@ -4794,7 +4794,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask(priority: .userInitiated) {
             let outcome: (HTTPResponseStatus, String) = await MainActor.run {
-                guard let agent = AgentManager.shared.agent(for: agentId), !agent.isBuiltIn else {
+                // The Orchestrator is a built-in the owner may retune: its
+                // model lives in the Orchestrator settings, and
+                // `updateDefaultModel` writes there for `defaultId`. Any
+                // other built-in stays read-only.
+                guard let agent = AgentManager.shared.agent(for: agentId),
+                    !agent.isBuiltIn || agent.id == Agent.defaultId
+                else {
                     return (.notFound, #"{"error":"agent_not_found"}"#)
                 }
                 AgentManager.shared.updateDefaultModel(for: agentId, model: normalized)

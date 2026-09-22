@@ -837,8 +837,10 @@ marks rows the Mac greys out.
 
 `{"model":"<id from 12.1>"}` (or `null` to reset) sets the agent's default
 model — exactly what picking a model in the Mac composer does — and returns
-`{"ok":true,"effective_model":"…"}`. `404 agent_not_found` for unknown or
-built-in agents. Per-chat choice is simply the `model` field of `/run`
+`{"ok":true,"effective_model":"…"}`. `404 agent_not_found` for unknown agents.
+For the Orchestrator (§18) the choice lands in the Mac's Orchestrator
+settings, the same place the Mac's own composer writes it; every other
+built-in agent answers `404`. Per-chat choice is simply the `model` field of `/run`
 (§6.3); shared workspace agents still refuse overrides
 (`workspace_model_locked`).
 
@@ -1072,9 +1074,11 @@ It has no agent address of its own, so a client reaches it inside the Secure
 Channel of one of its pinned agents: the channel authenticates the phone, and
 the inner request names the Orchestrator.
 
-`PUT /agents/{id}/model` still refuses it. The Orchestrator's model belongs to
-the Mac's Orchestrator settings (`DefaultAgentConfiguration`), not to a chat,
-so a client shows its model without offering to change it.
+`PUT /agents/{id}/model` (§12.2) accepts it for owner callers. The
+Orchestrator's model belongs to the Mac's Orchestrator settings
+(`DefaultAgentConfiguration`) rather than to a chat, and that is where the
+call writes, so a phone picking a model for it changes it Mac-wide, just as
+the Mac's own composer does.
 
 ---
 
