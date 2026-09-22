@@ -22,6 +22,9 @@ OpenAI's Codex CLI can run against your local models. Settings → Server → Ov
 - Codex only speaks the Responses API (`wire_api = "responses"`), so requests land on `POST /v1/responses`.
 - With network exposure off, Codex on the same Mac needs no key. With it on, the generated block adds `env_key = "OSAURUS_API_KEY"`; create an access key and export that variable in the shell running Codex.
 - If `config.toml` already defines `model_providers.osaurus` by hand, the write is refused rather than duplicated; remove the manual table first.
+- The profile's `model_context_window` is what the server actually keeps: the model's context length, capped by the KV retention limit in Settings → Server → Memory Safety. Codex compacts the thread against it.
+- Each Codex thread is its own conversation for the on-disk prompt cache (its `prompt_cache_key` becomes the session id), so resuming a thread reuses its cached prefix.
+- To resume a non-interactive run, put the profile before the subcommand: `codex exec --profile osaurus resume --last "…"`. Placed after `resume` the flag is rejected, and without it Codex uses OpenAI instead of Osaurus.
 
 ## Two ways to run tools
 
