@@ -666,20 +666,41 @@ enum FeatureTelemetry {
         }
     }
 
-    // MARK: - Product Hunt launch dialog (July 2026, one-shot)
+    // MARK: - Product Hunt launch dialogs (one-shot per campaign phase)
 
-    /// The one-time Product Hunt launch dialog was presented. Count only.
-    static func productHuntLaunchDialogShown(service: TelemetryService = .shared) {
-        service.track("product_hunt_launch_dialog_shown")
+    /// A Product Hunt campaign dialog was presented. `campaign` separates
+    /// the Raptor run (Sept 2026) from the July 2026 launch, which emitted
+    /// the same event name without props; `phase` is `teaser` or `launch`.
+    static func productHuntLaunchDialogShown(
+        phase: ProductHuntLaunchCampaign.Phase,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "product_hunt_launch_dialog_shown",
+            [
+                "campaign": ProductHuntLaunchCampaign.campaignId,
+                "phase": phase.rawValue,
+            ]
+        )
     }
 
-    /// The user dismissed the Product Hunt launch dialog. `action` is a
-    /// closed two-value enum token: `launch` (opened the PH page) or `later`.
+    /// The user dismissed a Product Hunt campaign dialog. `action` is a
+    /// closed enum token: `later` (cancel button, Escape, outside click),
+    /// `launch` (launch-day primary, opened the PH page), or `notify`
+    /// (teaser primary, opened the coming-soon page).
     static func productHuntLaunchDialogClicked(
+        phase: ProductHuntLaunchCampaign.Phase,
         action: String,
         service: TelemetryService = .shared
     ) {
-        service.track("product_hunt_launch_dialog_clicked", ["action": action])
+        service.track(
+            "product_hunt_launch_dialog_clicked",
+            [
+                "campaign": ProductHuntLaunchCampaign.campaignId,
+                "phase": phase.rawValue,
+                "action": action,
+            ]
+        )
     }
 
     // MARK: - Import history prompt (post-onboarding, one-shot)

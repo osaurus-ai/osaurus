@@ -625,9 +625,9 @@ struct FeatureTelemetryEventTests {
         let (service, rec, cleanup) = makeRecordingService()
         defer { cleanup() }
 
-        FeatureTelemetry.productHuntLaunchDialogShown(service: service)
-        FeatureTelemetry.productHuntLaunchDialogClicked(action: "launch", service: service)
-        FeatureTelemetry.productHuntLaunchDialogClicked(action: "later", service: service)
+        FeatureTelemetry.productHuntLaunchDialogShown(phase: .launch, service: service)
+        FeatureTelemetry.productHuntLaunchDialogClicked(phase: .launch, action: "launch", service: service)
+        FeatureTelemetry.productHuntLaunchDialogClicked(phase: .teaser, action: "later", service: service)
 
         #expect(
             rec.events.map(\.name) == [
@@ -636,11 +636,17 @@ struct FeatureTelemetryEventTests {
                 "product_hunt_launch_dialog_clicked",
             ]
         )
-        // Shown carries no event-specific props; clicked carries only the
-        // closed two-value action token.
-        #expect(business(rec.events[0].props).isEmpty)
+        // Both events carry the campaign + phase tokens so the Raptor run
+        // is separable from the July 2026 launch (same event names, no
+        // props); clicked adds only the closed action token.
+        #expect(rec.events[0].props["campaign"] as? String == "raptor-2026-09")
+        #expect(rec.events[0].props["phase"] as? String == "launch")
+        #expect(business(rec.events[0].props).count == 2)
+        #expect(rec.events[1].props["campaign"] as? String == "raptor-2026-09")
+        #expect(rec.events[1].props["phase"] as? String == "launch")
         #expect(rec.events[1].props["action"] as? String == "launch")
-        #expect(business(rec.events[1].props).count == 1)
+        #expect(business(rec.events[1].props).count == 3)
+        #expect(rec.events[2].props["phase"] as? String == "teaser")
         #expect(rec.events[2].props["action"] as? String == "later")
     }
 
@@ -658,8 +664,8 @@ struct FeatureTelemetryEventTests {
         service.markStartedForTesting()
         service.setEnabled(false)  // declined → drop
 
-        FeatureTelemetry.productHuntLaunchDialogShown(service: service)
-        FeatureTelemetry.productHuntLaunchDialogClicked(action: "later", service: service)
+        FeatureTelemetry.productHuntLaunchDialogShown(phase: .teaser, service: service)
+        FeatureTelemetry.productHuntLaunchDialogClicked(phase: .teaser, action: "later", service: service)
 
         #expect(recorder.events.isEmpty)
     }

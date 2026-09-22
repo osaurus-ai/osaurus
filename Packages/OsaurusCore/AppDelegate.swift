@@ -1255,8 +1255,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             )
             menu.addItem(
                 NSMenuItem(
-                    title: "Reset & Test Product Hunt Launch",
-                    action: #selector(dockResetProductHuntLaunch),
+                    title: "Reset & Test PH Teaser",
+                    action: #selector(dockResetProductHuntTeaser),
+                    keyEquivalent: ""
+                )
+            )
+            menu.addItem(
+                NSMenuItem(
+                    title: "Reset & Test PH Launch Day",
+                    action: #selector(dockResetProductHuntLaunchDay),
                     keyEquivalent: ""
                 )
             )
@@ -1297,13 +1304,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             ChatWindowManager.shared.createWindow()
         }
 
-        /// Clear the campaign's seen flag, bypass only the UTC date window,
-        /// and run the normal eligibility/presentation path — including all
-        /// onboarding/modal/active-work deferrals — so the debug run
-        /// exercises the production coordination. Dismissing the dialog
+        /// Clear the teaser's seen flag, force the teaser phase regardless
+        /// of the UTC clock, and run the normal eligibility/presentation
+        /// path — including all onboarding/modal/active-work deferrals — so
+        /// the debug run exercises the production coordination. Dismissing
         /// re-persists seen; pick this item again to test another pass.
-        @objc private func dockResetProductHuntLaunch() {
-            ProductHuntLaunchCampaign.shared.resetForDebugTesting()
+        @objc private func dockResetProductHuntTeaser() {
+            ProductHuntLaunchCampaign.shared.resetForDebugTesting(phase: .teaser)
+            presentProductHuntLaunchDialogIfEligible()
+        }
+
+        /// Same as above for the launch-day dialog. The teaser's flag is
+        /// left alone so the teaser → launch-day handoff can be exercised.
+        @objc private func dockResetProductHuntLaunchDay() {
+            ProductHuntLaunchCampaign.shared.resetForDebugTesting(phase: .launch)
             presentProductHuntLaunchDialogIfEligible()
         }
 
@@ -2761,17 +2775,23 @@ extension AppDelegate {
 
 // MARK: - Product Hunt Launch Dialog
 extension AppDelegate {
-    /// Present the one-time Product Hunt launch thank-you dialog when the
-    /// campaign's own gates pass (inside the UTC window, never seen) AND
-    /// nothing critical is in progress. A blocked attempt does NOT consume
-    /// eligibility — the next launch/foreground activation or onboarding
-    /// completion simply rechecks while the window remains open.
+    /// Present whichever Product Hunt campaign dialog (pre-launch teaser or
+    /// launch-day reminder) the campaign's own gates resolve to — the
+    /// current UTC phase, never seen for that phase — AND nothing critical
+    /// is in progress. A blocked attempt does NOT consume eligibility — the
+    /// next launch/foreground activation or onboarding completion simply
+    /// rechecks while the phase remains open. On launch day the same
+    /// rechecks are what surface the second dialog to users who already
+    /// dismissed the teaser.
     @MainActor
     func presentProductHuntLaunchDialogIfEligible() {
-        guard !keychainDisabledTestMode else { return }
+        // Headless keychain-free live-proof launches never show UI; the
+        // keychain-free UI-proof mode (`OSAURUS_KEYCHAIN_FREE_SHOW_UI=1`)
+        // does, and is how this dialog is exercised without a signed build.
+        guard !keychainDisabledTestMode || keychainDisabledUIPresentationMode else { return }
 
         let campaign = ProductHuntLaunchCampaign.shared
-        guard campaign.isEligible else { return }
+        guard let phase = campaign.eligiblePhase else { return }
 
         // Defer instead of stacking: onboarding flow (fresh installs see the
         // dialog after it completes, via the onboarding-completion recheck),
@@ -2811,46 +2831,81 @@ extension AppDelegate {
 
         // Seen is persisted at presentation time, so even a force-quit while
         // the dialog is up can't make it reappear.
-        campaign.willPresent()
-        FeatureTelemetry.productHuntLaunchDialogShown()
+        campaign.willPresent(phase)
+        FeatureTelemetry.productHuntLaunchDialogShown(phase: phase)
+
+        // `open` makes a synchronous XPC round-trip to LaunchServices that
+        // can block for seconds while the browser cold-launches and hang the
+        // main thread; NSWorkspace is thread-safe, so fire it off main.
+        let openLaunchPage = {
+            DispatchQueue.global(qos: .userInitiated).async {
+                NSWorkspace.shared.open(ProductHuntLaunchCampaign.launchURL)
+            }
+        }
+
+        let title: String
+        let message: String
+        let cancelLabel: String
+        let primaryLabel: String
+        let primaryAction: String
+        let width: CGFloat
+        switch phase {
+        case .teaser:
+            let countdown = ProductHuntLaunchCampaign.countdownDescription(from: Date())
+            title = L("A note from the Osaurus Team")
+            message = L(
+                """
+                Hey! Osaurus Team here. We just want to say thank you for using our product, we hope you are finding value in what we do. We believe that everyone should be able to own their AI, and our goal is to make that as easy as possible.
+
+                We realized through feedback not everyone has the best hardware, so we've done our best to launch Raptor, our flagship model for agentic tasks locally. It's less than 4GB in size, and it can do a lot of awesome things.
+
+                We're going to be launching on Product Hunt in \(countdown), please come support us. We will show another reminder when it's live!
+
+                Thank you for being part of the community. We're grateful for your support. Let's bring Local AI to everyone!
+                """
+            )
+            cancelLabel = L("Got it")
+            primaryLabel = L("Come support us")
+            primaryAction = "notify"
+            width = 440
+        case .launch:
+            title = L("We're live on Product Hunt with Raptor")
+            message = L(
+                """
+                Hey! Today's the day — Raptor is live on Product Hunt.
+
+                We built this one for you — for Macs with 16GB of memory or less. If Osaurus has been useful to you, come support the launch and share your feedback. It means a lot to us.
+                """
+            )
+            cancelLabel = L("Maybe later")
+            primaryLabel = L("Check out the launch")
+            primaryAction = "launch"
+            width = 400
+        }
 
         let requestId = UUID()
         ThemedAlertCenter.shared.present(
             ThemedAlertRequest(
                 id: requestId,
-                title: L("We're live on Product Hunt"),
-                message: L(
-                    """
-                    Hey! After 10 months of building in public, today is our official launch on Product Hunt.
-
-                    Osaurus has been shaped by feedback from people like you. If it's been useful to you, come say hi and support the launch. It means a lot to us.
-
-                    Thank you for being here early.
-                    """
-                ),
+                title: title,
+                message: message,
                 headerImageNames: ["osaurus-thanks", "ph-cat"],
                 headerImageAccessibilityLabel: L(
                     "Osaurus dinosaur and the Product Hunt kitty saying thank you"),
                 buttons: [
-                    // "Maybe later" carries the cancel role so Escape and an
-                    // outside click follow the same permanent-dismiss path.
-                    .cancel(L("Maybe later")) {
-                        campaign.markSeen()
-                        FeatureTelemetry.productHuntLaunchDialogClicked(action: "later")
+                    // The dismiss button carries the cancel role so Escape and
+                    // an outside click follow the same permanent-dismiss path.
+                    .cancel(cancelLabel) {
+                        campaign.markSeen(phase)
+                        FeatureTelemetry.productHuntLaunchDialogClicked(phase: phase, action: "later")
                     },
-                    .primary(L("Check out the launch")) {
-                        campaign.markSeen()
-                        FeatureTelemetry.productHuntLaunchDialogClicked(action: "launch")
-                        // `open` makes a synchronous XPC round-trip to
-                        // LaunchServices that can block for seconds while the
-                        // browser cold-launches and hang the main thread;
-                        // NSWorkspace is thread-safe, so fire it off main.
-                        DispatchQueue.global(qos: .userInitiated).async {
-                            NSWorkspace.shared.open(ProductHuntLaunchCampaign.launchURL)
-                        }
+                    .primary(primaryLabel) {
+                        campaign.markSeen(phase)
+                        FeatureTelemetry.productHuntLaunchDialogClicked(phase: phase, action: primaryAction)
+                        openLaunchPage()
                     },
                 ],
-                width: 400,
+                width: width,
                 onDismiss: {
                     campaign.didDismiss()
                     ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
