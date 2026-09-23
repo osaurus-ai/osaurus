@@ -41,7 +41,7 @@ your configured sampling settings or guarantee a throughput floor.
 
 ## Apple Foundation Models
 
-On macOS 26+ with Apple Intelligence, the on-device Apple Foundation model is available as `foundation` — used out of the box as the "core model" for background jobs like memory distillation and chat titles (configurable in Settings → General → Core Model).
+On macOS 26+ with Apple Intelligence, the on-device Apple Foundation model is available as `foundation` — used out of the box as the "core model" for background jobs like memory distillation and chat titles (configurable in Settings → General → Core Model). It requires Apple Intelligence to be enabled in System Settings → Apple Intelligence & Siri. When it is turned off, the model is still downloading, or a request stalls, background jobs automatically run on your active chat model instead; the Core Model picker and Memory diagnostics show the reason.
 
 ## Model memory and loading
 

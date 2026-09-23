@@ -264,6 +264,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// gates (Osaurus Router) can tell keyed callers from key-less
         /// loopback-trusted ones.
         var callerHasVerifiedAccessKey: Bool = false
+        /// `true` when that verified key is master-scoped. Unlike
+        /// `authedScopeIsMaster` this is also set by the opportunistic
+        /// loopback validation, so owner-only routes (`/credits/*`) can
+        /// refuse agent-scoped keys that loopback trust lets past the gate.
+        var callerAccessKeyIsMaster: Bool = false
         /// Set when the request arrived as an encrypted `/secure/call`
         /// envelope and was rewritten to its inner request. Routes that
         /// hard-require end-to-end encryption (`/agents/{id}/run`,
@@ -376,6 +381,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stateRef.value.authedAudience = nil
             stateRef.value.authedScopeIsMaster = false
             stateRef.value.callerHasVerifiedAccessKey = false
+            stateRef.value.callerAccessKeyIsMaster = false
             // Clear last request's attribution so a keep-alive connection's
             // next (possibly loopback / public) request can't inherit it.
             _inboundConnection.value = nil
@@ -556,6 +562,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         stateRef.value.authedAudience = audience.lowercased()
                         stateRef.value.authedScopeIsMaster =
                             apiKeyValidator.isMasterScoped(audience: audience)
+                        stateRef.value.callerAccessKeyIsMaster = stateRef.value.authedScopeIsMaster
                         stateRef.value.authedKeyIsWorkspaceMinted =
                             !stateRef.value.authedScopeIsMaster
                             && WorkspaceAgentAccessHost.isWorkspaceMintedKey(nonce: keyNonce)
@@ -669,8 +676,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let authHeader = head.headers.first(name: "Authorization") ?? ""
                 if authHeader.hasPrefix("Bearer ") {
                     let token = String(authHeader.dropFirst(7))
-                    if case .valid = apiKeyValidator.validate(rawKey: token) {
+                    if case .valid(_, let audience, _) = apiKeyValidator.validate(rawKey: token) {
                         stateRef.value.callerHasVerifiedAccessKey = true
+                        stateRef.value.callerAccessKeyIsMaster =
+                            apiKeyValidator.isMasterScoped(audience: audience)
                     }
                 }
             }
@@ -805,6 +814,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } else if head.method == .GET, path == "/models/picker" {
                 handleModelPickerEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .GET, path == "/credits/balance" {
+                handleCreditsBalanceEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    method: method,
+                    path: path
+                )
             } else if head.method == .GET, path == "/models" {
                 handleModelsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/tags" {
@@ -1175,7 +1193,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 row["native_mtp_status"] = summary.nativeMTPStatus ?? NSNull()
                 row["native_mtp_reason"] = summary.nativeMTPReason ?? NSNull()
                 row["generation_defaults"] = Self.generationDefaultsJSONObject(
-                    LocalGenerationDefaults.defaults(forModelId: summary.name)
+                    summary.generationDefaults
                 )
                 if let effective = lastEffectiveGenerationSettings[summary.name] {
                     row["last_effective_generation"] = Self.effectiveGenerationSettingsJSONObject(effective)
@@ -1440,10 +1458,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             var defaultsByModel: [String: Any] = [:]
             var effectiveByModel: [String: Any] = [:]
             for modelName in lastEffectiveGenerationSettings.keys.sorted() {
-                defaultsByModel[modelName] = Self.generationDefaultsJSONObject(
-                    LocalGenerationDefaults.defaults(forModelId: modelName)
-                )
                 if let effective = lastEffectiveGenerationSettings[modelName] {
+                    defaultsByModel[modelName] = Self.generationDefaultsJSONObject(effective.modelDefaults)
                     effectiveByModel[modelName] = Self.effectiveGenerationSettingsJSONObject(effective)
                 }
             }
@@ -1479,6 +1495,80 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 requestBody: nil,
                 responseBody: body,
                 responseStatus: 200,
+                startTime: logStartTime
+            )
+        }
+    }
+
+    /// `GET /credits/balance` — read-only Osaurus Router credit balance for
+    /// local tools (usage dashboards, menu bar apps). Osaurus signs the router
+    /// request itself, so the caller never touches the wallet key. Loopback
+    /// skips the global auth gate, so `LocalCreditsBalance.isAuthorized` is
+    /// applied here: a verified master key, or the key-less loopback opt-in
+    /// for non-browser callers.
+    private func handleCreditsBalanceEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        method: String,
+        path: String
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let version = head.version
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logMethod = method
+        let logPath = path
+        let hasVerifiedMasterKey =
+            stateRef.value.callerHasVerifiedAccessKey && stateRef.value.callerAccessKeyIsMaster
+        let requestHasOrigin = head.headers.contains(name: "Origin")
+
+        runRequestTask(priority: .userInitiated) {
+            let response: (status: Int, json: [String: Any])
+            if LocalCreditsBalance.isAuthorized(
+                callerHasVerifiedMasterKey: hasVerifiedMasterKey,
+                allowsUnkeyedLoopbackSpend: OsaurusRouter.allowsUnkeyedLoopbackSpend,
+                requestHasOrigin: requestHasOrigin
+            ) {
+                let result = await OsaurusRouterAccountService.shared.balanceForLocalAPI()
+                response = LocalCreditsBalance.response(for: result)
+            } else {
+                response = (
+                    403,
+                    LocalCreditsBalance.error(
+                        code: "credits_access_not_authorized",
+                        message: LocalCreditsBalance.unauthorizedMessage
+                    )
+                )
+            }
+            let data = try? JSONSerialization.data(withJSONObject: response.json, options: .osaurusCanonical)
+            let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            let headers: [(String, String)] =
+                [("Content-Type", "application/json; charset=utf-8")]
+                + cors
+            let status = HTTPResponseStatus(statusCode: response.status)
+
+            hop {
+                logSelf.sendResponse(
+                    context: ctx.value,
+                    version: version,
+                    status: status,
+                    headers: headers,
+                    body: body
+                )
+            }
+            logSelf.logRequest(
+                method: logMethod,
+                path: logPath,
+                userAgent: logUserAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: response.status,
                 startTime: logStartTime
             )
         }
@@ -1694,6 +1784,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             ServerRuntimeSettingsStore.save(next)
             if loadedModelRefreshNeeded {
                 await ModelRuntime.shared.clearAll()
+            } else {
+                await ModelRuntime.shared.refreshDiskCacheCaps()
             }
             if runtimeConfigInvalidated {
                 await ModelRuntime.shared.invalidateConfig()
@@ -2211,17 +2303,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "paged_kv_block_size": cache.pagedKV.blockSize as Any? ?? NSNull(),
             "paged_kv_max_blocks": cache.pagedKV.maxBlocks as Any? ?? NSNull(),
             "block_disk_enabled": cache.blockDisk.enabled,
-            // The cap is a percent of the disk now, so the stored GB field is
-            // nil on every migrated install. Reporting it raw would show
-            // `null` for a cache that in fact has a real cap. Report the share
-            // the user set AND the gigabytes it resolves to on this machine —
-            // the same figure the coordinator enforces.
             "block_disk_max_size_percent": cache.blockDisk.maxSizePercent as Any? ?? NSNull(),
-            "block_disk_max_size_gb": VMLXServerRuntimeSettings.resolveDiskCacheMaxGB(
-                percent: cache.blockDisk.maxSizePercent,
-                legacyGB: cache.blockDisk.maxSizeGB,
-                directory: ModelRuntime.cacheDiskDirectoryOverride(for: cache)
-                    ?? OsaurusPaths.diskKVCache()),
+            "block_disk_requested_size_gb": cache.blockDisk.maxSizeGB as Any? ?? NSNull(),
+            "block_disk_max_size_gb": ModelRuntime.diskCacheCap(
+                for: cache, directory: ModelRuntime.cacheDiskDirectoryOverride(for: cache)
+                    ?? OsaurusPaths.diskKVCache()).capGB,
             "block_disk_directory": cache.blockDisk.directory as Any? ?? NSNull(),
             "legacy_disk_enabled": cache.legacyDisk.enabled,
             "live_kv_codec": cache.liveKVCodec.rawValue,
@@ -3704,11 +3790,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     /// Legacy pairing / invite keys: everything they could reach before, minus
-    /// server administration. `path` is normalized (no `/v1` / `/api` prefix,
-    /// no query string).
+    /// server administration and the owner's account data (`/credits/*`).
+    /// `path` is normalized (no `/v1` / `/api` prefix, no query string).
     static func legacyAgentScopedKeyMayReach(method: HTTPMethod, path: String) -> Bool {
         let components = path.split(separator: "/", omittingEmptySubsequences: true)
-        return components.first != "admin"
+        return components.first != "admin" && components.first != "credits"
     }
 
     /// Strict allowlist for workspace-minted keys. `path` is already
@@ -14274,44 +14360,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
         }
 
-        struct CallBody: Codable {
+        struct CallBody: Decodable {
             let name: String
-            let arguments: AnyCodable?
-        }
-
-        // Lightweight AnyCodable for arguments passthrough
-        struct AnyCodable: Codable {
-            let value: Any
-            init(from decoder: Decoder) throws {
-                let container = try decoder.singleValueContainer()
-                if let b = try? container.decode(Bool.self) { value = b; return }
-                if let i = try? container.decode(Int.self) { value = i; return }
-                if let d = try? container.decode(Double.self) { value = d; return }
-                if let s = try? container.decode(String.self) { value = s; return }
-                if let arr = try? container.decode([AnyCodable].self) { value = arr.map { $0.value }; return }
-                if let dict = try? container.decode([String: AnyCodable].self) {
-                    value = dict.mapValues { $0.value }
-                    return
-                }
-                value = NSNull()
-            }
-            func encode(to encoder: Encoder) throws {
-                var container = encoder.singleValueContainer()
-                switch value {
-                case let b as Bool: try container.encode(b)
-                case let i as Int: try container.encode(i)
-                case let d as Double: try container.encode(d)
-                case let s as String: try container.encode(s)
-                case let arr as [Any]:
-                    let enc = try JSONSerialization.data(withJSONObject: arr, options: .osaurusCanonical)
-                    try container.encode(String(decoding: enc, as: UTF8.self))
-                case let dict as [String: Any]:
-                    let enc = try JSONSerialization.data(withJSONObject: dict, options: .osaurusCanonical)
-                    try container.encode(String(decoding: enc, as: UTF8.self))
-                default:
-                    try container.encodeNil()
-                }
-            }
+            let arguments: [String: JSONValue]?
         }
 
         guard let req = try? JSONDecoder().decode(CallBody.self, from: data) else {
@@ -14334,14 +14385,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        let argsJSON: String = {
-            if let a = req.arguments?.value,
-                let d = try? JSONSerialization.data(withJSONObject: a, options: .osaurusCanonical)
-            {
-                return String(decoding: d, as: UTF8.self)
-            }
-            return "{}"
-        }()
+        let argsData = try? JSONEncoder.osaurusCanonical().encode(req.arguments ?? [:])
+        let argsJSON = argsData.map { String(decoding: $0, as: UTF8.self) } ?? "{}"
 
         // External deny list: app-only tool classes are never invocable
         // through the MCP bridge (they're also hidden from `/mcp/tools`).

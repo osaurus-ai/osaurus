@@ -222,6 +222,7 @@ public enum ComputerUseLoop {
         vision: VisionContext = .none,
         sessionId: String,
         enableThinking: Bool? = nil,
+        reasoningEffort: String? = nil,
         nextAction: AgentStepProvider? = nil
     ) async -> ComputerUseRunResult {
         // The wall clock measures the RUN, not the user. Time spent inside a
@@ -422,7 +423,8 @@ public enum ComputerUseLoop {
                         modelId: modelId,
                         sessionId: sessionId,
                         messages: stepMessages,
-                        enableThinking: enableThinking
+                        enableThinking: enableThinking,
+                        reasoningEffort: reasoningEffort
                     )
                 }
             }
@@ -1643,7 +1645,8 @@ public enum ComputerUseLoop {
         modelId: String,
         sessionId: String,
         messages: [ChatMessage],
-        enableThinking: Bool?
+        enableThinking: Bool?,
+        reasoningEffort: String?
     ) async throws -> ModelStepResult {
         var req = ChatCompletionRequest(
             model: modelId,
@@ -1663,6 +1666,7 @@ public enum ComputerUseLoop {
         req.samplingParametersAreImplicit = true
         req.isAgentRequest = true
         req.enable_thinking = enableThinking
+        req.reasoning_effort = reasoningEffort
         let generateStarted = Date()
         let response = try await engine.completeChat(request: req)
         ComputerUseTraceLog.record(

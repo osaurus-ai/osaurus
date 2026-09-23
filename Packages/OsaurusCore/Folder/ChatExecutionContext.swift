@@ -157,6 +157,9 @@ public enum ChatExecutionContext {
     /// ownership of its own template/config default.
     @TaskLocal public static var currentEnableThinking: Bool?
 
+    /// Explicit effort frozen alongside the toggle; nil keeps bundle defaults.
+    @TaskLocal public static var currentReasoningEffort: String?
+
     /// Exact user text that owns the scope of the current logical turn. A
     /// parent model may choose and parameterize a tool, but it may not silently
     /// broaden that request with new side effects. Desktop subagents use this

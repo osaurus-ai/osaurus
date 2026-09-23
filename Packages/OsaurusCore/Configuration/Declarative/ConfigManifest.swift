@@ -208,6 +208,14 @@ public enum ConfigManifest {
                                 "relay_enabled", .scalar(.boolean, example: "false"),
                                 comment: "relay tunnel forwards to this agent",
                                 moreComments: ["(HIGH RISK: reachable from outside)"]),
+                            ConfigKeySpec(
+                                "apple_apps", .scalarList(.string, example: ["calendar", "reminders"]),
+                                comment: "built-in Apple app tools this agent may use; list REPLACES the set",
+                                moreComments: [
+                                    "(calendar | reminders | contacts | notes | mail | messages |",
+                                    " maps | music | shortcuts; [] disables all;",
+                                    " macOS asks the user for the app's permission on first use)",
+                                ]),
                         ]),
                         comment: "only provided keys change"),
                 ],
@@ -284,7 +292,7 @@ public enum ConfigManifest {
                     comment: "false skips the RAM preflight (HIGH RISK)"),
                 ConfigKeySpec(
                     "coexistence_enabled", .scalar(.boolean, example: "false"),
-                    comment: "spawn model may load beside the chat model"),
+                    comment: "legacy compatibility key; no effect (local_text_enabled=false keeps parent loaded)"),
             ])),
 
         ConfigSectionSpec(

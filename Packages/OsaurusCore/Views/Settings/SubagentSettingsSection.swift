@@ -87,9 +87,10 @@ struct SubagentSettingsSection: View {
                         SettingsToggle(
                             title: "Swap local models for subagents",
                             description:
-                                "When a subagent uses a different local model than the chat: unload the chat model → load the subagent's model → run → reload the chat model → continue. Same-model subagents never swap. Off: the subagent runs without this sequence and the server eviction policy decides what stays loaded. Cloud subagents never need this.",
+                                "For text, Browser Use, Computer Use, AppleScript, local image jobs and context compaction using a different local model: On unloads the invoking model, runs the job, then reloads it. AppleScript keep-warm can defer the reload. Off keeps the invoking model loaded during the job, including under Server Strict. Memory checks still apply. Same-model and cloud jobs never swap.",
                             isOn: $configuration.localTextDelegationEnabled
                         )
+                        .settingsLandingAnchor("settings.orchestrator.delegation.swapModels")
 
                         SettingsToggle(
                             title: "Check memory before delegating",
@@ -98,13 +99,6 @@ struct SubagentSettingsSection: View {
                             isOn: $configuration.ramSafetyPreflightEnabled
                         )
                         .settingsLandingAnchor("settings.orchestrator.delegation.ramSafety")
-
-                        SettingsToggle(
-                            title: "Keep the chat model loaded alongside subagents (experimental)",
-                            description:
-                                "Only while \"Swap local models for subagents\" is off: when the server eviction policy is Flexible (Multi Model) and memory projections say both fit, load the subagent's model next to the chat model on high-RAM Macs.",
-                            isOn: $configuration.subagentCoexistenceEnabled
-                        )
                     }
                 }
             }

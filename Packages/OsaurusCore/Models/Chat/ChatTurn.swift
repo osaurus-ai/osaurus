@@ -54,12 +54,42 @@ final class ChatTurn: ObservableObject, Identifiable {
             contentChunks = newValue.isEmpty ? [] : [newValue]
             _cachedContent = newValue
             _contentLength = newValue.count
+            _cachedEnvelope = nil
             objectWillChange.send()
         }
     }
 
     /// Cached content length - O(1) access without forcing lazy join
     var contentLength: Int { _contentLength }
+
+    // MARK: - Dispatch envelope (memoized)
+
+    /// Memoized `DispatchEnvelope.parse` result for this turn, keyed by the
+    /// session source it was parsed under. Invalidated whenever `content`
+    /// changes. Read from block generation, the find bar, the minimap, copy
+    /// and title derivation — all on the streaming path — so the parse runs
+    /// once per turn per session load, not once per consumer per tick.
+    private var _cachedEnvelope: (source: SessionSource, value: DispatchEnvelope?)?
+
+    /// The machine-generated dispatch envelope wrapping this user turn's
+    /// content, if any. Nil for non-user turns and ordinary typed messages.
+    func dispatchEnvelope(sessionSource: SessionSource) -> DispatchEnvelope? {
+        guard role == .user, !contentIsEmpty else { return nil }
+        if let cached = _cachedEnvelope, cached.source == sessionSource {
+            return cached.value
+        }
+        let parsed = DispatchEnvelope.parse(content, sessionSource: sessionSource)
+        _cachedEnvelope = (sessionSource, parsed)
+        return parsed
+    }
+
+    /// The text the chat should present for this turn: the envelope's
+    /// human-authored text when one wraps the content, else the raw content.
+    /// Every user-facing consumer (bubble, find bar, minimap, copy, title)
+    /// reads this so what is counted and copied matches what is painted.
+    func displayContent(sessionSource: SessionSource) -> String {
+        dispatchEnvelope(sessionSource: sessionSource)?.displayText ?? content
+    }
 
     /// Whether content is empty - O(1) access without forcing lazy join
     var contentIsEmpty: Bool { _contentLength == 0 }
@@ -80,6 +110,7 @@ final class ChatTurn: ObservableObject, Identifiable {
         contentChunks.append(s)
         _contentLength += s.count
         _cachedContent = nil  // Invalidate cache
+        _cachedEnvelope = nil
     }
 
     /// Append content and immediately notify observers (triggers UI update)
@@ -102,6 +133,7 @@ final class ChatTurn: ObservableObject, Identifiable {
             contentChunks = cleanedContent.isEmpty ? [] : [cleanedContent]
             _contentLength = cleanedContent.count
             _cachedContent = cleanedContent
+            _cachedEnvelope = nil
         }
     }
 

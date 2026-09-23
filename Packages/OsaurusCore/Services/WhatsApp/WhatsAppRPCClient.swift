@@ -223,7 +223,7 @@ enum WhatsAppRPCFraming {
             )
         }
         let result = object["result"] ?? [:]
-        let resultJSON = (try? JSONSerialization.data(withJSONObject: result)) ?? Data("{}".utf8)
+        let resultJSON = (try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys, .fragmentsAllowed])) ?? Data("{}".utf8)
         return ParsedResponse(id: id, resultJSON: resultJSON, errorCode: nil, errorMessage: nil)
     }
 
@@ -239,7 +239,7 @@ enum WhatsAppRPCFraming {
             let method = object["method"] as? String, !method.isEmpty
         else { return nil }
         let params = object["params"] ?? [:]
-        let paramsJSON = (try? JSONSerialization.data(withJSONObject: params)) ?? Data("{}".utf8)
+        let paramsJSON = (try? JSONSerialization.data(withJSONObject: params, options: [.sortedKeys, .fragmentsAllowed])) ?? Data("{}".utf8)
         return ParsedNotification(method: method, paramsJSON: paramsJSON)
     }
 }

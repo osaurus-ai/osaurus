@@ -366,12 +366,15 @@ struct SpawnToolTests {
             deadline: Date().addingTimeInterval(10),
             sessionId: "reasoning-tool-final-regression",
             enableThinking: true,
+            reasoningEffort: "low",
             toolset: toolset,
             onChannelDelta: { delta in
                 channelProbe.record(delta)
             },
             streamProvider: { request in
-                try await probe.stream(for: request)
+                #expect(request.enable_thinking == true)
+                #expect(request.reasoning_effort == "low")
+                return try await probe.stream(for: request)
             }
         )
 

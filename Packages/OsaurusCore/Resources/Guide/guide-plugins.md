@@ -16,6 +16,10 @@ Plugins add new tools to Osaurus. There are two kinds: native plugins (compiled,
 - Some plugins need secrets (API keys): enter them in Settings → Plugins → Secrets — they go to the Keychain, never through chat.
 - Plugin activity (every host API call) is logged under Insights → Plugin Activity.
 
+## Built into Osaurus (superseded plugins)
+
+Web search, the browser, and the Apple app plugins (`osaurus.calendar`, `osaurus.reminders`, `osaurus.contacts`, `osaurus.notes`, `osaurus.mail`, `osaurus.messages`, `osaurus.maps`, `osaurus.music`) are now part of Osaurus itself. Their cards show a "Built into Osaurus" banner and the plugin is never loaded. Apple app tools are turned on per custom agent under Management → Agents → *agent* → Abilities → Tools, where each app is a group in the tool picker (or by asking the assistant to enable them on an agent); they are off by default. Agents whose tool lists named the old plugin tools were migrated once to the built-in names and had the matching Apple app enabled.
+
 ## Claude plugins
 
 - Management → Plugins → Import → enter `owner/repo` or a GitHub URL → pick plugins → Install Selected.

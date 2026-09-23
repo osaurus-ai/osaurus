@@ -178,12 +178,16 @@ extension ChatSessionData {
         return !workspace.isServedForTeammate
     }
 
-    /// Generate a title from the first user message
-    public static func generateTitle(from turns: [ChatTurnData]) -> String {
+    /// Generate a title from the first user message. Dispatch envelopes
+    /// (channel wrapper, delegation contract, …) are stripped first so a
+    /// machine header can never become the chat title; `source` gates the
+    /// marker-less watcher framing.
+    public static func generateTitle(from turns: [ChatTurnData], source: SessionSource = .chat) -> String {
         guard let firstUserTurn = turns.first(where: { $0.role == .user }) else {
             return "New Chat"
         }
-        let content = firstUserTurn.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let content = firstUserTurn.displayContent(sessionSource: source)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         if content.isEmpty {
             return "New Chat"
         }

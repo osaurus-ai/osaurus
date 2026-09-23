@@ -76,7 +76,13 @@ public final class TelemetryService {
     /// Resolve the app key and initialize Aptabase. Call once from
     /// `applicationDidFinishLaunching`. No-ops (tracking stays disabled) when
     /// no key is configured, so dev builds without a key are silent.
-    public func configure() {
+    ///
+    /// `launchProps` ride on the baseline `app_launched` event — the
+    /// install-cohort/age retention dimensions from
+    /// `FeatureTelemetry.installProps()`. The caller stamps the install
+    /// first and passes them in, so the ordering is explicit at the call
+    /// site instead of hidden behind a default read here.
+    public func configure(launchProps: [String: Value] = [:]) {
         guard !started else { return }
         guard let appKey = Self.resolveAppKey() else { return }
 
@@ -87,7 +93,7 @@ public final class TelemetryService {
         started = true
 
         // Baseline launch signal
-        track("app_launched")
+        track("app_launched", launchProps)
     }
 
     /// Marks the service as configured without initializing the Aptabase

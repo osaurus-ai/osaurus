@@ -102,6 +102,15 @@ struct MLXBatchAdapter {
         await Registry.shared.lastMTPStatsSnapshot()
     }
 
+    /// Record how much of the just-prefilled real request came back from a
+    /// cache tier. Reported by the runtime's own `.cacheRestore` progress
+    /// event, so a cold request records zero restored tokens rather than
+    /// leaving the previous request's figure in place. Read back through
+    /// `snapshotDiagnostics()`.
+    static func recordLastCacheRestore(_ summary: CacheRestoreSummary) async {
+        await Registry.shared.recordLastCacheRestore(summary)
+    }
+
     /// Result handed back to `ModelRuntime`. The `Generation` stream is
     /// consumed by `GenerationEventMapper`, which translates the upstream
     /// events into `ModelRuntimeEvent`. The producer task exists so callers
@@ -143,6 +152,9 @@ struct MLXBatchAdapter {
         /// making a requested depth appear active when the engine runs AR.
         let mtpFallbackReason: String?
         let compiledBatchDecode: Bool
+        /// The bundle snapshot used for this request. Readouts must not try to
+        /// rediscover it by the short serving name after resolution or unload.
+        var modelDefaults: LocalGenerationDefaults.Defaults = .empty
         /// Retained API diagnostic fields. Native MTP no longer substitutes
         /// a sampler, so both remain false for this resolver.
         var mtpGreedyEnforced: Bool = false
@@ -222,13 +234,15 @@ struct MLXBatchAdapter {
                     modelName: modelName,
                     maxBatchSize: maxBatchSize,
                     cacheTopology: cacheTopology
-                )
+                ),
+            modelDefaults: modelDefaults
         )
         return resolved
     }
 
     static func recordPendingEffectiveGenerationSettings(
         modelName: String,
+        modelId: String,
         generation: GenerationParameters,
         runtimeDefaults: VMLXServerGenerationDefaults,
         maxBatchSize: Int
@@ -239,7 +253,7 @@ struct MLXBatchAdapter {
         // the row makes the admin endpoint describe the warm-up instead of
         // the generation the user just observed.
         guard shouldRecordAsLastEffectiveGeneration(generation) else { return }
-        let modelDefaults = LocalGenerationDefaults.defaults(forModelId: modelName)
+        let modelDefaults = LocalGenerationDefaults.defaults(forModelId: modelId)
         let effective = Self.effectiveGenerationSettings(
             modelName: modelName,
             generation: generation,
@@ -421,6 +435,8 @@ struct MLXBatchAdapter {
         /// non-MTP family never appears here and the readout for an MTP model
         /// reflects its most recent speculative turn.
         private var lastMTPStats: [String: MTPStatsSummary] = [:]
+        /// Cache restore of the most recent real request, across models.
+        private var lastCacheRestore: CacheRestoreSummary?
         /// Counters from engines and cache coordinators that have left the
         /// live resident set. Before this accumulator, switching model A to B
         /// made process-level diagnostics decrease because A simply vanished
@@ -553,6 +569,10 @@ struct MLXBatchAdapter {
             lastMTPStats
         }
 
+        func recordLastCacheRestore(_ summary: CacheRestoreSummary) {
+            lastCacheRestore = summary
+        }
+
         func turboQuantCacheTransitionsSnapshot() async
             -> [String: TurboQuantCacheTransitionSnapshot]
         {
@@ -663,8 +683,20 @@ struct MLXBatchAdapter {
             // summing would multiply the reported size by the model count.
             var diskL2PayloadBytes = 0
             var diskL2MaxBytes = 0
-            // Per-instance counter, so this one genuinely accumulates.
+            // Per-instance counters, so these genuinely accumulate.
             var diskL2Evictions = 0
+            var diskL2EvictedBytes = 0
+            var diskL2QuotaPasses = 0
+            var diskL2FailedIndexWrites = 0
+            var diskL2PressureEventSeq = 0
+            // DispatchTime.uptimeNanoseconds is process-wide. Select readings
+            // by that clock; the summed report count is not an event identity.
+            var diskL2LastQuotaPassMs = 0.0
+            var diskL2PressureKind: String?
+            var diskL2PressureChainId: String?
+            var diskL2PressureTick: UInt64 = 0
+            var diskL2QuotaTick: UInt64 = 0
+            var diskRoots: [URL: (bytes: Int, cap: Int)] = [:]
             var ssmHits = 0
             var ssmMisses = 0
             var ssmReDerives = 0
@@ -685,16 +717,44 @@ struct MLXBatchAdapter {
                     diskL2Hits += diskStats.hits
                     diskL2Misses += diskStats.misses
                     diskL2Stores += diskStats.stores
-                    diskL2PayloadBytes = max(
-                        diskL2PayloadBytes,
-                        diskStats.currentPayloadBytes
-                    )
-                    diskL2MaxBytes = max(diskL2MaxBytes, diskStats.maxSizeBytes)
+                    if let directory = summary.cacheDiskDirectory {
+                        let root = directory.standardizedFileURL.resolvingSymlinksInPath()
+                        let prior = diskRoots[root] ?? (bytes: 0, cap: 0)
+                        diskRoots[root] = (
+                            max(prior.bytes, diskStats.currentPayloadBytes),
+                            max(prior.cap, diskStats.maxSizeBytes)
+                        )
+                    }
                     diskL2Evictions += diskStats.evictions
+                    diskL2EvictedBytes = Self.saturatingSum(
+                        diskL2EvictedBytes,
+                        Int(clamping: diskStats.evictedBytes)
+                    )
+                    diskL2QuotaPasses += diskStats.quotaPasses
+                    diskL2FailedIndexWrites += diskStats.failedIndexWrites
+                    diskL2PressureEventSeq = Self.saturatingSum(
+                        diskL2PressureEventSeq,
+                        Int(clamping: diskStats.pressureEventSeq)
+                    )
+                    if diskStats.lastQuotaPassTick > diskL2QuotaTick {
+                        diskL2QuotaTick = diskStats.lastQuotaPassTick
+                        diskL2LastQuotaPassMs = diskStats.lastQuotaPassMs
+                    }
+                    if let event = diskStats.lastPressureEvent,
+                        diskStats.lastPressureEventTick > diskL2PressureTick
+                    {
+                        diskL2PressureKind = event.kind.rawValue
+                        diskL2PressureChainId = event.chainId
+                        diskL2PressureTick = diskStats.lastPressureEventTick
+                    }
                 }
                 ssmHits += stats.ssmStats.hits
                 ssmMisses += stats.ssmStats.misses
                 ssmReDerives += stats.ssmStats.reDerives
+            }
+            for usage in diskRoots.values {
+                diskL2PayloadBytes = Self.saturatingSum(diskL2PayloadBytes, usage.bytes)
+                diskL2MaxBytes = Self.saturatingSum(diskL2MaxBytes, usage.cap)
             }
             for (modelName, engine) in entries {
                 let capacity = await engine.capacitySnapshot
@@ -740,9 +800,22 @@ struct MLXBatchAdapter {
                 ssmCompanionReDerives: ssmReDerives,
                 diskL2PayloadBytes: diskL2PayloadBytes,
                 diskL2MaxBytes: diskL2MaxBytes,
-                diskL2Evictions: diskL2Evictions
+                diskL2Evictions: diskL2Evictions,
+                diskL2EvictedBytes: diskL2EvictedBytes,
+                diskL2QuotaPasses: diskL2QuotaPasses,
+                diskL2LastQuotaPassMs: diskL2LastQuotaPassMs,
+                diskL2FailedIndexWrites: diskL2FailedIndexWrites,
+                diskL2PressureEventSeq: diskL2PressureEventSeq,
+                diskL2PressureKind: diskL2PressureKind,
+                diskL2PressureChainId: diskL2PressureChainId,
+                lastCacheRestore: lastCacheRestore
             )
             return processLifetimeCounters.mergingCounters(into: live)
+        }
+
+        private static func saturatingSum(_ lhs: Int, _ rhs: Int) -> Int {
+            let (sum, overflow) = lhs.addingReportingOverflow(max(0, rhs))
+            return overflow ? Int.max : sum
         }
 
         /// Fold one container's final cache-coordinator counters into the
@@ -871,6 +944,7 @@ struct MLXBatchAdapter {
     static func warmupNativeMTPAtLoad(
         modelName: String,
         container: ModelContainer,
+        modelDefaults: LocalGenerationDefaults.Defaults,
         draftStrategy: MLXLMCommon.DraftStrategy?,
         runtime: RuntimeConfig,
         maxBatchSize: Int
@@ -885,6 +959,7 @@ struct MLXBatchAdapter {
                 let prepared = try await generate(
                     modelName: modelName,
                     container: container,
+                    modelDefaults: modelDefaults,
                     buildChat: {
                         [MLXLMCommon.Chat.Message(role: .user, content: nativeMTPLoadWarmupPrompt)]
                     },
@@ -1346,6 +1421,7 @@ struct MLXBatchAdapter {
     static func generate(
         modelName: String,
         container: ModelContainer,
+        modelDefaults: LocalGenerationDefaults.Defaults,
         buildChat: @Sendable () -> [MLXLMCommon.Chat.Message],
         buildToolsSpec: @Sendable () -> [[String: any Sendable]]?,
         buildRawPrompt: (@Sendable () -> String)? = nil,
@@ -1466,7 +1542,9 @@ struct MLXBatchAdapter {
         // request omits a field. This mirrors vmlx's direct-engine
         // `GenerateParameters(generationConfig:fallback:)` behavior for the
         // local app path instead of inventing osaurus-specific defaults.
-        let modelDefaults = LocalGenerationDefaults.defaults(forModelId: modelName)
+        // This snapshot was read from the exact directory used to load the
+        // container. A short-name lookup here loses defaults when two orgs
+        // install the same repo name, despite full-ID loading being valid.
         let nativeMTPColdWarmup = await Registry.shared.consumeNativeMTPColdWarmup(
             modelName: modelName,
             requested: draftStrategy?.usesNativeMTP == true
@@ -1552,6 +1630,11 @@ struct MLXBatchAdapter {
             modelName: modelName
         )
         mlxParams.nativeMTPDepthPolicy = Self.nativeMTPDepthPolicy(runtime.mtp)
+        // The chat this request belongs to. The engine tags every disk-cache
+        // row it stores with it, so the quota pass evicts OTHER chats' rows
+        // first and reports when it had to take this chat's. Subagent runs
+        // carry their own session id and so count as their own chats.
+        mlxParams.cacheChainId = generation.sessionId
 
         // The engine chooses greedy or exact-p/q speculation from the resolved
         // sampler. MTP eligibility may fall back to AR, never alter sampling.
@@ -1672,6 +1755,11 @@ struct MLXBatchAdapter {
         // `STREAM-DRAINED postSubmitMs` = this step's decode + KV store, and the
         // lease (which the next step waits on) releases right after.
         let producerSubmitAt = CFAbsoluteTimeGetCurrent()
+        // Relay attribution, captured as plain values so the producer task
+        // does not hold the whole parameter struct.
+        let relaySessionId = generation.sessionId
+        let relayActivitySource = generation.activitySource
+        let relayAuxiliary = generation.auxiliaryCacheIntent
         let producerTask = Task<Void, Never> {
             var terminalInfo: Generation?
             await withTaskCancellationHandler {
@@ -1690,9 +1778,15 @@ struct MLXBatchAdapter {
                         // completion on the relay so the chat can stop its
                         // cursor at the last letter; the run's ordering
                         // (lease, allocator window, send gate) is untouched.
+                        // Scoped to the producing request so a chat only
+                        // accepts completions for its own session (see
+                        // `Completion.matches`).
                         GenerationOutputRelay.shared.announce(
                             modelName: modelName,
-                            generationTokens: info.generationTokenCount
+                            generationTokens: info.generationTokenCount,
+                            sessionId: relaySessionId,
+                            activitySource: relayActivitySource,
+                            auxiliary: relayAuxiliary
                         )
                         terminalInfo = event
                         continue

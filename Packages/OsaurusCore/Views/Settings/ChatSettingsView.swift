@@ -372,7 +372,7 @@ struct ChatSettingsView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         compactionModelPicker
                         Text(
-                            "Model used to summarize older messages when a chat outgrows its context window (context compaction). Remote models pass through your Privacy Filter. If unset, you'll be asked to pick a model the first time compaction runs.",
+                            "Model used to summarize older messages when a chat outgrows its context window (context compaction). Compaction runs automatically near the limit and on demand from the context budget popover. Remote models pass through your Privacy Filter. If unset, the chat's current model summarizes.",
                             bundle: .module
                         )
                         .font(.system(size: 11))
@@ -604,8 +604,8 @@ struct ChatSettingsView: View {
     }
 
     /// Same trigger + rich `ModelPickerView` popover as the General tab's
-    /// Core Model picker, with "unset" meaning "ask on first compaction run"
-    /// rather than a chat-model fallback.
+    /// Core Model picker, with "unset" meaning "summarize with the chat's
+    /// current model" (see `ContextCompactionService.effectiveModelIdentifier`).
     private var compactionModelPicker: some View {
         let currentId = compactionModelIdentifierBinding.wrappedValue
         let currentItem = compactionModelPickerItems.first { $0.id == currentId }
@@ -618,7 +618,7 @@ struct ChatSettingsView: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(currentId.isEmpty ? theme.tertiaryText : theme.accentColor)
                     if currentId.isEmpty {
-                        Text("Ask on first use (default)", bundle: .module)
+                        Text("Use the current chat model (default)", bundle: .module)
                             .font(.system(size: 13))
                             .foregroundColor(theme.placeholderText)
                     } else if let currentItem {
@@ -669,7 +669,7 @@ struct ChatSettingsView: View {
                         .foregroundColor(theme.tertiaryText)
                 }
                 .buttonStyle(.plain)
-                .localizedHelp("Ask on first use (default)")
+                .localizedHelp("Use the current chat model (default)")
             }
         }
         .frame(maxWidth: 320)

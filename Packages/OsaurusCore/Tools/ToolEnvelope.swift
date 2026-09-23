@@ -51,6 +51,11 @@ public enum ToolEnvelope {
         /// User clicked "Deny" on an interactive approval prompt.
         /// Distinct from `rejected` (configured policy refusal).
         case userDenied = "user_denied"
+        /// A macOS privacy permission (Calendar, Contacts, Automation, Full
+        /// Disk Access, …) the tool needs is not granted. Not retryable
+        /// until the user changes it in System Settings; the message names
+        /// the exact permission and pane.
+        case permissionDenied = "permission_denied"
     }
 
     // MARK: - Construction
@@ -397,11 +402,18 @@ public enum ToolEnvelope {
                     retryable: false
                 )
             case 7:  // missing system permissions
+                var metadata: [String: Any] = [:]
+                if let permission = nserr.userInfo[ToolRegistry.missingPermissionUserInfoKey] as? String {
+                    metadata["permission"] = permission
+                    metadata["system_settings_url"] =
+                        (nserr.userInfo[ToolRegistry.missingPermissionSettingsURLUserInfoKey] as? String) ?? ""
+                }
                 return failure(
-                    kind: .unavailable,
+                    kind: .permissionDenied,
                     message: nserr.localizedDescription,
                     tool: tool,
-                    retryable: false
+                    retryable: false,
+                    metadata: metadata.isEmpty ? nil : metadata
                 )
             default:
                 break
@@ -512,7 +524,7 @@ public enum ToolEnvelope {
 
     private static func defaultRetryable(for kind: Kind) -> Bool {
         switch kind {
-        case .rejected, .toolNotFound, .userDenied, .notFound: return false
+        case .rejected, .toolNotFound, .userDenied, .notFound, .permissionDenied: return false
         case .invalidArgs, .timeout, .executionError, .unavailable: return true
         }
     }

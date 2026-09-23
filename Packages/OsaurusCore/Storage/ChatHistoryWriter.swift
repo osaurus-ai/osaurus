@@ -121,7 +121,7 @@ enum ChatHistoryWriter {
             hit.updatedAt = now
             hit.selectedModel = model
             if hit.title == "New Chat" {
-                hit.title = ChatSessionData.generateTitle(from: turns)
+                hit.title = ChatSessionData.generateTitle(from: turns, source: hit.source)
             }
             hit.capabilities = SessionCapability.derive(from: turns)
             if let workspace { hit.workspace = workspace }
@@ -136,7 +136,7 @@ enum ChatHistoryWriter {
             }
             session = ChatSessionData(
                 id: UUID(),
-                title: ChatSessionData.generateTitle(from: turns),
+                title: ChatSessionData.generateTitle(from: turns, source: source),
                 createdAt: now,
                 updatedAt: now,
                 selectedModel: model,

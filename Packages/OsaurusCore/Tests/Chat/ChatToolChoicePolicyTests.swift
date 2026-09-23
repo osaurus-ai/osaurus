@@ -151,6 +151,47 @@ struct ChatToolChoicePolicyTests {
         #expect(Self.isAuto(choice))
     }
 
+    @Test("Tool-result recall does not require another call", arguments: [
+        "Do not run another tool.",
+        "Don't run tools.",
+        "Dont run file_read again.",
+        "Answer without running tools.",
+        "Answer without calling tools.",
+        "Do not invoke file_read again.",
+        "Don't invoke another tool.",
+        "Dont invoke file_read.",
+        "Answer without invoking any tools.",
+    ])
+    func toolResultRecallRespectsNoExecutionRequest(instruction: String) {
+        let choice = ChatToolChoicePolicy.resolve(
+            tools: [Self.tool("file_read")],
+            userText: "How many lines did file_read report for bonsai-defaults-ternary.txt? "
+                + "Use the tool result already present in this chat; " + instruction,
+            attempt: 1
+        )
+        #expect(Self.isAuto(choice))
+    }
+
+    @Test("Explicit execution still requires a call", arguments: ["Run", "Invoke", "Call", "Use"])
+    func affirmativeToolExecutionStillRequiresCall(verb: String) {
+        let choice = ChatToolChoicePolicy.resolve(
+            tools: [Self.tool("file_read")],
+            userText: "\(verb) file_read for report.txt.",
+            attempt: 1
+        )
+        #expect(Self.isRequired(choice))
+    }
+
+    @Test
+    func negatedRedactionExecutionDoesNotForceMutation() {
+        let choice = ChatToolChoicePolicy.resolve(
+            tools: [Self.tool("redact_file"), Self.tool("file_read")],
+            userText: "Explain how to redact emails, without running redact_file or any other tools.",
+            attempt: 1
+        )
+        #expect(Self.isAuto(choice))
+    }
+
     @Test
     func emptyToolListOmitsToolChoice() {
         let choice = ChatToolChoicePolicy.resolve(

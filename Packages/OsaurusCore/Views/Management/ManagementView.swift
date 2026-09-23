@@ -337,6 +337,13 @@ private extension ManagementView {
             case .server: stateManager.serverSectionRequest = subTab
             case .imageGeneration: stateManager.imageGenerationSubTabRequest = subTab
             case .memory: stateManager.memorySubTabRequest = subTab
+            case .agents:
+                // Agent detail tabs (`capabilities` for the Apple app groups)
+                // are routed by `AgentsView.routeSettingsLanding` from the
+                // landing id itself, because the destination also has to pick
+                // an agent; the catalog's `subTab` documents the tab raw value
+                // (`AgentDetailTabRoute`) for help/find consumers.
+                break
             default: break
             }
         }

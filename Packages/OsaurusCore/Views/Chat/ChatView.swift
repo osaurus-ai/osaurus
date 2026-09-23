@@ -161,7 +161,25 @@ final class ChatSession: ObservableObject {
         .localModelsChanged,
     ]
 
-    @Published var turns: [ChatTurn] = []
+    @Published var turns: [ChatTurn] = [] {
+        didSet {
+            _cachedRouterSpendMicro = turns.reduce(0) { sum, turn in
+                guard let raw = turn.routerBilling?.costMicro else { return sum }
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                return sum + (Int(trimmed) ?? 0)
+            }
+            _cachedRouterCacheStats = turns.reduce((cachedInputTokens: 0, inputTokens: 0)) { acc, turn in
+                guard let billing = turn.routerBilling else { return acc }
+                return (
+                    acc.cachedInputTokens + max(0, billing.cachedInputTokens),
+                    acc.inputTokens + max(0, billing.inputTokens)
+                )
+            }
+        }
+    }
+
+    private var _cachedRouterSpendMicro: Int = 0
+    private var _cachedRouterCacheStats: (cachedInputTokens: Int, inputTokens: Int) = (0, 0)
 
     /// The model's OUTPUT for the in-flight run is complete (vmlx emitted its
     /// terminal info) even though the RUN has not ended: the adapter keeps the
@@ -453,6 +471,14 @@ final class ChatSession: ObservableObject {
     /// long model switch instead of presenting a second ordinary Send button.
     var isSendActiveForComposer: Bool {
         isStreaming || awaitingPreSendHandshake
+    }
+
+    /// Grouped background dispatch must not take over a live turn, a paused
+    /// permission/clarify exchange, or a compaction mutating this transcript.
+    var isAvailableForDispatchReattachment: Bool {
+        !isSendActiveForComposer && activeRunId == nil
+            && awaitingClarify == nil && promptQueue.current == nil
+            && !compactionState.isRunning
     }
 
     /// Session id whose activity was last pushed to `SessionActivityMonitor`,
@@ -911,7 +937,11 @@ final class ChatSession: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in await self?.refreshPickerItems() }
+            Task { @MainActor in
+                guard let self else { return }
+                await self.refreshPickerItems()
+                self.loadActiveModelOptions(for: self.selectedModel)
+            }
         }
 
         localModelsObserver = NotificationCenter.default.addObserver(
@@ -919,7 +949,13 @@ final class ChatSession: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in await self?.refreshPickerItems() }
+            Task { @MainActor in
+                guard let self else { return }
+                await self.refreshPickerItems()
+                // Capability discovery can finish without changing the model
+                // list. Rehydrate explicit controls even in that case.
+                self.loadActiveModelOptions(for: self.selectedModel)
+            }
         }
 
         storageMutationObserver = NotificationCenter.default.addObserver(
@@ -1279,10 +1315,7 @@ final class ChatSession: ObservableObject {
         // per-model toggles do not leak into families whose option surface
         // changed. This runs for both user-picked and programmatic model
         // selection paths.
-        activeModelOptions = ModelProfileRegistry.normalizedOptions(
-            for: model,
-            persisted: ModelOptionsStore.shared.loadOptions(for: model)
-        )
+        activeModelOptions = ModelOptionsStore.shared.loadOptions(for: model) ?? [:]
     }
 
     /// Stable session id used as the AgentTodoStore key. Falls back to a
@@ -1765,11 +1798,7 @@ final class ChatSession: ObservableObject {
     /// live run and a reloaded session. The on-device ledger remains the exact
     /// source of truth if a single turn ever carried more than one charge.
     var sessionRouterSpendMicro: Int {
-        turns.reduce(0) { sum, turn in
-            guard let raw = turn.routerBilling?.costMicro else { return sum }
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            return sum + (Int(trimmed) ?? 0)
-        }
+        _cachedRouterSpendMicro
     }
 
     /// Router prompt-cache telemetry for this session: total input tokens
@@ -1778,13 +1807,7 @@ final class ChatSession: ObservableObject {
     /// alongside `sessionRouterSpendMicro`. Both are `0` for sessions billed
     /// by a pre-cache router, which omits the split.
     var sessionRouterCacheStats: (cachedInputTokens: Int, inputTokens: Int) {
-        turns.reduce((cachedInputTokens: 0, inputTokens: 0)) { acc, turn in
-            guard let billing = turn.routerBilling else { return acc }
-            return (
-                acc.cachedInputTokens + max(0, billing.cachedInputTokens),
-                acc.inputTokens + max(0, billing.inputTokens)
-            )
-        }
+        _cachedRouterCacheStats
     }
 
     /// True when the selected model is a local model — the kind that runs on
@@ -1913,6 +1936,11 @@ final class ChatSession: ObservableObject {
         // the thread; otherwise fall back to the local agent's name.
         let displayName = threadAgentDisplayName ?? localName
         var streamingTurnId = (isStreaming && !outputComplete) ? turns.last?.id : nil
+        // The run-open id: stays on the last turn through `outputComplete`, so
+        // the pending tool chip / finishing indicator survive the engine tail
+        // (see `ContentBlock.generateBlocks(activeTurnId:)`). Nil once the
+        // run closes and Stop disappears.
+        let activeTurnId = isStreaming ? turns.last?.id : nil
 
         // While a send waits on the pre-send warm-up handshake there is no
         // assistant turn yet; render a placeholder typing-indicator group so
@@ -1949,7 +1977,9 @@ final class ChatSession: ObservableObject {
                 into: blockMemoizer.blocks(
                     from: effectiveTurns,
                     streamingTurnId: streamingTurnId,
-                    agentName: displayName
+                    activeTurnId: activeTurnId,
+                    agentName: displayName,
+                    sessionSource: source
                 )
             )
         )
@@ -2249,7 +2279,7 @@ final class ChatSession: ObservableObject {
 
         var parts: [String] = []
         for doc in docs {
-            if let name = doc.filename, let text = doc.documentContent {
+            if let name = doc.filename, let text = doc.loadDocumentContent() {
                 let attributes = attachedDocumentAttributes(for: doc, rawName: name)
                 let safeText = xmlEscape(text)
                 parts.append("<attached_document \(attributes)>\n\(safeText)\n</attached_document>")
@@ -3085,18 +3115,28 @@ final class ChatSession: ObservableObject {
         return Double(total) / Double(effective)
     }
 
-    /// Popover-button gate: utilization crossed the manual threshold (~70%)
-    /// and there's an uncovered older span a summary could reclaim.
+    /// Popover-button gate: there's an uncovered older span a summary could
+    /// reclaim. Deliberately NOT gated on utilization — a user who wants to
+    /// free context early (before the auto threshold) can, and hiding the
+    /// button until ~70% read as "compaction doesn't exist".
     var canManuallyCompactConversation: Bool {
-        guard hasCompactableConversation,
-            let fraction = contextUsageFractionEstimate
-        else { return false }
-        return fraction >= ContextCompactionService.manualTriggerThreshold
+        hasCompactableConversation
     }
 
-    /// One-shot suppression after the user dismisses the first-run dialog
-    /// without picking a model: stop auto-prompting for the rest of this
-    /// session (the manual popover button remains available).
+    /// The model the next compaction run will use (configured compaction
+    /// model, else this chat's current model). Nil when neither is known.
+    var effectiveCompactionModelIdentifier: String? {
+        ContextCompactionService.effectiveModelIdentifier(fallback: selectedModel)
+    }
+
+    /// True when a stashed auto-triggered send is waiting on the compaction
+    /// outcome (drives the "Send without compacting" dialog action).
+    var hasPendingSendAfterCompaction: Bool { resumeSendAfterCompaction }
+
+    /// One-shot suppression after the user dismisses the model-selection
+    /// dialog without picking a model: stop auto-prompting for the rest of
+    /// this session. Only reachable when there is no chat model to fall
+    /// back to, so it no longer disables auto compaction in normal chats.
     private var compactionDeclinedForSession = false
 
     /// Auto-trigger gate, checked at send time: the estimated next send is
@@ -3104,11 +3144,16 @@ final class ChatSession: ObservableObject {
     /// the context chip amber) and there is an uncovered span to summarize.
     private var shouldAutoCompactBeforeSend: Bool {
         guard !skipAutoCompactionForNextSend,
-            !compactionDeclinedForSession,
             compactionState == .idle,
             hasCompactableConversation,
             let fraction = contextUsageFractionEstimate
         else { return false }
+        // Without a usable model the only outcome is the picker dialog; a
+        // user who already declined it once shouldn't be re-prompted on
+        // every send this session.
+        if effectiveCompactionModelIdentifier == nil, compactionDeclinedForSession {
+            return false
+        }
         return fraction >= 0.85
     }
 
@@ -3154,9 +3199,10 @@ final class ChatSession: ObservableObject {
     private func beginCompaction(resumeSend: Bool, showDialogWhileRunning: Bool) {
         validateConversationSummary()
         resumeSendAfterCompaction = resumeSend
-        guard ContextCompactionService.configuredModelIdentifier() != nil else {
-            // First run: no model configured. Open the explainer dialog and
-            // let the user pick one (or decline).
+        guard effectiveCompactionModelIdentifier != nil else {
+            // No compaction model configured AND no chat model to fall back
+            // to. Open the explainer dialog and let the user pick one (or
+            // decline).
             compactionState = .needsModelSelection
             showCompactionDialog = true
             return
@@ -3171,6 +3217,8 @@ final class ChatSession: ObservableObject {
         let turnsSnapshot = turns
         let existing = conversationSummary
         let sid = sessionId
+        let invocation = ModelJobInvocation(parentModelName: selectedModel, source: source)
+        let compactionAgentID = agentId ?? Agent.defaultId
         compactionState = .running(.preparing)
         compactionTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -3179,6 +3227,8 @@ final class ChatSession: ObservableObject {
                     turns: turnsSnapshot,
                     existingSummary: existing,
                     sessionId: sid,
+                    invocation: invocation,
+                    agentId: compactionAgentID,
                     onPhase: { [weak self] phase in
                         self?.compactionState = .running(phase)
                     }
@@ -3231,21 +3281,29 @@ final class ChatSession: ObservableObject {
         }
     }
 
-    /// Post-run bookkeeping: resume a stashed auto-triggered send, and let
-    /// transient states (completed badge) settle back to idle.
+    /// Post-run bookkeeping: resume a stashed auto-triggered send after a
+    /// success, and let transient states (completed badge) settle back to
+    /// idle.
+    ///
+    /// A FAILED auto run does not resume on its own. Proceeding silently
+    /// made compaction look like it never ran — the only trace was a
+    /// six-second row in the hover popover. Instead the dialog stays (or
+    /// comes back, if the user hid it mid-run) in its failed state so the
+    /// user sees why, and chooses Retry or "Send without compacting"
+    /// (`cancelCompactionDialog`, which resumes the stashed send with the
+    /// deterministic trimmer as the safety net).
     private func finishCompaction(success: Bool) {
         let shouldResume = resumeSendAfterCompaction
+        if shouldResume, !success {
+            showCompactionDialog = true
+            return
+        }
         resumeSendAfterCompaction = false
         if shouldResume {
             Task { @MainActor [weak self] in
                 // Let the user read the "done" state briefly before the
-                // dialog closes and the send proceeds. Failures resume
-                // immediately — the deterministic trimmer still protects
-                // the request, and the failed state stays visible in the
-                // budget popover.
-                if success {
-                    try? await Task.sleep(nanoseconds: 900_000_000)
-                }
+                // dialog closes and the send proceeds.
+                try? await Task.sleep(nanoseconds: 900_000_000)
                 guard let self else { return }
                 self.showCompactionDialog = false
                 self.skipAutoCompactionForNextSend = true
@@ -3253,12 +3311,15 @@ final class ChatSession: ObservableObject {
             }
         }
         // Settle transient completed/failed badges back to idle so the
-        // popover button doesn't stay stuck on an old outcome.
+        // popover button doesn't stay stuck on an old outcome. A failure
+        // the dialog is still presenting is left alone — the dialog's
+        // Close/Retry actions own that transition.
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 6_000_000_000)
             guard let self else { return }
             switch self.compactionState {
-            case .completed, .failed: self.compactionState = .idle
+            case .completed: self.compactionState = .idle
+            case .failed where !self.showCompactionDialog: self.compactionState = .idle
             default: break
             }
         }
@@ -3374,7 +3435,7 @@ final class ChatSession: ObservableObject {
         // Auto-generate title from first user message if still default
         if title == "New Chat" {
             let turnData = turns.map { ChatTurnData(from: $0) }
-            title = ChatSessionData.generateTitle(from: turnData)
+            title = ChatSessionData.generateTitle(from: turnData, source: source)
         }
 
         let data = toSessionData()
@@ -3425,16 +3486,7 @@ final class ChatSession: ObservableObject {
         // fall back to the agent's preferred model. `isLoadingModel`
         // suppresses the auto-persist sink so a load doesn't look like
         // the user just picked a model.
-        if let savedModel = data.selectedModel,
-            pickerItems.contains(where: { $0.id == savedModel })
-        {
-            isLoadingModel = true
-            selectedModel = savedModel
-            loadActiveModelOptions(for: selectedModel)
-            isLoadingModel = false
-        } else {
-            applyEffectiveModel(for: data.agentId)
-        }
+        restorePersistedModelSelection(data.selectedModel)
 
         turns = data.turns.map { ChatTurn(from: $0) }
         // Restore the LLM compaction summary and drop it immediately when it
@@ -3473,6 +3525,19 @@ final class ChatSession: ObservableObject {
         Task { [weak self] in
             await self?.refreshContextEstimates()
             self?.notifySessionBecameActive()
+        }
+    }
+
+    /// Restore only model selection after picker discovery, without loading a
+    /// second copy of the transcript or resetting an attached window's draft.
+    func restorePersistedModelSelection(_ savedModel: String?) {
+        if let savedModel, pickerItems.contains(where: { $0.id == savedModel }) {
+            isLoadingModel = true
+            selectedModel = savedModel
+            loadActiveModelOptions(for: selectedModel)
+            isLoadingModel = false
+        } else {
+            applyEffectiveModel(for: agentId)
         }
     }
 
@@ -3664,6 +3729,10 @@ final class ChatSession: ObservableObject {
     func editAndRegenerate(turnId: UUID, newContent: String) {
         guard let index = turns.firstIndex(where: { $0.id == turnId }) else { return }
         guard turns[index].role == .user else { return }
+        // Enveloped dispatch turns (channel / delegated / scheduled / watcher)
+        // hide Edit in the UI; refuse here too so the wire envelope can never
+        // be swapped for hand-edited text through any other path.
+        guard turns[index].dispatchEnvelope(sessionSource: source) == nil else { return }
 
         turnsRollbackOnCancel = snapshotTurnsForCancelRollback()
 
@@ -4531,6 +4600,17 @@ final class ChatSession: ObservableObject {
     private func markUnfinishedToolCallsInterrupted() {
         guard stopRequested || lastStreamError != nil else { return }
         for turn in turns where turn.role == .assistant {
+            // A tool the model was still naming/arguing (or whose parsed
+            // invocation was withheld by the engine tail) never became a
+            // call. Drop the ephemeral placeholder: with the run closed the
+            // pending chip no longer renders, and leaving the name set also
+            // suppressed the cancelled turn's "Interrupted" notice — a
+            // header-only row until a reload (which never restores this
+            // field) made the record visible.
+            if turn.pendingToolName != nil {
+                turn.pendingToolName = nil
+                turn.clearPendingToolArgs()
+            }
             guard let calls = turn.toolCalls, !calls.isEmpty else { continue }
             for call in calls where turn.toolResults[call.id] == nil {
                 // `setToolResult` also records the elapsed-until-stop duration.
@@ -4826,6 +4906,26 @@ final class ChatSession: ObservableObject {
         }
     }
 
+    /// Mark the start of one model generation step inside a run and return
+    /// its `streamStartTime`.
+    ///
+    /// `outputComplete` is set by the relay when a step's engine finishes and
+    /// is otherwise only cleared when `isStreaming` flips on — which happens
+    /// once per RUN, not per step. A tool-call continuation therefore started
+    /// with the flag still true from the previous step: `streamingTurnId`
+    /// resolved to nil, the fresh assistant turn rendered as finished (no
+    /// typing indicator during its load/prefill, so no "Loading Model..."),
+    /// and every delta took the non-streaming table path (per-token height
+    /// notes — the visible jump). Clear it BEFORE awaiting `streamChat`, which
+    /// may span the whole model load, so the indicator covers that wait.
+    private func beginModelStep() -> Date {
+        if outputComplete {
+            outputComplete = false
+            rebuildVisibleBlocks()
+        }
+        return Date()
+    }
+
     private func processStreamDeltas(
         stream: AsyncThrowingStream<String, Error>,
         assistantTurn: ChatTurn,
@@ -4850,6 +4950,15 @@ final class ChatSession: ObservableObject {
         currentTurn.unclosedReasoning = false
         currentTurn.completedAt = nil
         currentTurn.lastOutputAt = nil
+        // Same contract for the session-level flag: the previous step's
+        // relay completion set it, and `isStreaming` (which resets it) stays
+        // true across the whole run. Callers already reset it before awaiting
+        // `streamChat` (see `beginModelStep`); this covers any path that
+        // reaches the processor without it.
+        if outputComplete {
+            outputComplete = false
+            rebuildVisibleBlocks()
+        }
         // Output-complete relay: the adapter announces the instant vmlx's
         // terminal info arrives (before the cache-store tail it withholds the
         // stream end for). Stop the cursor and stamp completion right then.
@@ -4916,9 +5025,15 @@ final class ChatSession: ObservableObject {
         // cursor and stamp. No engine output can follow `.info`, so the quiet
         // window only ever waits on delivery, never on generation.
         var lastDeltaAt = Date()
+        // Only THIS session's own (non-utility) generation may complete this
+        // step. The relay is process-wide, and the previous turn's title /
+        // follow-up / memory jobs queue behind the same solo lease, so they
+        // finish right after a new send starts — a bare timestamp filter let
+        // them mark this turn complete before its model emitted a token.
+        let relaySessionId = sessionId?.uuidString
         let outputCompleteSub = GenerationOutputRelay.shared.$lastCompletion
             .compactMap { $0 }
-            .filter { $0.at >= streamStartTime }
+            .filter { $0.matches(sessionId: relaySessionId, startedAt: streamStartTime) }
             .first()
             .receive(on: RunLoop.main)
             .sink { [weak self, weak currentTurn] completion in
@@ -4937,8 +5052,11 @@ final class ChatSession: ObservableObject {
                         if turn.lastOutputAt == nil { turn.lastOutputAt = at }
                     }
                     self.outputComplete = true
+                    // The rebuild keeps the last turn "active" (pending tool
+                    // chip / finishing indicator) while the engine tail
+                    // drains — only the cursor and live-content path end here.
                     self.rebuildVisibleBlocks()
-                    print("[Osaurus][UI] output complete at \(String(format: "%.2f", at.timeIntervalSince(streamStartTime)))s (engine done at \(String(format: "%.2f", completion.at.timeIntervalSince(streamStartTime)))s; run end pending on the engine tail)")
+                    print("[Osaurus][UI] output complete at \(String(format: "%.2f", at.timeIntervalSince(streamStartTime)))s (engine done at \(String(format: "%.2f", completion.at.timeIntervalSince(streamStartTime)))s; run end pending on the engine tail, finishing indicator shown)")
                 }
             }
         defer { outputCompleteSub.cancel() }
@@ -6241,8 +6359,10 @@ final class ChatSession: ObservableObject {
                 _ = await LocalReasoningCapability.resolveForDispatch(modelId: modelId)
             }
             guard self.isRunActive(runId) else { return }
-            if self.selectedModel == turnModelId,
-                self.activeModelOptions.isEmpty,
+            if let turnModelId,
+                self.selectedModel == turnModelId,
+                self.activeModelOptions == turnModelOptions,
+                ModelOptionsStore.shared.storedExplicitOptions(for: turnModelId) == storedTurnModelOptions,
                 let recovered = turnGenerationControls.modelOptions
             {
                 self.activeModelOptions = recovered
@@ -7756,7 +7876,7 @@ final class ChatSession: ObservableObject {
                                 )
                             }
                             do {
-                                let streamStartTime = Date()
+                                let streamStartTime = self.beginModelStep()
                                 let (invocations, finalTurn) = try await self.processStreamDeltas(
                                     stream: try await engine.streamChat(request: req),
                                     assistantTurn: assistantTurn,
@@ -8280,11 +8400,12 @@ final class ChatSession: ObservableObject {
                                 // stats envelopes into ChatTurn.content (and then
                                 // transcript exports) whenever the agent reached
                                 // its iteration cap.
+                                let finalStreamStartTime = beginModelStep()
                                 let (_, finalTurn) = try await processStreamDeltas(
                                     stream: try await engine.streamChat(request: finalReq),
                                     assistantTurn: assistantTurn,
                                     runId: runId,
-                                    streamStartTime: Date(),
+                                    streamStartTime: finalStreamStartTime,
                                     ttftTrace: ttftTrace,
                                     selectedModel: turnModelId
                                 )
@@ -8446,6 +8567,9 @@ final class ChatSession: ObservableObject {
             await ChatExecutionContext.$currentEnableThinking.withValue(
                 turnGenerationControls.enableThinking
             ) { [self] () async -> Void in
+            await ChatExecutionContext.$currentReasoningEffort.withValue(
+                turnGenerationControls.reasoningEffort
+            ) { [self] () async -> Void in
             // Same flag `turnToMessage` uses to encode tool-turn images, so
             // `file_read` never stages an image the request would drop.
             await ChatExecutionContext.$toolResultImagesEnabled.withValue(
@@ -8453,6 +8577,7 @@ final class ChatSession: ObservableObject {
             ) { [self] () async -> Void in
                 await runTurn()
             }  // ChatExecutionContext.$toolResultImagesEnabled.withValue
+            }  // ChatExecutionContext.$currentReasoningEffort.withValue
             }  // ChatExecutionContext.$currentEnableThinking.withValue
             }  // ChatExecutionContext.$currentModelName.withValue
             }  // ChatExecutionContext.$currentUserRequest.withValue
@@ -10069,7 +10194,6 @@ struct ChatView: View {
                             if !NSApp.windows.contains(where: { $0.attachedSheet != nil }) { break }
                         }
                         AppDelegate.shared?.presentProductHuntLaunchDialogIfEligible()
-                        AppDelegate.shared?.presentWorkspacesIntroDialogIfEligible()
                     }
                 },
                 onAction: { action in
@@ -10953,8 +11077,8 @@ extension ChatView {
         var markers: [ChatMinimap.Marker] = []
         markers.reserveCapacity(8)
         for block in blocks {
-            if case let .userMessage(text, _, _, _) = block.kind {
-                markers.append(ChatMinimap.Marker(id: block.turnId, preview: text))
+            if case let .userMessage(text, _, _, _, envelope) = block.kind {
+                markers.append(ChatMinimap.Marker(id: block.turnId, preview: envelope?.displayText ?? text))
             }
         }
         return markers
@@ -10981,7 +11105,13 @@ extension ChatView {
         }
         if !turn.contentIsBlank {
             if !textToCopy.isEmpty { textToCopy += "\n\n" }
-            textToCopy += turn.visibleContent
+            // A user turn copies what the bubble shows: an enveloped dispatch
+            // (channel / delegated / scheduled / watcher) yields the message,
+            // not the machine wrapper around it.
+            textToCopy +=
+                turn.role == .user
+                ? turn.displayContent(sessionSource: session.source)
+                : turn.visibleContent
         }
         guard !textToCopy.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         NSPasteboard.general.clearContents()
@@ -11202,9 +11332,10 @@ extension ChatView {
         // Snapshot on the main thread (O(turn count) — strings are CoW),
         // scan off it: the scan is O(total conversation text) and must
         // never block the main thread (Sentry app-hang).
-        let snapshot = session.turns.map {
-            ChatFindTurnSnapshot(id: $0.id, role: $0.role, content: $0.content)
-        }
+        // User turns snapshot their DISPLAYED text (envelope stripped), so
+        // the match total agrees with the block-level offsets and paint.
+        let source = session.source
+        let snapshot = session.turns.map { ChatFindTurnSnapshot(turn: $0, sessionSource: source) }
         let previous = ChatFindState(matches: findMatches, matchIndex: findMatchIndex)
         findComputeTask = Task { @MainActor in
             let (state, jumpTo) = await ChatFindMatcher.recomputeDetached(

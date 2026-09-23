@@ -50,6 +50,24 @@ private final class PolicyProbeTool: OsaurusTool, PermissionedTool, @unchecked S
     }
 }
 
+/// Same probe, but declares per-call approval (the shape of `messages_send`
+/// / `calendar_delete_event` / `delete_knowledge`).
+private final class PerCallProbeTool: OsaurusTool, PermissionedTool, PerCallApprovalTool, @unchecked Sendable {
+    let name: String
+    let description = "Test-only per-call approval probe."
+    let parameters: JSONValue? = nil
+    let requirements: [String] = []
+    let defaultPermissionPolicy: ToolPermissionPolicy = .ask
+    private(set) var executions = 0
+
+    init(name: String) { self.name = name }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        executions += 1
+        return ToolEnvelope.success(tool: name, text: "ran")
+    }
+}
+
 // MARK: - Tests
 
 @MainActor
@@ -209,6 +227,80 @@ struct ToolRegistryAutoApproveTests {
             }
         }
         #expect(tool.executions == 0)
+    }
+
+    // MARK: Per-call approval outranks a configured `auto`
+
+    /// A per-call tool (send / delete) can never be made silent through the
+    /// policy surface: the Tools catalog menu and `tools.policies` in a
+    /// declarative document both end in `setPolicy(.auto, …)`, and the gate
+    /// must force `.ask` anyway — otherwise "always confirmed" would depend
+    /// on a setting the Orchestrator can rewrite.
+    @Test func perCallToolIgnoresConfiguredAutoPolicy() async {
+        let tool = PerCallProbeTool(name: "test_per_call_auto_probe")
+        ToolRegistry.shared.register(tool)
+        ToolRegistry.shared.setPolicy(.auto, for: tool.name)
+        defer {
+            ToolRegistry.shared.setPolicy(.ask, for: tool.name)
+            ToolRegistry.shared.unregister(names: [tool.name])
+        }
+
+        #expect(ToolRegistry.shared.configuredPolicy(for: tool.name) == .auto)
+        #expect(ToolRegistry.shared.requiresPerCallApproval(tool.name))
+        // The pill mirrors the gate, not the inert stored value.
+        #expect(ToolRegistry.shared.policyInfo(for: tool.name)?.effectivePolicy == .ask)
+
+        // Headless surface: the forced `.ask` has nobody to answer it → deny,
+        // and the body never runs. With the old branch structure the `.auto`
+        // case would have executed straight through.
+        await #expect(throws: (any Error).self) {
+            _ = try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
+                try await ToolRegistry.shared.execute(name: tool.name, argumentsJSON: "{}")
+            }
+        }
+        #expect(tool.executions == 0)
+
+        // The global auto-allow chat setting does not cover it either.
+        UserDefaults.standard.set(true, forKey: ToolApprovalSettings.autoAllowAllDefaultsKey)
+        defer { UserDefaults.standard.removeObject(forKey: ToolApprovalSettings.autoAllowAllDefaultsKey) }
+        await #expect(throws: (any Error).self) {
+            _ = try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
+                try await ToolRegistry.shared.execute(name: tool.name, argumentsJSON: "{}")
+            }
+        }
+        #expect(tool.executions == 0)
+    }
+
+    /// `.deny` still outranks the forced `.ask`: strictest wins in both
+    /// directions.
+    @Test func perCallToolStillHonoursDeny() async {
+        let tool = PerCallProbeTool(name: "test_per_call_deny_probe")
+        ToolRegistry.shared.register(tool)
+        ToolRegistry.shared.setPolicy(.deny, for: tool.name)
+        defer {
+            ToolRegistry.shared.setPolicy(.ask, for: tool.name)
+            ToolRegistry.shared.unregister(names: [tool.name])
+        }
+        #expect(ToolRegistry.shared.policyInfo(for: tool.name)?.effectivePolicy == .deny)
+        await #expect(throws: (any Error).self) {
+            _ = try await ChatExecutionContext.$autoApproveToolPrompts.withValue(true) {
+                try await ToolRegistry.shared.execute(name: tool.name, argumentsJSON: "{}")
+            }
+        }
+        #expect(tool.executions == 0)
+    }
+
+    /// The shipped send/delete tools are the reason this exists.
+    @Test func appleSendAndDeleteToolsArePerCall() {
+        for name in ["messages_send", "calendar_delete_event", "reminders_delete", "delete_knowledge"]
+        where ToolRegistry.shared.isRegistered(name)
+        {
+            #expect(ToolRegistry.shared.requiresPerCallApproval(name), "\(name)")
+        }
+        for name in ["mail_compose", "mail_reply"] where ToolRegistry.shared.isRegistered(name) {
+            #expect(!ToolRegistry.shared.requiresPerCallApproval(name), "\(name)")
+            #expect(ToolRegistry.shared.mayRequirePerCallApproval(name), "\(name)")
+        }
     }
 
     // MARK: Two-phase batch (serial approvals → parallel execution)

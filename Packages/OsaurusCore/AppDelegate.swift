@@ -239,9 +239,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // on the main thread during launch.
         ChatSessionStore.preloadInBackground()
 
+        // Stamp the install's first-launch date BEFORE analytics come up so
+        // the baseline `app_launched` can carry the install-cohort/age
+        // retention dimensions. One-shot: fresh installs record now,
+        // existing installs are back-dated from the data roots' birth times.
+        FeatureTelemetry.stampFirstLaunchIfNeeded()
+
         // Bring up analytics early so the launch + onboarding funnel is
         // captured. No-ops silently when no Aptabase key is configured.
-        TelemetryService.shared.configure()
+        TelemetryService.shared.configure(launchProps: FeatureTelemetry.installProps() ?? [:])
+
+        // Once-per-local-day retention signal (the cohort-retention
+        // numerator/denominator). Consent-gated like every other event.
+        FeatureTelemetry.dailyActive()
 
         // Attribute the `brain_source` dimension for installs that completed
         // onboarding before the choice existed: stamp `pre_choice` once so
@@ -441,6 +451,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 // catalog so existing sign-ins carry over to Browser Use.
                 BrowserPluginMigration.migrateIfNeeded()
             }
+            // Superseded Apple app plugins → built-in Apple Apps: drop any
+            // ticked legacy plugin tools on custom agents and enable the owning
+            // app so those agents keep working (installed plugins only; the
+            // Tools/ scan runs off-main). Shows the one-time notice. No
+            // Keychain involved.
+            await AppleAppsPluginMigration.migrateIfNeededAtLaunch()
             await MediaGenerationCoordinator.shared.refreshCloudCatalog()
             await MediaGenerationCoordinator.shared.resumePendingJobs()
             await ModelPickerItemCache.shared.prewarmModelCache()
@@ -724,7 +740,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     maybePromptForTelemetryConsent()
                 }
 
-                // One-time Product Hunt launch dialog (July 2026). Delayed
+                // One-time Product Hunt launch dialogs (Raptor, Sept 2026). Delayed
                 // past the consent prompt's own 900ms settle so the two can
                 // never race for a scope; if consent is still pending the
                 // eligibility gate defers to the next activation. Silent
@@ -734,10 +750,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     Task { @MainActor [weak self] in
                         try? await Task.sleep(for: .seconds(2))
                         self?.presentProductHuntLaunchDialogIfEligible()
-                        // One-time Workspaces introduction for existing
-                        // users. Its guard defers while any other alert
-                        // (including the one above) is on screen.
-                        self?.presentWorkspacesIntroDialogIfEligible()
                     }
                 }
             }
@@ -884,11 +896,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     onDismiss: { [weak self] in
                         ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
                         // On an upgrade launch this prompt precedes the
-                        // first-run announcements, which defer while it is up
-                        // and otherwise wait for the next activation. Chain
-                        // them so they land in the same session.
+                        // first-run announcement, which defers while it is up
+                        // and otherwise waits for the next activation. Chain
+                        // it so it lands in the same session.
                         self?.presentProductHuntLaunchDialogIfEligible()
-                        self?.presentWorkspacesIntroDialogIfEligible()
                     }
                 ),
                 scope: scope
@@ -1224,7 +1235,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 self?.maybePromptForTelemetryConsent()
             }
             self?.presentProductHuntLaunchDialogIfEligible()
-            self?.presentWorkspacesIntroDialogIfEligible()
         }
     }
 
@@ -1245,8 +1255,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             )
             menu.addItem(
                 NSMenuItem(
-                    title: "Reset & Test Product Hunt Launch",
-                    action: #selector(dockResetProductHuntLaunch),
+                    title: "Reset & Test PH Teaser",
+                    action: #selector(dockResetProductHuntTeaser),
+                    keyEquivalent: ""
+                )
+            )
+            menu.addItem(
+                NSMenuItem(
+                    title: "Reset & Test PH Launch Day",
+                    action: #selector(dockResetProductHuntLaunchDay),
                     keyEquivalent: ""
                 )
             )
@@ -1254,13 +1271,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 NSMenuItem(
                     title: "Reset & Test Import History Prompt",
                     action: #selector(dockResetImportHistoryPrompt),
-                    keyEquivalent: ""
-                )
-            )
-            menu.addItem(
-                NSMenuItem(
-                    title: "Reset & Test Workspaces Intro",
-                    action: #selector(dockResetWorkspacesIntro),
                     keyEquivalent: ""
                 )
             )
@@ -1294,14 +1304,36 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             ChatWindowManager.shared.createWindow()
         }
 
-        /// Clear the campaign's seen flag, bypass only the UTC date window,
-        /// and run the normal eligibility/presentation path — including all
-        /// onboarding/modal/active-work deferrals — so the debug run
-        /// exercises the production coordination. Dismissing the dialog
+        /// Clear the teaser's seen flag, force the teaser phase regardless
+        /// of the UTC clock, and run the normal eligibility/presentation
+        /// path — including all onboarding/modal/active-work deferrals — so
+        /// the debug run exercises the production coordination. Dismissing
         /// re-persists seen; pick this item again to test another pass.
-        @objc private func dockResetProductHuntLaunch() {
-            ProductHuntLaunchCampaign.shared.resetForDebugTesting()
-            presentProductHuntLaunchDialogIfEligible()
+        @objc private func dockResetProductHuntTeaser() {
+            ProductHuntLaunchCampaign.shared.resetForDebugTesting(phase: .teaser)
+            debugReportProductHuntDeferral(presentProductHuntLaunchDialogIfEligible(), phase: .teaser)
+        }
+
+        /// Same as above for the launch-day dialog. The teaser's flag is
+        /// left alone so the teaser → launch-day handoff can be exercised.
+        @objc private func dockResetProductHuntLaunchDay() {
+            ProductHuntLaunchCampaign.shared.resetForDebugTesting(phase: .launch)
+            debugReportProductHuntDeferral(presentProductHuntLaunchDialogIfEligible(), phase: .launch)
+        }
+
+        /// The production presenter defers silently by design (the next
+        /// activation rechecks). For the dock test items that reads as
+        /// "nothing happened", so name the gate in a toast + log. The
+        /// flag stays cleared, so fixing the blocker and picking the item
+        /// again (or just re-activating the app) shows the dialog.
+        private func debugReportProductHuntDeferral(_ reason: String?, phase: ProductHuntLaunchCampaign.Phase) {
+            guard let reason else { return }
+            NSLog("[ProductHunt] \(phase.rawValue) dialog deferred: \(reason)")
+            ToastManager.shared.warning(
+                "PH \(phase.rawValue) dialog deferred",
+                message: "\(reason). Resolve it and pick the dock item again, or re-activate the app.",
+                timeout: 8
+            )
         }
 
         /// Clear the import prompt's seen flag and run the normal
@@ -1312,15 +1344,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         @objc private func dockResetImportHistoryPrompt() {
             ImportHistoryPromptGate.shared.resetForDebugTesting()
             presentImportHistoryPromptIfEligible()
-        }
-
-        /// Clear the Workspaces intro's seen flag and run the normal
-        /// eligibility/presentation path, including every modal/active-work
-        /// deferral, so the debug run exercises the production coordination.
-        /// Dismissing re-persists seen; pick this item again for another pass.
-        @objc private func dockResetWorkspacesIntro() {
-            WorkspacesIntroCampaign.shared.resetForDebugTesting()
-            presentWorkspacesIntroDialogIfEligible()
         }
     #endif
 
@@ -1427,6 +1450,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             ScheduleManager.shared.stop()
             WatcherManager.shared.stop()
             KnowledgeFolderWatcher.shared.stop()
+            // Detach the sandbox registrar from the container status stream
+            // BEFORE phase 2 stops the VM. Otherwise the `.running -> .stopped`
+            // edge from `stopContainer` re-enters `registerTools`, which
+            // treats a set-up sandbox as warm-restartable and re-acquires the
+            // vmnet lease + re-boots the VM inside the quit window — the
+            // relaunched app then finds the lease held by a live, exiting
+            // owner (`vmnet_in_use`).
+            SandboxToolRegistrar.shared.prepareForTermination()
             await runWithDeadline(seconds: 2) {
                 await AgentChannelTransportSupervisor.shared.stop()
             }
@@ -2215,7 +2246,15 @@ extension AppDelegate {
     /// `osaurus://settings?tab=<tab>` — open the management window on a tab
     /// (used by the in-chat osaurus_config result card's "Open in Settings"
     /// links for rows the user must finish by hand).
+    /// `osaurus://open_from_hf?model=<org/repo>[&file=<path>]` — the link
+    /// Hugging Face's "Use this model" menu generates for Osaurus; same
+    /// handling as `huggingface://?model=…` (see `HuggingFaceModelDeepLink`).
     fileprivate func handleOsaurusDeepLink(_ url: URL) {
+        if HuggingFaceModelDeepLink.matches(url) {
+            handleHuggingFaceDeepLink(url)
+            return
+        }
+
         Task { @MainActor in
             NSApp.activate(ignoringOtherApps: true)
 
@@ -2260,41 +2299,43 @@ extension AppDelegate {
         showManagementWindow(initialTab: .tools)
     }
 
+    /// `huggingface://?model=<org/repo>[&file=<path>]` and
+    /// `osaurus://open_from_hf?model=<org/repo>[&file=<path>]` — open the
+    /// Model Manager on that repository after checking it is MLX-compatible.
     fileprivate func handleHuggingFaceDeepLink(_ url: URL) {
-        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
-        let items = components.queryItems ?? []
-        let modelId = items.first(where: { $0.name.lowercased() == "model" })?.value?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let file = items.first(where: { $0.name.lowercased() == "file" })?.value?.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-
-        guard let modelId, !modelId.isEmpty else {
+        guard let link = HuggingFaceModelDeepLink.parse(url) else {
             // No model id provided; ignore silently
             return
         }
+        let modelId = link.modelId
+        let file = link.file
 
         // Resolve to ensure it appears in the UI; enforce MLX-only via metadata
         Task { @MainActor in
-            if await ModelManager.shared.resolveModelIfMLXCompatible(byRepoId: modelId) == nil {
-                let alert = NSAlert()
-                alert.messageText = L("Unsupported model")
-                alert.informativeText = L(
-                    "Osaurus supports MLX-compatible Hugging Face repositories, including MLX, MXFP, JANG, JANGTQ, and TurboQuant artifacts when required files are present."
-                )
-                alert.alertStyle = .warning
-                alert.addButton(withTitle: "OK")
-                // `runModal` intentionally blocks the main run loop until the
-                // user dismisses the alert; pause the hang watchdog so the
-                // wait isn't reported as an app hang (Sentry APPLE-MACOS-VE).
-                CrashReportingService.shared.withAppHangTrackingPaused {
-                    _ = alert.runModal()
-                }
+            let resolution = await ModelManager.shared.resolveModelForDeepLink(byRepoId: modelId)
+            // The Models tab is reached through shared state, never through
+            // `showManagementWindow(deeplinkModelId:)`: that path rebuilds the
+            // window's hosting controller when the window already exists, and
+            // a SwiftUI sheet left up by the previous link (its detail sheet)
+            // then traps on the next resize (Sentry APPLE-MACOS-EF; reproduced
+            // live with two links in a row). The requests are set after the
+            // window call so a freshly created view replays them and an
+            // existing view receives them as changes.
+            if case .model = resolution {
+                showManagementWindow(initialTab: .models)
+                let state = ManagementStateManager.shared
+                state.pendingModelDeepLink = .init(modelId: modelId, file: file)
+                // Linked model's detail sheet (and its Download button) up.
+                state.pendingModelDetailId = modelId
                 return
             }
 
-            // Open Model Manager in its own window for deeplinks
-            showManagementWindow(initialTab: .models, deeplinkModelId: modelId, deeplinkFile: file)
+            guard HuggingFaceDeepLinkAlert.present(resolution, modelId: modelId) == .addToken else { return }
+            showManagementWindow(initialTab: .models)
+            let state = ManagementStateManager.shared
+            state.pendingModelDeepLink = .init(modelId: modelId, file: file)
+            state.pendingDeepLinkRetryModelId = modelId
+            state.pendingHuggingFaceTokenPrompt = true
         }
     }
 }
@@ -2486,10 +2527,6 @@ extension AppDelegate {
                         // now that the chat window is up to host it. Its guard
                         // defers again while the import prompt is on screen.
                         self?.presentProductHuntLaunchDialogIfEligible()
-                        // Fresh installs see the Workspaces intro here, right after
-                        // onboarding (the launch check deferred it behind the flow);
-                        // its guard defers again while the import prompt is up.
-                        self?.presentWorkspacesIntroDialogIfEligible()
                     }
                 }
             )
@@ -2753,17 +2790,33 @@ extension AppDelegate {
 
 // MARK: - Product Hunt Launch Dialog
 extension AppDelegate {
-    /// Present the one-time Product Hunt launch thank-you dialog when the
-    /// campaign's own gates pass (inside the UTC window, never seen) AND
-    /// nothing critical is in progress. A blocked attempt does NOT consume
-    /// eligibility — the next launch/foreground activation or onboarding
-    /// completion simply rechecks while the window remains open.
+    /// Present whichever Product Hunt campaign dialog (pre-launch teaser or
+    /// launch-day reminder) the campaign's own gates resolve to — the
+    /// current UTC phase, never seen for that phase — AND nothing critical
+    /// is in progress. A blocked attempt does NOT consume eligibility — the
+    /// next launch/foreground activation or onboarding completion simply
+    /// rechecks while the phase remains open. On launch day the same
+    /// rechecks are what surface the second dialog to users who already
+    /// dismissed the teaser.
+    ///
+    /// Returns `nil` when a dialog was presented, otherwise a short,
+    /// developer-facing token naming the gate that deferred it. Production
+    /// callers ignore it; the DEBUG dock items surface it so a silent
+    /// deferral is diagnosable instead of looking like a no-op.
     @MainActor
-    func presentProductHuntLaunchDialogIfEligible() {
-        guard !keychainDisabledTestMode else { return }
+    @discardableResult
+    func presentProductHuntLaunchDialogIfEligible() -> String? {
+        // Headless keychain-free live-proof launches never show UI; the
+        // keychain-free UI-proof mode (`OSAURUS_KEYCHAIN_FREE_SHOW_UI=1`)
+        // does, and is how this dialog is exercised without a signed build.
+        guard !keychainDisabledTestMode || keychainDisabledUIPresentationMode else {
+            return "keychain-free headless mode"
+        }
 
         let campaign = ProductHuntLaunchCampaign.shared
-        guard campaign.isEligible else { return }
+        guard let phase = campaign.eligiblePhase else {
+            return campaign.isPresenting ? "already presenting" : "no eligible phase (outside window or already seen)"
+        }
 
         // Defer instead of stacking: onboarding flow (fresh installs see the
         // dialog after it completes, via the onboarding-completion recheck),
@@ -2771,29 +2824,31 @@ extension AppDelegate {
         // sheet, any themed alert anywhere, a blocking in-chat or Computer
         // Use prompt awaiting the user, a streaming chat turn, or an active
         // background agent task (the current Work Mode equivalent).
-        guard !OnboardingService.shared.shouldShowOnboarding else { return }
-        guard !TelemetryService.shared.needsConsentDecision else { return }
-        guard NSApp.modalWindow == nil else { return }
-        guard !NSApp.windows.contains(where: { $0.attachedSheet != nil }) else { return }
-        guard !ThemedAlertCenter.shared.hasAnyActiveAlert else { return }
+        guard !OnboardingService.shared.shouldShowOnboarding else { return "onboarding pending" }
+        guard !TelemetryService.shared.needsConsentDecision else { return "telemetry consent pending" }
+        guard NSApp.modalWindow == nil else { return "AppKit modal window up" }
+        guard !NSApp.windows.contains(where: { $0.attachedSheet != nil }) else { return "attached sheet up" }
+        guard !ThemedAlertCenter.shared.hasAnyActiveAlert else { return "another themed alert is active" }
         // The layout tour's coachmark overlay owns the chat window while it
         // runs; a dialog landing underneath it would be unreachable.
-        guard !ChatLayoutTour.shared.isActive else { return }
+        guard !ChatLayoutTour.shared.isActive else { return "layout tour active" }
         guard ComputerUsePromptQueue.shared.pending.isEmpty,
             ComputerUsePromptQueue.shared.pendingConsent.isEmpty
-        else { return }
-        guard !ChatWindowManager.shared.isAnySessionStreaming else { return }
-        guard !ChatWindowManager.shared.hasAnyBlockingPromptOverlay else { return }
+        else { return "Computer Use prompt pending" }
+        guard !ChatWindowManager.shared.isAnySessionStreaming else { return "a chat session is streaming" }
+        guard !ChatWindowManager.shared.hasAnyBlockingPromptOverlay else { return "blocking in-chat prompt up" }
         guard !BackgroundTaskManager.shared.backgroundTasks.values.contains(where: { $0.status.isActive })
-        else { return }
+        else { return "background agent task active" }
 
         // Host in the user's landing window (same routing as the telemetry
         // consent prompt) so the dialog behaves like an app modal and recedes
-        // when Osaurus deactivates; the screen-level toast overlay is only a
-        // last-resort fallback when no app window is up.
+        // when Osaurus deactivates. A chat window that exists but is hidden
+        // (Esc / hotkey toggle orders it out) must not host it — the alert
+        // would sit invisibly until the user happened to reopen that window
+        // — so fall through to the screen-level toast overlay instead.
         let scope: ThemedAlertScope
         if let chatId = ChatWindowManager.shared.lastFocusedWindowId,
-            ChatWindowManager.shared.windowExists(id: chatId) {
+            ChatWindowManager.shared.getNSWindow(id: chatId)?.isVisible == true {
             scope = .chat(chatId)
         } else if WindowManager.shared.isVisible(.management) {
             scope = .management
@@ -2803,45 +2858,77 @@ extension AppDelegate {
 
         // Seen is persisted at presentation time, so even a force-quit while
         // the dialog is up can't make it reappear.
-        campaign.willPresent()
-        FeatureTelemetry.productHuntLaunchDialogShown()
+        campaign.willPresent(phase)
+        FeatureTelemetry.productHuntLaunchDialogShown(phase: phase)
+
+        // The dismiss button carries the cancel role so Escape and an outside
+        // click follow the same permanent-dismiss path. Alone (teaser) it
+        // renders in the primary style and also takes Return; on launch day
+        // it is promoted to the corner X.
+        let dismissButton = { (label: String) -> AlertButtonConfig in
+            .cancel(label) {
+                campaign.markSeen(phase)
+                FeatureTelemetry.productHuntLaunchDialogClicked(phase: phase, action: "later")
+            }
+        }
+
+        let title: String
+        let message: String
+        let buttons: [AlertButtonConfig]
+        switch phase {
+        case .teaser:
+            // No launch page exists yet, so the teaser is acknowledge-only.
+            let countdown = ProductHuntLaunchCampaign.countdownDescription(from: Date())
+            title = L("A note from the Osaurus team")
+            message = L(
+                """
+                Thanks for using Osaurus. We believe everyone should be able to own their AI, and we're trying to make that as easy as possible.
+
+                We heard from a lot of you that not everyone has a high-end Mac. So we built Raptor: our model for agentic tasks that runs locally in under 4GB.
+
+                Raptor launches on Product Hunt in \(countdown). We'll remind you when it's live. Your support means a lot.
+                """
+            )
+            buttons = [dismissButton(L("Got it"))]
+        case .launch:
+            title = L("We're live on Product Hunt! 🥳")
+            message = L(
+                """
+                Raptor by Osaurus runs in less than 4GB, and is built for Macs with 16GB RAM or less.
+
+                We hope Osaurus is useful to you and if so, we need your support to share it with more people! A comment about what you like really helps.
+                """
+            )
+            // No "Maybe later" — later never comes. The cancel-role button is
+            // promoted to the corner X (`showsCloseButton`), leaving "Check
+            // it out" as the only inline (primary) action.
+            buttons = [
+                dismissButton(L("Close")),
+                .primary(L("Check it out")) {
+                    campaign.markSeen(phase)
+                    FeatureTelemetry.productHuntLaunchDialogClicked(phase: phase, action: "launch")
+                    // `open` makes a synchronous XPC round-trip to
+                    // LaunchServices that can block for seconds while the
+                    // browser cold-launches and hang the main thread;
+                    // NSWorkspace is thread-safe, so fire it off main.
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        NSWorkspace.shared.open(ProductHuntLaunchCampaign.launchURL)
+                    }
+                },
+            ]
+        }
 
         let requestId = UUID()
         ThemedAlertCenter.shared.present(
             ThemedAlertRequest(
                 id: requestId,
-                title: L("We're live on Product Hunt"),
-                message: L(
-                    """
-                    Hey! After 10 months of building in public, today is our official launch on Product Hunt.
-
-                    Osaurus has been shaped by feedback from people like you. If it's been useful to you, come say hi and support the launch. It means a lot to us.
-
-                    Thank you for being here early.
-                    """
-                ),
+                title: title,
+                message: message,
                 headerImageNames: ["osaurus-thanks", "ph-cat"],
                 headerImageAccessibilityLabel: L(
                     "Osaurus dinosaur and the Product Hunt kitty saying thank you"),
-                buttons: [
-                    // "Maybe later" carries the cancel role so Escape and an
-                    // outside click follow the same permanent-dismiss path.
-                    .cancel(L("Maybe later")) {
-                        campaign.markSeen()
-                        FeatureTelemetry.productHuntLaunchDialogClicked(action: "later")
-                    },
-                    .primary(L("Check out the launch")) {
-                        campaign.markSeen()
-                        FeatureTelemetry.productHuntLaunchDialogClicked(action: "launch")
-                        // `open` makes a synchronous XPC round-trip to
-                        // LaunchServices that can block for seconds while the
-                        // browser cold-launches and hang the main thread;
-                        // NSWorkspace is thread-safe, so fire it off main.
-                        DispatchQueue.global(qos: .userInitiated).async {
-                            NSWorkspace.shared.open(ProductHuntLaunchCampaign.launchURL)
-                        }
-                    },
-                ],
+                buttons: buttons,
+                showsCloseButton: phase == .launch,
                 width: 400,
                 onDismiss: {
                     campaign.didDismiss()
@@ -2850,150 +2937,7 @@ extension AppDelegate {
             ),
             scope: scope
         )
-    }
-}
-
-// MARK: - Workspaces Intro Dialog
-extension AppDelegate {
-    /// Present the one-time Founding Workspaces introduction when the
-    /// campaign's own gate passes (never seen; fresh installs included, they
-    /// get it right after onboarding) AND nothing critical is in progress. A
-    /// blocked attempt does NOT consume eligibility: the next launch or
-    /// foreground activation simply rechecks. Same deferral set as the
-    /// Product Hunt dialog so the two announcement paths behave identically.
-    @MainActor
-    func presentWorkspacesIntroDialogIfEligible() {
-        guard !keychainDisabledTestMode else { return }
-
-        let campaign = WorkspacesIntroCampaign.shared
-        guard campaign.isEligible else { return }
-
-        guard !OnboardingService.shared.shouldShowOnboarding else { return }
-        guard !TelemetryService.shared.needsConsentDecision else { return }
-        guard NSApp.modalWindow == nil else { return }
-        guard !NSApp.windows.contains(where: { $0.attachedSheet != nil }) else { return }
-        guard !ThemedAlertCenter.shared.hasAnyActiveAlert else { return }
-        guard !ChatLayoutTour.shared.isActive else { return }
-        guard ComputerUsePromptQueue.shared.pending.isEmpty,
-            ComputerUsePromptQueue.shared.pendingConsent.isEmpty
-        else { return }
-        guard !ChatWindowManager.shared.isAnySessionStreaming else { return }
-        guard !ChatWindowManager.shared.hasAnyBlockingPromptOverlay else { return }
-        guard !BackgroundTaskManager.shared.backgroundTasks.values.contains(where: { $0.status.isActive })
-        else { return }
-
-        // Host in the user's landing window (same routing as the Product
-        // Hunt dialog) so it behaves like an app modal and recedes when
-        // Osaurus deactivates; the toast overlay is only a last resort.
-        let scope: ThemedAlertScope
-        if let chatId = ChatWindowManager.shared.lastFocusedWindowId,
-            ChatWindowManager.shared.windowExists(id: chatId) {
-            scope = .chat(chatId)
-        } else if WindowManager.shared.isVisible(.management) {
-            scope = .management
-        } else {
-            scope = .toastOverlay
-        }
-
-        // Seen is persisted at presentation time, so even a force-quit while
-        // the dialog is up can't make it reappear.
-        campaign.willPresent()
-        FeatureTelemetry.workspacesIntroDialogShown()
-
-        let requestId = UUID()
-        // The dialog is designed for 960pt but hosts as an overlay inside
-        // the landing window, and that window remembers a user-shrunk frame
-        // via autosave. Rather than squeeze the announcement into whatever
-        // is left, grow the host to the chat window's default size (the
-        // screen's full visible area) when it is too small, then measure
-        // it. The scale below is only a last-resort fallback after that.
-        let hostWindow: NSWindow?
-        switch scope {
-        case .chat(let id): hostWindow = ChatWindowManager.shared.getNSWindow(id: id)
-        case .management: hostWindow = WindowManager.shared.window(for: .management)
-        default: hostWindow = nil
-        }
-        if let hostWindow {
-            Self.growWindowForIntroDialogIfNeeded(hostWindow)
-        }
-        let available: CGSize =
-            hostWindow?.contentView?.bounds.size
-            ?? (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame.size
-            ?? CGSize(width: 1440, height: 900)
-        let scale = WorkspacesIntroModal.scale(fitting: available)
-        let content = WorkspacesIntroModal(
-            scale: scale,
-            onClaim: {
-                FeatureTelemetry.workspacesIntroDialogClicked(action: "start_trial")
-                // `dismiss` drops the request without running `onDismiss`,
-                // so the inline buttons release the presenting flag here.
-                campaign.didDismiss()
-                ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
-                // Same path as the Workspaces tab's own "Start free trial"
-                // button: land on the tab with the New Workspace sheet up
-                // (name, interval), which opens Stripe Checkout in the
-                // browser and lets the app's activation polling finish it.
-                ManagementStateManager.shared.pendingCreateWorkspace = true
-                AppDelegate.shared?.showManagementWindow(initialTab: .workspaces)
-            },
-            onLater: {
-                FeatureTelemetry.workspacesIntroDialogClicked(action: "later")
-                campaign.didDismiss()
-                ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
-            }
-        )
-        ThemedAlertCenter.shared.present(
-            ThemedAlertRequest(
-                id: requestId,
-                title: L("Introducing Workspaces"),
-                message: nil,
-                showsHeaderIcon: false,
-                // "Maybe later" carries the cancel role so the corner X,
-                // Escape, and an outside click all follow the same
-                // permanent-dismiss path. The inline buttons live in the
-                // custom content, so this one only renders as the X.
-                buttons: [
-                    .cancel(L("Maybe later")) {
-                        FeatureTelemetry.workspacesIntroDialogClicked(action: "later")
-                    }
-                ],
-                showsCloseButton: true,
-                titleFontSize: 22,
-                customContent: AnyView(content),
-                width: WorkspacesIntroModal.dialogWidth(scale: scale),
-                onDismiss: {
-                    campaign.didDismiss()
-                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
-                }
-            ),
-            scope: scope
-        )
-    }
-}
-
-// MARK: - Workspaces Intro Dialog (host sizing)
-extension AppDelegate {
-    /// Grow `window` to the chat window's default size, centred on its
-    /// screen, when its content area cannot show the Workspaces intro at
-    /// full size. Leaves a window that already has room alone. Not
-    /// animated: `setFrame(_:display:animate:)` runs its animation
-    /// synchronously on the main thread. Frame autosave records the new
-    /// size, so a user who had shrunk the window keeps the larger one until
-    /// they resize again, which is the intended trade-off.
-    @MainActor
-    static func growWindowForIntroDialogIfNeeded(_ window: NSWindow) {
-        let current = window.contentView?.bounds.size ?? window.frame.size
-        guard WorkspacesIntroModal.scale(fitting: current) < 1 else { return }
-        guard let screen = window.screen ?? NSScreen.main else { return }
-        let visible = screen.visibleFrame
-        let size = ChatWindowManager.defaultWindowSize(fitting: screen)
-        let frame = NSRect(
-            x: visible.midX - size.width / 2,
-            y: visible.midY - size.height / 2,
-            width: size.width,
-            height: size.height
-        )
-        window.setFrame(frame, display: true)
+        return nil
     }
 }
 
@@ -3071,7 +3015,6 @@ extension AppDelegate {
                     // this one, so every modal is done before the deferred
                     // layout tour starts.
                     self?.presentProductHuntLaunchDialogIfEligible()
-                    self?.presentWorkspacesIntroDialogIfEligible()
                 }
             ),
             scope: scope

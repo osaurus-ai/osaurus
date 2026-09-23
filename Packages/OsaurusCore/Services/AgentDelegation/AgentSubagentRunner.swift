@@ -154,6 +154,7 @@ enum AgentSubagentRunner {
         sessionId: String,
         temperature: Float? = nil,
         enableThinking: Bool? = nil,
+        reasoningEffort: String? = nil,
         isAgentRequest: Bool = true,
         stopOnToolRejection: Bool = false,
         treatEmptyChoicesAsFinal: Bool = false,
@@ -244,6 +245,7 @@ enum AgentSubagentRunner {
                 request.samplingParametersAreImplicit = true
                 request.isAgentRequest = isAgentRequest
                 request.enable_thinking = enableThinking
+                request.reasoning_effort = reasoningEffort
                 // A child is user-visible work, but its cold load must not
                 // evict an unrelated resident owned by HTTP/plugin traffic.
                 // The runtime's background intent is atomic: same-model cache

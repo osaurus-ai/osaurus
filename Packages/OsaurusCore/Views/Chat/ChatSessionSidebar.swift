@@ -2124,11 +2124,11 @@ private struct AgentSidebarRow: View {
     private var agentContextMenu: some View {
         if let onNewChat {
             Button(action: onNewChat) {
-                Label(L("New Chat"), systemImage: "plus.bubble")
+                Label(LCached("New Chat"), systemImage: "plus.bubble")
             }
         }
         Button(action: openAgentSettings) {
-            Label(L("Open Settings"), systemImage: "gearshape")
+            Label(LCached("Open Settings"), systemImage: "gearshape")
         }
         if !shareableWorkspaces.isEmpty, let onShareToWorkspace {
             Menu {
@@ -2136,7 +2136,7 @@ private struct AgentSidebarRow: View {
                     Button(workspace.name) { onShareToWorkspace(workspace) }
                 }
             } label: {
-                Label(L("Share to Workspace…"), systemImage: "person.2.fill")
+                Label(LCached("Share to Workspace…"), systemImage: "person.2.fill")
             }
         }
         if !sharedWorkspaces.isEmpty, let onUnshareFromWorkspace {
@@ -2145,7 +2145,7 @@ private struct AgentSidebarRow: View {
                 Button(role: .destructive) {
                     onUnshareFromWorkspace(workspace)
                 } label: {
-                    Label(String(format: L("Unshare from %@"), workspace.name), systemImage: "person.2.slash")
+                    Label(String(format: LCached("Unshare from %@"), workspace.name), systemImage: "person.2.slash")
                 }
             }
         }
@@ -2155,12 +2155,12 @@ private struct AgentSidebarRow: View {
     private func liveStatusLine(_ status: SessionActivityMonitor.Status) -> String {
         switch status {
         case .waitingForInput:
-            return L("Needs your input")
+            return LCached("Needs your input")
         case .working:
             if let step = activityStep?.trimmingCharacters(in: .whitespacesAndNewlines), !step.isEmpty {
-                return "\(L("Working")) · \(step)"
+                return "\(LCached("Working")) · \(step)"
             }
-            return L("Working…")
+            return LCached("Working…")
         }
     }
 }

@@ -51,7 +51,7 @@ public enum OsaurusPaths {
         if let override = overrideRoot {
             return override
         }
-        if let envRoot = ProcessInfo.processInfo.environment["OSAURUS_TEST_ROOT"],
+        if let envRoot = ProcessEnvironment.value("OSAURUS_TEST_ROOT"),
             !envRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
             return URL(fileURLWithPath: envRoot, isDirectory: true)
@@ -539,6 +539,10 @@ public enum OsaurusPaths {
     /// the built-in Default agent has no per-agent settings editor).
     public static func browserConfigFile() -> URL {
         config().appendingPathComponent("browser.json")
+    }
+    /// Built-in Apple app tools state (one-time plugin → native migration marker).
+    public static func appleAppsConfigFile() -> URL {
+        config().appendingPathComponent("apple-apps.json")
     }
     /// Persistent catalog of native browser sessions (agent id → WebKit
     /// profile UUID + last-known page + observed auth status). The WebKit

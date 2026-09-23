@@ -52,6 +52,9 @@ agents: # custom agents (never the Default agent)
       computer_use_enabled: false # HIGH RISK when enabled
       image_enabled: false # image generation/editing lives on custom agents
       applescript_enabled: false # AppleScript / mac_query lives on custom agents
+      apple_apps: [] # built-in Apple app tools; full list replaces the set.
+      # calendar | reminders | contacts | notes | mail | messages | maps | music | shortcuts
+      # (mail / messages / shortcuts act on your behalf — the plan card flags them)
       relay_enabled: false # HIGH RISK: reachable from outside
 
 tools: # global tool enablement / permission policies
@@ -116,8 +119,8 @@ mcp_servers: # user-added MCP servers (plugin-owned stay put)
 models: # desired installed local MLX models (HF repo ids)
   - mlx-community/Qwen2.5-7B-Instruct-4bit
 
-plugins: # desired installed plugins (registry ids)
-  - osaurus.weather
+plugins: # desired installed plugins (registry ids). Apple apps are built in — see capabilities.apple_apps above.
+  - osaurus.fetch
 
 providers: # cloud LLM providers
   - name: Anthropic

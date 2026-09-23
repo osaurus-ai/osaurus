@@ -29,11 +29,39 @@ enum ConfigRisk {
     static func autoPolicy(_ tool: String) -> String {
         "Sets tool `\(tool)` to auto — it will run without asking."
     }
+    /// A per-call approval tool (send / delete) cannot be made silent: the
+    /// registry forces `ask` at execution, so the stored `auto` is inert.
+    static func autoPolicyIgnoredPerCall(_ tool: String) -> String {
+        "Sets tool `\(tool)` to auto, but it always asks for approval on every call (it sends or deletes as the user) — the setting is stored and has no effect."
+    }
+    /// Argument-aware per-call tools (`mail_compose` / `mail_reply`): `auto`
+    /// covers drafts, never the `send: true` calls.
+    static func autoPolicySendsStillAsk(_ tool: String) -> String {
+        "Sets tool `\(tool)` to auto — drafts will run without asking; calls that send as the user still show an approval card every time."
+    }
     static func computerUse(_ agent: String) -> String {
         "Gives agent `\(agent)` screen control (computer use)."
     }
     static func browserUse(_ agent: String) -> String {
         "Gives agent `\(agent)` browser automation."
+    }
+    /// Apple apps whose tools can act on the user's behalf outside Osaurus
+    /// (send mail / iMessages, run arbitrary Shortcuts). Reads and the
+    /// organiser apps stay risk-free; the model still gets a per-call
+    /// approval prompt for each send.
+    static let riskyAppleApps: Set<AppleApp> = [.mail, .messages, .shortcuts]
+    static func appleApp(_ agent: String, _ app: AppleApp) -> String {
+        switch app {
+        case .mail: return "Lets agent `\(agent)` read and send email as the user (Mail)."
+        case .messages: return "Lets agent `\(agent)` read and send iMessages/SMS as the user (Messages)."
+        case .shortcuts: return "Lets agent `\(agent)` run the user's Shortcuts (arbitrary automations)."
+        default: return "Gives agent `\(agent)` access to \(app.displayName)."
+        }
+    }
+    /// Risk lines for the Apple apps newly turned on (present in `desired`,
+    /// absent from `current`) that are in `riskyAppleApps`.
+    static func appleAppRisks(_ agent: String, current: Set<AppleApp>, desired: Set<AppleApp>) -> [String] {
+        AppleApp.sorted(desired.subtracting(current).intersection(riskyAppleApps)).map { appleApp(agent, $0) }
     }
     static func relayEnabled(_ agent: String) -> String {
         "Exposes agent `\(agent)` through the relay tunnel (reachable from outside this Mac)."
@@ -377,6 +405,14 @@ enum ConfigPlanner {
                         issues.append(
                             "agents[\(entry.name)].capabilities.knowledge_collection_ids: "
                                 + "`\(raw)` is not a UUID.")
+                    }
+                }
+                if let apps = entry.capabilities?.appleApps {
+                    for raw in apps where AppleApp.parse(raw) == nil {
+                        issues.append(
+                            "agents[\(entry.name)].capabilities.apple_apps: `\(raw)` is not a "
+                                + "built-in Apple app. Allowed: "
+                                + AppleApp.allCases.map(\.rawValue).joined(separator: ", ") + ".")
                     }
                 }
                 // A doc name colliding with a built-in (non-default) agent
@@ -1138,6 +1174,11 @@ enum ConfigPlanner {
                     if caps.computerUseEnabled == true { risks.append(ConfigRisk.computerUse(entry.name)) }
                     if caps.browserUseEnabled == true { risks.append(ConfigRisk.browserUse(entry.name)) }
                     if caps.relayEnabled == true { risks.append(ConfigRisk.relayEnabled(entry.name)) }
+                    if let apps = Self.appleApps(from: caps), !apps.isEmpty {
+                        changes.append(
+                            "apple_apps: enable " + AppleApp.sorted(apps).map(\.displayName).joined(separator: ", "))
+                        risks.append(contentsOf: ConfigRisk.appleAppRisks(entry.name, current: [], desired: apps))
+                    }
                 }
                 actions.append(
                     ConfigPlanAction(
@@ -1205,6 +1246,13 @@ enum ConfigPlanner {
             current: agent.settings.renderChartEnabled, into: &changes)
         let currentRelay = RelayConfigurationStore.load().isEnabled(for: agent.id)
         diff("relay_enabled", desired: caps.relayEnabled, current: currentRelay, into: &changes)
+        if let desiredApps = Self.appleApps(from: caps) {
+            let current = agent.settings.enabledAppleApps
+            if desiredApps != current {
+                changes.append(contentsOf: appleAppsChangeLines(current: current, desired: desiredApps))
+                risks.append(contentsOf: ConfigRisk.appleAppRisks(agent.name, current: current, desired: desiredApps))
+            }
+        }
         if caps.computerUseEnabled == true && !agent.settings.computerUseEnabled {
             risks.append(ConfigRisk.computerUse(agent.name))
         }
@@ -1214,6 +1262,28 @@ enum ConfigPlanner {
         if caps.relayEnabled == true && !currentRelay {
             risks.append(ConfigRisk.relayEnabled(agent.name))
         }
+    }
+
+    /// Resolve `capabilities.apple_apps` into the enum set (nil when the
+    /// key is absent; unknown names were already rejected by `validate`).
+    static func appleApps(from caps: AgentCapabilitiesEntry) -> Set<AppleApp>? {
+        guard let raw = caps.appleApps else { return nil }
+        return Set(raw.compactMap(AppleApp.parse))
+    }
+
+    /// Plan-card rows for an Apple apps change: one "enable …" and/or one
+    /// "disable …" line naming the apps by display name.
+    static func appleAppsChangeLines(current: Set<AppleApp>, desired: Set<AppleApp>) -> [String] {
+        var lines: [String] = []
+        let added = AppleApp.sorted(desired.subtracting(current))
+        let removed = AppleApp.sorted(current.subtracting(desired))
+        if !added.isEmpty {
+            lines.append("apple_apps: enable " + added.map(\.displayName).joined(separator: ", "))
+        }
+        if !removed.isEmpty {
+            lines.append("apple_apps: disable " + removed.map(\.displayName).joined(separator: ", "))
+        }
+        return lines
     }
 
     // MARK: - Tools
@@ -1242,7 +1312,15 @@ enum ConfigPlanner {
             let current = registry.configuredPolicy(for: tool) ?? .ask
             if current != policy {
                 changes.append("\(tool): policy \(current.rawValue) -> \(policy.rawValue)")
-                if policy == .auto { risks.append(ConfigRisk.autoPolicy(tool)) }
+                if policy == .auto {
+                    if registry.requiresPerCallApproval(tool) {
+                        risks.append(ConfigRisk.autoPolicyIgnoredPerCall(tool))
+                    } else if registry.mayRequirePerCallApproval(tool) {
+                        risks.append(ConfigRisk.autoPolicySendsStillAsk(tool))
+                    } else {
+                        risks.append(ConfigRisk.autoPolicy(tool))
+                    }
+                }
             }
         }
         guard !changes.isEmpty else { return }

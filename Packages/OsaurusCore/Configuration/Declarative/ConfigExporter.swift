@@ -107,6 +107,7 @@ enum ConfigExporter {
                 caps.selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
                 caps.computerUseEnabled = agent.settings.computerUseEnabled
                 caps.browserUseEnabled = agent.settings.browserUseEnabled
+                caps.appleApps = AppleApp.sorted(agent.settings.enabledAppleApps).map(\.rawValue)
                 caps.imageEnabled = agent.settings.imageEnabled
                 caps.applescriptEnabled = agent.settings.appleScriptEnabled
                 caps.speakEnabled = agent.settings.speakEnabled

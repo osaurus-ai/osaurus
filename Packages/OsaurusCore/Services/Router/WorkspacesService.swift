@@ -24,6 +24,10 @@ final class WorkspacesService: ObservableObject {
 
     @Published private(set) var workspaces: [OsaurusRouterWorkspaceSummary] = []
     @Published private(set) var isLoadingWorkspaces = false
+    /// True once `refreshWorkspaces` has delivered a list at least once (even
+    /// an empty one). Lets the tab show loading skeletons only for the very
+    /// first fetch and keep a settled empty state through later refreshes.
+    @Published private(set) var hasLoadedWorkspaces = false
     /// The caller's account-level billing picture: owner subscription (if
     /// any, with trial state), owned/billed counts, and trial eligibility.
     /// Best-effort — refreshed alongside the list, never an error banner.
@@ -160,6 +164,7 @@ final class WorkspacesService: ObservableObject {
             let fetched = try await client.listWorkspaces()
             guard generation == rootGeneration else { return }
             workspaces = fetched
+            hasLoadedWorkspaces = true
             lastRootRefresh = Date()
             // An authoritative workspace list is the reconciliation point for
             // per-agent billing prefs: leaving, being removed, or the workspace

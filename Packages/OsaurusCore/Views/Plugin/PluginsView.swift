@@ -1900,12 +1900,19 @@ private struct PluginDetailView: View {
     /// owning settings tab instead of the plugin's own configuration.
     private var supersededBanner: some View {
         let nativeTab = PluginManager.nativeSettingsTab(forSupersededPlugin: plugin.pluginId)
+        let appleApp = AppleApp.allCases.first { $0.supersededPluginId == plugin.pluginId }
         let detail: LocalizedStringKey =
             switch plugin.pluginId {
             case "osaurus.browser":
                 "The browser is now a native feature. This plugin's tools and skill are no longer loaded — enable Browser Use on a custom agent's Subagents tab, and manage sessions in Settings → Browser. You can uninstall this plugin."
-            default:
+            case "osaurus.search":
                 "Web search is now a native feature. This plugin's tools are no longer loaded — configure providers in Settings → Search. You can uninstall this plugin."
+            default:
+                if let appleApp {
+                    "\(appleApp.displayName) tools are now built into Osaurus. This plugin's tools are no longer loaded — turn \(appleApp.displayName) on for a custom agent under Agents → Abilities → Tools (off by default). You can uninstall this plugin."
+                } else {
+                    "This plugin's functionality is now built into Osaurus. Its tools are no longer loaded. You can uninstall this plugin."
+                }
             }
         return detailCard {
             HStack(spacing: 12) {

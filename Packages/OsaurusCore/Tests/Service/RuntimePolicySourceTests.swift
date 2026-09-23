@@ -808,7 +808,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "cfc6af29f97afc437da09004af26a6b6f32cea0f"
+        let expectedRuntimeHardenedRevision = "028943b7609aba300bb25a416610edce071949f5"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -841,7 +841,10 @@ struct RuntimePolicySourceTests {
             source.range(of: "loadingTasks[name] = LoadingTaskRecord(")
         )
         let success = try #require(
-            source.range(of: "return try await finishLoadedContainer", range: taskStore.upperBound ..< source.endIndex)
+            source.range(
+                of: "let published = try await finishLoadedContainer",
+                range: taskStore.upperBound ..< source.endIndex
+            )
         )
         let loadBody = String(source[taskStart.lowerBound ..< success.lowerBound])
 
@@ -1235,12 +1238,13 @@ struct RuntimePolicySourceTests {
         )
     }
 
-    @Test("Server settings cache changes clear loaded model runtime")
+    @Test("Cache topology changes reload models while size changes refresh resident caps")
     func cacheSettingsChangesClearLoadedModelRuntime() throws {
         let controller = try Self.source("Networking/ServerController.swift")
 
         #expect(controller.contains("loadedModelRuntimeInputsRequireRefresh"))
-        #expect(controller.contains("previous.cache != next.cache"))
+        #expect(controller.contains("previous.cache.requiresModelReload(comparedTo: next.cache)"))
+        #expect(controller.contains("await ModelRuntime.shared.refreshDiskCacheCaps()"))
         #expect(controller.contains("previous.memorySafety != next.memorySafety"))
         #expect(controller.contains("previous.multimodal != next.multimodal"))
         // Deliberately NOT `previous.mtp != next.mtp` any more: comparing the
@@ -2165,7 +2169,14 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("try? await record.task.value"))
         #expect(runtime.contains("holder.container.disableCaching()"))
         #expect(runtime.contains("loadContainer: strict drain of in-flight load"))
-        #expect(runtime.contains("return try await finishLoadedContainer"))
+        // Publication can await cache configuration. Each caller must validate
+        // its own parent-retention permit again after that suspension point.
+        #expect(runtime.components(separatedBy: "let published = try await finishLoadedContainer").count == 4)
+        let normalizedRuntime = runtime.split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .joined(separator: "\n")
+        let postPublicationReturn = "try validateParentRetention(parentRetention, target: name)\nreturn published"
+        #expect(normalizedRuntime.components(separatedBy: postPublicationReturn).count == 4)
         #expect(
             !runtime.contains("loadingTasks[other]?.cancel()"),
             "Strict single-model replacement must not fire-and-forget cancel an in-flight model load"
@@ -2808,7 +2819,9 @@ struct RuntimePolicySourceTests {
         #expect(httpHandler.contains("\"generation_defaults\""))
         #expect(httpHandler.contains("\"last_effective_generation\""))
         #expect(httpHandler.contains("\"stage\": settings.stage"))
-        #expect(httpHandler.contains("LocalGenerationDefaults.defaults(forModelId: summary.name)"))
+        #expect(httpHandler.contains("summary.generationDefaults"))
+        #expect(httpHandler.contains("effective.modelDefaults"))
+        #expect(!httpHandler.contains("LocalGenerationDefaults.defaults(forModelId: summary.name)"))
         #expect(httpHandler.contains("lastEffectiveGenerationSettingsSnapshot()"))
         #expect(httpHandler.contains("path == \"/admin/generation-settings\""))
         #expect(httpHandler.contains("handleGenerationSettingsEndpoint("))
@@ -2820,6 +2833,10 @@ struct RuntimePolicySourceTests {
         #expect(adapter.contains("stage: \"pending_preload\""))
         #expect(adapter.contains("stage: \"submitted_to_batch_engine\""))
         #expect(runtime.contains("MLXBatchAdapter.recordPendingEffectiveGenerationSettings("))
+        #expect(runtime.contains("generationDefaults: LocalGenerationDefaults.load(fromDirectory: localURL)"))
+        #expect(runtime.contains("modelDefaults: holder.generationDefaults"))
+        #expect(adapter.contains("LocalGenerationDefaults.defaults(forModelId: modelId)"))
+        #expect(!adapter.contains("LocalGenerationDefaults.defaults(forModelId: modelName)"))
     }
 
     @Test("admin cache stats exposes resolved and per-load memory safety status")
@@ -2988,6 +3005,9 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("ModelLease.shared.count(for: name)"))
         #expect(runtime.contains("await ModelResidencyManager.shared.cancel(modelName: name)"))
         #expect(runtime.contains("await ModelResidencyManager.shared.cancelAll()"))
+        let scheduleBody = try Self.functionBody("private func scheduleIdleResidency(", in: runtime)
+        #expect(scheduleBody.contains("residentMetadata[modelName]?.childOwnershipToken != nil"))
+        #expect(scheduleBody.contains("Self.resolvedIdleResidencyPolicy("))
         #expect(manager.contains("guard await leaseCount(modelName) == 0"))
         #expect(manager.contains("guard await isResident(modelName)"))
 
@@ -3015,6 +3035,8 @@ struct RuntimePolicySourceTests {
         )
         #expect(finalDecisionGate.lowerBound < commit.lowerBound)
         #expect(commit.lowerBound < idleShutdown.lowerBound)
+        let precommit = unloadBody[idleBranch.lowerBound ..< commit.lowerBound]
+        #expect(precommit.components(separatedBy: "residentMetadata[name]?.childOwnershipToken == nil").count == 3)
 
         let markActiveBody = try Self.functionBody(
             "private func markModelActiveForResidency(",

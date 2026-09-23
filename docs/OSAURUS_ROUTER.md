@@ -222,6 +222,31 @@ unless one of these holds:
 
 App-internal sources (chat UI, plugins, P2P) are not affected by this gate.
 
+### Local read-only balance
+
+`GET /credits/balance` (also `/v1/credits/balance`) on the local HTTP API lets
+local tools such as usage dashboards read the remaining balance. Osaurus signs
+the hosted `/credits/balance` request itself, so the caller never touches the
+wallet key. Access is stricter than the loopback spend gate above
+(403 `credits_access_not_authorized` otherwise):
+
+- a valid **master-scoped** access key, on loopback too. Agent-scoped and
+  workspace-minted keys are refused even though loopback trust skips the
+  global scope confinement, or
+- "Allow local API access without a key", but only for requests without an
+  `Origin` header. Loopback responses carry `Access-Control-Allow-Origin: *`,
+  so browser requests always need a key.
+
+The endpoint keeps its own cache, separate from the Credits screen state: only
+Router-fetched values are served (never the UI's optimistic post-request
+deductions), and polling never touches the UI's loading or error state. Values
+are fresh for 30 seconds, concurrent callers share one in-flight request with
+an 8 second timeout, and after a failure the Router is not retried for 10
+seconds. `stale: true` marks a last known value returned after a failed
+refresh. The cache is dropped when the Router is turned off or the identity
+changes. Non-success states: `409 router_disabled`, `409 no_account`,
+`503 router_unavailable` (unreachable), `502 router_error` (Router refused).
+
 ## On-Device Billing Ledger
 
 Router charges are also persisted to a local ledger so support can

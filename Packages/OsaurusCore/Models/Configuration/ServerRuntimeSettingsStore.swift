@@ -22,6 +22,8 @@ import os
 
 /// Centralized persistence for `VMLXServerRuntimeSettings`.
 public enum ServerRuntimeSettingsStore {
+    /// Fingerprint of the previously shipped default, not today's Automatic policy.
+    private static let legacyDefaultDiskCachePercent: Double = 10
     /// Emitted after `server-runtime.json` and the hot snapshot have both been
     /// updated successfully. `ServerController` observes this so non-UI
     /// writers (notably `/admin/runtime-settings`) publish the same live value
@@ -379,19 +381,8 @@ public enum ServerRuntimeSettingsStore {
         _ settings: VMLXServerRuntimeSettings
     ) -> VMLXServerRuntimeSettings {
         var normalized = canonicalizedContextAndKVPolicy(settings)
-        // Run vmlx's schema migrations.
-        //
-        // These were DEAD CODE: `migrateToCurrentSchema()` had no call site in
-        // either repo, so every version-gated repair it defines silently never
-        // happened. The v2 repair (a persisted flat 10 GB disk cap becoming
-        // auto) therefore never reached a single updating install — only fresh
-        // installs benefited, because their value was nil to begin with and the
-        // resolver handled nil. A live launch is what surfaced it: the config
-        // the app wrote back had no `schemaVersion` at all.
-        //
-        // This is the right home for it. Both `load()` and `loadOrMigrate()`
-        // funnel through here, and `load()` persists whenever normalization
-        // changes the value, so the migration runs once and is written back.
+        // Run and persist engine schema migrations. Current migrations preserve
+        // explicit percentages and legacy GB; only an unset size is Automatic.
         normalized.migrateToCurrentSchema()
         // Native MTP now requires opt-in. Never repair an explicit Off to Auto.
         // Retire only defaults whose provenance was recorded by the old family
@@ -512,14 +503,11 @@ public enum ServerRuntimeSettingsStore {
             && cache.legacyDisk.maxSizeGB == nil
             && cache.blockDisk.enabled
             && cache.blockDisk.maxSizeGB == nil
-            // The cap is a share of the disk now, and schema v3 stamps the
-            // shipped 10% onto every install. Testing only `maxSizeGB == nil`
-            // would call a deliberate 40% "untouched" — because that field is
-            // nil for everyone after migration — and let a later defaults
-            // migration overwrite a choice the user made.
+            // Recognize the historical shipped profile without treating an
+            // arbitrary explicit percentage as an untouched cache default.
             && (cache.blockDisk.maxSizePercent == nil
                 || cache.blockDisk.maxSizePercent
-                    == VMLXServerRuntimeSettings.autoDiskCacheFraction * 100)
+                    == legacyDefaultDiskCachePercent)
             && cache.blockDisk.directory == nil
             && cache.enableSSMReDerive == false
     }
@@ -554,14 +542,11 @@ public enum ServerRuntimeSettingsStore {
             && cache.legacyDisk.maxSizeGB == nil
             && cache.blockDisk.enabled
             && cache.blockDisk.maxSizeGB == nil
-            // The cap is a share of the disk now, and schema v3 stamps the
-            // shipped 10% onto every install. Testing only `maxSizeGB == nil`
-            // would call a deliberate 40% "untouched" — because that field is
-            // nil for everyone after migration — and let a later defaults
-            // migration overwrite a choice the user made.
+            // Recognize the historical shipped profile without treating an
+            // arbitrary explicit percentage as an untouched cache default.
             && (cache.blockDisk.maxSizePercent == nil
                 || cache.blockDisk.maxSizePercent
-                    == VMLXServerRuntimeSettings.autoDiskCacheFraction * 100)
+                    == legacyDefaultDiskCachePercent)
             && cache.blockDisk.directory == nil
             && cache.enableSSMReDerive
     }

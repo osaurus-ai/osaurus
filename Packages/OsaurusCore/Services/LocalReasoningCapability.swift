@@ -133,9 +133,21 @@ enum LocalReasoningCapability {
         await ModelManager.awaitLocalModelsCacheReadyForDispatch()
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
+                // Effort and boolean controls form one contract. Warming only
+                // the latter still drops saved effort choices on the main actor.
+                _ = DeclaredReasoningEffort.declaration(forModelId: modelId)
                 continuation.resume(returning: capability(forModelId: modelId))
             }
         }
+    }
+
+    /// A cold UI lookup is unknown, not Off. Start nonblocking discovery but
+    /// let the view withhold its default-state indicator until it is resolved.
+    static func capabilityForPresentation(forModelId modelId: String) -> Capability? {
+        _ = capability(forModelId: modelId)
+        lock.lock()
+        defer { lock.unlock() }
+        return cache[modelId.lowercased()]
     }
 
     /// Resolve a main-thread cold miss off-main. Deduped per key so a burst

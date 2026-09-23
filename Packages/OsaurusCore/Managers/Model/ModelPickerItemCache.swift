@@ -91,6 +91,9 @@ final class ModelPickerItemCache: ObservableObject {
             .localModelsChanged,
             .remoteProviderModelsChanged,
             .cloudMediaCatalogChanged,
+            // The `foundation` entry is gated on live Apple Intelligence
+            // availability, which `AppConfiguration` re-probes on activation.
+            .foundationModelAvailabilityChanged,
         ] {
             NotificationCenter.default.addObserver(
                 forName: name,

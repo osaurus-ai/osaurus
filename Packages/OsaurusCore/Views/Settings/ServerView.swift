@@ -120,6 +120,7 @@ private struct OverviewTabContent: View {
             LazyVStack(alignment: .leading, spacing: 24) {
                 ServerStatusCard()
                 AccessKeysSection()
+                CodexCLISetupSection()
                 PeerInferenceSharingSection()
                 RelaysSectionView()
             }
@@ -684,6 +685,340 @@ private struct AccessKeysSection: View {
     private func restartServerForKeyChange() {
         guard server.isRunning else { return }
         Task { await server.restartServer() }
+    }
+}
+
+// MARK: - Codex CLI Setup
+
+/// "Use with Codex CLI": generates the `~/.codex` provider + profile config
+/// that points OpenAI's Codex CLI at this server, and can write it in place.
+///
+/// The snippet is derived from the live `ServerController` state on every
+/// render, so a port or exposure change is reflected immediately. Writing
+/// goes through `CodexCLIConfiguration.write`, which refuses (rather than
+/// duplicates) when the user already defines the provider by hand.
+private struct CodexCLISetupSection: View {
+    @Environment(\.theme) private var theme
+    @EnvironmentObject var server: ServerController
+
+    @State private var modelIds: [String] = []
+    @State private var hasLoadedModels = false
+    @State private var selectedModelId: String = ""
+    /// Resolved off-main from the bundle's `config.json`; nil omits
+    /// `model_context_window` from the profile.
+    @State private var contextWindow: Int?
+    @State private var writeStatus: WriteStatus?
+    @State private var didCopy = false
+
+    private enum WriteStatus: Equatable {
+        case success(configPath: String, profilePath: String, replaced: Bool)
+        case failure(String)
+    }
+
+    private var codexHome: URL { CodexCLIConfiguration.codexHome() }
+
+    private var snippet: String {
+        CodexCLIConfiguration.snippet(
+            port: server.port,
+            exposeToNetwork: server.configuration.exposeToNetwork,
+            modelId: selectedModelId.isEmpty ? "<model>" : selectedModelId,
+            contextWindow: contextWindow,
+            codexHome: codexHome
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label {
+                Text("Use with Codex CLI", bundle: .module)
+            } icon: {
+                Image(systemName: "terminal")
+            }
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundColor(theme.primaryText)
+
+            Text(
+                "Run OpenAI's Codex CLI against your local models. Osaurus registers itself as a Codex model provider and adds an `osaurus` profile; nothing else in your Codex config is touched.",
+                bundle: .module
+            )
+            .font(.system(size: 12))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+
+            modelRow
+
+            snippetView
+
+            HStack(spacing: 10) {
+                Button(action: copySnippet) {
+                    HStack(spacing: 6) {
+                        Image(systemName: didCopy ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(verbatim: didCopy ? L("Copied") : L("Copy"))
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(theme.primaryText)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(theme.primaryBorder.opacity(0.6), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .localizedHelp("Copy both files and the command")
+
+                Button(action: writeConfig) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "square.and.arrow.down")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(verbatim: String(format: L("Add to %@"), CodexCLIConfiguration.displayPath(codexHome)))
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(selectedModelId.isEmpty ? theme.accentColor.opacity(0.4) : theme.accentColor)
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(selectedModelId.isEmpty)
+                .localizedHelp("Write config.toml and osaurus.config.toml")
+
+                Spacer()
+            }
+
+            if let writeStatus {
+                statusView(writeStatus)
+            }
+
+            if server.configuration.exposeToNetwork {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "key.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.warningColor)
+                    Text(
+                        verbatim: String(
+                            format: L(
+                                "Network exposure is on, so Codex must send an access key even from this Mac. Create one under Access Keys and export %@ in the shell that runs codex."
+                            ),
+                            CodexCLIConfiguration.accessKeyEnvironmentVariable
+                        )
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.secondaryBackground)
+        )
+        .settingsLandingAnchor("server.codexCLI")
+        .task { await loadModels() }
+        .onChange(of: selectedModelId) { _, newValue in
+            writeStatus = nil
+            Task { await resolveContextWindow(for: newValue) }
+        }
+        .onChange(of: server.port) { _, _ in writeStatus = nil }
+        .onChange(of: server.configuration.exposeToNetwork) { _, _ in writeStatus = nil }
+    }
+
+    private var modelRow: some View {
+        HStack(spacing: 12) {
+            Text("Model", bundle: .module)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+
+            if !hasLoadedModels {
+                ProgressView()
+                    .controlSize(.small)
+            } else if modelIds.isEmpty {
+                Text("No local models installed. Download one from the Models manager first.", bundle: .module)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.tertiaryText)
+            } else {
+                Picker("", selection: $selectedModelId) {
+                    ForEach(modelIds, id: \.self) { id in
+                        Text(id).tag(id)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(maxWidth: 360, alignment: .leading)
+                .accessibilityIdentifier("server.codexCLI.model")
+            }
+
+            Spacer()
+
+            if let contextWindow {
+                Text(verbatim: String(format: L("%@ context"), Self.tokenFormatter.string(from: NSNumber(value: contextWindow)) ?? "\(contextWindow)"))
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
+        }
+    }
+
+    private var snippetView: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            Text(snippet)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(theme.primaryText)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: true, vertical: true)
+                .padding(12)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(theme.inputBorder, lineWidth: 1)
+                )
+        )
+        .accessibilityIdentifier("server.codexCLI.snippet")
+    }
+
+    private func statusView(_ status: WriteStatus) -> some View {
+        let isSuccess: Bool
+        let icon: String
+        let color: Color
+        let message: String
+        switch status {
+        case .success(let configPath, let profilePath, let replaced):
+            isSuccess = true
+            icon = "checkmark.circle.fill"
+            color = theme.successColor
+            message = String(
+                format: replaced
+                    ? L("Updated %@ and wrote %@. Run `%@`.")
+                    : L("Added the provider to %@ and wrote %@. Run `%@`."),
+                configPath, profilePath, CodexCLIConfiguration.usageCommand
+            )
+        case .failure(let detail):
+            isSuccess = false
+            icon = "exclamationmark.triangle.fill"
+            color = theme.errorColor
+            message = detail
+        }
+        return HStack(alignment: .top, spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(color)
+            Text(verbatim: message)
+                .font(.system(size: 11, weight: isSuccess ? .regular : .medium))
+                .foregroundColor(isSuccess ? theme.secondaryText : theme.errorColor)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+        .accessibilityIdentifier("server.codexCLI.status")
+    }
+
+    // MARK: Actions
+
+    private func copySnippet() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(snippet, forType: .string)
+        didCopy = true
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            didCopy = false
+        }
+    }
+
+    private func writeConfig() {
+        guard !selectedModelId.isEmpty else { return }
+        do {
+            let result = try CodexCLIConfiguration.write(
+                port: server.port,
+                exposeToNetwork: server.configuration.exposeToNetwork,
+                modelId: selectedModelId,
+                contextWindow: contextWindow,
+                codexHome: codexHome
+            )
+            writeStatus = .success(
+                configPath: CodexCLIConfiguration.displayPath(result.configURL),
+                profilePath: CodexCLIConfiguration.displayPath(result.profileURL),
+                replaced: result.replacedExistingBlock
+            )
+        } catch {
+            writeStatus = .failure(error.localizedDescription)
+        }
+    }
+
+    // MARK: Loading
+
+    /// Same enumeration as Server → Models: repo slugs deduped
+    /// case-insensitively, plus `foundation` when available.
+    private func loadModels() async {
+        let discovered = await ModelManager.discoverLocalModelsOffMain()
+        var seen: Set<String> = []
+        var ids: [String] = []
+        for model in discovered {
+            let slug =
+                model.id.split(separator: "/").last.map(String.init)?.lowercased()
+                ?? model.id.lowercased()
+            guard !seen.contains(slug) else { continue }
+            seen.insert(slug)
+            ids.append(slug)
+        }
+        ids.sort()
+        if FoundationModelService.isDefaultModelAvailable() {
+            ids.insert("foundation", at: 0)
+        }
+        modelIds = ids
+        hasLoadedModels = true
+        if selectedModelId.isEmpty || !ids.contains(selectedModelId) {
+            // Prefer a real bundle over Foundation, whose 4K window makes a
+            // poor Codex default.
+            selectedModelId = ids.first(where: { $0 != "foundation" }) ?? ids.first ?? ""
+        }
+    }
+
+    private func resolveContextWindow(for modelId: String) async {
+        guard !modelId.isEmpty else {
+            contextWindow = nil
+            return
+        }
+        let resolved: Int? = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                // What the server will actually retain, not what the bundle
+                // declares: past the KV retention cap the engine rolls the
+                // window silently, so that cap is the number Codex must
+                // compact against.
+                let bundle = ContextSizeResolverBridge.contextLength(modelId: modelId)
+                let cap = ServerRuntimeSettingsStore.resolvedKVRetentionCap()
+                continuation.resume(
+                    returning: CodexCLIConfiguration.effectiveContextWindow(
+                        bundleContextLength: bundle, kvRetentionCap: cap))
+            }
+        }
+        guard modelId == selectedModelId else { return }
+        contextWindow = resolved
+    }
+
+    private static let tokenFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        return f
+    }()
+}
+
+/// Off-main context-window lookup for the Codex card. `ModelInfo.load` does
+/// the cold disk probe that `ContextSizeResolver.resolve` deliberately skips
+/// (it runs inside layout); here we're already off the main thread, so the
+/// full read is the right call and the result is exact rather than "warming".
+private enum ContextSizeResolverBridge {
+    static func contextLength(modelId: String) -> Int? {
+        if modelId.caseInsensitiveCompare("foundation") == .orderedSame {
+            return ContextSizeResolver.resolve(modelId: modelId).contextLength
+        }
+        return ModelInfo.load(modelId: modelId)?.model.contextLength
     }
 }
 

@@ -5042,7 +5042,7 @@ struct RemoteChatRequest: Encodable {
                 AnthropicTool(
                     name: tool.function.name,
                     description: tool.function.description,
-                    input_schema: tool.function.parameters ?? emptySchema,
+                    input_schema: tool.function.parameters?.withEmptyPropertiesIfMissing ?? emptySchema,
                     // GA Anthropic contract: stream large parameter values as
                     // generated so file-write calls do not sit entirely in an
                     // upstream buffer until the value closes.
@@ -5083,6 +5083,12 @@ struct RemoteChatRequest: Encodable {
             // Observed live 2026-07-09 (req_011CcscQwssbYSF8ZBJ8Awdp): HTTP 400
             // "`temperature` is deprecated for this model." on claude-sonnet-5.
             "claude-sonnet-5",
+            // claude-opus-5 (released 2026-07-24) is an adaptive-thinking
+            // model of the same generation as sonnet-5 / fable-5 and shares
+            // their sampler-knob deprecation. Added from the documented
+            // model contract; confirm with a live HTTP 400 trace when an
+            // Anthropic key is available.
+            "claude-opus-5",
         ]
         let deprecatesSamplerKnobs = knobDeprecatingClaudePrefixes.contains {
             bareModel.hasPrefix($0)

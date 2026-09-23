@@ -14,12 +14,10 @@
 //  own picker instead of the shared override row — exactly the divergence
 //  `image` established.
 //
-//  Residency: the AppleScript model is ALWAYS a different bundle than the
-//  resident chat model, so when a chat model is loaded this kind must unload it
-//  for the run (single-GPU residency) and reload after. It forces that handoff
-//  independent of the global "Local Orchestrator Handoff" toggle (which exists
-//  for the chat-driven kinds), because requiring an unrelated toggle would make
-//  the feature unusable. The per-script consent surface is the execution-mode
+//  Residency follows the same global swap setting and exact-parent ownership
+//  contract as other local subagents. Keep-warm may defer an authorized swap's
+//  restore, but cannot force a swap when the setting is off. The consent surface
+//  is the execution-mode
 //  gate inside the loop (confirm-each / auto-run-with-warning), so the host
 //  permission is `.allow`.
 //
@@ -27,7 +25,7 @@
 import AppKit
 import Foundation
 
-final class AppleScriptKind: SubagentKind, @unchecked Sendable {
+final class AppleScriptKind: SubagentKind, SubagentPostAdmissionResidencyPlanning, @unchecked Sendable {
     let capability = SubagentCapabilityRegistry.appleScript
 
     private let task: String
@@ -46,6 +44,7 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
     /// Residency plan resolved up front (reject-before-evict), run by
     /// `makeHandoff()`. `.none` when nothing else is resident.
     private var residencyPlan: ResidencyPlan = .none
+    private var invokingScope: SubagentScope?
     /// Keep-warm policy snapshotted in `resolveModel`, consumed by
     /// `makeHandoff()`. Under keep-warm the chat restore is deferred so a
     /// back-to-back AppleScript call reuses the resident model.
@@ -81,6 +80,7 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
     // MARK: - Model resolution (reject-before-evict)
 
     func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel {
+        invokingScope = scope
         let config = SubagentConfigurationStore.snapshot()
         let isDefault = scope.agentId == Agent.defaultId
         let settings = await MainActor.run {
@@ -140,7 +140,10 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
         // The query gate blocks any mutation regardless of which model writes
         // the script, so this trades only read-script quality for latency.
         if mode == .query, config.appleScriptQueryPrefersResidentModel,
-            let resident = await Self.residentQueryModel(dedicatedModelId: modelId)
+            let resident = await Self.residentQueryModel(
+                dedicatedModelId: modelId,
+                invokingParentModelName: scope.parentModelName
+            )
         {
             self.resolvedModelId = resident
             self.usingResidentChatModel = true
@@ -148,8 +151,6 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
             return ResolvedModel(name: resident, id: resident, isLocal: true)
         }
 
-        // Single-GPU residency: the AppleScript bundle differs from any resident
-        // chat model, so force the handoff (independent of the global toggle).
         let decision = try await SubagentResidency.resolve(
             modelName: modelId,
             config: config,
@@ -157,10 +158,29 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
             deniedMessage:
                 "AppleScript needs to load its own model, which requires unloading the chat model to "
                 + "make room.",
-            handoffEnabledOverride: true
+            invokingParentModelName: scope.parentModelName
         )
         self.residencyPlan = decision.plan
         return ResolvedModel(name: modelId, id: modelId, isLocal: decision.isLocal)
+    }
+
+    func refreshedResidencyPlanAfterAdmission(for resolved: ResolvedModel) async throws -> ResidencyPlan {
+        guard resolved.isLocal, let scope = invokingScope else { return .none }
+        let config = SubagentConfigurationStore.snapshot()
+        loadPolicy = config.appleScriptLoadPolicy
+        try await AppleScriptWarmResidencyCoordinator.shared.prepareForRun(
+            model: resolved.name,
+            owner: AppleScriptWarmResidencyOwner(scope: scope),
+            allowAdoption: !usingResidentChatModel && config.localOrchestratorTextHandoffActive
+                && loadPolicy.keepWarmSeconds > 0
+        )
+        residencyPlan = try await SubagentResidency.refreshedPlan(
+            for: resolved,
+            invokingParentModelName: scope.parentModelName,
+            idleWaitSeconds: Self.residencyIdleWaitSeconds,
+            deniedMessage: "AppleScript could not safely hand off the invoking model."
+        )
+        return residencyPlan
     }
 
     func makeHandoff() -> SubagentHandoff {
@@ -170,17 +190,13 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
         if usingResidentChatModel {
             return SubagentResidency.handoff(for: residencyPlan)
         }
-        // Keep-warm: route the chat restore through the warm coordinator so a
-        // back-to-back AppleScript call reuses the resident model. A run whose
-        // model is already resident (a warm hold from the previous run) resolves
-        // to `.none`, but the warm handoff still adopts + re-arms the hold, so
-        // route through it whenever keep-warm is on and this is a local run.
-        let keepWarmSeconds = loadPolicy.keepWarmSeconds
-        if keepWarmSeconds > 0, !resolvedModelId.isEmpty {
+        // Even a zero-window/OFF run must settle a previous warm lease before
+        // proceeding. The wrapper only keeps a lease warm for an actual swap.
+        if !resolvedModelId.isEmpty {
             return AppleScriptWarmResidencyHandoff.production(
                 plan: residencyPlan,
                 model: resolvedModelId,
-                keepWarmSeconds: keepWarmSeconds
+                keepWarmSeconds: loadPolicy.keepWarmSeconds
             )
         }
         return SubagentResidency.handoff(for: residencyPlan)
@@ -197,6 +213,18 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
         return SubagentResidency.admissionClass(isLocal: resolved.isLocal, plan: residencyPlan)
     }
 
+    func validateExecutionAuthority(_ scope: SubagentScope, resolved: ResolvedModel) async throws {
+        let config = SubagentConfigurationStore.snapshot()
+        let enabled = await MainActor.run {
+            AgentManager.shared.agent(for: scope.agentId)?.settings.appleScriptEnabled ?? false
+        }
+        guard SubagentToolVisibility.appleScriptAvailable(
+            isDefault: scope.agentId == Agent.defaultId, config: config, perAgentEnabled: enabled
+        ) else {
+            throw SubagentError.denied("AppleScript is not enabled for this agent.")
+        }
+    }
+
     /// The resident local chat model a `mac_query` read can reuse, or `nil` to
     /// fall back to the dedicated-model path. `nil` when nothing is resident,
     /// when the DEDICATED AppleScript model is itself resident (a keep-warm
@@ -204,7 +232,13 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
     /// no resident model is tool-capable (the loop needs a real
     /// `run_applescript` tool call; a model that can't emit one would burn the
     /// step budget producing nothing).
-    private static func residentQueryModel(dedicatedModelId: String) async -> String? {
+    private static func residentQueryModel(
+        dedicatedModelId: String,
+        invokingParentModelName: String?
+    ) async -> String? {
+        guard let invokingParentModelName else { return nil }
+        let parentCanonical =
+            ModelManager.findInstalledModel(named: invokingParentModelName)?.name ?? invokingParentModelName
         let summaries = await ModelRuntime.shared.cachedModelSummaries()
         guard !summaries.isEmpty else { return nil }
         // Compare on canonical installed-bundle names, same as
@@ -220,10 +254,8 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
         }) {
             return nil
         }
-        // Prefer the CURRENT model (the one chat actively uses) over other
-        // residents under a flexible multi-model policy.
-        let ordered = summaries.sorted { $0.isCurrent && !$1.isCurrent }
-        for summary in ordered {
+        // Reuse only this turn's parent, never another session's current model.
+        for summary in summaries where summary.name.caseInsensitiveCompare(parentCanonical) == .orderedSame {
             guard let found = ModelManager.findInstalledModel(named: summary.name) else {
                 continue
             }
@@ -300,7 +332,8 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
             dictionaryContext: knowledge.dictionary,
             recipeContext: knowledge.recipes,
             literals: literals,
-            enableThinking: scope.enableThinking(forDelegatedModel: resolved.name)
+            enableThinking: scope.enableThinking(forDelegatedModel: resolved.name),
+            reasoningEffort: scope.reasoningEffort(forDelegatedModel: resolved.name)
         )
         return try Self.mapOutcome(result, model: resolved.name, mode: mode)
     }

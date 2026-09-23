@@ -802,36 +802,48 @@ public final class WatcherManager {
         var prompt = watcher.instructions
 
         if let anchor = resolvedWatchPath ?? watcher.watchPath, !anchor.isEmpty {
-            prompt +=
-                "\n\nWatched folder (work HERE, not in any other directory): \(anchor)\n"
+            prompt += "\n\n" + Self.watchedFolderLinePrefix + anchor + "\n"
         } else {
             prompt += "\n"
         }
         if !changedPaths.isEmpty {
             let shown = changedPaths.prefix(Self.dispatchPromptChangedPathCap)
-            prompt += "Changed since the last check:\n"
+            prompt += Self.changedSinceHeader + "\n"
             for path in shown {
                 prompt += Self.promptLine(forChangedPath: path)
             }
             let overflow = changedPaths.count - shown.count
             if overflow > 0 {
-                prompt += "…and \(overflow) more changed file(s).\n"
+                prompt += Self.changedPathOverflowPrefix + "\(overflow)" + Self.changedPathOverflowSuffix + "\n"
             }
         }
 
         if iteration == 1 {
-            prompt +=
-                "\nChanges were detected in the watched folder. Use `file_read` (which lists a directory when given one) and other file tools to inspect the current state of the directory and take action.\n"
+            prompt += "\n" + Self.firstIterationGuidance + "\n"
         } else {
-            prompt +=
-                "\nThis is a follow-up check after a previous organizing pass. Quickly verify the directory state with a single `file_read` call on the folder. If everything looks organized, return immediately without further inspection. Only take action if you see clearly unorganized files.\n"
+            prompt += "\n" + Self.followUpIterationGuidance + "\n"
         }
 
-        prompt +=
-            "\nIf all files are already properly organized, return without making changes. Do not re-organize files that are already in their correct location.\n"
+        prompt += "\n" + Self.alreadyOrganizedGuidance + "\n"
 
         return prompt
     }
+
+    // MARK: - Dispatch prompt fragments
+
+    /// Fixed fragments of the watcher dispatch prompt. Shared with
+    /// `DispatchEnvelope`, which strips them for display, so the producer and
+    /// the parser can never drift apart. Byte-for-byte the historical text.
+    nonisolated static let watchedFolderLinePrefix = "Watched folder (work HERE, not in any other directory): "
+    nonisolated static let changedSinceHeader = "Changed since the last check:"
+    nonisolated static let changedPathOverflowPrefix = "…and "
+    nonisolated static let changedPathOverflowSuffix = " more changed file(s)."
+    nonisolated static let firstIterationGuidance =
+        "Changes were detected in the watched folder. Use `file_read` (which lists a directory when given one) and other file tools to inspect the current state of the directory and take action."
+    nonisolated static let followUpIterationGuidance =
+        "This is a follow-up check after a previous organizing pass. Quickly verify the directory state with a single `file_read` call on the folder. If everything looks organized, return immediately without further inspection. Only take action if you see clearly unorganized files."
+    nonisolated static let alreadyOrganizedGuidance =
+        "If all files are already properly organized, return without making changes. Do not re-organize files that are already in their correct location."
 }
 
 // MARK: - FSEvents Callback

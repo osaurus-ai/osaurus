@@ -689,6 +689,8 @@ The Sandbox UI includes built-in diagnostic checks accessible from the **Contain
 | APK | Package manager is functional |
 | Vsock Bridge | Host API bridge is reachable from the container |
 
+The Diagnostics card also shows the most recent startup or provisioning failure as one monospaced line, e.g. `Last failure: agent_provision_failed · agent_provision.bootstrap_exec · sandbox_timeout · on_demand · warm · vm · 2 hr. ago`. It is read from the local ring buffer `~/.osaurus/container/startup-failures.json` and uses the same closed tokens as the `sandbox_provision_failure` telemetry event (see `docs/TELEMETRY.md`), so pasting it into a bug report gives us exactly the classification we would otherwise only see in aggregate. No error message, path, or agent identity is stored in that file.
+
 ---
 
 ## Container Management
@@ -696,7 +698,13 @@ The Sandbox UI includes built-in diagnostic checks accessible from the **Contain
 ### Start / Stop
 
 - **Start** — Boots the container (provisions first if needed)
-- **Stop** — Gracefully shuts down the container
+- **Stop** — Gracefully shuts down the container. A deliberate stop is not
+  auto-restarted: the sandbox stays down until you press **Start**, or until a
+  sandbox-enabled agent's first tool use calls the `sandbox_init_pending`
+  placeholder. (Only a container that went away on its own — VM death after
+  sleep/wake, for example — is warm-restarted automatically.) The same rule
+  keeps the quit chain from re-booting the VM while the app is exiting, which
+  is what a relaunched Osaurus used to collide with as `vmnet_in_use`.
 
 ### Reset
 

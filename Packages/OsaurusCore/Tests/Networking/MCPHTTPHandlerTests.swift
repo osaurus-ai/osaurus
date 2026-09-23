@@ -40,6 +40,48 @@ struct MCPHTTPHandlerTests {
         "agent_channel_publish",
     ]
 
+    @Test func mcp_call_rejects_non_object_arguments_without_executing() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let name = "json_shape_invalid_probe"
+            ToolRegistry.shared.register(NamedEchoTool(name: name))
+            ToolRegistry.shared.setEnabled(true, for: name)
+            defer { ToolRegistry.shared.unregister(names: [name]) }
+            let server = try await startTestServer()
+            defer { Task { await server.shutdown() } }
+            for value in ["5", "true", #""text""#, "[]"] {
+                var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/call")!)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.authenticate()
+                request.httpBody = Data("{\"name\":\"\(name)\",\"arguments\":\(value)}".utf8)
+                let (_, response) = try await URLSession.shared.data(for: request)
+                #expect((response as? HTTPURLResponse)?.statusCode == 400)
+            }
+        }
+    }
+
+    @Test func mcp_call_accepts_missing_null_and_object_arguments() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let name = "json_shape_no_args_probe"
+            ToolRegistry.shared.register(NamedEchoTool(name: name))
+            ToolRegistry.shared.setEnabled(true, for: name)
+            defer { ToolRegistry.shared.unregister(names: [name]) }
+            let server = try await startTestServer()
+            defer { Task { await server.shutdown() } }
+            for field in ["", ",\"arguments\":null", ",\"arguments\":{}"] {
+                var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/call")!)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.authenticate()
+                request.httpBody = Data("{\"name\":\"\(name)\"\(field)}".utf8)
+                let (data, response) = try await URLSession.shared.data(for: request)
+                #expect((response as? HTTPURLResponse)?.statusCode == 200)
+                let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+                #expect(json["isError"] as? Bool == false)
+            }
+        }
+    }
+
     @Test func mcp_health_returns_ok() async throws {
         let server = try await startTestServer()
         defer { Task { await server.shutdown() } }
@@ -242,12 +284,15 @@ struct MCPHTTPHandlerTests {
         // Independent literal copy: if a new agent_channel_* tool ships
         // without updating `ToolRegistry.agentChannelToolNames`, this fails.
         #expect(ToolRegistry.agentChannelToolNames == Set(Self.agentChannelToolNames))
-        // The external deny list is derived, so the channel family can never
-        // drift out of it.
+        // The external deny list is derived, so neither the channel family nor
+        // the per-agent Apple app family can ever drift out of it.
         #expect(ToolRegistry.agentChannelToolNames.isSubset(of: ToolRegistry.externallyDeniedToolNames))
+        #expect(AppleApp.allToolNames.isSubset(of: ToolRegistry.externallyDeniedToolNames))
         #expect(
             ToolRegistry.externallyDeniedToolNames
-                == ToolRegistry.externallyDeniedHostToolNames.union(ToolRegistry.agentChannelToolNames)
+                == ToolRegistry.externallyDeniedHostToolNames
+                .union(ToolRegistry.agentChannelToolNames)
+                .union(AppleApp.allToolNames)
         )
         // Every REGISTERED agent_channel_* tool must be in the deny family.
         let registeredChannelNames = Set(

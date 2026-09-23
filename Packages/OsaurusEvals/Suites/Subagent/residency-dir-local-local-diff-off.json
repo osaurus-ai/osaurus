@@ -1,9 +1,9 @@
 {
   "id": "subagent.residency-dir-local-local-diff-off",
   "domain": "subagent",
-  "label": "Subagent • residency direction: local→local (different, handoff OFF) runs with no sequencing",
+  "label": "Subagent • residency direction: local→local (different, handoff OFF) retains parent",
   "query": "Spawn a DIFFERENT local model with the Local Orchestrator Handoff disabled.",
-  "notes": "LIVE RESIDENCY (machine-specific) — the NO-SEQUENCING mode. PRODUCTION path: preloads local orchestrator A, then spawns a DIFFERENT local model B with the Local Orchestrator Handoff OFF. The toggle is a mode, not a gate: SubagentResidency must NOT refuse — the spawn runs without the unload→load→run→unload→reload sequence (handoffWrapped=false, residency_mode=sequencing_off) and the server eviction policy decides what happens to A. Id is `residency-dir-*` so it stays OUT of FILTER=spawn; run with FILTER=residency-dir-. SKIPS when either local model isn't installed (surfaces unavailable).",
+  "notes": "LIVE RESIDENCY (machine-specific) — keep-parent mode. PRODUCTION path: preloads local orchestrator A, then spawns a DIFFERENT local model B with Local Orchestrator Handoff OFF. A scoped hold keeps the exact invoking A resident even under Server Strict; only an owned cold-loaded child is cleaned up. handoffWrapped=false means no parent unload/reload, not a passthrough loader. Independent RAM admission still applies. Id is `residency-dir-*` so it stays OUT of FILTER=spawn; run with FILTER=residency-dir-. SKIPS when either local model is absent. Verify retained residency as well as the tool result.",
   "fixtures": {},
   "expect": {
     "subagent": {

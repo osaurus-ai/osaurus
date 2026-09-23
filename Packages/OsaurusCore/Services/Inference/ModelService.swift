@@ -690,6 +690,21 @@ protocol ModelService: Sendable {
         requestedModel: String?,
         stopSequences: [String]
     ) async throws -> AsyncThrowingStream<String, Error>
+
+    /// Seconds `CoreModelService` may wait for the *first* streamed token
+    /// from this service before declaring a primary core-model call hung and
+    /// moving to the chat-model fallback. `nil` (the default) disables the
+    /// deadline. Only a service whose first token is not preceded by a
+    /// local load / process startup, and whose `streamDeltas` yields plain
+    /// text with no inline hint sentinels, should opt in: on MLX the wait can
+    /// legitimately be a weights load, on Claude Code a CLI startup, and the
+    /// remote stream carries billing / reasoning sentinels that `generateOneShot`
+    /// filters. Apple Foundation is always resident and streams plain text.
+    var firstTokenDeadline: TimeInterval? { get }
+}
+
+extension ModelService {
+    var firstTokenDeadline: TimeInterval? { nil }
 }
 
 /// Optional capability for services that can natively handle OpenAI-style tools (message-based only).

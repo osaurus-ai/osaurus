@@ -247,31 +247,13 @@ final class TextSubagentKind:
         // local row never reaches this branch with a model override.
         if modelOverride != nil { return residencyPlan }
 
-        let lookup = resolved.id ?? resolved.name
-        guard
-            let installed =
-                ModelManager.findInstalledModel(named: lookup)
-                ?? ModelManager.findInstalledModel(named: resolved.name)
-        else {
-            throw SubagentError.unavailable(
-                "Local model '\(resolved.name)' is no longer installed."
-            )
-        }
-
-        let decision = try await SubagentResidency.resolve(
-            modelName: installed.id,
-            config: SubagentConfigurationStore.snapshot(),
+        residencyPlan = try await SubagentResidency.refreshedPlan(
+            for: resolved,
+            invokingParentModelName: invokingParentModelName,
             idleWaitSeconds: budgets.normalized.maxElapsedSeconds,
-            deniedMessage: residencyDeniedMessage,
-            invokingParentModelName: invokingParentModelName
+            deniedMessage: residencyDeniedMessage
         )
-        guard decision.isLocal else {
-            throw SubagentError.unavailable(
-                "Local model '\(resolved.name)' became unavailable while the run was waiting."
-            )
-        }
-        residencyPlan = decision.plan
-        return decision.plan
+        return residencyPlan
     }
 
     /// `spawn_agent` entry point (agent context). The optional `modelOverride`
@@ -1036,7 +1018,8 @@ final class TextSubagentKind:
                 sessionId: sessionId,
                 temperature: temperature,
                 enableThinking: scope.enableThinking(forDelegatedModel: resolved.name),
-                isInterrupted: { interrupt.isInterrupted },
+                    reasoningEffort: scope.reasoningEffort(forDelegatedModel: resolved.name),
+                    isInterrupted: { interrupt.isInterrupted },
                 toolset: toolset,
                 onProgress: { [feed] tokens, tokensPerSecond in
                     // Live "generating" row: coalesced in place by the feed, so
@@ -1481,6 +1464,10 @@ final class TextSubagentKind:
                 names.formUnion(SystemPromptComposer.knowledgeCuratorToolNames)
             }
         }
+        // Apple app families are a capability toggle like the others: a
+        // spawned Mail agent must carry `mail_*` exactly as it does in direct
+        // chat (the execution gate re-checks the owning app per call).
+        names.formUnion(AppleApp.toolNames(for: caps.enabledAppleApps))
         return names.filter { !isExcludedChildTool($0) }.sorted()
     }
 

@@ -200,6 +200,7 @@ struct AgentsView: View {
             }
             consumeDeeplinkIfPossible()
             applyPendingRemoteAgentDetail()
+            routeSettingsLanding(highlightCoordinator.pending)
         }
         .onChange(of: agentManager.agents) { _, _ in
             // Agent list may load asynchronously after the view appears.
@@ -225,14 +226,7 @@ struct AgentsView: View {
             isCreating = true
         }
         .onChange(of: highlightCoordinator.pending) { _, pending in
-            // Settings-search landings target the grid (header / agent
-            // cards); pop any open detail so the anchored control is
-            // actually on screen to glow.
-            guard let pending, pending.hasPrefix("agents.") else { return }
-            withAnimation(Self.navTransition) {
-                selectedAgent = nil
-                selectedRemoteAgentId = nil
-            }
+            routeSettingsLanding(pending)
         }
         .onReceive(NotificationCenter.default.publisher(for: .agentDetailDeeplink)) { note in
             // Notification-tap deep-link router (spec §3.3). Resolves
@@ -259,6 +253,62 @@ struct AgentsView: View {
                 selectedAgent = target
             }
         }
+    }
+
+    /// Settings-search landing router. Also invoked from `onAppear`: the
+    /// coordinator publishes the id BEFORE the Management tab switches, so a
+    /// cold-mounted Agents tab never sees the `onChange`.
+    private func routeSettingsLanding(_ pending: String?) {
+        guard let pending, pending.hasPrefix("agents.") else { return }
+        if pending.hasPrefix("agents.appleApps") {
+            // The Apple app groups live inside a custom agent's
+            // Abilities → Tools picker, not on the grid: route into the
+            // first custom agent's Tools tab (or keep the currently open
+            // custom agent) so the anchored group can scroll and glow.
+            // With no custom agent yet there is nothing to land on; the
+            // grid's onboarding CTA is the right place to be.
+            guard let target = Self.appleAppsLandingAgent(open: detailAgent, all: agentManager.agents) else {
+                withAnimation(Self.navTransition) {
+                    selectedAgent = nil
+                    selectedRemoteAgentId = nil
+                }
+                return
+            }
+            deeplinkTab = (target.id, Self.appleAppsLandingTabRaw)
+            if detailAgent?.id == target.id {
+                // Already mounted: the detail view flips its own tab via
+                // the deeplink notification, same as the What's New CTA.
+                NotificationCenter.default.post(
+                    name: .agentDetailDeeplink, object: nil,
+                    userInfo: ["agentId": target.id, "tab": Self.appleAppsLandingTabRaw]
+                )
+            } else {
+                withAnimation(Self.navTransition) {
+                    selectedRemoteAgentId = nil
+                    selectedAgent = target
+                }
+            }
+            return
+        }
+        // Other settings-search landings target the grid (header /
+        // agent cards); pop any open detail so the anchored control is
+        // actually on screen to glow.
+        withAnimation(Self.navTransition) {
+            selectedAgent = nil
+            selectedRemoteAgentId = nil
+        }
+    }
+
+    /// Detail tab raw value the `agents.appleApps*` landings open.
+    static let appleAppsLandingTabRaw = "capabilities"
+
+    /// Which custom agent an `agents.appleApps*` settings-search landing
+    /// should open: the custom agent already on screen, else the first
+    /// custom (non-built-in) agent in display order. `nil` when there is no
+    /// custom agent (the Default agent has no Apple app groups).
+    static func appleAppsLandingAgent(open: Agent?, all: [Agent]) -> Agent? {
+        if let open, !open.isBuiltIn { return open }
+        return all.first { !$0.isBuiltIn }
     }
 
     // MARK: - Grid Content
@@ -1316,6 +1366,8 @@ struct AgentDetailView: View {
     @State private var abilityContextDeltaDismissTask: Task<Void, Never>?
     @State private var abilityPreviewToolMode: ToolSelectionMode?
     @State private var abilityPreviewToolNames: Set<String>?
+    @State private var abilityPreviewAppleApps: Set<AppleApp>?
+    @Environment(\.settingsLandingPending) private var settingsLandingPending
     @State private var abilityPreviewAutonomousConfig: AutonomousExecConfig?
     @State private var abilityPreviewRegistryRevision = 0
     /// Editable mirror of `AutonomousExecConfig.sandboxAllowedDomains`
@@ -1506,6 +1558,17 @@ struct AgentDetailView: View {
         return hasConfig || hasInstructions || hasSecrets
     }
 
+    /// The Tools picker hosts every Apple app group, so it is the landing
+    /// target for the group row and for each per-app catalog row. One anchor
+    /// id at a time (stacked `.id()`s would shadow each other): whichever
+    /// `agents.appleApps*` id is pending, else the group id.
+    private var appleAppsLandingAnchorId: String {
+        if let pending = settingsLandingPending, pending.hasPrefix("agents.appleApps") {
+            return pending
+        }
+        return "agents.appleApps"
+    }
+
     @ViewBuilder
     private var tabContent: some View {
         switch selectedTab {
@@ -1513,12 +1576,16 @@ struct AgentDetailView: View {
             AgentCapabilityManagerView(
                 agentId: agent.id,
                 onDismiss: nil,
-                onSelectionChanged: { mode, names in
+                onSelectionChanged: { mode, names, appleApps in
                     abilityPreviewToolMode = mode
                     abilityPreviewToolNames = names
+                    abilityPreviewAppleApps = appleApps
                 }
             )
                 .environment(\.theme, themeManager.currentTheme)
+                // Built-in Apple apps live in this picker (one group per
+                // app); the `agents.appleApps[.<app>]` catalog rows land here.
+                .settingsLandingAnchor(appleAppsLandingAnchorId)
                 .id(selectedTab)
         case .builtIn(.database):
             DatabaseWorkspaceView(
@@ -3255,6 +3322,12 @@ struct AgentDetailView: View {
         let toolNames =
             abilityPreviewToolNames
             ?? Set(agentManager.effectiveEnabledToolNames(for: agent.id) ?? [])
+        // Apple apps are written by the Tools picker straight through
+        // `AgentManager` (like `manualToolNames`); mirror the picker's
+        // in-flight value first, then the persisted set.
+        let enabledAppleApps =
+            agent.id == Agent.defaultId
+            ? [] : (abilityPreviewAppleApps ?? currentAgent.settings.enabledAppleApps)
         let autonomous =
             abilityPreviewAutonomousConfig
             ?? agentManager.effectiveAutonomousExec(for: agent.id)
@@ -3297,6 +3370,7 @@ struct AgentDetailView: View {
             appleScriptEnabled: appleScriptEnabled,
             spawnableAgentIDs: spawnableAgentIDs,
             spawnConfiguration: spawnConfiguration,
+            enabledAppleApps: enabledAppleApps,
             autonomousConfig: autonomous,
             knowledgeCollections: collections,
             registryRevision: abilityPreviewRegistryRevision
@@ -3335,6 +3409,9 @@ struct AgentDetailView: View {
 
     /// On/off values behind the hero's "N of M abilities on" counter, in
     /// card order. Working Folder counts as on when the agent has a folder.
+    /// Apple apps are deliberately NOT counted: they have no Overview card
+    /// (they are groups in the Tools tab), so counting them made the
+    /// denominator disagree with the cards on screen.
     private var abilityFlagValues: [Bool] {
         var flags = [toolsEnabled]
         if agent.id != Agent.defaultId {
@@ -7139,7 +7216,12 @@ struct AgentDetailView: View {
                 knowledgeEnabled: knowledgeEnabled,
                 knowledgeCollectionIds: knowledgeCollectionIds,
                 knowledgeCuratorEnabled: knowledgeCuratorEnabled,
-                spawnableWorkspaceAgents: spawnableWorkspaceAgents
+                spawnableWorkspaceAgents: spawnableWorkspaceAgents,
+                // Apple app families are written by the Tools picker through
+                // `AgentManager.updateEnabledAppleApps` (instant save, like
+                // `manualToolNames`), so pass the persisted value through.
+                // The Default agent never carries any.
+                enabledAppleApps: agent.id == Agent.defaultId ? [] : current.settings.enabledAppleApps
             ),
             order: current.order
         )
@@ -8076,6 +8158,11 @@ private struct AgentEditorSheet: View {
     @State private var draftMode: ToolSelectionMode = .auto
     @State private var draftToolNames: Set<String> = []
     @State private var draftSeeded: Bool = false
+    /// Optional Apple app families to provision at creation, picked in the
+    /// same Customize… tool picker (one group per app; Abilities → Tools
+    /// after the fact). Empty by default — macOS is asked for permission
+    /// only once an app is on and the agent exists.
+    @State private var draftAppleApps: Set<AppleApp> = []
 
     @FocusState private var nameFocused: Bool
 
@@ -8192,6 +8279,7 @@ private struct AgentEditorSheet: View {
         AgentCapabilityManagerView(
             draftMode: $draftMode,
             draftTools: $draftToolNames,
+            draftAppleApps: $draftAppleApps,
             onDismiss: {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
                     inlineCustomize = false
@@ -8478,7 +8566,11 @@ private struct AgentEditorSheet: View {
             ? L("Loaded on demand from your assigned set.")
             : L("All assigned tools are sent every turn.")
         let countLabel = toolCount == 1 ? L("1 tool assigned") : L("\(toolCount) tools assigned")
-        return "\(countLabel) · \(modeBlurb)"
+        if draftAppleApps.isEmpty {
+            return "\(countLabel) · \(modeBlurb)"
+        }
+        let apps = AppleApp.sorted(draftAppleApps).map(\.displayName).joined(separator: ", ")
+        return "\(countLabel) · \(L("Apple apps: \(apps)")) · \(modeBlurb)"
     }
 
     private var promptField: some View {
@@ -8668,6 +8760,7 @@ private struct AgentEditorSheet: View {
         agent.toolSelectionMode = draftMode
         agent.manualToolNames = Array(draftToolNames)
         agent.avatar = selectedAvatar
+        agent.settings.enabledAppleApps = draftAppleApps
 
         onSave(agent)
     }

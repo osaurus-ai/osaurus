@@ -279,6 +279,50 @@ struct MLXBatchAdapterTests {
         #expect(params.prefillStepSize == 256)
     }
 
+    @Test("Loaded bundle defaults survive ambiguous catalog aliases", arguments: [false, true])
+    func loadedBundleDefaultsSurviveAliasCollision(explicitOverride: Bool) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let models = ["Org-A", "Org-B"].map { org in
+            MLXModel(
+                id: "\(org)/Shared-Bundle", name: "Shared", description: "",
+                downloadURL: "https://example.com/unused", rootDirectory: root
+            )
+        }
+        for (index, model) in models.enumerated() {
+            try FileManager.default.createDirectory(at: model.localDirectory, withIntermediateDirectories: true)
+            let config = index == 0
+                ? #"{"temperature":0.2,"top_p":0.8,"top_k":7}"#
+                : #"{"temperature":1.0,"top_p":0.95,"top_k":20,"do_sample":true}"#
+            try Data(config.utf8).write(to: model.localDirectory.appendingPathComponent("generation_config.json"))
+        }
+        // Keep the safety rule: only the full selected ID resolves. Never
+        // choose the first organization merely to make defaults non-empty.
+        #expect(ModelManager.matchInstalledMLXModel(named: "Shared-Bundle", in: models) == nil)
+        let selected = try #require(ModelManager.matchInstalledMLXModel(named: "Org-B/Shared-Bundle", in: models))
+        let snapshot = LocalGenerationDefaults.load(fromDirectory: selected.localDirectory)
+        // Same load-time snapshot supplied by SessionHolder in production.
+        // Removing metadata afterwards must not make telemetry rediscover a
+        // different model or turn the already-resolved defaults into nil.
+        try FileManager.default.removeItem(at: selected.localDirectory.appendingPathComponent("generation_config.json"))
+        let effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "shared-bundle",
+            generation: GenerationParameters(
+                temperature: explicitOverride ? 0 : nil, maxTokens: 128,
+                topKOverride: explicitOverride ? 5 : nil
+            ),
+            runtimeDefaults: VMLXServerGenerationDefaults(),
+            maxBatchSize: 1,
+            modelDefaults: snapshot
+        )
+        #expect(effective.temperature == (explicitOverride ? 0 : 1))
+        #expect(effective.topP == 0.95)
+        #expect(effective.topK == (explicitOverride ? 5 : 20))
+        #expect(effective.modelDefaults == snapshot)
+        #expect(effective.modelDefaults.temperature == 1)
+        #expect(effective.modelDefaults.topK == 20)
+    }
+
     @Test func effectiveGenerationSettings_honorsBundleDefaultsWhenRequestOmitted() {
         let generation = GenerationParameters(
             temperature: nil,
@@ -307,6 +351,7 @@ struct MLXBatchAdapterTests {
         )
 
         #expect(effective.temperature == 1.0)
+        #expect(effective.modelDefaults == defaults)
         #expect(effective.maxTokens == 300)
         #expect(effective.topP == 0.95)
         #expect(effective.topK == 40)

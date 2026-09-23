@@ -3,10 +3,12 @@
 //  OsaurusCore — Subagent framework
 //
 //  The single optional handoff middleware for model-swapping subagent kinds
-//  (spawn, image). When a kind resolves a DIFFERENT local model than the
+//  (text, Browser Use, Computer Use, AppleScript and compaction). When a kind
+//  resolves a DIFFERENT local model than the
 //  resident orchestrator, the chat model must be unloaded so the subagent
 //  model takes the GPU exclusively, then reloaded after the run. Same-model
-//  kinds (computer_use) use `PassthroughHandoff` instead.
+//  execution uses `PassthroughHandoff` instead. Images retain their lifecycle
+//  inside the native producer but share the same parent-policy decision.
 //
 //  Generalized from the residency flow `NativeImageJobCoordinator` and the
 //  spawn kind (`TextSubagentKind`) each open-coded. The actual
@@ -18,7 +20,7 @@
 //  wires them to `ChatResidencyHandoff`.
 //
 //  The KIND owns the per-run `ResidencyPlan` (spawn decides from live GPU
-//  residency + its handoff flag; image from its load policy) so this
+//  residency + the shared handoff flag) so this
 //  middleware stays generic. Internal to OsaurusCore: kinds construct it in
 //  this module and the host drives it via the public `SubagentHandoff`
 //  existential.
@@ -42,35 +44,26 @@ struct ResidencyPlan: Sendable {
     var ramSafetyEnabled: Bool
     /// Idle-wait budget (seconds) before the unload gives up on chat going idle.
     var maxElapsedSeconds: Int
-    /// RAM-aware coexistence: a DIFFERENT local model loads alongside the
-    /// resident orchestrator (no unload, no restore) because the projection
-    /// said both fit under the flexible eviction policy. The handoff still
+    /// Keep-parent mode: a DIFFERENT local model loads alongside the invoking
+    /// parent (no parent unload or restore), including under Strict policy.
+    /// RAM admission remains separate. The handoff still
     /// waits for local chat generation to go idle before the run — the drain
     /// keeps "two resident graphs" from becoming "two GENERATING graphs"
     /// (the BUG G crash class) at run start; process-wide exclusivity for the
     /// run itself comes from the admission class.
     var coexists: Bool
-    /// The user turned the "Local Orchestrator Handoff" toggle OFF and the
-    /// delegate is a DIFFERENT local model: the run proceeds with NO
-    /// unload/reload sequencing (the runtime's own eviction policy decides
-    /// what happens to the chat model). Never a refusal — this flag exists
-    /// so the tool result and activity readout can say so.
-    var sequencingDisabled: Bool
-
     init(
         shouldUnload: Bool,
         requiredBytes: Int64 = 0,
         ramSafetyEnabled: Bool = false,
         maxElapsedSeconds: Int = 300,
-        coexists: Bool = false,
-        sequencingDisabled: Bool = false
+        coexists: Bool = false
     ) {
         self.shouldUnload = shouldUnload
         self.requiredBytes = requiredBytes
         self.ramSafetyEnabled = ramSafetyEnabled
         self.maxElapsedSeconds = maxElapsedSeconds
         self.coexists = coexists
-        self.sequencingDisabled = sequencingDisabled
     }
 
     /// A plan that performs no residency change.
@@ -80,7 +73,6 @@ struct ResidencyPlan: Sendable {
     var mode: String {
         if shouldUnload { return "swap_unload_reload" }
         if coexists { return "coexist" }
-        if sequencingDisabled { return "sequencing_off" }
         return "in_place"
     }
 }
@@ -158,15 +150,13 @@ enum DelegationResidencySequence {
                 + "unloaded it, then loaded '\(main)' for the chat turn"
         }
         if plan.coexists {
+            if !mainResident {
+                return
+                    "\"Swap local models for subagents\" is off: '\(main)' was not resident; ran '\(delegateModelName)' without a parent reload"
+            }
             return
-                "kept chat model '\(main)' loaded and ran delegate '\(delegateModelName)' "
+                "\"Swap local models for subagents\" is off: kept chat model '\(main)' loaded and ran delegate '\(delegateModelName)' "
                 + "alongside it (coexistence)"
-        }
-        if plan.sequencingDisabled {
-            return
-                "\"Swap local models for subagents\" is off: ran subagent model '\(delegateModelName)' "
-                + "without the unload/reload sequence; the runtime's eviction policy "
-                + "decides whether '\(main)' stays loaded"
         }
         return "delegate '\(delegateModelName)' ran in place; no model swap was needed"
     }
@@ -193,7 +183,7 @@ struct ResidencyHandoff: SubagentHandoff {
     /// unloaded, so restore failure is part of this handoff's outcome.
     typealias Restore =
         @Sendable (_ lease: ChatResidencyLease, _ onPhase: (String, String) -> Void) async throws
-            -> [String]
+        -> [String]
     /// Sequence leg "unload the delegate model" — release the child model(s)
     /// this handoff cold-loaded, BEFORE the main model is reloaded. Optional
     /// so single-step fixtures keep compiling; production wires it to
@@ -201,7 +191,7 @@ struct ResidencyHandoff: SubagentHandoff {
     /// reload-only leg, which makes the two legs individually observable.
     typealias ReleaseDelegate =
         @Sendable (_ lease: ChatResidencyLease, _ onPhase: (String, String) -> Void) async throws
-            -> [String]
+        -> [String]
 
     let plan: PlanProvider
     let preflight: Preflight
@@ -263,7 +253,9 @@ struct ResidencyHandoff: SubagentHandoff {
                 _ = await ModelRuntime.shared.reclaimMemoryForSubagentAdmission()
                 try await Task.sleep(for: .milliseconds(1_100))
                 try await ChatResidencyHandoff.memoryPreflight(
-                    requiredBytes: requiredBytes, enabled: enabled, onPhase: onPhase
+                    requiredBytes: requiredBytes,
+                    enabled: enabled,
+                    onPhase: onPhase
                 )
             }
         )
@@ -275,6 +267,38 @@ struct ResidencyHandoff: SubagentHandoff {
         feed: SubagentFeed,
         run body: () async throws -> SubagentResult
     ) async throws -> SubagentResult {
+        try await withResidency(scope: scope, resolved: resolved, feed: feed, run: body) { value, plan, lease in
+            var result = value
+            let mainModelName = lease.restoreModelNames.first ?? scope.parentModelName
+            let mainWasResident = !lease.unloadedModelNames.isEmpty
+            let steps = DelegationResidencySequence.steps(
+                plan: plan,
+                mainModelName: mainModelName,
+                mainResident: mainWasResident,
+                delegateModelName: resolved.name
+            )
+            let summary = DelegationResidencySequence.summary(
+                plan: plan,
+                mainModelName: mainModelName,
+                mainResident: mainWasResident,
+                delegateModelName: resolved.name
+            )
+            feed.emit(SubagentActivityEvent(kind: .narrate, title: "model swap", detail: summary))
+            result.payload["handoff_sequence"] = steps.map(\.description)
+            result.payload["handoff_summary"] = summary
+            return result
+        }
+    }
+
+    /// The same owned lifecycle for non-tool work (e.g. compaction). Keep the
+    /// typed result intact rather than round-tripping it through a tool payload.
+    func withResidency<Value: Sendable>(
+        scope: SubagentScope,
+        resolved: ResolvedModel,
+        feed: SubagentFeed,
+        run body: () async throws -> Value,
+        onCompleted: (Value, ResidencyPlan, ChatResidencyLease) -> Value = { value, _, _ in value }
+    ) async throws -> Value {
         let plan = await self.plan(resolved)
         let emit: (String, String) -> Void = { phase, detail in
             feed.emitPhase(phase, detail: detail.isEmpty ? nil : detail)
@@ -298,8 +322,6 @@ struct ResidencyHandoff: SubagentHandoff {
             plan.maxElapsedSeconds,
             emit
         )
-        let mainModelName =
-            lease.restoreModelNames.first ?? scope.parentModelName
         let mainWasResident = !lease.unloadedModelNames.isEmpty
         // Steps 2–4 — hand the task to the delegate; its model cold-loads
         // under this lease's ownership token so step 5 can release exactly it.
@@ -309,7 +331,7 @@ struct ResidencyHandoff: SubagentHandoff {
                 ? "chat model unloaded; loading delegate \(resolved.name)"
                 : "chat model was not loaded; loading delegate \(resolved.name)"
         )
-        var result: SubagentResult
+        let result: Value
         do {
             try await postUnloadPreflight?(plan.requiredBytes, plan.ramSafetyEnabled, emit)
             result = try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(
@@ -336,26 +358,7 @@ struct ResidencyHandoff: SubagentHandoff {
         // Steps 5–6 — unload the delegate, load the main chat model back.
         _ = try await restoreOutsideCancelledRun(lease, feed: feed)
 
-        // Step 7 belongs to the caller (the chat turn continues). Surface what
-        // happened so the user can see the swap in the tool result + feed.
-        let steps = DelegationResidencySequence.steps(
-            plan: plan,
-            mainModelName: mainModelName,
-            mainResident: mainWasResident,
-            delegateModelName: resolved.name
-        )
-        let summary = DelegationResidencySequence.summary(
-            plan: plan,
-            mainModelName: mainModelName,
-            mainResident: mainWasResident,
-            delegateModelName: resolved.name
-        )
-        feed.emit(
-            SubagentActivityEvent(kind: .narrate, title: "model swap", detail: summary)
-        )
-        result.payload["handoff_sequence"] = steps.map(\.description)
-        result.payload["handoff_summary"] = summary
-        return result
+        return onCompleted(result, plan, lease)
     }
 
     /// Restore is owned cleanup, not child work. Run it in a fresh detached
@@ -450,24 +453,63 @@ struct ResidencyOwnershipHandoff: SubagentHandoff {
     }
 }
 
-/// Coexistence handoff: the subagent model loads ALONGSIDE the resident
-/// orchestrator (flexible eviction policy + RAM projection passed), so there
-/// is nothing to unload or restore. The one residency obligation kept from the
-/// single-residency flow is the idle drain: local chat generation must be idle
+/// Keep-parent handoff: a registered exact-parent hold permits this child to
+/// load alongside it without changing global Strict/background policy. The
+/// owned child is cleaned up before releasing the hold. Local generation must be idle
 /// before the run starts, so a second MLX graph never begins producing while
 /// another graph is mid-generation (the BUG G crash class). `waitForIdle` is
 /// injectable for tests; `.production` wires it to `InferenceLoadCoordinator`.
 struct CoexistenceHandoff: SubagentHandoff {
     typealias WaitForIdle = @Sendable (_ timeoutMs: Int) async -> Bool
+    typealias Retain = @Sendable (SubagentScope, ResolvedModel) async throws -> ParentResidencyRetention
+    typealias Finish = @Sendable (ParentResidencyRetention) async throws -> Void
 
     let maxElapsedSeconds: Int
     let waitForIdle: WaitForIdle
+    var retain: Retain? = nil
+    var finish: Finish? = nil
 
-    static func production(maxElapsedSeconds: Int) -> CoexistenceHandoff {
+    static func production(plan: ResidencyPlan) -> CoexistenceHandoff {
         CoexistenceHandoff(
-            maxElapsedSeconds: maxElapsedSeconds,
+            maxElapsedSeconds: plan.maxElapsedSeconds,
             waitForIdle: { timeoutMs in
                 await InferenceLoadCoordinator.shared.waitForChatIdle(timeoutMs: timeoutMs)
+            },
+            retain: { scope, resolved in
+                // Warm reuse allocates no second set of weights. Per-child
+                // request/KV costs are handled by admission; do not charge
+                // the cold-load weight estimate again here.
+                let targetIsResident =
+                    await ModelRuntime.shared.residencyIdentity(
+                        named: resolved.id ?? resolved.name
+                    ) != nil
+                try await ChatResidencyHandoff.memoryPreflight(
+                    requiredBytes: plan.requiredBytes,
+                    enabled: plan.ramSafetyEnabled && !targetIsResident
+                )
+                return try await ModelRuntime.shared.retainInvokingParent(
+                    named: scope.parentModelName,
+                    for: resolved.id ?? resolved.name,
+                    source: ChatExecutionContext.currentSessionSource?.inferenceSource
+                )
+            },
+            finish: { retention in
+                do {
+                    // Release only this job's cold-loaded graphs. A reused
+                    // target never acquires the token and remains untouched.
+                    _ = try await ChatResidencyHandoff.releaseOwnedChildModels(
+                        ChatResidencyLease(
+                            unloadedModelNames: [],
+                            restoreModelNames: [],
+                            unloadedParentIdentity: nil,
+                            childOwnershipToken: retention.childOwnershipToken
+                        )
+                    )
+                } catch {
+                    await ModelRuntime.shared.releaseInvokingParent(retention)
+                    throw error
+                }
+                await ModelRuntime.shared.releaseInvokingParent(retention)
             }
         )
     }
@@ -478,6 +520,15 @@ struct CoexistenceHandoff: SubagentHandoff {
         feed: SubagentFeed,
         run body: () async throws -> SubagentResult
     ) async throws -> SubagentResult {
+        try await withRetainedParent(scope: scope, resolved: resolved, feed: feed, run: body)
+    }
+
+    func withRetainedParent<Value: Sendable>(
+        scope: SubagentScope,
+        resolved: ResolvedModel,
+        feed: SubagentFeed,
+        run body: () async throws -> Value
+    ) async throws -> Value {
         // Same wait bounds as the unload path (15s floor, 300s ceiling).
         let waitMs = max(15, min(maxElapsedSeconds, 300)) * 1000
         feed.emitPhase(
@@ -490,6 +541,37 @@ struct CoexistenceHandoff: SubagentHandoff {
                 "Local chat generation did not become idle before the coexistence run."
             )
         }
-        return try await body()
+        guard let retain, let finish else { return try await body() }
+        let retention = try await retain(scope, resolved)
+        feed.emitPhase(
+            "parent_retained",
+            detail: retention.parentIdentity?.modelName ?? "invoking model was not resident"
+        )
+        let result: Value
+        do {
+            result = try await ParentResidencyRetentionContext.$current.withValue(retention) {
+                try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(
+                    retention.childOwnershipToken
+                ) {
+                    try await body()
+                }
+            }
+        } catch let bodyError {
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    try await finish(retention)
+                }.value
+            } catch let cleanupError {
+                throw ResidencyHandoffFailure.bodyAndRestoreFailed(
+                    body: bodyError.localizedDescription,
+                    restore: cleanupError.localizedDescription
+                )
+            }
+            throw bodyError
+        }
+        try await Task.detached(priority: .userInitiated) {
+            try await finish(retention)
+        }.value
+        return result
     }
 }

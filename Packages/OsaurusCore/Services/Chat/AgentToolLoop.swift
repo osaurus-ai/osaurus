@@ -1650,7 +1650,7 @@ enum AgentToolLoop {
         switch kind {
         case .invalidArgs, .notFound, .unavailable:
             return false
-        case .rejected, .timeout, .executionError, .toolNotFound, .userDenied:
+        case .rejected, .timeout, .executionError, .toolNotFound, .userDenied, .permissionDenied:
             return true
         }
     }
