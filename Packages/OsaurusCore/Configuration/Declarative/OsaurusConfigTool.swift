@@ -393,14 +393,32 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         // auto-approves, external/headless surfaces and unattended
         // schedule/watcher dispatches auto-deny (never park a card nobody
         // can answer, and never let an unattended run reconfigure the app).
+        // The owner's paired phone is attended: its runs park the plan for
+        // the phone to answer (`GET /config/approvals`, MOBILE_PROTOCOL
+        // §16.3), with longer to read it than the Mac's card gives.
         let approval: ConfigApprovalOutcome
         if ChatExecutionContext.autoApproveToolPrompts {
             approval = .approved
         } else if ChatExecutionContext.denyUnapprovedToolPrompts
-            || ChatExecutionContext.isExternalSurface
             || ChatExecutionContext.isUnattendedDispatch
+            || (ChatExecutionContext.isExternalSurface && !ChatExecutionContext.hasRemoteReviewer)
         {
-            approval = .denied
+            // Nobody was asked, so the model must not be told the user said
+            // no: that reads as a decision and ends the setup it was doing.
+            return ToolEnvelope.failure(
+                kind: .permissionDenied,
+                message: "Configuration changes need the user's approval in the Osaurus app, "
+                    + "and this run has no way to show it. Nothing was applied.",
+                tool: name,
+                retryable: false
+            )
+        } else if ChatExecutionContext.hasRemoteReviewer {
+            approval = await ConfigApprovalQueue.shared.requestApproval(
+                plan: plan,
+                prune: prune,
+                fromPairedPhone: true,
+                timeout: .seconds(300)
+            )
         } else {
             approval = await ConfigApprovalService.requestApproval(plan: plan, prune: prune)
         }

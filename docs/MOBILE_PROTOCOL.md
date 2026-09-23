@@ -1059,6 +1059,31 @@ pressed there. `404 approval_not_pending` when the card is already gone —
 answered on the Mac, or its run ended. An unknown decision is a `400`, never
 an allow.
 
+### 16.3 Configuration plans: `GET /config/approvals`, `POST /config/approvals/{id}`
+
+The orchestrator changes this Mac's setup with `osaurus_config`, and every
+apply waits on its own plan-review card rather than a §16.1 card. A run from
+the paired phone parks the plan here for the phone to answer, for up to five
+minutes; plans raised in a Mac chat are never listed.
+
+```json
+{"approvals":[{"id":"<uuid>","prune":false,"high_risk":true,"change_count":2,
+  "summary":"agents:\n  + Researcher\n      model: … \n  …",
+  "actions":[{"section":"agents","target":"Researcher","kind":"create",
+              "changes":["model: gpt-5"],"risks":["…"]}],
+  "notes":["…"]}]}
+```
+
+`kind` is `create | update | delete | needs_user_input`. `summary` is the
+plan as the Mac renders it for the model. `prune: true` means entries missing
+from the document are deleted, and deserves a warning on the card.
+
+Answer with `{"decision":"apply" | "cancel"}`. `apply` resumes the run and
+applies the plan; `cancel` tells the model the user declined. `404
+approval_not_pending` when it was answered on the Mac or timed out. A caller
+that is not the paired phone is refused outright and the model is told no
+one could be asked, not that the user declined.
+
 ---
 
 ## 17. Creating an agent
