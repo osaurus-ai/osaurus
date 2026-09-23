@@ -25,14 +25,18 @@ Owner: Eric. Updated 2026-09-23. Work through these tasks in order; merge each p
 - [x] Updated installed iteration2 explicitly selected by Eric; all 54 manifest files passed checksum verification.
 - [x] R21 rebuilt app and eval runner; 346/346 focused app tests passed. Actual iteration2 loads without the old affine-companion error.
 - [x] Native quant follow-up [vmlx-swift#495](https://github.com/osaurus-ai/vmlx-swift/pull/495) merged at `fce53ef0e5cf5eb052a5a38490661bc48218917f`: native MXFP8 and quant-independent fused dispatch; 18 default-flags and 27 optional-flags/runtime tests passed. All four app pins and both tripwires updated.
-- [ ] Finish current-bundle qualification; do not carry R19 scores over. Expand bounded coverage across quant widths, projection roles, group sizes, scale dtypes and native floating quant formats.
+- [x] Expanded bounded quant matrix covers all supported affine widths, projection roles, group32/64/128, F16/BF16 companions, MXFP4/MXFP8, exact packed retention, native output parity and malformed companions.
+- [x] R22 Release app/eval rebuild completed; 346/346 focused app tests passed, exact source/binary hashes recorded.
+- [ ] Resolve R22 full-load memory abort before another full-model run. Three guarded loads stopped before generation; both private launchers enforce the written hold. Three-layer allocation/release diagnostic is complete; no safety limit raised.
+- [ ] Finish current-bundle qualification and updated full local eval matrix; do not carry R19 scores over.
 - [x] R21 actual audio/video/history UI and tool cards with follow-up exercised and recorded: video/tool calls pass; audio and media-history provenance fail. Natural stops, settled UI, tokens/s, memory and cache telemetry captured.
 - [ ] Diagnose retained audio semantic failure and repeat affected proof after any further runtime pin.
 - [ ] Required remote-model AgentLoop/AgentLoopFrontier comparison. Existing supported credential source requested; none in environment, configured endpoint unreachable. No pasted secrets or invented keys.
 - [ ] Resolve/attribute any remaining in-scope failures; do not call every media/agent row passed. API media recall currently has a retained 3/4 semantic result.
 - [x] Osaurus CI passed at `a285a38515bc18d5124618003803c23a821fc0ec`.
 - [x] R21 Osaurus CI passed at `c0b3b280c3ce132b63fca9b657714ee17f6d2a3c`.
-- [ ] Final amended-head CI and review complete.
+- [x] R22 Osaurus CI passed at `ec6e370487a57aa0d3516e05aaf752a7a175fbe9`; receipt `osaurus-pr2863-ec6-ci.json`.
+- [ ] Final amended-head CI and review complete after any further commits.
 - [ ] Update final proof/limitations in PR and repo docs, then merge Osaurus#2863. No release/tag.
 
 Evidence index: [MiMo proof](MIMO_RUNTIME_PROOF_2026_09_23.md). Private command/results/source manifests: `~/vmlx-private-evidence/mimo26-swift-2026-09-22/`. Current builds/tests/UI logs and raw eval denominators must remain traceable there.

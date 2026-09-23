@@ -107,3 +107,77 @@ legacy dispatch and indexed-model rotating-cache parity. Receipts:
 tripwires now reference the merged SHA. Fresh app/eval rebuild and affected
 current-bundle proof are required; the R21 audio failures remain open.
 Osaurus CI passed at R21 head c0b3b280 before this next dependency update.
+
+
+## R22 rebuild complete; full-load qualification held
+
+The Release development app and eval CLI rebuilt at app commit
+`ec6e370487a57aa0d3516e05aaf752a7a175fbe9`, consuming merged engine
+`fce53ef0e5cf5eb052a5a38490661bc48218917f`. Frozen inputs:
+`post-pin-r22-source-manifest.json`. App SHA256
+`7e335c22dcfb4ef1a6284723aa5d45d5254707c6d63478fe19c19b80a49ba370`;
+eval SHA256
+`9569f86c600e080492ccf2254d6a032b393d5a90ed98de8c1e2fa147438d57f9`.
+All 346 focused app tests passed across ten suites. Receipts:
+`local-app-r22-build-outputs.json`, `local-evals-r22-build-outputs.json`,
+`post-pin-r22-tests-receipt.json`.
+
+Three full-model loads were stopped by the unchanged compressor-growth guard:
+`local-app-r22`, `local-app-r22b`, `local-app-r22c`. Peak physical footprints
+were 85,875,995,848; 97,799,951,936; and 99,415,137,104 bytes. Host pressure
+remained normal with zero swap; only the owned development-app processes were
+terminated. The third run added a stricter actual-free-memory preflight and
+still failed. More initial free RAM alone is not a verified correction.
+These are failed load rows, with no generated output or token/s.
+`R22-FULL-MODEL-LOAD-HOLD.json` now blocks both private app/eval launchers.
+Further full-model retries require a concrete bounded validation, without
+weakening safety limits. Warp, Terminal and unrelated jobs remain protected.
+
+A bounded load of actual layers11/12/13 retained 5,972,688,896 packed bytes,
+with matching MLX active memory, zero MLX cached memory, and physical footprint
+6,317,315,304 bytes. After release and clearing only that test's MLX cache,
+active/cache memory returned to zero and physical footprint to341,689,376.
+This does not show a large accumulating duplicate in this bounded loader;
+it does not qualify full-model loading. Evidence:
+`native-resident-r22-allocation.log`, `native-resident-r22-allocation-receipt.json`.
+
+The current-bundle audio differential also completed without loading the text
+backbone: all three clips' mel values and all2,940 RVQ codes exactly matched
+the independent local Python implementation. Clip-b and neutral-control
+features were exact; clip-a differed in1,389/49,152 values, maximum absolute
+difference0.00048828125. This remains numerical component evidence, not a
+resolution of the retained audio semantic failures. Evidence:
+`native-audio-r22-components-receipt.json`, `actual-audio-r22-reference.json`.
+No language generation in these bounded tests; token/s is not applicable.
+
+The required remote comparison remains unavailable: the configured no-auth
+provider endpoint failed to connect, no supported environment key is present,
+and no existing suitable eval workflow/credential source was found in the
+bounded alternatives check. See `r22-configured-provider-probe.json` and
+`r22-remote-eval-alternative-check.json`. Osaurus#2863 remains draft/unmerged.
+No release/tag or manual release-workflow dispatch.
+
+A further bounded GPU-touch diagnostic did not validate an early-residency fix:
+three-bank reductions added temporary/cache allocations and retained more
+physical memory at the immediate release sample. No production change was
+made; full-load hold remains. Artifacts:
+`native-resident-r22-gpu-touch-receipt.json`,
+`native-resident-r22-gpu-touch-summary.json`.
+
+The actual installed expert weights also passed a bounded cross-language
+comparison: layers1/11/12, decode1 and prefill8, eight varied routes across
+0..255, native BF16 input. All six production resident outputs were bit-exact
+against independent Python MLX0.32.2 native gather_qmm using the same complete
+256-expert bank geometry. This covers actual MXFP4/group32 plus affine2/group128,
+affine3/group128 plus affine2/group128, and uniform affine2/group128 layers.
+The first reduced-eight-expert reference changed prefill reduction geometry
+and differed; that result is retained, and no tolerance was loosened.
+Receipts: `native-installed-r22-quant-receipt.json`,
+`native-installed-r22-quant-reference-fullbanks.json`,
+`native-installed-r22-quant-reference-fullbanks-receipt.json`. These tests load
+one expert layer at a time, not the complete model; they do not close the
+full-load/audio/eval gates. No host-guard trips, no language generation.
+
+All Osaurus CI checks passed at R22 runtime head
+`ec6e370487a57aa0d3516e05aaf752a7a175fbe9`; receipt
+`osaurus-pr2863-ec6-ci.json`. This does not waive the live/eval gates above.
