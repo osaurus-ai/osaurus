@@ -163,6 +163,9 @@ public enum EvalBootstrap {
     ///     during the run land in the throwaway copy;
     ///   - a COPY of `config/prefill-tuning.json` so hermetic runs apply the
     ///     same measured prefill step sizes the production runtime uses;
+    ///   - a snapshot of `config/server-runtime.json` so loading, memory,
+    ///     generation, and cache policy match the app; both writable KV
+    ///     directories are redirected into the isolated root;
     ///   - a `container/` symlink: the sandbox VM (kernel, rootfs, workspace)
     ///     is host-global BY DESIGN — boot costs minutes and the container is
     ///     shared with the host app — so it is the one deliberate exception
@@ -331,6 +334,51 @@ public enum EvalBootstrap {
             guard fm.fileExists(atPath: source.path) else { continue }
             try? fm.createDirectory(at: isolatedConfig, withIntermediateDirectories: true)
             try? fm.copyItem(at: source, to: isolatedConfig.appendingPathComponent(fileName))
+        }
+
+        // Residency lives outside server-runtime.json. Carry only this policy
+        // and its migration marker, not host ports, exposure or auth settings.
+        // Otherwise an explicit Keep Model Loaded profile silently becomes the
+        // default idle policy, unloading between headless agent/tool rounds.
+        let serverSource = realConfig.appendingPathComponent("server.json")
+        if fm.fileExists(atPath: serverSource.path) {
+            do {
+                let object = try JSONSerialization.jsonObject(with: Data(contentsOf: serverSource))
+                if let settings = object as? [String: Any],
+                    settings["modelIdleResidencyPolicy"] != nil
+                {
+                    let keys: Set<String> = ["modelIdleResidencyPolicy", "_modelIdleResidencyPolicyVersion"]
+                    let snapshot = settings.filter { keys.contains($0.key) }
+                    try fm.createDirectory(at: isolatedConfig, withIntermediateDirectories: true)
+                    try JSONSerialization.data(withJSONObject: snapshot).write(
+                        to: isolatedConfig.appendingPathComponent("server.json"), options: .atomic)
+                }
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "[evals] could not snapshot model residency policy: \(error)\n".utf8))
+            }
+        }
+
+        let runtimeSource = realConfig.appendingPathComponent("server-runtime.json")
+        if fm.fileExists(atPath: runtimeSource.path) {
+            do {
+                var settings = try JSONDecoder().decode(
+                    VMLXServerRuntimeSettings.self, from: Data(contentsOf: runtimeSource))
+                // Preserve the configured policy, never the host's writable
+                // cache locations (which can also point outside realRoot).
+                settings.cache.blockDisk.directory = isolatedRoot
+                    .appendingPathComponent("cache/kv_v2", isDirectory: true).path
+                settings.cache.legacyDisk.directory = isolatedRoot
+                    .appendingPathComponent("cache/legacy-kv", isDirectory: true).path
+                try fm.createDirectory(at: isolatedConfig, withIntermediateDirectories: true)
+                try JSONEncoder().encode(settings).write(
+                    to: isolatedConfig.appendingPathComponent("server-runtime.json"), options: .atomic)
+                FileHandle.standardError.write(Data(
+                    "[evals] inherited server-runtime settings; writable KV storage isolated\n".utf8))
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "[evals] could not snapshot server-runtime settings: \(error)\n".utf8))
+            }
         }
 
         // The sandbox VM runtime (kernel, initfs, persisted rootfs, the

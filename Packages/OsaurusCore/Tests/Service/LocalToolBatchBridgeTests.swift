@@ -11,6 +11,7 @@ struct LocalToolBatchBridgeTests {
         var ended = false
         var failed = false
         var upstreamCancelled = false
+        var exhaustedCallCount: Int?
 
         func delta(_ value: String) { deltas.append(value) }
         func finish(_ values: [ServiceToolInvocation] = [], failed: Bool = false) {
@@ -19,6 +20,10 @@ struct LocalToolBatchBridgeTests {
             ended = true
         }
         func cancelUpstream() { upstreamCancelled = true }
+        func exhausted(_ count: Int) {
+            exhaustedCallCount = count
+            finish(failed: true)
+        }
         func sawPreview(_ name: String) -> Bool {
             deltas.contains { StreamingToolHint.decode($0) == name }
         }
@@ -47,6 +52,8 @@ struct LocalToolBatchBridgeTests {
                 await observed.finish(batch.invocations)
             } catch let call as ServiceToolInvocation {
                 await observed.finish([call])
+            } catch let exhausted as ServiceToolResponseExhausted {
+                await observed.exhausted(exhausted.toolCallCount)
             } catch {
                 await observed.finish(failed: true)
             }
@@ -196,6 +203,82 @@ struct LocalToolBatchBridgeTests {
         await consume(upstream, complete: true, observed: observed).value
         #expect(await observed.failed)
         #expect(await observed.calls.isEmpty)
+    }
+
+    @Test(arguments: [false, true], [1, 2, 64])
+    func lengthExhaustionDoesNotPublishAnExecutableBatch(_ complete: Bool, _ callCount: Int) async {
+        let upstream = AsyncThrowingStream<ModelRuntimeEvent, Error> { producer in
+            for _ in 0 ..< callCount { producer.yield(first) }
+            producer.yield(.completionInfo(
+                tokenCount: 16_384, tokensPerSecond: 38, unclosedReasoning: false,
+                stopReason: "length", promptTokensPerSecond: 450, mtp: nil
+            ))
+            producer.finish()
+        }
+        let observed = Observation()
+        await consume(upstream, complete: complete, observed: observed).value
+        #expect(await observed.failed)
+        #expect(await observed.calls.isEmpty)
+        #expect(await observed.exhaustedCallCount == callCount)
+        #expect(await observed.deltas.contains {
+            guard let stats = StreamingStatsHint.decode($0) else { return false }
+            return stats.stopReason == "length" && stats.tokenCount == 16_384
+        })
+    }
+
+    @Test func lengthFailurePreservesTheUpstreamCleanupTail() async throws {
+        let (upstream, producer) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
+        let observed = Observation()
+        producer.onTermination = { termination in
+            if case .cancelled = termination { Task { await observed.cancelUpstream() } }
+        }
+        let consumer = consume(upstream, observed: observed)
+        defer { producer.finish(); consumer.cancel() }
+        producer.yield(first)
+        producer.yield(.completionInfo(
+            tokenCount: 16_384, tokensPerSecond: 38, unclosedReasoning: false,
+            stopReason: "length", promptTokensPerSecond: 450, mtp: nil
+        ))
+        #expect(try await waitFor { await observed.ended })
+        #expect(await observed.failed)
+        #expect(await observed.calls.isEmpty)
+        #expect(await observed.upstreamCancelled == false)
+        producer.finish()
+        await consumer.value
+    }
+
+    @Test func nonStreamingLengthExhaustionRejectsParsedCalls() async throws {
+        let events = AsyncThrowingStream<ModelRuntimeEvent, Error> { producer in
+            producer.yield(.tokens("Partial response"))
+            producer.yield(first)
+            producer.yield(second)
+            producer.yield(.completionInfo(
+                tokenCount: 16_384, tokensPerSecond: 38, unclosedReasoning: false,
+                stopReason: "length", promptTokensPerSecond: 450, mtp: nil
+            ))
+            producer.finish()
+        }
+        do {
+            _ = try await ModelRuntime.collectToolEventResponse(events)
+            Issue.record("An exhausted tool response must fail explicitly")
+        } catch let exhausted as ServiceToolResponseExhausted {
+            #expect(exhausted.toolCallCount == 2)
+        }
+    }
+
+    @Test func nonStreamingCompletedResponsePreservesTheBatch() async throws {
+        let events = AsyncThrowingStream<ModelRuntimeEvent, Error> { producer in
+            producer.yield(first)
+            producer.yield(second)
+            producer.yield(completion)
+            producer.finish()
+        }
+        do {
+            _ = try await ModelRuntime.collectToolEventResponse(events)
+            Issue.record("Expected the completed tool batch")
+        } catch let batch as ServiceToolInvocations {
+            #expect(batch.invocations.map(\.jsonArguments) == [#"{"path":"first.txt"}"#, #"{"path":"second.txt"}"#])
+        }
     }
 
     @Test func nextEnvelopeResetsThePreviousCallPreview() async {

@@ -2,6 +2,41 @@ import Foundation
 
 /// Small, structurally valid safetensors fixtures. No MLX allocation or fake index-only weights.
 enum VisionBundleFixture {
+    static func makeMiMo(omit: String? = nil, sidecarOmit: String? = nil) throws -> URL {
+        let root = try make(type: "mimo_v2")
+        try writeJSON([
+            "model_type": "mimo_v2", "attention_projection_layout": "fused_qkv",
+            "quantization": ["mode": "affine", "gate": ["mode": "mxfp4"]],
+            "vision_config": ["depth": 2, "temporal_patch_size": 2],
+            "audio_config": ["audio_channels": 2, "input_local_layers": 2, "input_local_dim": 8],
+            "video_token_id": 123, "audio_token_id": 124,
+            "processor_config": ["video_token_id": 123, "audio_token_id": 124,
+                "video_start_token_id": 125, "video_end_token_id": 126,
+                "fps": 2.0, "audio_sampling_rate": 24000],
+        ], to: root.appendingPathComponent("config.json"))
+        // Deliberately stale sidecar: native nested configuration takes precedence.
+        try writeJSON(["processor_class": "UnknownLegacyProcessor"],
+                      to: root.appendingPathComponent("preprocessor_config.json"))
+        let names = ["visual.patch_embed.proj.weight", "visual.merger.mlp.0.weight",
+            "visual.merger.mlp.2.weight", "visual.blocks.0.attn.qkv.weight",
+            "visual.blocks.1.attn.qkv.weight", "audio_encoder.projection.mlp.0.weight",
+            "audio_encoder.projection.mlp.2.weight", "speech_embeddings.0.weight", "speech_embeddings.1.weight",
+            "audio_encoder.input_local_transformer.layers.0.self_attn.q_proj.weight",
+            "audio_encoder.input_local_transformer.layers.1.self_attn.q_proj.weight"]
+        try writeWeights(names.filter { omit == nil || !$0.contains(omit!) },
+                         to: root.appendingPathComponent("model.safetensors"))
+        let sidecar = root.appendingPathComponent("audio_tokenizer")
+        try FileManager.default.createDirectory(at: sidecar, withIntermediateDirectories: true)
+        try writeJSON(["encoder_layers": 2, "num_quantizers": 2, "d_model": 8, "sampling_rate": 24000],
+                      to: sidecar.appendingPathComponent("config.json"))
+        let encoder = ["encoder.conv1.weight", "encoder.conv2.weight", "encoder.down_sample_layer.0.weight",
+            "encoder.layers.0.self_attn.q_proj.weight", "encoder.layers.1.self_attn.q_proj.weight",
+            "encoder.quantizer.vq.layers.0._codebook.embed", "encoder.quantizer.vq.layers.1._codebook.embed"]
+        try writeWeights(encoder.filter { sidecarOmit == nil || !$0.contains(sidecarOmit!) },
+                         to: sidecar.appendingPathComponent("model.safetensors"))
+        return root
+    }
+
     static func make(type: String = "qwen3_5", omit: String? = nil, indexed: Bool = false) throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

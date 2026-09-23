@@ -367,6 +367,10 @@ public actor ModelRuntime {
         /// tracked separately
         /// so ordinary models still use Osaurus's dynamic reuse heuristic.
         let allocatorCacheLimitBytes: Int?
+        /// The same per-model working set and process budget used at admission.
+        /// Freed buffers consume the remaining budget, not an additional allowance.
+        let admittedWorkingSetBytes: UInt64?
+        let admittedLoadBudgetBytes: UInt64?
         /// Load-time plain-affine DSV4 fact. Native MTP is deliberately not
         /// frozen here because MTP Off/Auto/manual depth is request-scoped.
         /// Both paths may temporarily use the admitted allocator ceiling while
@@ -389,6 +393,8 @@ public actor ModelRuntime {
             nativeMTPReason: String? = nil,
             nativeMTPAdmission: NativeMTPAdmission = .init(),
             allocatorCacheLimitBytes: Int? = nil,
+            admittedWorkingSetBytes: UInt64? = nil,
+            admittedLoadBudgetBytes: UInt64? = nil,
             requiresAdmittedMLXAllocatorCeiling: Bool = false
         ) {
             self.name = name
@@ -403,6 +409,8 @@ public actor ModelRuntime {
             self.nativeMTPReason = nativeMTPReason
             self.nativeMTPAdmission = nativeMTPAdmission
             self.allocatorCacheLimitBytes = allocatorCacheLimitBytes
+            self.admittedWorkingSetBytes = admittedWorkingSetBytes
+            self.admittedLoadBudgetBytes = admittedLoadBudgetBytes
             self.requiresAdmittedMLXAllocatorCeiling = requiresAdmittedMLXAllocatorCeiling
         }
     }
@@ -2880,8 +2888,40 @@ public actor ModelRuntime {
         let dynamicLimit = min(byModel, bySystem)
         return Self.effectiveMLXCacheLimit(
             dynamicLimit: dynamicLimit,
-            configuredLimits: modelCache.values.map(\.allocatorCacheLimitBytes)
+            configuredLimits: allocatorCacheCaps()
         )
+    }
+
+    /// MLX owns one pool shared by all resident models. Reserve each admitted
+    /// working set once, then limit buffer reuse to the remaining process budget.
+    /// This does not lower Memory.memoryLimit or evict live weights/KV tensors.
+    private func allocatorCacheCaps(including holder: SessionHolder? = nil) -> [Int?] {
+        var residents = Array(modelCache.values)
+        if let holder, !residents.contains(where: { $0 === holder }) {
+            residents.append(holder)
+        }
+        return residents.map(\.allocatorCacheLimitBytes) + [Self.allocatorCacheBudgetHeadroom(
+            workingSets: residents.map(\.admittedWorkingSetBytes),
+            budgets: residents.map(\.admittedLoadBudgetBytes)
+        )]
+    }
+
+    nonisolated static func allocatorCacheBudgetHeadroom(
+        workingSets: [UInt64?],
+        budgets: [UInt64?]
+    ) -> Int? {
+        // An unbounded plan has no capacity clamp. Unknown estimates retain the
+        // existing dynamic policy; strict admission rejects them before load.
+        guard let budget = budgets.compactMap({ $0 }).min() else { return nil }
+        var reserved: UInt64 = 0
+        for estimate in workingSets {
+            guard let estimate else { return nil }
+            let sum = reserved.addingReportingOverflow(estimate)
+            guard !sum.overflow else { return 0 }
+            reserved = sum.partialValue
+        }
+        guard budget > reserved else { return 0 }
+        return Int(min(UInt64(Int.max), budget - reserved))
     }
 
     /// Native MTP and plain affine DSV4 both keep large decode intermediates
@@ -2910,8 +2950,9 @@ public actor ModelRuntime {
         return min(dynamicLimit, max(0, configuredLimit))
     }
 
-    /// The only allocator clamp a session holder may carry is one the user
-    /// explicitly typed into Memory Safety. The memory-safety *profile
+    /// The numeric allocator override a session holder carries is one the user
+    /// explicitly typed into Memory Safety. Separately, the admitted working set
+    /// must leave room for buffer reuse within the total budget. The *profile
     /// defaults* (Safe Auto and Strict both resolve the allocator cap to a
     /// fixed 128 MiB) must not override the weight-scaled `mlxCacheLimit()`
     /// dynamic limit: past roughly 13k tokens of context a 128 MiB
@@ -2998,8 +3039,7 @@ public actor ModelRuntime {
             ),
             // MLX has one process-wide pool. Include every resident's explicit
             // maximum, plus the holder while it is being published/warmed.
-            configuredLimits: modelCache.values.map(\.allocatorCacheLimitBytes)
-                + [holder.allocatorCacheLimitBytes]
+            configuredLimits: allocatorCacheCaps(including: holder)
         )
     }
 
@@ -3129,6 +3169,14 @@ public actor ModelRuntime {
         public let useMmapSafetensors: Bool
         public let blockingIssues: [String]
         public let timestamp: Date
+
+        func refusingHostCapacity(_ message: String) -> Self {
+            Self(modelName: modelName, estimatedWorkingSetBytes: estimatedWorkingSetBytes,
+                resolvedLoadBudgetBytes: resolvedLoadBudgetBytes, allowed: false,
+                displaySummary: displaySummary, useMmapSafetensors: useMmapSafetensors,
+                blockingIssues: blockingIssues + ["host.reclaimableMemory: \(message)"],
+                timestamp: Date())
+        }
     }
 
     /// Estimated KV-cache + activation headroom an incoming load needs beyond
@@ -3272,6 +3320,12 @@ public actor ModelRuntime {
             nope > 0, vDim > 0, heads > 0
         {
             perTokenCacheDims = Int64(heads) * Int64(nope + rope + vDim)
+        } else if stringValue(config["model_type"]) == "mimo_v2",
+            stringValue(config["attention_projection_layout"]) == "fused_qkv" {
+            let slidingHeads = intValue(config["swa_num_key_value_heads"]) ?? kvHeads
+            let slidingKey = intValue(config["swa_head_dim"]) ?? headDim
+            let slidingValue = intValue(config["swa_v_head_dim"]) ?? slidingKey
+            perTokenCacheDims = Int64(slidingHeads) * Int64(slidingKey + slidingValue)
         } else {
             perTokenCacheDims = 2 * Int64(kvHeads) * Int64(headDim)
         }
@@ -3285,7 +3339,10 @@ public actor ModelRuntime {
         // sliding attention. Both K and V remain in the cache even when their
         // projections share weights (attention_k_eq_v).
         let fullAttentionDims: Int64
-        if let globalHeadDim = intValue(config["global_head_dim"]), globalHeadDim > 0 {
+        if stringValue(config["model_type"]) == "mimo_v2",
+            stringValue(config["attention_projection_layout"]) == "fused_qkv" {
+            fullAttentionDims = Int64(kvHeads) * Int64(headDim + (intValue(config["v_head_dim"]) ?? headDim))
+        } else if let globalHeadDim = intValue(config["global_head_dim"]), globalHeadDim > 0 {
             let globalHeads = intValue(config["num_global_key_value_heads"]) ?? kvHeads
             fullAttentionDims = 2 * Int64(max(1, globalHeads)) * Int64(globalHeadDim)
         } else {
@@ -3359,6 +3416,19 @@ public actor ModelRuntime {
             ?? intValue(config["attention_chunk_size"])
 
         let modelType = stringValue(config["model_type"])?.lowercased() ?? ""
+
+        if modelType == "mimo_v2", let pattern = config["hybrid_layer_pattern"] as? [Int] {
+            // Full layers must never inherit the sliding-window clamp.
+            mix.declaredPerLayer = true
+            let layers = intValue(config["num_hidden_layers"]) ?? 0
+            if pattern.count == layers, pattern.allSatisfy({ $0 == 0 || $0 == 1 }) {
+                mix.fullAttention = pattern.filter { $0 == 0 }.count
+                mix.slidingAttention = pattern.filter { $0 == 1 }.count
+            } else {
+                mix.fullAttention = layers
+            }
+            return mix
+        }
 
         if let types = config["layer_types"] as? [Any] {
             // Gemma4 / qwen3_5-style explicit per-layer topology.
@@ -3491,9 +3561,24 @@ public actor ModelRuntime {
 
     static func estimatedMemorySafetyWorkingSetBytes(
         loadFootprintBytes: Int64,
-        physicalMemoryBytes: UInt64
+        physicalMemoryBytes: UInt64,
+        modelDirectory: URL? = nil
     ) -> UInt64? {
         guard physicalMemoryBytes > 0 else { return nil }
+        if let modelDirectory,
+            let payload = LocalVisionEvidence.residentMiMoPayloadBytes(modelDirectory),
+            let architectureHeadroom = estimatedArchitectureKVHeadroomBytes(
+                at: modelDirectory,
+                kvRetentionCap: ServerRuntimeSettingsStore.resolvedKVRetentionCap()) {
+            // Native packed gather matmul never materializes a BF16 expert bank.
+            // Price actual payloads (including lazy media towers) plus the resolved
+            // KV topology. The 2 GiB floor covers load/activation/allocator scratch;
+            // resident text proof used ~1 GiB above its 96 GiB packed payload.
+            // A percentage of all 256 experts invents ~25 GiB of temporary data.
+            let scratch = UInt64(max(2 << 30, architectureHeadroom))
+            let total = payload.addingReportingOverflow(scratch)
+            return total.overflow ? nil : total.partialValue
+        }
         return GPUMemoryBudget.estimatedChatWorkingSetBytes(
             onDiskBytes: loadFootprintBytes
         )
@@ -3594,6 +3679,37 @@ public actor ModelRuntime {
         return Int64(budgetGB * bytesPerGB)
     }
 
+    /// Capacity needed without compressing anonymous pages belonging to other
+    /// processes. File-backed reclaim is already included in `available`; it
+    /// must not be credited again as a percentage of physical memory.
+    static func materializedLoadRequiredAvailableBytes(
+        loadFootprintBytes: Int64,
+        kvHeadroomBytes: Int64,
+        estimatedWorkingSetBytes: UInt64?,
+        inflightOtherBytes: Int64,
+        physicalBytes: Int64
+    ) -> Int64? {
+        guard loadFootprintBytes > 0, kvHeadroomBytes >= 0,
+            inflightOtherBytes >= 0, physicalBytes > 0,
+            let estimate = estimatedWorkingSetBytes, estimate <= UInt64(Int64.max)
+        else { return nil }
+        let (weightsAndKV, overflow1) = loadFootprintBytes.addingReportingOverflow(kvHeadroomBytes)
+        guard !overflow1 else { return nil }
+        let (working, overflow2) = max(weightsAndKV, Int64(estimate))
+            .addingReportingOverflow(inflightOtherBytes)
+        guard !overflow2 else { return nil }
+        // Share the existing handoff admission headroom, rather than inventing
+        // a second hidden percentage limit for ordinary model loads.
+        let reserve = ChatResidencyHandoff.headroomBytes
+        let (required, overflow3) = working.addingReportingOverflow(reserve)
+        return overflow3 ? nil : required
+    }
+
+    static func materializedLoadFits(requiredBytes: Int64?, availableBytes: Int64) -> Bool {
+        guard let requiredBytes, requiredBytes > 0, availableBytes > 0 else { return false }
+        return requiredBytes <= availableBytes
+    }
+
     /// Pre-load RAM feasibility assessment. Records `lastRAMFeasibility` for
     /// observability but does not reject a user-requested load solely because
     /// RAM is currently full or projected pressure crosses a configured
@@ -3638,31 +3754,33 @@ public actor ModelRuntime {
 
         lastRAMFeasibility = assessment
 
-        // Materialized (mmap-off) loads make the verdict authoritative: a
-        // load that truly cannot fit aborts in a Metal command-buffer
-        // completion handler mid-materialization instead of degrading
-        // gracefully. Refuse those with a clear error. macOS does reclaim
-        // its own file cache under allocation pressure (the Python runtime
-        // materializes this same 94 GB pack repeatedly with a warm cache),
-        // so grant the same 10%-of-physical reclaim slack the advisory
-        // verdict uses; the margin covers load-time transients. KV headroom
-        // is deliberately not required up front — KV grows later under the
-        // normal budget.
+        // Resident compute needs actual reclaimable capacity for weights,
+        // KV and working state. The host sample already credits file cache;
+        // adding 10% "slack" would instead borrow from anonymous memory and
+        // leave no host reserve during the first prefill. Zero/failed samples
+        // must also refuse rather than silently bypass this check.
         if refuseOnShortfall {
-            let workingMargin: Int64 = 4 << 30
-            let required = incomingLoadFootprintBytes + workingMargin
+            let required = Self.materializedLoadRequiredAvailableBytes(
+                loadFootprintBytes: incomingLoadFootprintBytes,
+                kvHeadroomBytes: kvHeadroom,
+                estimatedWorkingSetBytes: Self.estimatedMemorySafetyWorkingSetBytes(
+                    loadFootprintBytes: incomingLoadFootprintBytes,
+                    physicalMemoryBytes: UInt64(physical), modelDirectory: modelDirectory),
+                inflightOtherBytes: inflightOther,
+                physicalBytes: physical)
             let available = assessment.availableMemoryBytes
-            let reclaimSlack = physical / 10
-            if available > 0, required > available + reclaimSlack {
+            if !Self.materializedLoadFits(requiredBytes: required, availableBytes: available) {
+                let requiredDescription = required.map { "~\($0 >> 30) GiB" } ?? "an unavailable working-set estimate"
+                let message = "Not enough reclaimable memory to load \(modelName): resident weights, KV, working state and host reserve require \(requiredDescription), but only ~\(max(0, available) >> 30) GiB is available. Close other apps or unload other models, then retry."
+                lastMemorySafetyLoadDecision = lastMemorySafetyLoadDecision?.refusingHostCapacity(message)
                 genLog.error(
-                    "loadContainer: refusing materialized load of \(modelName, privacy: .public): required=\(required, privacy: .public) available=\(available, privacy: .public)"
+                    "loadContainer: refusing materialized load of \(modelName, privacy: .public): required=\(requiredDescription, privacy: .public) available=\(available, privacy: .public)"
                 )
                 throw NSError(
                     domain: "ModelRuntime",
                     code: 507,
                     userInfo: [
-                        NSLocalizedDescriptionKey:
-                            "Not enough free memory to load \(modelName): it needs ~\(required >> 30) GB free (\(incomingLoadFootprintBytes >> 30) GB of weights plus working margin) but only \(available >> 30) GB is available. Close other apps or unload other models, then retry."
+                        NSLocalizedDescriptionKey: message
                     ]
                 )
             }
@@ -3858,7 +3976,8 @@ public actor ModelRuntime {
         let estimatedWorkingSetBytes = targetLoadFootprintBytes.flatMap {
             Self.estimatedMemorySafetyWorkingSetBytes(
                 loadFootprintBytes: $0,
-                physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory
+                physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory,
+                modelDirectory: localURL
             )
         }
         let admissionPlan = Self.resolveMemorySafetyLoadPlan(
@@ -4631,7 +4750,8 @@ public actor ModelRuntime {
 
         let estimatedWorkingSetBytes = Self.estimatedMemorySafetyWorkingSetBytes(
             loadFootprintBytes: loadFootprintBytes,
-            physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory
+            physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory,
+            modelDirectory: localURL
         )
         let admissionPlan = Self.resolveMemorySafetyLoadPlan(
             modelName: name,
@@ -4841,8 +4961,8 @@ public actor ModelRuntime {
                 nativeMTPStatus: mtpPlan.statusLine,
                 nativeMTPReason: mtpPlan.reason,
                 nativeMTPAdmission: mtpPlan.admission,
-                // Only a user-typed Memory Safety override may clamp the MLX
-                // freed-buffer pool below the weight-scaled dynamic limit.
+                // Profile allocator defaults must not replace the dynamic pool.
+                // The total admitted budget also bounds its remaining capacity.
                 // Routing the resolved plan value here folded the profile
                 // default (128 MiB for Safe Auto / Strict) into every load,
                 // which collapses deep-context decode under memory pressure
@@ -4851,6 +4971,8 @@ public actor ModelRuntime {
                     customAllocatorCacheBytes:
                         serverSettings.memorySafety.customAllocatorCacheBytes
                 ),
+                admittedWorkingSetBytes: estimatedWorkingSetBytes,
+                admittedLoadBudgetBytes: admissionPlan.resolvedLoadBudgetBytes,
                 // Store the load-time DSV4 fact. Native MTP is resolved per
                 // request so toggling MTP Off cannot keep using the enlarged
                 // request allocator window.
@@ -5810,7 +5932,12 @@ public actor ModelRuntime {
     /// empty list, the single invocation directly for one (backwards
     /// compatibility with consumers that catch `ServiceToolInvocation`),
     /// and a `ServiceToolInvocations` batch for two or more.
-    private static func throwIfTools(_ invs: [ServiceToolInvocation]) throws {
+    private nonisolated static func throwIfTools(
+        _ invs: [ServiceToolInvocation], stopReason: String? = nil
+    ) throws {
+        if stopReason == "length", !invs.isEmpty {
+            throw ServiceToolResponseExhausted(toolCallCount: invs.count)
+        }
         if invs.count == 1 {
             throw invs[0]
         } else if !invs.isEmpty {
@@ -5827,8 +5954,6 @@ public actor ModelRuntime {
         modelId: String,
         modelName: String
     ) async throws -> String {
-        var accumulated = ""
-        var pendingTools: [ServiceToolInvocation] = []
         let forcedToolMessages = ModelRuntime.applyForcedToolChoiceDirective(
             messages,
             toolChoice: toolChoice,
@@ -5850,6 +5975,15 @@ public actor ModelRuntime {
             modelId: modelId,
             modelName: modelName
         )
+        return try await Self.collectToolEventResponse(events)
+    }
+
+    nonisolated static func collectToolEventResponse(
+        _ events: AsyncThrowingStream<ModelRuntimeEvent, Error>
+    ) async throws -> String {
+        var accumulated = ""
+        var pendingTools: [ServiceToolInvocation] = []
+        var terminalStopReason: String?
         // Drain the entire stream so multiple tool invocations parsed by
         // vmlx-swift in a single completion are surfaced together
         // (`BatchEngine.generate` emits one `.toolCall` event per detected
@@ -5876,11 +6010,11 @@ public actor ModelRuntime {
                 // UI-only affordance; only the committed `.toolInvocation`
                 // matters here. Dropped, like `.reasoning`/`.prefillProgress`.
                 break
-            case .completionInfo:
-                break
+            case .completionInfo(_, _, _, let stopReason, _, _):
+                terminalStopReason = stopReason
             }
         }
-        try Self.throwIfTools(pendingTools)
+        try Self.throwIfTools(pendingTools, stopReason: terminalStopReason)
         return accumulated
     }
 
@@ -5994,23 +6128,23 @@ public actor ModelRuntime {
     ) -> AsyncThrowingStream<String, Error> {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let producerTask = Task {
-            var dispatchedTools = false
+            var publishedTerminal = false
             var completedTools: [ServiceToolInvocation] = []
+            var terminalStopReason: String?
             var hasCompletedToolPreview = false
             let traceID = PrefillDebugLog.shared.isEnabled ? UUID().uuidString : ""
 
             func finishTools() {
-                if !completedTools.isEmpty {
+                if !completedTools.isEmpty, terminalStopReason != "length" {
                     PrefillDebugLog.shared.log(
                         "TOOL-BATCH published id=\(traceID) count=\(completedTools.count) completeResponse=\(collectCompleteResponse)"
                     )
                 }
-                if completedTools.count == 1 {
-                    continuation.finish(throwing: completedTools[0])
-                } else if !completedTools.isEmpty {
-                    continuation.finish(throwing: ServiceToolInvocations(invocations: completedTools))
-                } else {
+                do {
+                    try Self.throwIfTools(completedTools, stopReason: terminalStopReason)
                     continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
                 }
             }
 
@@ -6025,7 +6159,7 @@ public actor ModelRuntime {
                     }
                     // Only logical completion closes the batch. Any wrapper
                     // cleanup after it still owns its generation/cache lease.
-                    if dispatchedTools { continue }
+                    if publishedTerminal { continue }
 
                     if case .completionInfo(
                         let tokenCount,
@@ -6035,6 +6169,7 @@ public actor ModelRuntime {
                         let promptTokensPerSecond,
                         let mtp
                     ) = ev {
+                        terminalStopReason = stopReason
                         continuation.yield(
                             StreamingStatsHint.encode(
                                 tokenCount: tokenCount,
@@ -6046,7 +6181,7 @@ public actor ModelRuntime {
                             )
                         )
                         if !collectCompleteResponse, !completedTools.isEmpty {
-                            dispatchedTools = true
+                            publishedTerminal = true
                             finishTools()
                         }
                         continue
@@ -6102,21 +6237,21 @@ public actor ModelRuntime {
                 }
                 if Task.isCancelled {
                     continuation.finish()
-                } else if !dispatchedTools {
+                } else if !publishedTerminal {
                     // Clean EOF also supports producers without a stats event.
                     finishTools()
                 }
             } catch {
                 if Task.isCancelled {
                     continuation.finish()
-                } else if !dispatchedTools {
+                } else if !publishedTerminal {
                     continuation.finish(throwing: error)
                 } else {
-                    // The tool is already executing and cannot receive a
-                    // second terminal result. Keep the cache-drain failure
-                    // visible in diagnostics instead of perturbing the loop.
+                    // Success or exhaustion has already reached the consumer.
+                    // Keep a later cache-drain failure visible without
+                    // publishing a second terminal result.
                     genLog.error(
-                        "tool-call terminal drain failed after dispatch: \(error.localizedDescription, privacy: .public)"
+                        "tool-response drain failed after completion: \(error.localizedDescription, privacy: .public)"
                     )
                 }
             }
@@ -6772,6 +6907,7 @@ public actor ModelRuntime {
         let imageSources = try msgs.map { try extractImageSources(from: $0) }
         var audioMetrics = AudioMaterializationMetrics()
         for (m, images) in zip(msgs, imageSources) {
+            let previousCount = out.count
             let videos = extractVideoSources(from: m)
             let audios = extractAudioSources(from: m, metrics: &audioMetrics)
             switch m.role {
@@ -6856,6 +6992,17 @@ public actor ModelRuntime {
                         audios: audios
                     )
                 )
+            }
+            if out.count > previousCount, let parts = m.contentParts,
+                m.role != "tool" || preserveStructuredToolHistory {
+                out[out.count - 1].contentParts = parts.map { part in
+                    switch part {
+                    case .text(let text): return .text(text)
+                    case .imageUrl: return .image
+                    case .videoUrl: return .video
+                    case .audioInput: return .audio
+                    }
+                }
             }
         }
         if audioMetrics.inputCount > 0 {

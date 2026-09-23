@@ -808,7 +808,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "028943b7609aba300bb25a416610edce071949f5"
+        let expectedRuntimeHardenedRevision = "454e5258641f1c004fcc86b1944ce40e0b4f7a5f"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -3578,22 +3578,24 @@ struct RuntimePolicySourceTests {
                 && invocationCase.contains("completedTools.append(")
                 && invocationCase.contains("ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)")
                 && !invocationCase.contains("continuation.finish(")
-                && !invocationCase.contains("dispatchedTools = true"),
+                && !invocationCase.contains("publishedTerminal = true"),
             "Each closed invocation must enter the ordered batch without ending or cancelling generation before later calls can arrive."
         )
         #expect(
             invocationCase.contains("continuation.yield(StreamingToolHint.encode(name))")
                 && invocationCase.contains("continuation.yield(StreamingToolHint.encodeArgs(argsJSON))")
-                && streamWithTools.contains("if dispatchedTools { continue }")
+                && streamWithTools.contains("if publishedTerminal { continue }")
                 && streamWithTools.contains("if case .cancelled = termination")
                 && streamWithTools.contains("producerTask.cancel()"),
             "The native UI must receive the tool envelope immediately, while only a real consumer cancellation may cancel the engine-owned terminal drain."
         )
         #expect(
             streamWithTools.contains("if !collectCompleteResponse, !completedTools.isEmpty")
-                && streamWithTools.contains("continuation.finish(throwing: ServiceToolInvocations(invocations: completedTools))")
-                && streamWithTools.contains("else if !dispatchedTools"),
-            "Native dispatch must publish the whole batch at logical completion, with clean EOF fallback and no cancellation of the remaining wrapper drain."
+                && streamWithTools.contains("try Self.throwIfTools(completedTools, stopReason: terminalStopReason)")
+                && streamWithTools.contains("else if !publishedTerminal")
+                && runtime.contains("if stopReason == \"length\", !invs.isEmpty")
+                && runtime.contains("throw ServiceToolResponseExhausted(toolCallCount: invs.count)"),
+            "Native dispatch must classify the whole batch at logical completion, rejecting length-truncated tool responses while retaining clean EOF fallback and the wrapper drain."
         )
     }
 

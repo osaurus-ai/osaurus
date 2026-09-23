@@ -1,5 +1,7 @@
 import Foundation
 import Testing
+import OsaurusCore
+@preconcurrency import MLXLMCommon
 
 @testable import OsaurusEvalsKit
 
@@ -19,6 +21,62 @@ import Testing
 ///     the container is shared with the host app).
 @MainActor
 struct EvalBootstrapHostSnapshotTests {
+    @Test func residencyPolicyIsCopiedWithoutHostServerSettings() throws {
+        let real = try makeRealRoot()
+        let isolated = try makeIsolatedRoot()
+        defer {
+            try? FileManager.default.removeItem(at: real)
+            try? FileManager.default.removeItem(at: isolated)
+        }
+        let original = Data(#"{"modelIdleResidencyPolicy":{"mode":"never"},"_modelIdleResidencyPolicyVersion":2,"port":9999,"host":"0.0.0.0","apiKey":"fixture-only"}"#.utf8)
+        let source = real.appendingPathComponent("config/server.json")
+        try original.write(to: source)
+
+        EvalBootstrap.seedHostSnapshots(realRoot: real, isolatedRoot: isolated, symlinkTools: false)
+
+        let copy = isolated.appendingPathComponent("config/server.json")
+        #expect(isRegularFile(copy))
+        let data = try Data(contentsOf: copy)
+        let decoded = try JSONDecoder().decode(ServerConfiguration.self, from: data)
+        #expect(decoded.modelIdleResidencyPolicy == .never)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(Set(object.keys) == ["modelIdleResidencyPolicy", "_modelIdleResidencyPolicyVersion"])
+        #expect(object["_modelIdleResidencyPolicyVersion"] as? Int == 2)
+        try Data("changed by eval".utf8).write(to: copy)
+        #expect(try Data(contentsOf: source) == original)
+    }
+
+    @Test func runtimePolicyIsPreservedWithoutSharingWritableCacheDirectories() throws {
+        let real = try makeRealRoot()
+        let isolated = try makeIsolatedRoot()
+        defer {
+            try? FileManager.default.removeItem(at: real)
+            try? FileManager.default.removeItem(at: isolated)
+        }
+        var settings = VMLXServerRuntimeSettings()
+        settings.memorySafety.slider = 3
+        settings.memorySafety.customPhysicalMemoryFraction = 0.8
+        settings.performance = VMLXServerPerformanceSettings(compiledDecode: false)
+        settings.concurrency.prefillStepSize = 4096
+        settings.cache.blockDisk.directory = "/host-owned-kv-cache"
+        settings.cache.legacyDisk.directory = "/host-owned-legacy-cache"
+        let source = real.appendingPathComponent("config/server-runtime.json")
+        let original = try JSONEncoder().encode(settings)
+        try original.write(to: source)
+
+        EvalBootstrap.seedHostSnapshots(realRoot: real, isolatedRoot: isolated, symlinkTools: false)
+
+        let copy = isolated.appendingPathComponent("config/server-runtime.json")
+        #expect(isRegularFile(copy))
+        let snapshot = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: Data(contentsOf: copy))
+        var expected = settings
+        expected.cache.blockDisk.directory = isolated.appendingPathComponent("cache/kv_v2").path
+        expected.cache.legacyDisk.directory = isolated.appendingPathComponent("cache/legacy-kv").path
+        #expect(snapshot == expected)
+        try Data("changed by eval".utf8).write(to: copy)
+        #expect(try Data(contentsOf: source) == original)
+    }
+
     private func makeRealRoot() throws -> URL {
         let fm = FileManager.default
         let root = fm.temporaryDirectory
