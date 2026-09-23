@@ -49,7 +49,7 @@ Live artifacts: `local-app-r20c-load-failure.json`, `r20c-current-bundle-invento
 - [x] Native affine-width loading regression proved and engine #494 merged; app consumes merged SHA in all four pins and both tripwires.
 - [ ] Rebuild and repeat affected proof for the current bundle and follow-up pin.
 - [ ] Final-pin actual audio/video and tool-card UI with follow-up, source identity, tokens/s and cache telemetry; retain any semantic failures.
-- [ ] Required remote-model AgentLoop/AgentLoopFrontier comparison. Supported environment keys absent; configured endpoint unreachable. `r19-remote-comparison-prerequisites.json`. Existing credential source requested without requesting a pasted secret.
+- [ ] Remote-model AgentLoop/AgentLoopFrontier comparison is now owner-deferred for this PR, not passed. See the R27 checkpoint below; the older missing-credential finding is superseded.
 - [x] Osaurus CI on `a285a38515bc18d5124618003803c23a821fc0ec` passed.
 - [ ] Final amended-head CI and review. Engine CI waiver does not apply here.
 
@@ -287,3 +287,21 @@ The first private PyTorch attempt failed on an unmaterialized nonpersistent
 RoPE buffer from meta-device construction; that harness failure remains
 recorded in `r23-torch-audio-reference.log` and was corrected by ordinary CPU
 construction before the successful run. No production source changed.
+
+## R27 current-source checkpoint
+
+Tested app source `51358261c284880dfc9203a0b6ac2a6c3ae78419`, engine pin `fce53ef0e5cf5eb052a5a38490661bc48218917f`. Main/#2865 is merged into the branch, including the migration-provenance test. Both Release builds succeeded. App SHA256 `032af3b5ab010640c3777890964280b30eb82b8b8f58af3a84bbb8ec97bbab19`; eval SHA256 `67392675a870a6cc68abb1eff071995e47fe22d27065fec3e66bc04a82a1cdb3`. Source manifest `post-pin-r27-source-manifest.json`; build receipts `local-app-r27-build-receipt.json` and `local-evals-r27-build-receipt.json`. Focused regression result: **346/346 tests, 10 suites**, `post-pin-r27-tests-receipt.json`. These do not replace current-source full model/UI proof.
+
+The existing HF credential authenticated and the real DeepSeek-V4.1-Flash router smoke passed 1/1 AgentLoop case. The full attempt hit HTTP402; partial AgentLoop output contains 2 passed, 19 errored, 4 skipped rows. This is infrastructure-limited and not a complete model score. Eric explicitly deferred this comparison (“no need for this one atm”), recorded in `r27-owner-frontier-deferral.json`. No credits purchased, no demo deployed, and no comparison reported as passed.
+
+Current full local matrix and app generation have not run: unchanged admission refused safe capacity112919674880 bytes versus119382780232 required, with normal pressure and zero swap. Remaining shortfall6463105352 bytes. Receipt `r27-final-preflight.json`. Task-owned cleanup retained all files; subsequent read-only census found only2146304 resident bytes across5082 large owned files. No model was started and no memory gate lowered. Existing audio semantic failures remain open; prior runs are historical, not current-source passes.
+
+### R27 admitted diagnostic and parser finding
+
+The owner explicitly requested the load despite the startup reserve refusal. The diagnostic runner retained the actual-free requirement and every running pressure/compressor/swap/reserve/footprint abort, while waiving only the extra initial reserve. It loaded and generated with no live guard trip, peak106532431480bytes physical. This is not an unchanged-admission pass. ReasoningChannel13/13 andCacheProof14/14 passed; interrupted AgentLoopFrontier recorded8passed/1failed. All CI on51358261cpassed.
+
+The failed byte-exact-write row omitted trailing newlines in dispatched arguments and repeatedly appended empty strings. Source review found XMLFunctionParser strips boundaryCR/LF and JSON-unescapes string parameters. Installed MiMo template emits strings verbatim; the upstream SGLang MiMo conversion preserves all five regression values, including newline-only and literal backslash-n. Attribution cannot blame the model alone. Stopped only the owned baseline process and retained its partial results before fixing this transport defect. No full-matrix pass or new UI pass is claimed. Evidence: `r27-local-baseline-summary.json`, `r27-owner-load-exception.json`, `r27-parser-baseline-stop.json`, `r28-upstream-string-reference.json`.
+
+## R28 parser correction merged; rebuild pending
+
+Engine [#500](https://github.com/osaurus-ai/vmlx-swift/pull/500) merged as `6b8dda85a3659b255377a76caf8914c005d2eef1`; tested source `395c993ad4e625d39ae7cc60c0e982d9ed75b4c6` on main `27c50c4915c89a569823305f7f82f08add9be48b`. MiMo now resolves its literal-string XML dialect, including legacy generic stamps in both factories. Swift parser/streaming regressions first reproduced nine failures; the correction passed 81 neighboring tests, then 108 tests on current main. Normal TF32 mode retains four pre-existing known precision issues; the required strict process passed all 108 with none. Receipts: `native-tool-values-r28-main-regression-receipt.json`, `native-tool-values-r28-main-strict-regression-receipt.json`. Engine CI was owner-waived; no Osaurus CI waiver. All four Osaurus pins and both source tripwires now consume the merged fix. Fresh app/eval builds, affected full matrix, actual UI proof and current Osaurus CI remain required. Prior audio semantic failures remain open. No release/tag.
