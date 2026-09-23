@@ -6,7 +6,7 @@ Owner: Eric. Updated 2026-09-23. Work through these tasks in order; merge each p
 
 - **MERGE ONLY. Never cut releases, create/push release tags, or manually dispatch release/deployment workflows.** Urgency and green CI do not authorize a release.
 - Finish and prove each task, then merge its Osaurus PR. Runtime-library changes may use their own paired PR; consume the actual merged runtime SHA in Osaurus and verify the app.
-- Eric explicitly waived CI only for vmlx-swift#493. Osaurus CI remains required.
+- Eric waived engine CI for this MiMo vmlx-swift merge work. Osaurus CI remains required.
 - Eric's expectation is to be impressed by the quality of the work: inspect related variables/callers and omitted edge cases, think through recommendations, prove real behavior in a freshly built development app, preserve failures, and keep exact evidence. Do not substitute confidence, guessed speedups, hidden behavior changes, or status prose for proof.
 - Run model proof on this Mac with unchanged host guards. Protect Warp, Terminal, active agents/jobs and user data. Never overlap full-model loads or bypass an unsafe preflight.
 - Preserve native quantization, dtype, template and bundle generation defaults. No sampler/prompt masking, fabricated credentials, or self-grading presented as independent remote-model proof.
@@ -21,7 +21,9 @@ Owner: Eric. Updated 2026-09-23. Work through these tasks in order; merge each p
 - [x] Final-pin focused regressions: 253 tests in nine suites passed, including both dependency-pin checks.
 - [x] Full R19 local matrix completed on identical runtime source: ReasoningChannel13/13, CacheProof14/14, AgentLoopFrontier42/42, AgentLoop41/56 passed, 11 failed, four skipped. Every non-pass attributed; scores unchanged. R19-to-final-pin source comparison recorded separately from live proof.
 - [x] Actual R19 Chat/Settings proof: load cancellation/cleanup/recovery, allocator override/persistence, image attachments/changed images, prefix off/on/save/reload/history. Prior evidence is explicitly tied to its source/app identity.
-- [ ] Resolve changed-bundle load failure: native affine 3-bit/group128 rejected by catalog. Prove mapped/resident packing and routing, merge paired engine fix, repin/rebuild and requalify current bundle; do not carry R19 scores over.
+- [x] Loader follow-up [vmlx-swift#494](https://github.com/osaurus-ai/vmlx-swift/pull/494) merged at `cd63706f8302b8cd5d9224b26787d85b473aebc2`: native 3/5/6-bit packed loading and mapped/resident routing proved, 13 tests passed with default flags and 13 with optional fusions enabled; all four Osaurus pins and both source tripwires updated.
+- [x] Updated installed iteration2 explicitly selected by Eric; all 54 manifest files passed checksum verification.
+- [ ] Rebuild and requalify current bundle with the follow-up pin; do not carry R19 scores over.
 - [ ] Finish final-pin actual native audio/video/history UI and real tool cards with follow-up. Inspect reasoning, visible answers, card settlement, Stop/input state, tokens/s, memory and cache telemetry. Preserve any semantic failure.
 - [ ] Required remote-model AgentLoop/AgentLoopFrontier comparison. Existing supported credential source requested; none in environment, configured endpoint unreachable. No pasted secrets or invented keys.
 - [ ] Resolve/attribute any remaining in-scope failures; do not call every media/agent row passed. API media recall currently has a retained 3/4 semantic result.
