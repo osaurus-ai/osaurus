@@ -1107,7 +1107,9 @@ Answer with `{"decision":…}`: for `action`, `approve | deny | approve_rest`
 (approve this and any later action in the same app at the same or lower
 effect, for the rest of the run; only when `offers_approve_rest`); for
 `cloud_vision_consent`, `allow_once | allow_always | deny`. A decision that
-does not fit the card is a `404`, never an approval.
+does not fit the card is a `400 invalid_decision` and leaves it waiting;
+it is never read as an approval. `404 prompt_not_pending` means the card is
+gone: answered on the Mac, or its run ended.
 
 ### 16.5 Secrets: `GET /secrets/prompts`, `POST /secrets/prompts/{id}`
 

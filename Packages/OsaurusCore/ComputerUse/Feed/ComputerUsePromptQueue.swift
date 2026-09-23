@@ -265,29 +265,38 @@ extension ComputerUsePromptQueue {
             ?? Data(#"{"prompts":[]}"#.utf8)
     }
 
+    /// How a phone's answer landed.
+    public enum PairedPhoneAnswer: Sendable {
+        case answered
+        /// Already answered, the run ended, or never the phone's card.
+        case notPending
+        /// The card is still waiting: this decision does not fit its kind.
+        case invalidDecision
+    }
+
     /// Answers one of the phone's cards. Actions take `approve | deny |
-    /// approve_rest`; consent takes `allow_once | allow_always | deny`.
-    /// False when the id is not a pending phone card, or the decision does
-    /// not fit its kind (never read as an approval).
-    public func resolveFromPairedPhone(id: UUID, decision: String) -> Bool {
+    /// approve_rest`; consent takes `allow_once | allow_always | deny`. A
+    /// decision that does not fit is refused, never read as an approval, and
+    /// leaves the card pending.
+    public func resolveFromPairedPhone(id: UUID, decision: String) -> PairedPhoneAnswer {
         if pending.contains(where: { $0.id == id && $0.fromPairedPhone }) {
             switch decision {
             case "approve": resolve(id: id, approved: true)
             case "deny": resolve(id: id, approved: false)
             case "approve_rest": resolveApprovingRest(id: id)
-            default: return false
+            default: return .invalidDecision
             }
-            return true
+            return .answered
         }
         if pendingConsent.contains(where: { $0.id == id && $0.fromPairedPhone }) {
             switch decision {
             case "allow_once": resolveConsent(id: id, choice: .allowOnce)
             case "allow_always": resolveConsent(id: id, choice: .allowAlways)
             case "deny": resolveConsent(id: id, choice: .deny)
-            default: return false
+            default: return .invalidDecision
             }
-            return true
+            return .answered
         }
-        return false
+        return .notPending
     }
 }

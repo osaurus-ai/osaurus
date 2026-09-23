@@ -5976,13 +5976,28 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask(priority: .userInitiated) {
-            let answered = await MainActor.run {
-                isSecrets
-                    ? RemoteSecretPromptQueue.shared.resolve(id: promptId, value: secretValue)
-                    : ComputerUsePromptQueue.shared.resolveFromPairedPhone(id: promptId, decision: decision)
+            let outcome: ComputerUsePromptQueue.PairedPhoneAnswer = await MainActor.run {
+                if isSecrets {
+                    return RemoteSecretPromptQueue.shared.resolve(id: promptId, value: secretValue)
+                        ? .answered : .notPending
+                }
+                return ComputerUsePromptQueue.shared.resolveFromPairedPhone(id: promptId, decision: decision)
             }
-            let status: HTTPResponseStatus = answered ? .ok : .notFound
-            let json = answered ? #"{"ok":true}"# : #"{"error":"prompt_not_pending"}"#
+            // A decision that doesn't fit the card is the phone's mistake, not
+            // a gone card: 400 keeps it from dropping a card still waiting.
+            let status: HTTPResponseStatus
+            let json: String
+            switch outcome {
+            case .answered:
+                status = .ok
+                json = #"{"ok":true}"#
+            case .notPending:
+                status = .notFound
+                json = #"{"error":"prompt_not_pending"}"#
+            case .invalidDecision:
+                status = .badRequest
+                json = #"{"error":"invalid_decision"}"#
+            }
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
                 headers.append(contentsOf: cors)
