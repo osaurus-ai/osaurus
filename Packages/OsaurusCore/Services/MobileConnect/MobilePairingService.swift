@@ -2,7 +2,7 @@
 //  MobilePairingService.swift
 //  osaurus
 //
-//  Osaurus Connect pairing: lets exactly one phone (the iOSaurus app) pair
+//  Osaurus Connect pairing: lets exactly one phone (the Osaurus iPhone app) pair
 //  with this Mac by typing a 6-digit code shown in Settings → Osaurus Connect.
 //
 //  Flow:
@@ -33,7 +33,7 @@ struct MobilePairRequest: Decodable, Sendable {
     let deviceName: String
     /// Phone's ephemeral X25519 public key (base64url) the response is sealed to.
     let encPub: String
-    /// Set by iOSaurus when running in the iOS Simulator (shown as a badge).
+    /// Set by the iPhone app when running in the iOS Simulator (shown as a badge).
     var isSimulator: Bool? = nil
 }
 

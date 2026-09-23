@@ -275059,7 +275059,6 @@
     "Nothing is charged until you complete the checkout. Osaurus checks for the new workspace each time you come back to it; you can also close this and refresh the list.": {},
     "Off: callers not on this Mac must use Secure Channel or get 426. On: the secret alone is enough — trusted LAN only.": {},
     "Open Context Window Cap": {},
-    "Open iOSaurus on your iPhone, then generate a code here and type it in. Your iPhone must be on the same network as this Mac while pairing.": {},
     "Open setting": {},
     "Optional. Runs every delegated agent on this model instead of the agent's own. Leave it on \"Use each agent's model\" unless you need one model for all subagents.": {},
     "Osaurus Connect": {},
@@ -275146,7 +275145,8 @@
     "Workspace agents": {},
     "Your handle lives on the router, next to your credits and workspaces. Turn it on to claim one.": {},
     "Your public handle across Osaurus. Workspaces, invites, and usage show it instead of your master address.": {},
-    "Your workspaces are paused until the payment method is fixed. Update your card in the billing portal.": {}
+    "Your workspaces are paused until the payment method is fixed. Update your card in the billing portal.": {},
+    "Open Osaurus on your iPhone, then generate a code here and type it in. Your iPhone must be on the same network as this Mac while pairing.": {}
   },
   "version": "1.1"
 }

@@ -719,7 +719,7 @@ sequenceDiagram
 
 ## 11. Osaurus Connect pairing (6-digit code)
 
-The iOSaurus app pairs with **one** Mac by typing a 6-digit code shown in
+The Osaurus iPhone app pairs with **one** Mac by typing a 6-digit code shown in
 Settings → Osaurus Connect. It needs no master key on the phone and yields a
 master-scoped `osk-v1` key covering every agent on that Mac, plus each agent's
 crypto address for the Secure Channel (§6.2). One phone per Mac: a new

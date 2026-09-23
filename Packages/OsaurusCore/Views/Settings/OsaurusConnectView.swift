@@ -2,7 +2,7 @@
 //  OsaurusConnectView.swift
 //  osaurus
 //
-//  Settings → Osaurus Connect: pair the iOSaurus phone app with a 6-digit
+//  Settings → Osaurus Connect: pair the Osaurus iPhone app with a 6-digit
 //  code, see / revoke the paired phone, and keep the Mac awake for it.
 //  All state lives in `MobilePairingService`; this view only renders it.
 //
@@ -66,7 +66,7 @@ struct OsaurusConnectView: View {
         SettingsSection(title: L("Pair an iPhone"), icon: "iphone.gen3") {
             VStack(alignment: .leading, spacing: 14) {
                 Text(
-                    "Open iOSaurus on your iPhone, then generate a code here and type it in. Your iPhone must be on the same network as this Mac while pairing.",
+                    "Open Osaurus on your iPhone, then generate a code here and type it in. Your iPhone must be on the same network as this Mac while pairing.",
                     bundle: .module
                 )
                 .font(.system(size: 12))

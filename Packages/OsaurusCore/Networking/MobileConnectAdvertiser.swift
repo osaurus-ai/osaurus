@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Advertises this Mac itself (not an agent) as `_osaurus-mobile._tcp` so the
-//  iOSaurus app can find it for 6-digit pairing even when no agent has
+//  Osaurus iPhone app can find it for 6-digit pairing even when no agent has
 //  Bonjour enabled. The TXT record carries only a display name and the
 //  protocol version; identity and keys are exchanged by `POST /pair/code`.
 //

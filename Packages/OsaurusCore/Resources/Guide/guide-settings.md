@@ -29,7 +29,7 @@ Ask the assistant to change declarative settings in chat (`osaurus_config`); eac
 - Themes: theme gallery, custom theme editor, import/export.
 - Computer Use / Browser / Sandbox: autonomy presets, app allowlists, resources.
 - Permissions: macOS TCC grants (Accessibility, Screen Recording, …). Tool Auto/Ask/Deny policies live on the Tools tab.
-- Osaurus Connect: **Generate Pairing Code** (a 6-digit code the iOSaurus iPhone app redeems on the same network; one iPhone per Mac, pairing a new one unpairs the old), the **Paired iPhone** with **Unpair**, **Reach From Anywhere** (on by default; turns on the relay tunnel for every agent while a phone is paired, so the iPhone works away from this network, still end-to-end encrypted), and **Keep Mac Awake for Paired iPhone** (on by default; prevents idle system sleep only while a phone is paired).
+- Osaurus Connect: **Generate Pairing Code** (a 6-digit code the Osaurus iPhone app redeems on the same network; one iPhone per Mac, pairing a new one unpairs the old), the **Paired iPhone** with **Unpair**, **Reach From Anywhere** (on by default; turns on the relay tunnel for every agent while a phone is paired, so the iPhone works away from this network, still end-to-end encrypted), and **Keep Mac Awake for Paired iPhone** (on by default; prevents idle system sleep only while a phone is paired).
 - Identity, Storage (encryption/backup), Privacy, Channels credentials.
 - Secrets of any kind (API keys, tokens) are always entered in native secure fields, never chat.
 
