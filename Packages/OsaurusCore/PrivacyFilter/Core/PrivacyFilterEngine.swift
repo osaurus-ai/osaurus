@@ -210,6 +210,8 @@ public final class PrivacyFilterEngine {
         // the classifier-only categories (person / address / date /
         // secret) then rely on regex/preset/custom rules.
         var modelPending: [PendingMatch] = []
+        // Per-layer counts for the one-line diagnostic below.
+        var modelRawCount = 0
         if useModel {
             switch backend {
             case .openai:
@@ -220,6 +222,7 @@ public final class PrivacyFilterEngine {
                 } catch {
                     throw PrivacyFilterEngineError.detectionFailed(error.localizedDescription)
                 }
+                modelRawCount = entities.count
                 for entity in entities {
                     guard let category = EntityCategory(entity.type) else { continue }
                     modelPending.append(
@@ -234,6 +237,7 @@ public final class PrivacyFilterEngine {
                 }
             case .rampart:
                 let spans = await RampartModelManager.shared.modelSpans(in: scanText)
+                modelRawCount = spans.count
                 for span in spans {
                     modelPending.append(
                         PendingMatch(
@@ -279,14 +283,27 @@ public final class PrivacyFilterEngine {
         // this BEFORE interning so we don't pay for placeholders we're
         // about to throw away.
         let injected = InjectedContextSpans.ranges(in: scanText)
+        var droppedInjected = 0
+        var droppedMasked = 0
         var surviving: [(category: EntityCategory, original: String, range: Range<String.Index>, label: String?)] =
             []
         surviving.reserveCapacity(resolved.count)
         for match in resolved {
-            if InjectedContextSpans.overlaps(match.range, injected) { continue }
-            guard let restored = restore(match.range) else { continue }
+            if InjectedContextSpans.overlaps(match.range, injected) {
+                droppedInjected += 1
+                continue
+            }
+            guard let restored = restore(match.range) else {
+                droppedMasked += 1
+                continue
+            }
             surviving.append((match.category, match.original, restored, match.label))
         }
+        // Counts only, never text: enough to tell "the model saw nothing"
+        // from "it was dropped" when a send goes out with no review.
+        print(
+            "[PrivacyFilter] Segment: \(scanText.count) chars, model[\(useModel ? backend.rawValue : "off")] \(modelRawCount) raw / \(modelPending.count) mapped, regex \(regexMatches.count), merged \(resolved.count), dropped \(droppedInjected) injected-context + \(droppedMasked) code-masked, kept \(surviving.count); injected-context spans \(injected.count)"
+        )
 
         // Second pass: batch-intern in a single actor hop. Previous
         // implementation awaited `map.intern(…)` per match — a 30-hit
