@@ -502,11 +502,16 @@ private struct ThemedAlertDialogContent: View {
         return buttons.filter { $0.role != .cancel }
     }
 
+    /// Index of the inline button that takes the accent style and Return.
+    /// With the corner X shown, an explicit role-nil action (e.g. an
+    /// announcement's single call-to-action) still reads as primary; only
+    /// the "nothing but cancel" chooser case yields no primary (`-1`).
     private var inlinePrimaryIndex: Int {
+        if let explicit = inlineButtons.firstIndex(where: { $0.role == nil }) {
+            return explicit
+        }
         if showsCloseButton { return -1 }
-        return inlineButtons.firstIndex { $0.role == nil }
-            ?? inlineButtons.firstIndex { $0.role == .destructive }
-            ?? 0
+        return inlineButtons.firstIndex { $0.role == .destructive } ?? 0
     }
 
     private func closeButton(_ cancel: AlertButtonConfig) -> some View {

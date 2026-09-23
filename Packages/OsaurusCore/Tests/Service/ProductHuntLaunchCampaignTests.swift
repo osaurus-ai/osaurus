@@ -3,7 +3,7 @@
 //  osaurusTests
 //
 //  Locks the two-phase Raptor Product Hunt campaign's eligibility
-//  contract: the absolute UTC launch window (half-open,
+//  contract: the absolute UTC launch window (Monday 2026-09-28, half-open,
 //  timezone-independent) that splits time into teaser / launch / closed,
 //  the per-phase persisted seen flags (dismissing the teaser must NOT
 //  hide the launch-day dialog), the in-memory duplicate-presentation
@@ -42,8 +42,9 @@ struct ProductHuntLaunchCampaignTests {
     /// (absolute instants, never the user's local calendar date).
     @Test func windowBounds_match_spec_utc_instants() {
         let iso = ISO8601DateFormatter()
-        #expect(iso.date(from: "2026-09-23T07:01:00Z") == open)
-        #expect(iso.date(from: "2026-09-24T07:01:00Z") == close)
+        // Monday 2026-09-28 at 12:01am Pacific (PDT = UTC-7).
+        #expect(iso.date(from: "2026-09-28T07:01:00Z") == open)
+        #expect(iso.date(from: "2026-09-29T07:01:00Z") == close)
         // 24-hour window — Product Hunt launches run for one day.
         #expect(close.timeIntervalSince(open) == 24 * 3600)
     }

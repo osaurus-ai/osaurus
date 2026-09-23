@@ -33,16 +33,17 @@ public final class ProductHuntLaunchCampaign {
         case launch
     }
 
-    /// 2026-09-23T07:01:00Z — 12:01am Pacific on launch day (PDT = UTC-7).
-    /// Stored as an absolute epoch instant so a user in Tokyo and a user in
-    /// LA become eligible at the same real-world moment regardless of their
-    /// local calendar date. Verified against ISO-8601 parses in tests.
-    nonisolated public static let launchOpensAt = Date(timeIntervalSince1970: 1_790_146_860)
+    /// 2026-09-28T07:01:00Z — 12:01am Pacific on launch day, Monday
+    /// (PDT = UTC-7). Stored as an absolute epoch instant so a user in
+    /// Tokyo and a user in LA become eligible at the same real-world moment
+    /// regardless of their local calendar date. Verified against ISO-8601
+    /// parses in tests.
+    nonisolated public static let launchOpensAt = Date(timeIntervalSince1970: 1_790_578_860)
 
-    /// 2026-09-24T07:01:00Z — exactly 24 hours after open (Product Hunt
+    /// 2026-09-29T07:01:00Z — exactly 24 hours after open (Product Hunt
     /// launches run for one day). The interval is half-open
     /// (`open <= now < close`), so this instant itself is closed.
-    nonisolated public static let launchClosesAt = Date(timeIntervalSince1970: 1_790_233_260)
+    nonisolated public static let launchClosesAt = Date(timeIntervalSince1970: 1_790_665_260)
 
     /// Product Hunt launch page, opened by the launch-day dialog's primary
     /// button. The teaser is acknowledge-only (no page exists yet).

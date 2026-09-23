@@ -740,7 +740,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     maybePromptForTelemetryConsent()
                 }
 
-                // One-time Product Hunt launch dialog (July 2026). Delayed
+                // One-time Product Hunt launch dialogs (Raptor, Sept 2026). Delayed
                 // past the consent prompt's own 900ms settle so the two can
                 // never race for a scope; if consent is still pending the
                 // eligibility gate defers to the next activation. Silent
@@ -2863,7 +2863,8 @@ extension AppDelegate {
 
         // The dismiss button carries the cancel role so Escape and an outside
         // click follow the same permanent-dismiss path. Alone (teaser) it
-        // renders in the primary style and also takes Return.
+        // renders in the primary style and also takes Return; on launch day
+        // it is promoted to the corner X.
         let dismissButton = { (label: String) -> AlertButtonConfig in
             .cancel(label) {
                 campaign.markSeen(phase)
@@ -2890,17 +2891,20 @@ extension AppDelegate {
             )
             buttons = [dismissButton(L("Got it"))]
         case .launch:
-            title = L("Raptor is live on Product Hunt")
+            title = L("We're live on Product Hunt! 🥳")
             message = L(
                 """
-                Today's the day. Raptor, our local model for agentic tasks, runs in under 4GB and is built for Macs with 16GB of memory or less.
+                Raptor by Osaurus runs in less than 4GB, and is built for Macs with 16GB RAM or less.
 
-                If Osaurus has been useful to you, come support the launch and leave your feedback. It means a lot to us.
+                We hope Osaurus is useful to you and if so, we need your support to share it with more people! A comment about what you like really helps.
                 """
             )
+            // No "Maybe later" — later never comes. The cancel-role button is
+            // promoted to the corner X (`showsCloseButton`), leaving "Check
+            // it out" as the only inline (primary) action.
             buttons = [
-                dismissButton(L("Maybe later")),
-                .primary(L("Support the launch")) {
+                dismissButton(L("Close")),
+                .primary(L("Check it out")) {
                     campaign.markSeen(phase)
                     FeatureTelemetry.productHuntLaunchDialogClicked(phase: phase, action: "launch")
                     // `open` makes a synchronous XPC round-trip to
@@ -2924,6 +2928,7 @@ extension AppDelegate {
                 headerImageAccessibilityLabel: L(
                     "Osaurus dinosaur and the Product Hunt kitty saying thank you"),
                 buttons: buttons,
+                showsCloseButton: phase == .launch,
                 width: 400,
                 onDismiss: {
                     campaign.didDismiss()
