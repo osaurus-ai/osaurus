@@ -39,6 +39,7 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_osaurus._tcp</string>
+		<string>_osaurus-mobile._tcp</string>
 	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
