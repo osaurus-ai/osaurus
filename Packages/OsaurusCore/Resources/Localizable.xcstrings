@@ -274759,6 +274759,90 @@
           }
         }
       }
+    },
+    "ERROR: Write-only access. Full access is required.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "FEHLER: Nur Schreibzugriff. Vollzugriff ist erforderlich."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "오류: 쓰기 전용 접근입니다. 전체 접근 권한이 필요합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "ОШИБКА: доступ только для записи. Требуется полный доступ."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "错误：仅写入权限。需要完全访问权限。"
+          }
+        }
+      }
+    },
+    "SUCCESS: Authorized (fetching a contact failed: %@)": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "ERFOLG: Autorisiert (Abruf eines Kontakts fehlgeschlagen: %@)"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "성공: 인증됨 (연락처 가져오기 실패: %@)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "SUCCESS: авторизовано (не удалось получить контакт: %@)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "成功：已授权（获取联系人失败：%@）"
+          }
+        }
+      }
+    },
+    "SUCCESS: Protected files are readable.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "ERFOLG: Geschützte Dateien sind lesbar."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "성공: 보호된 파일을 읽을 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "SUCCESS: защищённые файлы доступны для чтения."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "成功：受保护的文件可读。"
+          }
+        }
+      }
     }
   },
   "version": "1.1"

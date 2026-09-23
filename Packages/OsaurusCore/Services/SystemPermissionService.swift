@@ -806,12 +806,12 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         case .compileError, .runtimeError:
             let number = result.errorNumber.map { "[\($0)]" } ?? ""
             let text = result.errorMessage ?? "Unknown error"
-            var guidance = ""
-            if result.errorNumber == AppleScriptBridge.ErrorNumber.appNotRunning
-                || result.errorNumber == AppleScriptBridge.ErrorNumber.connectionInvalid
-            {
-                guidance = " → App communication failed. Open the app and try again."
-            }
+            let appGoneCodes = [
+                AppleScriptBridge.ErrorNumber.appNotRunning,
+                AppleScriptBridge.ErrorNumber.connectionInvalid,
+            ]
+            let appGone = result.errorNumber.map(appGoneCodes.contains) ?? false
+            let guidance = appGone ? " → App communication failed. Open the app and try again." : ""
             return .denied("ERROR \(number): \(text)\(guidance)")
         }
     }
