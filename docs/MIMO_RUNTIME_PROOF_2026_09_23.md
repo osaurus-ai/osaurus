@@ -227,22 +227,22 @@ CPU-only cache-key reconstruction subsequently corroborated the prior API output
 
 The updated installed bundle was evaluated through the independent Python
 MiMo backbone, loading and releasing one decoder layer at a time to stay within
-an8GiB diagnostic cap. All48layers, full256expert banks and native quantization
+an 8 GiB diagnostic cap. All 48 layers, full 256-expert banks and native quantization
 were retained. This private diagnostic does not change the resident app path.
 The neutral audio features reused here were independently bit-exact against
 the Python encoder, rather than freshly recomputed in the language run.
 
-Teacher-forced logits ranked all12observed tokens first, including EOS
+Teacher-forced logits ranked all 12 observed tokens first, including EOS
 (`r22-layerwise-audio-r2-reference.json`). More decisively, free-running native
-temperature1/top-p0.95 generation reproduced the exact sequence
+temperature 1/top-p 0.95 generation reproduced the exact sequence
 `<think><think>A red bicycle is beside the wooden fence.<|im_end|>`.
 It stopped naturally, with no fabricated tags, parser repair or prompt changes.
-Receipt `r22-streamed-audio-receipt.json`: exit0, no guard trip,
-peak6,656,349,800bytes. Raw result `r22-streamed-audio-reference.json`:
-270.377s,12tokens including EOS,0.04438tokens/s end-to-end and0.04606decode
+Receipt `r22-streamed-audio-receipt.json`: exit 0, no guard trip,
+peak 6,656,349,800 bytes. Raw result `r22-streamed-audio-reference.json`:
+270.377 s, 12 tokens including EOS,0.04438 tokens/s end-to-end and0.04606 decode
 tokens/s. These intentionally slow diagnostic rates include per-token layer
-reloads (1,220,649,802,240bytes read), and are not app performance results.
-The actual app remains the46.4–49.0tokens/s rows above. This reproduces a
+reloads (1,220,649,802,240 bytes read), and are not app performance results.
+The actual app remains the 46.4–49.0 tokens/s rows above. This reproduces a
 model/backbone failure independently of Swift's output parser; it does not
 prove whether the shared architecture, bundle conversion or source weights
 caused it.
@@ -250,24 +250,40 @@ caused it.
 The FP32 codec policy originated in the local Python omni wrapper
 (`v26_omni.py:39–43`); it differs from Xiaomi's bundled loader default BF16 and
 SGLang's BF16 load followed by FP32 RVQ. A bounded BF16 diagnostic changed
-207/920,142/840and215/1180codes for the three clips, but the neutral backbone
+207/920, 142/840 and 215/1180 codes for the three clips, but the neutral backbone
 still ranks every token of the same invalid output first, with probability
-at least0.97135 (`r23-audio-dtype-reference.json`,
+at least 0.97135 (`r23-audio-dtype-reference.json`,
 `r23-layerwise-audio-bf16-reference.json`). These are component/logit rows,
 not free-running BF16 generation or proof of a semantic fix. The production
 dtype path has not been changed on this evidence.
 
 The updated full local eval matrix was then attempted with the rebuilt CLI,
-but refused before child launch: safe capacity115,852,132,352bytes versus
-119,382,780,232required (`local-evals-r22-host-memory.jsonl`). No model was
+but refused before child launch: safe capacity 115,852,132,352 bytes versus
+119,382,780,232 required (`local-evals-r22-host-memory.jsonl`). No model was
 loaded for that attempt. Read-only invalidation had already reclaimed
-78,237,827,072bytes of clean cache from the completed reference's inactive
+78,237,827,072 bytes of clean cache from the completed reference's inactive
 model files; every target had no open handles and unchanged size/mtime
 (`r23-after-reference-cache-invalidation.json`). The remaining owned build
-and proof files account for only38,600,704cached bytes
+and proof files account for only 38,600,704 cached bytes
 (`r23-after-reference-owned-file-cache-census.json`). Closing the small vMLX
-GUI would not recover the missing3.3GiB; protected terminals, active jobs,
+GUI would not recover the missing 3.3 GiB; protected terminals, active jobs,
 system processes and unrelated files remain untouched. This refusal is not
 an eval score. Remote-model comparison also still needs an existing reachable
 provider/credential source; the configured endpoint's latest probe failed
-with curl7/HTTP000 (`r22-latest-provider-probe.json`).
+with curl 7/HTTP 000 (`r22-latest-provider-probe.json`).
+
+A further bounded differential executed the installed Xiaomi PyTorch source
+(`modeling_mimo_v2.py`, SHA256
+`a8c3cb3aae473bcc15f023010547c919f15eba6546e6ed7efb61a8937b12f3ad`)
+with the actual BF16 codec and audio encoder weights. Its codes differ from
+both FP32 and MLX-BF16 paths, but feeding those native PyTorch features into
+the independent backbone still ranks all 12 tokens of the same invalid
+answer first (minimum probability 0.97585). This is a logits comparison, not
+a new free-running answer or a full PyTorch language-model comparison.
+Artifacts: `r23-torch-audio-r2-reference.json`,
+`r23-torch-encoder-reference.json`, `r23-layerwise-audio-torch-reference.json`.
+All three guarded runs exited 0 without guard trips; peaks 0.86/2.76/4.73 GB.
+The first private PyTorch attempt failed on an unmaterialized nonpersistent
+RoPE buffer from meta-device construction; that harness failure remains
+recorded in `r23-torch-audio-reference.log` and was corrected by ordinary CPU
+construction before the successful run. No production source changed.
