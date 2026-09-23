@@ -366,7 +366,10 @@ public final class RelayTunnelManager: ObservableObject {
         supersededAgentIds.removeAll()
         supersededAddresses.removeAll()
         let enabled = configuration.enabledAgentIds
-        guard !enabled.isEmpty else { return }
+        guard !enabled.isEmpty else {
+            MobileConnectLog.write("relay: no agent has Reach From Anywhere on, not opening a tunnel")
+            return
+        }
 
         for id in enabled {
             agentStatuses[id] = .connecting
@@ -377,6 +380,7 @@ public final class RelayTunnelManager: ObservableObject {
 
     /// Called when the local server stops -- tears down the tunnel.
     public func disconnectAll() {
+        MobileConnectLog.write("relay: tunnel closed on purpose (server stopping)")
         shouldReconnect = false
         reconnectTask?.cancel()
         reconnectTask = nil
@@ -420,7 +424,10 @@ public final class RelayTunnelManager: ObservableObject {
         // automatically (relay contract). If that leaves nothing to
         // authenticate, there is no tunnel to open.
         let enabled = configuration.enabledAgentIds.filter { !isSupersededAgent($0) }
-        guard !enabled.isEmpty else { return }
+        guard !enabled.isEmpty else {
+            MobileConnectLog.write("relay: every enabled agent is served from another device, not connecting")
+            return
+        }
 
         for id in enabled {
             ensureAgentIdentity(id)
@@ -430,6 +437,7 @@ public final class RelayTunnelManager: ObservableObject {
             enabled.contains(agent.id) && agent.agentAddress != nil && agent.agentIndex != nil
         }
         guard !agents.isEmpty else {
+            MobileConnectLog.write("relay: FAILED to connect, none of the \(enabled.count) enabled agents has an identity")
             for id in enabled {
                 let agent = AgentManager.shared.agent(for: id)
                 if agent?.agentAddress == nil {
@@ -440,6 +448,7 @@ public final class RelayTunnelManager: ObservableObject {
         }
 
         guard let masterKey = await obtainMasterKey() else {
+            MobileConnectLog.write("relay: FAILED to connect, the master key could not be read from the keychain")
             for agent in agents { agentStatuses[agent.id] = .error("No identity") }
             return
         }
@@ -464,6 +473,9 @@ public final class RelayTunnelManager: ObservableObject {
         self.urlSession = session
         self.webSocketTask = task
         task.resume()
+        MobileConnectLog.write(
+            "relay: connecting to \(Self.relayURL.host ?? "relay") for \(agents.count) agent(s): \(agents.compactMap(\.agentAddress).joined(separator: ", "))"
+        )
 
         // `keyBox` is captured by reference; the handler zeroes the key bytes
         // after signing so master-key material doesn't outlive its single use
@@ -528,6 +540,9 @@ public final class RelayTunnelManager: ObservableObject {
                     self.handleMessage(message)
                 } catch {
                     guard self.webSocketTask === task else { break }
+                    MobileConnectLog.write(
+                        "relay: tunnel dropped: \(error.localizedDescription) (close code \(task.closeCode.rawValue))"
+                    )
                     self.handleDisconnect()
                     break
                 }
@@ -571,6 +586,7 @@ public final class RelayTunnelManager: ObservableObject {
         case "error":
             let errorMsg = json["error"] as? String ?? "unknown"
             print("[Relay] Error frame: \(errorMsg)")
+            MobileConnectLog.write("relay: error frame from the relay: \(errorMsg)")
         default:
             break
         }
@@ -589,6 +605,9 @@ public final class RelayTunnelManager: ObservableObject {
         authErrorRetries = 0
 
         guard let agents = json["agents"] as? [[String: Any]] else { return }
+        MobileConnectLog.write(
+            "relay: tunnel up, serving \(agents.compactMap { ($0["address"] as? String)?.lowercased() }.joined(separator: ", "))"
+        )
         for agentInfo in agents {
             guard let address = agentInfo["address"] as? String,
                 let url = agentInfo["url"] as? String
@@ -607,6 +626,7 @@ public final class RelayTunnelManager: ObservableObject {
     private func handleAuthError(_ json: [String: Any]) {
         let error = json["error"] as? String ?? "auth_failed"
         print("[Relay] Auth error: \(error)")
+        MobileConnectLog.write("relay: auth REFUSED by the relay: \(error) (retry \(authErrorRetries + 1) of \(Self.maxAuthErrorRetries))")
         for id in configuration.enabledAgentIds {
             agentStatuses[id] = .error(error)
         }
@@ -649,6 +669,7 @@ public final class RelayTunnelManager: ObservableObject {
 
         let lower = address.lowercased()
         authenticatedAgents.insert(lower)
+        MobileConnectLog.write("relay: now serving \(lower)")
         if let agent = findAgent(byAddress: lower) {
             addressToAgentId[lower] = agent.id
             beginPublicRouteCheck(for: agent.id, url: url)
@@ -662,6 +683,7 @@ public final class RelayTunnelManager: ObservableObject {
         guard let address = json["address"] as? String else { return }
         let lower = address.lowercased()
         let superseded = (json["reason"] as? String) == "superseded"
+        MobileConnectLog.write("relay: stopped serving \(lower)\(superseded ? ", another device took it over" : "")")
         authenticatedAgents.remove(lower)
         if superseded {
             supersededAddresses.insert(lower)
@@ -1158,6 +1180,7 @@ public final class RelayTunnelManager: ObservableObject {
             "address": address,
         ]
         sendJSON(frame)
+        MobileConnectLog.write("relay: Reach From Anywhere turned off for \(address.lowercased())")
         let lower = address.lowercased()
         authenticatedAgents.remove(lower)
         addressToAgentId.removeValue(forKey: lower)
@@ -1193,12 +1216,19 @@ public final class RelayTunnelManager: ObservableObject {
             }
         }
 
-        guard shouldReconnect else { return }
+        guard shouldReconnect else {
+            MobileConnectLog.write("relay: not reconnecting, the tunnel was closed on purpose")
+            return
+        }
         // Every enabled address is served from another device: the relay
         // contract says do not reconnect for them, and there is nothing else
         // to authenticate. A user-initiated enable or relaunch resumes.
-        guard !stillOurs.isEmpty else { return }
+        guard !stillOurs.isEmpty else {
+            MobileConnectLog.write("relay: not reconnecting, every enabled agent is served from another device")
+            return
+        }
 
+        MobileConnectLog.write("relay: reconnecting in \(Int(reconnectDelay))s")
         reconnectTask?.cancel()
         reconnectTask = Task { [weak self] in
             guard let self else { return }
