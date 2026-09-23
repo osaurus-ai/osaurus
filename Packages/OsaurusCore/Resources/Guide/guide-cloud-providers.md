@@ -10,7 +10,7 @@ Osaurus can use cloud or peer inference providers alongside local models. Your c
 
 ## Adding a provider
 
-- Management (⌘⇧M) → Providers → Add Provider → pick a preset or Custom → Save.
+- Settings… (⌘,) → Providers → Add Provider → pick a preset or Custom → Save.
 - Presets include Anthropic, OpenAI, xAI, and OpenRouter; Gemini, Venice AI, and Osaurus Router are also supported. Custom works with any OpenAI-, Anthropic-, or Open Responses-format API.
 - Or ask the default Osaurus assistant in chat to add a provider — API keys are entered through a secure native sheet that stores them straight to the macOS Keychain (never through chat text).
 

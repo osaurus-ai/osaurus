@@ -186,7 +186,7 @@ That's the entire surface. v1's 18 knobs (`mmrLambda`, `mmrFetchMultiplier`, `ve
 
 ## Storage
 
-All memory data is stored in a local SQLite database with WAL mode. As of 0.21.0 the database is **plaintext SQLite by default** (relying on macOS FileVault for at-rest protection), with **opt-in SQLCipher encryption** available in **Settings → Storage** — the same posture chat history, methods, and tool indexes share. The earlier always-on encryption was walked back because a missing Keychain key could silently brick memory and search; see [STORAGE.md → Why encryption is opt-in](STORAGE.md#why-encryption-is-opt-in).
+All memory data is stored in a local SQLite database with WAL mode. As of 0.21.0 the database is **plaintext SQLite by default** (relying on macOS FileVault for at-rest protection), with **opt-in SQLCipher encryption** available in **Settings… (⌘,) → Privacy → Storage** — the same posture chat history, methods, and tool indexes share. The earlier always-on encryption was walked back because a missing Keychain key could silently brick memory and search; see [STORAGE.md → Why encryption is opt-in](STORAGE.md#why-encryption-is-opt-in).
 
 **Location:** `~/.osaurus/memory/memory.sqlite` (plaintext SQLite, or SQLCipher when encryption is opted in)
 

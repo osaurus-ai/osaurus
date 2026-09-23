@@ -6728,7 +6728,7 @@ private struct ContextBreakdownPopover: View {
         .pointingHandCursor()
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .localizedHelp("Open Management → Server → Cache → Context Window Cap")
+        .localizedHelp("Open Settings… (⌘,) → Server → Settings → Cache → Context Window Cap")
     }
 
     // MARK: - Disk cache

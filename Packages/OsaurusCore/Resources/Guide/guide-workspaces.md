@@ -6,7 +6,7 @@ order: 176
 
 # Workspaces and Shared Agents
 
-A workspace is a group of people (Management ⌘⇧M → Workspaces) with a shared credit pool and a roster of **shared agents**: agents members chose to make reachable to the others. A shared agent keeps running on its owner's Mac; teammates talk to it through the Osaurus relay (Mode 2) — nothing about the agent is copied, and the owner's files never leave their machine.
+A workspace is a group of people (Settings… (⌘,) → Workspaces) with a shared credit pool and a roster of **shared agents**: agents members chose to make reachable to the others. A shared agent keeps running on its owner's Mac; teammates talk to it through the Osaurus relay (Mode 2) — nothing about the agent is copied, and the owner's files never leave their machine.
 
 Workspaces need an Osaurus identity (see the Identity topic) and Osaurus Router turned on; the same identity on two of your own devices sees the same workspaces.
 

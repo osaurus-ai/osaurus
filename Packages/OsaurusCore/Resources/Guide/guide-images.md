@@ -10,8 +10,8 @@ Osaurus can create and edit images entirely on your Mac using local image models
 
 ## Setup
 
-- Models → Images → Models: browse and download on-device image model bundles, or import one from Hugging Face.
-- Models → Images → Settings: choose the default generation model and (separately) the default edit model, plus the permission and model load policy.
+- Settings… (⌘,) → Media → Models: browse and download on-device image model bundles, or import one from Hugging Face.
+- Settings… (⌘,) → Media → Settings: choose the default generation model and (separately) the default edit model, plus the permission and model load policy.
 - Image models are large; they load on demand and can temporarily displace the resident chat model while a job runs.
 
 ## Using it in chat
@@ -28,4 +28,4 @@ The server exposes an OpenAI-compatible endpoint at `POST /v1/images/generations
 ## Notes
 
 - Per-agent: enable **Image** under a custom agent's Subagents section (pick the gen/edit models and permission there). The built-in Orchestrator has no image tool of its own — add an image-enabled agent to Settings → Orchestrator → Subagents → Allowed subagents and the Orchestrator delegates "generate an image of …" to it.
-- If no image model is installed, the tool is not offered — download one in Models → Images → Models first.
+- If no image model is installed, the tool is not offered — download one in Media → Models first.

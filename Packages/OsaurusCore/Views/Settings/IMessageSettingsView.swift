@@ -270,7 +270,7 @@ struct IMessageSettingsView: View {
     private var legacyPluginWarning: some View {
         Label {
             Text(
-                "The legacy “osaurus.messages” plugin is still installed. It is superseded — its tools no longer load, and the built-in Messages tools (Agents → Abilities → Tools → Messages) send through their own path that does not use these allowlists. Uninstall the plugin from Management → Plugins to clear this notice.",
+                "The legacy “osaurus.messages” plugin is still installed. It is superseded — its tools no longer load, and the built-in Messages tools (Agents → Abilities → Tools → Messages) send through their own path that does not use these allowlists. Uninstall the plugin from Settings… (⌘,) → Tools → Native Plugins to clear this notice.",
                 bundle: .module
             )
             .font(.system(size: 11))
