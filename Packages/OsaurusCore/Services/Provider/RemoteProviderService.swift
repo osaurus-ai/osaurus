@@ -36,6 +36,10 @@ public enum RemoteProviderServiceError: LocalizedError {
     /// into the API provider form. Typed so the edit sheet can offer a
     /// redirect to Tools > Connections instead of a dead-end failure badge.
     case mcpEndpointDetected
+    /// The provider was reconnected or disconnected (its URLSession torn
+    /// down) while this request waited, e.g. on a privacy review. Typed so
+    /// the person sees what happened instead of a bare CancellationError.
+    case sessionReplaced
 
     public var errorDescription: String? {
         switch self {
@@ -72,6 +76,8 @@ public enum RemoteProviderServiceError: LocalizedError {
             return L("\(message)")
         case .mcpEndpointDetected:
             return RemoteProviderMCPDetection.guidance()
+        case .sessionReplaced:
+            return L("The model provider reconnected while this message was waiting. Send it again.")
         }
     }
 
@@ -98,7 +104,7 @@ public enum RemoteProviderServiceError: LocalizedError {
         case .requestFailedWithDiagnostics:
             return self
         case .invalidURL, .notConnected, .streamingError, .noModelsAvailable, .rateLimited,
-            .unsupportedParameter, .mcpEndpointDetected:
+            .unsupportedParameter, .mcpEndpointDetected, .sessionReplaced:
             return self
         }
     }
@@ -203,7 +209,7 @@ public actor RemoteProviderService: ToolCapableService {
 
     /// Open a task-creation window on the session. Returns `false` when
     /// invalidation has been requested — the caller must throw
-    /// `CancellationError` instead of touching the session. Every successful
+    /// `RemoteProviderServiceError.sessionReplaced` instead of touching the session. Every successful
     /// `begin` MUST be paired with exactly one `endSessionRequest()`.
     nonisolated func beginSessionRequest() -> Bool {
         sessionLifecycle.withLock { state in
@@ -345,7 +351,7 @@ public actor RemoteProviderService: ToolCapableService {
     ///
     /// Marks the session invalidated BEFORE any teardown so concurrent
     /// producers observe it (`isSessionInvalidated` / a refused
-    /// `beginSessionRequest()`) and bail out with a Swift `CancellationError`
+    /// `beginSessionRequest()`) and bail out with `.sessionReplaced`
     /// instead of calling `bytes(for:)` on an invalidated session and
     /// triggering the uncatchable Obj-C `NSException` abort. When a
     /// task-creation window is currently open, the actual
@@ -372,7 +378,7 @@ public actor RemoteProviderService: ToolCapableService {
     /// under the task-creation call (uncatchable Obj-C exception — see
     /// `SessionLifecycle`).
     private func trackedData(for request: URLRequest) async throws -> (Data, URLResponse) {
-        guard beginSessionRequest() else { throw CancellationError() }
+        guard beginSessionRequest() else { throw RemoteProviderServiceError.sessionReplaced }
         defer { endSessionRequest() }
         return try await session.data(for: request)
     }
@@ -2830,10 +2836,10 @@ public actor RemoteProviderService: ToolCapableService {
                     // Bracket the task-creation window (secure handshake +
                     // connect) with the session-lifecycle guard: a concurrent
                     // `invalidateSession()` either refuses this `begin` (we
-                    // bail with CancellationError) or defers its
+                    // bail with `.sessionReplaced`) or defers its
                     // `invalidateAndCancel()` until the matching `end`, so
                     // the session can never be invalidated mid-`bytes(for:)`.
-                    guard self.beginSessionRequest() else { throw CancellationError() }
+                    guard self.beginSessionRequest() else { throw RemoteProviderServiceError.sessionReplaced }
                     let bytes: URLSession.AsyncBytes
                     let response: URLResponse
                     var secureOpener: SecureResponseOpener? = nil
@@ -3577,7 +3583,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         let producerTask = Task {
             do {
-                guard self.beginSessionRequest() else { throw CancellationError() }
+                guard self.beginSessionRequest() else { throw RemoteProviderServiceError.sessionReplaced }
                 let data: Data
                 let response: URLResponse
                 do {

@@ -57,6 +57,19 @@ extension ResponseWriter {
             )
             return
         }
+        // A bare CancellationError reads "The operation couldn’t be
+        // completed. (Swift.CancellationError error 1.)", never text for a
+        // person. The channel is still open, so the run was stopped on this
+        // side; say so in words.
+        if error is CancellationError {
+            writeStructuredError(
+                message: L("This send was stopped before it reached the model. Nothing was sent. Try again."),
+                type: "request_cancelled",
+                code: "request_cancelled",
+                context: context
+            )
+            return
+        }
         writeStructuredError(
             message: error.localizedDescription,
             type: HTTPHandler.openAIErrorType(for: error),
@@ -407,14 +420,14 @@ final class SSEResponseWriter: ResponseWriter {
     /// failure (broken pipe from a client that closed mid-stream) was
     /// silently swallowed and the connection lingered while the generation
     /// task kept producing into a dead socket. Here we attach a promise that
-    /// closes the channel on failure — which trips the route's
+    /// closes the channel on failure â which trips the route's
     /// `closeFuture` disconnect hook and cancels the in-flight generation.
     ///
     /// We also skip the write entirely once the channel is inactive, and we
     /// only `flush()` when the channel is writable: if a slow consumer has
     /// driven the outbound buffer past NIO's high-water mark (`isWritable ==
     /// false`), the bytes stay queued (NIO applies backpressure) rather than
-    /// forcing a flush that can't drain — bounding peak memory for a stalled
+    /// forcing a flush that can't drain â bounding peak memory for a stalled
     /// reader.
     @inline(__always)
     static func writeBackpressureAware(
@@ -927,7 +940,7 @@ final class AnthropicSSEResponseWriter {
     func writeTextDelta(_ text: String, context: ChannelHandlerContext) {
         guard !text.isEmpty else { return }
 
-        // Close any open thinking block before opening a text block —
+        // Close any open thinking block before opening a text block â
         // Anthropic content blocks are sequential, never nested.
         if hasStartedThinkingBlock {
             writeBlockStop(context: context)
@@ -954,12 +967,12 @@ final class AnthropicSSEResponseWriter {
     }
 
     /// Write content_block_start for a thinking block (Anthropic extended
-    /// thinking). Idempotent — subsequent calls before a `writeBlockStop`
+    /// thinking). Idempotent â subsequent calls before a `writeBlockStop`
     /// are no-ops.
     func writeThinkingBlockStart(context: ChannelHandlerContext) {
         guard !hasStartedThinkingBlock else { return }
 
-        // Close any open text block first — content blocks are sequential.
+        // Close any open text block first â content blocks are sequential.
         if hasStartedTextBlock {
             writeBlockStop(context: context)
         }
@@ -996,7 +1009,7 @@ final class AnthropicSSEResponseWriter {
         toolName: String,
         context: ChannelHandlerContext
     ) {
-        // Close any open block (text or thinking) — content blocks are
+        // Close any open block (text or thinking) â content blocks are
         // sequential.
         if hasStartedTextBlock || hasStartedThinkingBlock {
             writeBlockStop(context: context)

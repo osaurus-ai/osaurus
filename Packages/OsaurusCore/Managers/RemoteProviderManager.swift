@@ -812,7 +812,7 @@ public final class RemoteProviderManager: ObservableObject {
                 }
                 return false
             case .invalidURL, .notConnected, .requestFailed,
-                .streamingError, .noModelsAvailable, .unsupportedParameter, .mcpEndpointDetected:
+                .streamingError, .noModelsAvailable, .unsupportedParameter, .mcpEndpointDetected, .sessionReplaced:
                 return false
             }
         }
