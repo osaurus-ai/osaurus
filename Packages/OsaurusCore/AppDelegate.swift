@@ -57,6 +57,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     public func applicationWillFinishLaunching(_ notification: Notification) {
         // First, so the launch itself lands in tmp/osaurus.log (debug only).
         ConsoleLogFile.start()
+        #if DEBUG
+            // Per-token label trace for the OpenAI privacy model, into the same
+            // log: shows whether the model predicts nothing or the decoder drops
+            // it. Prints the first 80 chars of each scanned segment, so debug
+            // only; set OSAURUS_PRIVACY_TRACE=0 in the scheme to silence it.
+            PrivacyFilterKitDiagnostics.traceInference =
+                ProcessInfo.processInfo.environment["OSAURUS_PRIVACY_TRACE"] != "0"
+        #endif
         UncaughtExceptionLogger.install()
 
         AppDelegate.shared = self
