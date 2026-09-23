@@ -107,6 +107,30 @@ enum SystemPermissionProbe {
     }
 }
 
+/// Outcome of one permission probe (the Permissions tab "Test" button, the
+/// tool gate's Automation pre-check, the Abilities toggle).
+///
+/// `isGranted` is the machine decision and is derived from the real signal
+/// — the AppleScript error number, the framework authorization status, the
+/// protected-file read. `message` is the localized human text for display
+/// ONLY. Callers must branch on `isGranted`, never on the message: the
+/// `SUCCESS:` prefix is translated (`ERFOLG:` in German, `성공:` in Korean,
+/// `成功：` in Chinese), so a prefix test read every successful Mail / Notes
+/// / Music / Messages probe on those locales as a denial and the tool gate
+/// refused with `permission_denied` no matter what TCC said (GitHub #2858).
+struct PermissionProbeResult: Sendable, Equatable {
+    let isGranted: Bool
+    let message: String
+
+    static func granted(_ message: String) -> PermissionProbeResult {
+        PermissionProbeResult(isGranted: true, message: message)
+    }
+
+    static func denied(_ message: String) -> PermissionProbeResult {
+        PermissionProbeResult(isGranted: false, message: message)
+    }
+}
+
 @MainActor
 final class SystemPermissionService: NSObject, ObservableObject, CLLocationManagerDelegate {
     static let shared = SystemPermissionService()
@@ -192,26 +216,18 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     /// Check if a system permission is currently granted
     func isGranted(_ permission: SystemPermission) -> Bool {
         switch permission {
-        case .automation:
-            return checkAutomationPermission()
-        case .automationCalendar:
-            return checkCalendarAutomationPermission()
-        case .automationMail:
-            return checkMailPermission()
-        case .automationMessages:
-            return checkMessagesPermission()
-        case .automationMusic:
-            return checkMusicPermission()
+        case .automation, .automationCalendar, .automationMail, .automationMessages, .automationMusic, .notes,
+            .maps:
+            // Cached: the live Automation check runs AppleScript (and may
+            // launch the target app), which must not happen during view
+            // updates. `requestAutomationPermissionAndWait` refreshes it.
+            return permissionStates[permission] ?? false
         case .calendar:
             return checkCalendarPermission()
         case .reminders:
             return checkRemindersPermission()
         case .location:
             return checkLocationPermission()
-        case .notes:
-            return checkNotesPermission()
-        case .maps:
-            return checkMapsPermission()
         case .accessibility:
             return checkAccessibilityPermission()
         case .contacts:
@@ -353,26 +369,15 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     /// Request a permission (triggers system dialog or opens settings)
     func requestPermission(_ permission: SystemPermission) {
         switch permission {
-        case .automation:
-            requestAutomationPermission()
-        case .automationCalendar:
-            requestCalendarAutomationPermission()
-        case .automationMail:
-            requestMailPermission()
-        case .automationMessages:
-            requestMessagesPermission()
-        case .automationMusic:
-            requestMusicPermission()
+        case .automation, .automationCalendar, .automationMail, .automationMessages, .automationMusic, .notes,
+            .maps:
+            requestAutomationPermission(permission)
         case .calendar:
             requestCalendarPermission()
         case .reminders:
             requestRemindersPermission()
         case .location:
             requestLocationPermission()
-        case .notes:
-            requestNotesPermission()
-        case .maps:
-            requestMapsPermission()
         case .accessibility:
             requestAccessibilityPermission()
         case .contacts:
@@ -527,7 +532,7 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     static let locationDialogTimeout: TimeInterval = 120
 
     /// `.authorized` is macOS's legacy spelling of `.authorizedAlways`.
-    static func isLocationAuthorized(_ status: CLAuthorizationStatus) -> Bool {
+    nonisolated static func isLocationAuthorized(_ status: CLAuthorizationStatus) -> Bool {
         status == .authorizedAlways || status == .authorized
     }
 
@@ -590,204 +595,22 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         }
     }
 
-    // MARK: - Automation Permission
+    // MARK: - Automation Permissions (Apple Events)
 
-    private func checkAutomationPermission() -> Bool {
-        // Return cached state to avoid running AppleScript on main thread during view updates
-        return permissionStates[.automation] ?? false
-    }
-
-    private func checkNotesPermission() -> Bool {
-        // Return cached state for Notes (Automation)
-        return permissionStates[.notes] ?? false
-    }
-
-    private func checkMapsPermission() -> Bool {
-        // Return cached state for Maps (Automation)
-        return permissionStates[.maps] ?? false
-    }
-
-    private func checkMailPermission() -> Bool {
-        // Return cached state for Mail (Automation)
-        return permissionStates[.automationMail] ?? false
-    }
-
-    /// Perform full Automation check (runs AppleScript against System Events)
-    /// This is called only on explicit user request, not during periodic refresh
-    nonisolated private func performFullAutomationCheck() -> Bool {
-        let script = NSAppleScript(
-            source: """
-                tell application "System Events"
-                    return name of first process whose frontmost is true
-                end tell
-                """
-        )
-
-        var errorInfo: NSDictionary?
-        script?.executeAndReturnError(&errorInfo)
-
-        // If there's an error with code -1743, it's a permission error
-        if let error = errorInfo {
-            let errorNumber = error[NSAppleScript.errorNumber] as? Int
-            if errorNumber == -1743 {
-                return false
-            }
-        }
-
-        // If execution succeeded or had a different error, assume we have permission
-        return errorInfo == nil
-    }
-
-    private func requestAutomationPermission() {
-        // Run on MainActor to ensure TCC prompts attach correctly
+    /// Fire-and-forget request for any Apple Events automation permission
+    /// (System Events, Calendar, Mail, Messages, Music, Notes, Maps). Probes
+    /// through `requestAutomationPermissionAndWait`; when the grant is still
+    /// missing afterwards the macOS dialog was most likely already answered
+    /// with "Don't Allow", so System Settings is opened for a manual fix.
+    private func requestAutomationPermission(_ permission: SystemPermission) {
         Task { @MainActor in
-            // First, check if we already have permission
-            let alreadyGranted = checkAutomationPermission()
-            if alreadyGranted {
+            if permissionStates[permission] ?? false {
                 refreshAllPermissions()
                 return
             }
-
-            // Perform full check
-            let granted: Bool = await Task.detached { [weak self] in
-                guard let self = self else { return false }
-                return self.performFullAutomationCheck()
-            }.value
-
-            setPermission(.automation, isGranted: granted)
-
-            // If not granted, the dialog likely didn't appear (already shown before)
-            // Open System Settings so the user can manually grant the permission
+            let granted = await requestAutomationPermissionAndWait(permission)
             if !granted {
-                self.openSystemSettings(for: .automation)
-            }
-        }
-    }
-
-    private func requestNotesPermission() {
-        Task { @MainActor in
-            let alreadyGranted = checkNotesPermission()
-            if alreadyGranted {
-                refreshAllPermissions()
-                return
-            }
-
-            let granted: Bool = await Task.detached { [weak self] in
-                guard self != nil else { return false }
-                // Use debug test to trigger the prompt/check
-                let result = SystemPermissionService.debugTestNotesAccess()
-                return result.hasPrefix("SUCCESS")
-            }.value
-
-            setPermission(.notes, isGranted: granted)
-
-            if !granted {
-                self.openSystemSettings(for: .notes)
-            }
-        }
-    }
-
-    private func requestMapsPermission() {
-        Task { @MainActor in
-            let alreadyGranted = checkMapsPermission()
-            if alreadyGranted {
-                refreshAllPermissions()
-                return
-            }
-
-            let granted: Bool = await Task.detached { [weak self] in
-                guard self != nil else { return false }
-                // Use debug test to trigger the prompt/check
-                let result = SystemPermissionService.debugTestMapsAccess()
-                return result.hasPrefix("SUCCESS")
-            }.value
-
-            setPermission(.maps, isGranted: granted)
-
-            if !granted {
-                self.openSystemSettings(for: .maps)
-            }
-        }
-    }
-
-    // MARK: - Mail Automation Permission
-
-    private func requestMailPermission() {
-        Task { @MainActor in
-            let alreadyGranted = checkMailPermission()
-            if alreadyGranted {
-                refreshAllPermissions()
-                return
-            }
-
-            let granted: Bool = await Task.detached { [weak self] in
-                guard self != nil else { return false }
-                let result = SystemPermissionService.debugTestMailAccess()
-                return result.hasPrefix("SUCCESS")
-            }.value
-
-            setPermission(.automationMail, isGranted: granted)
-
-            if !granted {
-                self.openSystemSettings(for: .automationMail)
-            }
-        }
-    }
-
-    // MARK: - Messages Automation Permission
-
-    private func checkMessagesPermission() -> Bool {
-        // Return cached state for Messages (Automation)
-        return permissionStates[.automationMessages] ?? false
-    }
-
-    private func requestMessagesPermission() {
-        Task { @MainActor in
-            let alreadyGranted = checkMessagesPermission()
-            if alreadyGranted {
-                refreshAllPermissions()
-                return
-            }
-
-            let granted: Bool = await Task.detached { [weak self] in
-                guard self != nil else { return false }
-                let result = SystemPermissionService.debugTestMessagesAccess()
-                return result.hasPrefix("SUCCESS")
-            }.value
-
-            setPermission(.automationMessages, isGranted: granted)
-
-            if !granted {
-                self.openSystemSettings(for: .automationMessages)
-            }
-        }
-    }
-
-    // MARK: - Music Automation Permission
-
-    private func checkMusicPermission() -> Bool {
-        // Return cached state for Music (Automation)
-        return permissionStates[.automationMusic] ?? false
-    }
-
-    private func requestMusicPermission() {
-        Task { @MainActor in
-            let alreadyGranted = checkMusicPermission()
-            if alreadyGranted {
-                refreshAllPermissions()
-                return
-            }
-
-            let granted: Bool = await Task.detached { [weak self] in
-                guard self != nil else { return false }
-                let result = SystemPermissionService.debugTestMusicAccess()
-                return result.hasPrefix("SUCCESS")
-            }.value
-
-            setPermission(.automationMusic, isGranted: granted)
-
-            if !granted {
-                self.openSystemSettings(for: .automationMusic)
+                openSystemSettings(for: permission)
             }
         }
     }
@@ -797,32 +620,12 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     /// on denial) this returns the fresh result so a tool gate or an Abilities
     /// toggle can react to it. The first probe shows the macOS "wants access
     /// to control X" dialog; later probes just read the TCC decision.
+    ///
+    /// The decision is `PermissionProbeResult.isGranted` — derived from the
+    /// AppleScript error number — never the localized probe message (#2858).
     func requestAutomationPermissionAndWait(_ permission: SystemPermission) async -> Bool {
         if RuntimeEnvironment.isUnderTests { return false }
-        let probe: (@Sendable () -> String)?
-        switch permission {
-        case .automation:
-            let granted: Bool = await Task.detached { [weak self] in
-                guard let self else { return false }
-                return self.performFullAutomationCheck()
-            }.value
-            setPermission(.automation, isGranted: granted)
-            return granted
-        case .automationCalendar:
-            let granted: Bool = await Task.detached { [weak self] in
-                guard let self else { return false }
-                return await self.performFullCalendarAutomationCheck()
-            }.value
-            setPermission(.automationCalendar, isGranted: granted)
-            return granted
-        case .automationMail: probe = { SystemPermissionService.debugTestMailAccess() }
-        case .automationMessages: probe = { SystemPermissionService.debugTestMessagesAccess() }
-        case .automationMusic: probe = { SystemPermissionService.debugTestMusicAccess() }
-        case .notes: probe = { SystemPermissionService.debugTestNotesAccess() }
-        case .maps: probe = { SystemPermissionService.debugTestMapsAccess() }
-        default: probe = nil
-        }
-        guard let probe else { return permissionStates[permission] ?? false }
+        guard permission.isAutomationBased else { return permissionStates[permission] ?? false }
         // `tell application "X"` launches X if needed and would bring it to the
         // front; launching it ourselves first (activates = false) keeps the
         // probe from stealing focus from the chat window.
@@ -831,7 +634,7 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
                 bundleIdentifier: bundleId, appName: permission.displayName
             )
         }
-        let granted: Bool = await Task.detached { probe().hasPrefix("SUCCESS") }.value
+        let granted = await Self.probe(permission).isGranted
         setPermission(permission, isGranted: granted)
         return granted
     }
@@ -847,91 +650,6 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         case .maps: return "com.apple.Maps"
         case .automationCalendar: return "com.apple.iCal"
         default: return nil
-        }
-    }
-
-    // MARK: - Calendar Automation Permission
-
-    private func checkCalendarAutomationPermission() -> Bool {
-        // For periodic checks, just return the last known state to avoid launching Calendar
-        // The accurate check happens when user clicks "Test Calendar AppleScript" button
-        // or when the permission is explicitly requested
-        return permissionStates[.automationCalendar] ?? false
-    }
-
-    /// Perform a full Calendar automation check (may launch Calendar.app)
-    /// This is called only on explicit user request, not during periodic refresh
-    nonisolated private func performFullCalendarAutomationCheck() async -> Bool {
-        // Ensure Calendar is running using NSWorkspace
-        let workspace = NSWorkspace.shared
-        let calendarRunning = workspace.runningApplications.contains {
-            $0.bundleIdentifier == "com.apple.iCal"
-        }
-
-        if !calendarRunning {
-            if let calendarURL = workspace.urlForApplication(withBundleIdentifier: "com.apple.iCal") {
-                let config = NSWorkspace.OpenConfiguration()
-                config.activates = false
-
-                // Use async/await instead of blocking semaphore
-                _ = try? await workspace.openApplication(at: calendarURL, configuration: config)
-                // Give Calendar a moment to fully initialize
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-            }
-        }
-
-        // Use NSAppleScript directly (not osascript) to ensure attribution to host app
-        let script = NSAppleScript(
-            source: """
-                tell application id "com.apple.iCal"
-                    return name of calendars as string
-                end tell
-                """
-        )
-
-        var errorInfo: NSDictionary?
-        script?.executeAndReturnError(&errorInfo)
-
-        if let error = errorInfo {
-            let errorNumber = error[NSAppleScript.errorNumber] as? Int
-            // -1743 = permission denied (not authorized to send Apple events)
-            if errorNumber == -1743 {
-                return false
-            }
-            // -600 = app not responding, treat as unknown/failed
-            if errorNumber == -600 {
-                return false
-            }
-        }
-
-        // If execution succeeded, we have permission
-        return errorInfo == nil
-    }
-
-    private func requestCalendarAutomationPermission() {
-        // Run on MainActor to ensure TCC prompts attach correctly
-        Task { @MainActor in
-            // First, check if we already have permission
-            let alreadyGranted = checkCalendarAutomationPermission()
-            if alreadyGranted {
-                refreshAllPermissions()
-                return
-            }
-
-            // Perform full check which will launch Calendar and trigger permission prompt
-            // We use a detached task to avoid blocking the main actor
-            let granted: Bool = await Task.detached { [weak self] in
-                guard let self = self else { return false }
-                return await self.performFullCalendarAutomationCheck()
-            }.value
-
-            setPermission(.automationCalendar, isGranted: granted)
-
-            // If not granted, the dialog likely didn't appear (already shown before)
-            // Open System Settings so the user can manually grant the permission
-            if !granted {
-                self.openSystemSettings(for: .automationCalendar)
-            }
         }
     }
 
@@ -1028,119 +746,148 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         return SystemPermission(rawValue: requirement) != nil
     }
 
+    // MARK: - Probes
+
+    /// Run the diagnostic probe for `permission`: the same code path the
+    /// Permissions tab "Test" button, the tool gate's Automation pre-check
+    /// and the Abilities toggle use, so every consumer sees one decision.
+    /// Automation probes send a real Apple Event and may show the macOS
+    /// consent dialog; the others read the framework authorization status.
+    nonisolated static func probe(_ permission: SystemPermission) async -> PermissionProbeResult {
+        switch permission {
+        case .automation: return await debugTestAutomationAccess()
+        case .automationCalendar: return await debugTestCalendarAccess()
+        case .automationMail: return await debugTestMailAccess()
+        case .automationMessages: return await debugTestMessagesAccess()
+        case .automationMusic: return await debugTestMusicAccess()
+        case .notes: return await debugTestNotesAccess()
+        case .maps: return await debugTestMapsAccess()
+        case .calendar: return debugTestCalendarEventKitAccess()
+        case .reminders: return debugTestRemindersAccess()
+        case .contacts: return debugTestContactsAccess()
+        case .location: return await debugTestLocationAccess()
+        case .accessibility: return debugTestAccessibilityAccess()
+        case .disk: return debugTestFullDiskAccess()
+        case .microphone: return debugTestMicrophoneAccess()
+        case .screenRecording: return debugTestScreenRecordingAccess()
+        }
+    }
+
+    /// Longest an Automation probe waits for its Apple Event. The first
+    /// probe blocks inside the OS consent dialog until the user answers, so
+    /// this is a "user walked away" bound, not a script budget.
+    nonisolated static let automationProbeTimeout: TimeInterval = 120
+
+    /// Send one Apple Event probe through `AppleScriptExecutor` and map the
+    /// outcome. The executor is the ONLY place `NSAppleScript` may execute:
+    /// the OSA component deadlocks when two `executeAndReturnError` calls
+    /// overlap on different threads, and a raw probe on a detached task
+    /// could overlap a tool script from another chat or the iMessage
+    /// channel. Going through it also gives the probe the executor's
+    /// -1743 classification and main-runloop heartbeat.
+    ///
+    /// `isGranted` follows the executor status, never the text.
+    nonisolated private static func probeAutomation(
+        source: String,
+        success: @Sendable (String) -> String
+    ) async -> PermissionProbeResult {
+        let result = await AppleScriptExecutor.run(source: source, timeout: automationProbeTimeout)
+        switch result.status {
+        case .success:
+            return .granted(success(result.output ?? ""))
+        case .permissionRequired:
+            let number = result.errorNumber ?? AppleScriptExecutor.permissionDeniedErrorNumber
+            let text = result.errorMessage ?? "Not authorized to send Apple events."
+            return .denied(
+                "ERROR [\(number)]: \(text) → Permission denied. Grant in System Settings → Privacy & Security → Automation"
+            )
+        case .timedOut:
+            return .denied("ERROR: \(result.errorMessage ?? "The probe did not finish in time.")")
+        case .compileError, .runtimeError:
+            let number = result.errorNumber.map { "[\($0)]" } ?? ""
+            let text = result.errorMessage ?? "Unknown error"
+            let appGoneCodes = [
+                AppleScriptBridge.ErrorNumber.appNotRunning,
+                AppleScriptBridge.ErrorNumber.connectionInvalid,
+            ]
+            let appGone = result.errorNumber.map(appGoneCodes.contains) ?? false
+            let guidance = appGone ? " → App communication failed. Open the app and try again." : ""
+            return .denied("ERROR \(number): \(text)\(guidance)")
+        }
+    }
+
+    /// Probe Automation for one scriptable app with a read-only `name`
+    /// query — the same class of Apple Event the app tools send, so a
+    /// grant here proves the TCC decision. `appName` is the AppleScript
+    /// application name (`Mail`, `Notes`, …).
+    nonisolated static func probeAppleEvents(appName: String) async -> PermissionProbeResult {
+        await probeAutomation(
+            source: """
+                tell application "\(appName)"
+                    return name
+                end tell
+                """
+        ) { output in
+            L("SUCCESS: Connected to \(output.isEmpty ? appName : output)")
+        }
+    }
+
     // MARK: - Debug: Test Automation Access
 
     /// Debug function to test general Automation access (System Events)
-    nonisolated static func debugTestAutomationAccess() -> String {
-        let script = NSAppleScript(
+    nonisolated static func debugTestAutomationAccess() async -> PermissionProbeResult {
+        await probeAutomation(
             source: """
                 tell application "System Events"
                     return name of first process whose frontmost is true
                 end tell
                 """
-        )
-
-        var errorInfo: NSDictionary?
-        let result = script?.executeAndReturnError(&errorInfo)
-
-        if let error = errorInfo {
-            let errorNumber = error[NSAppleScript.errorNumber] as? Int ?? -1
-            let errorMessage = error[NSAppleScript.errorMessage] as? String ?? "Unknown error"
-
-            var guidance = ""
-            if errorNumber == -1743 {
-                guidance = " → Permission denied. Grant in System Settings → Privacy & Security → Automation"
-            }
-
-            return "ERROR [\(errorNumber)]: \(errorMessage)\(guidance)"
+        ) { output in
+            output.isEmpty ? L("NO RESULT") : L("SUCCESS: \(output)")
         }
-
-        if let resultValue = result?.stringValue {
-            return L("SUCCESS: \(resultValue)")
-        }
-
-        return L("NO RESULT")
     }
 
     // MARK: - Debug: Test Accessibility Access
 
     /// Debug function to test if Accessibility access is trusted.
-    nonisolated static func debugTestAccessibilityAccess() -> String {
-        let isTrusted = AXIsProcessTrusted()
-        if isTrusted {
-            return L("SUCCESS: Process is trusted for Accessibility.")
-        } else {
-            return
-                L(
-                    "ERROR: Process is NOT trusted for Accessibility. If enabled in System Settings, try removing and re-adding Osaurus to the list."
-                )
+    nonisolated static func debugTestAccessibilityAccess() -> PermissionProbeResult {
+        if AXIsProcessTrusted() {
+            return .granted(L("SUCCESS: Process is trusted for Accessibility."))
         }
+        return .denied(
+            L(
+                "ERROR: Process is NOT trusted for Accessibility. If enabled in System Settings, try removing and re-adding Osaurus to the list."
+            )
+        )
     }
 
     // MARK: - Debug: Test Calendar AppleScript
 
     /// Debug function to test if Calendar AppleScript works from this process.
-    /// This will launch Calendar.app if not running.
-    /// Marked nonisolated so it can be called from background threads.
-    nonisolated static func debugTestCalendarAccess() async -> String {
-        // Ensure Calendar is running using NSWorkspace
-        let workspace = NSWorkspace.shared
-        let calendarRunning = workspace.runningApplications.contains {
-            $0.bundleIdentifier == "com.apple.iCal"
-        }
-
-        var diagnostics = ""
-
-        if !calendarRunning {
-            if let calendarURL = workspace.urlForApplication(withBundleIdentifier: "com.apple.iCal") {
-                let config = NSWorkspace.OpenConfiguration()
-                config.activates = false
-                // Use async/await instead of blocking semaphore
-                _ = try? await workspace.openApplication(at: calendarURL, configuration: config)
-                // Give it a moment to fully initialize
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-            } else {
-                diagnostics += " | Calendar.app not found"
-            }
-        }
-
-        // Use bundle ID for reliable resolution
-        let script = NSAppleScript(
+    /// Launches Calendar.app in the background if it is not running.
+    nonisolated static func debugTestCalendarAccess() async -> PermissionProbeResult {
+        // Launch first (activates = false) so the Apple Event does not bring
+        // Calendar to the front or race its scripting server on a cold start.
+        let running = await AppleScriptBridge.ensureRunning(bundleIdentifier: "com.apple.iCal", appName: "Calendar")
+        let diagnostics = running ? "" : " | Calendar.app not found or failed to launch"
+        let result = await probeAutomation(
             source: """
                 tell application id "com.apple.iCal"
                     return name of calendars as string
                 end tell
                 """
-        )
-
-        var errorInfo: NSDictionary?
-        let result = script?.executeAndReturnError(&errorInfo)
-
-        if let error = errorInfo {
-            let errorNumber = error[NSAppleScript.errorNumber] as? Int ?? -1
-            let errorMessage = error[NSAppleScript.errorMessage] as? String ?? "Unknown error"
-
-            var guidance = ""
-            if errorNumber == -1743 {
-                guidance = " → Permission denied. Grant in System Settings → Privacy & Security → Automation"
-            } else if errorNumber == -600 {
-                guidance = " → App communication failed. Try restarting your Mac if this persists."
-            }
-
-            return "ERROR [\(errorNumber)]: \(errorMessage)\(guidance)\(diagnostics.isEmpty ? "" : " | \(diagnostics)")"
+        ) { output in
+            output.isEmpty ? L("NO RESULT") : L("SUCCESS: \(output)")
         }
-
-        if let resultValue = result?.stringValue {
-            return L("SUCCESS: \(resultValue)")
-        }
-
-        return L("NO RESULT")
+        guard !result.isGranted, !diagnostics.isEmpty else { return result }
+        return .denied(result.message + diagnostics)
     }
 
     // MARK: - Debug: Test Contacts Access
 
     /// Debug function to test if Contacts access works.
-    nonisolated static func debugTestContactsAccess() -> String {
+    nonisolated static func debugTestContactsAccess() -> PermissionProbeResult {
+        if RuntimeEnvironment.isUnderTests { return .denied(L("ERROR: Access Denied")) }
         let status = CNContactStore.authorizationStatus(for: .contacts)
         switch status {
         case .authorized:
@@ -1156,165 +903,168 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
                     count += 1
                     stop.pointee = true
                 }
-                return L("SUCCESS: Authorized (Found \(count)+ contacts)")
+                return .granted(L("SUCCESS: Authorized (Found \(count)+ contacts)"))
             } catch {
-                return L("ERROR: Authorized but fetch failed: \(error.localizedDescription)")
+                // The grant exists; the fetch failing is a data problem, not
+                // a permission one — the gate would let the tool run.
+                return .granted(L("SUCCESS: Authorized (fetching a contact failed: \(error.localizedDescription))"))
             }
         case .denied:
-            return L("ERROR: Access Denied")
+            return .denied(L("ERROR: Access Denied"))
         case .restricted:
-            return L("ERROR: Access Restricted")
+            return .denied(L("ERROR: Access Restricted"))
         case .notDetermined:
-            return L("WARNING: Access Not Determined")
+            return .denied(L("WARNING: Access Not Determined"))
         @unknown default:
-            return L("ERROR: Unknown Status")
+            return .denied(L("ERROR: Unknown Status"))
         }
     }
 
     // MARK: - Debug: Test Calendar (EventKit) Access
 
     /// Debug function to test if Calendar access works via EventKit.
-    nonisolated static func debugTestCalendarEventKitAccess() -> String {
+    /// Granted only for `.fullAccess`, matching `isGrantedOffMain` — a
+    /// write-only grant would pass "Test" and then fail the tool gate.
+    nonisolated static func debugTestCalendarEventKitAccess() -> PermissionProbeResult {
+        if RuntimeEnvironment.isUnderTests { return .denied(L("ERROR: Access Denied")) }
         let status = EKEventStore.authorizationStatus(for: .event)
         switch status {
-        case .fullAccess, .writeOnly:  // writeOnly shouldn't happen for us but covering it
+        case .fullAccess:
             let store = EKEventStore()
             // Try to fetch calendars to verify
             let calendars = store.calendars(for: .event)
             if !calendars.isEmpty {
-                return calendars.count == 1
-                    ? L("SUCCESS: Authorized (Found 1 calendar)")
-                    : L("SUCCESS: Authorized (Found \(calendars.count) calendars)")
-            } else {
-                return L("SUCCESS: Authorized (No calendars found)")
+                return .granted(
+                    calendars.count == 1
+                        ? L("SUCCESS: Authorized (Found 1 calendar)")
+                        : L("SUCCESS: Authorized (Found \(calendars.count) calendars)")
+                )
             }
+            return .granted(L("SUCCESS: Authorized (No calendars found)"))
+        case .writeOnly:
+            return .denied(L("ERROR: Write-only access. Full access is required."))
         case .denied:
-            return L("ERROR: Access Denied")
+            return .denied(L("ERROR: Access Denied"))
         case .restricted:
-            return L("ERROR: Access Restricted")
+            return .denied(L("ERROR: Access Restricted"))
         case .notDetermined:
-            return L("WARNING: Access Not Determined")
+            return .denied(L("WARNING: Access Not Determined"))
         @unknown default:
-            return L("ERROR: Unknown Status")
+            return .denied(L("ERROR: Unknown Status"))
         }
     }
 
     // MARK: - Debug: Test Reminders (EventKit) Access
 
     /// Debug function to test if Reminders access works via EventKit.
-    nonisolated static func debugTestRemindersAccess() -> String {
+    /// Granted only for `.fullAccess`, matching `isGrantedOffMain`.
+    nonisolated static func debugTestRemindersAccess() -> PermissionProbeResult {
+        if RuntimeEnvironment.isUnderTests { return .denied(L("ERROR: Access Denied")) }
         let status = EKEventStore.authorizationStatus(for: .reminder)
         switch status {
-        case .fullAccess, .writeOnly:
+        case .fullAccess:
             let store = EKEventStore()
             let calendars = store.calendars(for: .reminder)
             if !calendars.isEmpty {
-                return calendars.count == 1
-                    ? L("SUCCESS: Authorized (Found 1 list)")
-                    : L("SUCCESS: Authorized (Found \(calendars.count) lists)")
-            } else {
-                return L("SUCCESS: Authorized (No lists found)")
+                return .granted(
+                    calendars.count == 1
+                        ? L("SUCCESS: Authorized (Found 1 list)")
+                        : L("SUCCESS: Authorized (Found \(calendars.count) lists)")
+                )
             }
+            return .granted(L("SUCCESS: Authorized (No lists found)"))
+        case .writeOnly:
+            return .denied(L("ERROR: Write-only access. Full access is required."))
         case .denied:
-            return L("ERROR: Access Denied")
+            return .denied(L("ERROR: Access Denied"))
         case .restricted:
-            return L("ERROR: Access Restricted")
+            return .denied(L("ERROR: Access Restricted"))
         case .notDetermined:
-            return L("WARNING: Access Not Determined")
+            return .denied(L("WARNING: Access Not Determined"))
         @unknown default:
-            return L("ERROR: Unknown Status")
+            return .denied(L("ERROR: Unknown Status"))
         }
     }
 
     // MARK: - Debug: Test Location Access
 
-    /// Debug function to test if Location access works.
-    /// Note: This is tricky to test synchronously as location updates are async delegate callbacks.
-    /// We just check auth status here.
-    nonisolated static func debugTestLocationAccess() -> String {
-        let manager = CLLocationManager()
-        let status = manager.authorizationStatus
-
-        switch status {
-        case .authorizedAlways:
-            return L("SUCCESS: Authorized")
-        case .denied:
-            return L("ERROR: Access Denied")
-        case .restricted:
-            return L("ERROR: Access Restricted")
-        case .notDetermined:
-            return L("WARNING: Access Not Determined")
-        @unknown default:
-            return L("ERROR: Unknown Status")
+    /// Debug function to test if Location access works. Reads the shared
+    /// manager's authorization (no fresh `CLLocationManager()` — each one is
+    /// a synchronous locationd handshake) and accepts the legacy
+    /// `.authorized` spelling like `isLocationAuthorized` does.
+    nonisolated static func debugTestLocationAccess() async -> PermissionProbeResult {
+        let status = await MainActor.run { SystemPermissionService.shared.locationAuthorizationStatus }
+        if isLocationAuthorized(status) {
+            return .granted(L("SUCCESS: Authorized"))
         }
+        switch status {
+        case .denied:
+            return .denied(L("ERROR: Access Denied"))
+        case .restricted:
+            return .denied(L("ERROR: Access Restricted"))
+        case .notDetermined:
+            return .denied(L("WARNING: Access Not Determined"))
+        default:
+            return .denied(L("ERROR: Unknown Status"))
+        }
+    }
+
+    // MARK: - Debug: Test Full Disk Access / Microphone / Screen Recording
+
+    /// Debug function to test Full Disk Access with the real protected-file
+    /// read `isGrantedOffMain` uses.
+    nonisolated static func debugTestFullDiskAccess() -> PermissionProbeResult {
+        if SystemPermissionProbe.fullDiskAccessGranted() {
+            return .granted(L("SUCCESS: Protected files are readable."))
+        }
+        return .denied(
+            L(
+                "ERROR: Full Disk Access is not granted. Add Osaurus under System Settings → Privacy & Security → Full Disk Access."
+            )
+        )
+    }
+
+    /// Debug function to test Microphone access.
+    nonisolated static func debugTestMicrophoneAccess() -> PermissionProbeResult {
+        if RuntimeEnvironment.isUnderTests { return .denied(L("ERROR: Access Denied")) }
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            return .granted(L("SUCCESS: Authorized"))
+        case .denied:
+            return .denied(L("ERROR: Access Denied"))
+        case .restricted:
+            return .denied(L("ERROR: Access Restricted"))
+        case .notDetermined:
+            return .denied(L("WARNING: Access Not Determined"))
+        @unknown default:
+            return .denied(L("ERROR: Unknown Status"))
+        }
+    }
+
+    /// Debug function to test Screen Recording access.
+    nonisolated static func debugTestScreenRecordingAccess() -> PermissionProbeResult {
+        if SystemPermissionProbe.screenRecordingGranted() {
+            return .granted(L("SUCCESS: Authorized"))
+        }
+        return .denied(
+            L(
+                "ERROR: Screen Recording is not granted. Add Osaurus under System Settings → Privacy & Security → Screen Recording."
+            )
+        )
     }
 
     // MARK: - Debug: Test Notes Access
 
     /// Debug function to test if Notes access works via AppleScript.
-    nonisolated static func debugTestNotesAccess() -> String {
-        let script = NSAppleScript(
-            source: """
-                tell application "Notes"
-                    return name
-                end tell
-                """
-        )
-
-        var errorInfo: NSDictionary?
-        let result = script?.executeAndReturnError(&errorInfo)
-
-        if let error = errorInfo {
-            let errorNumber = error[NSAppleScript.errorNumber] as? Int ?? -1
-            let errorMessage = error[NSAppleScript.errorMessage] as? String ?? "Unknown error"
-
-            var guidance = ""
-            if errorNumber == -1743 {
-                guidance = " → Permission denied. Grant in System Settings → Privacy & Security → Automation"
-            }
-
-            return "ERROR [\(errorNumber)]: \(errorMessage)\(guidance)"
-        }
-
-        if let resultValue = result?.stringValue {
-            return L("SUCCESS: Connected to \(resultValue)")
-        }
-
-        return L("NO RESULT")
+    nonisolated static func debugTestNotesAccess() async -> PermissionProbeResult {
+        await probeAppleEvents(appName: "Notes")
     }
 
     // MARK: - Debug: Test Maps Access
 
     /// Debug function to test if Maps access works via AppleScript.
-    nonisolated static func debugTestMapsAccess() -> String {
-        let script = NSAppleScript(
-            source: """
-                tell application "Maps"
-                    return name
-                end tell
-                """
-        )
-
-        var errorInfo: NSDictionary?
-        let result = script?.executeAndReturnError(&errorInfo)
-
-        if let error = errorInfo {
-            let errorNumber = error[NSAppleScript.errorNumber] as? Int ?? -1
-            let errorMessage = error[NSAppleScript.errorMessage] as? String ?? "Unknown error"
-
-            var guidance = ""
-            if errorNumber == -1743 {
-                guidance = " → Permission denied. Grant in System Settings → Privacy & Security → Automation"
-            }
-
-            return "ERROR [\(errorNumber)]: \(errorMessage)\(guidance)"
-        }
-
-        if let resultValue = result?.stringValue {
-            return L("SUCCESS: Connected to \(resultValue)")
-        }
-
-        return L("NO RESULT")
+    nonisolated static func debugTestMapsAccess() async -> PermissionProbeResult {
+        await probeAppleEvents(appName: "Maps")
     }
 
     // MARK: - Debug: Test Messages Access
@@ -1322,103 +1072,22 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     /// Debug function to test if Messages access works via Apple Events.
     /// Sends a read-only query (app name) — this is the same class of Apple
     /// Event `imsg send` uses, so a SUCCESS here proves the TCC grant.
-    nonisolated static func debugTestMessagesAccess() -> String {
-        let script = NSAppleScript(
-            source: """
-                tell application "Messages"
-                    return name
-                end tell
-                """
-        )
-
-        var errorInfo: NSDictionary?
-        let result = script?.executeAndReturnError(&errorInfo)
-
-        if let error = errorInfo {
-            let errorNumber = error[NSAppleScript.errorNumber] as? Int ?? -1
-            let errorMessage = error[NSAppleScript.errorMessage] as? String ?? "Unknown error"
-
-            var guidance = ""
-            if errorNumber == -1743 {
-                guidance = " → Permission denied. Grant in System Settings → Privacy & Security → Automation"
-            }
-
-            return "ERROR [\(errorNumber)]: \(errorMessage)\(guidance)"
-        }
-
-        if let resultValue = result?.stringValue {
-            return L("SUCCESS: Connected to \(resultValue)")
-        }
-
-        return L("NO RESULT")
+    nonisolated static func debugTestMessagesAccess() async -> PermissionProbeResult {
+        await probeAppleEvents(appName: "Messages")
     }
 
     // MARK: - Debug: Test Music Access
 
     /// Debug function to test if Music access works via AppleScript.
-    nonisolated static func debugTestMusicAccess() -> String {
-        let script = NSAppleScript(
-            source: """
-                tell application "Music"
-                    return name
-                end tell
-                """
-        )
-
-        var errorInfo: NSDictionary?
-        let result = script?.executeAndReturnError(&errorInfo)
-
-        if let error = errorInfo {
-            let errorNumber = error[NSAppleScript.errorNumber] as? Int ?? -1
-            let errorMessage = error[NSAppleScript.errorMessage] as? String ?? "Unknown error"
-
-            var guidance = ""
-            if errorNumber == -1743 {
-                guidance = " → Permission denied. Grant in System Settings → Privacy & Security → Automation"
-            }
-
-            return "ERROR [\(errorNumber)]: \(errorMessage)\(guidance)"
-        }
-
-        if let resultValue = result?.stringValue {
-            return L("SUCCESS: Connected to \(resultValue)")
-        }
-
-        return L("NO RESULT")
+    nonisolated static func debugTestMusicAccess() async -> PermissionProbeResult {
+        await probeAppleEvents(appName: "Music")
     }
 
     // MARK: - Debug: Test Mail Access
 
     /// Debug function to test if Mail access works via AppleScript.
-    nonisolated static func debugTestMailAccess() -> String {
-        let script = NSAppleScript(
-            source: """
-                tell application "Mail"
-                    return name
-                end tell
-                """
-        )
-
-        var errorInfo: NSDictionary?
-        let result = script?.executeAndReturnError(&errorInfo)
-
-        if let error = errorInfo {
-            let errorNumber = error[NSAppleScript.errorNumber] as? Int ?? -1
-            let errorMessage = error[NSAppleScript.errorMessage] as? String ?? "Unknown error"
-
-            var guidance = ""
-            if errorNumber == -1743 {
-                guidance = " → Permission denied. Grant in System Settings → Privacy & Security → Automation"
-            }
-
-            return "ERROR [\(errorNumber)]: \(errorMessage)\(guidance)"
-        }
-
-        if let resultValue = result?.stringValue {
-            return L("SUCCESS: Connected to \(resultValue)")
-        }
-
-        return L("NO RESULT")
+    nonisolated static func debugTestMailAccess() async -> PermissionProbeResult {
+        await probeAppleEvents(appName: "Mail")
     }
 
     /// Simple error wrapper for osascript results
