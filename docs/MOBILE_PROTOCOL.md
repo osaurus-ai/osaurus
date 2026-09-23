@@ -728,8 +728,15 @@ pairing revokes the previous phone's key.
 ### 11.1 Discovery
 
 While the server is exposed to the network the Mac advertises itself (not an
-agent) as `_osaurus-mobile._tcp` with TXT `name=<computer name>`, `v=1`. The
-phone may also accept a manually entered host and port.
+agent) as `_osaurus-mobile._tcp` with TXT `name=<computer name>`, `v=1`.
+
+Where Bonjour does not reach the phone (office and guest Wi-Fi that block
+mDNS between clients), the phone probes the hosts on its own subnet on the
+Mac's port instead. `GET /pair/hello` is public and LAN-only (relay-origin
+requests get `403 lan_only`) and answers
+`{"v":1,"name":"<computer name>","pairing":true|false}` — the same facts as
+the TXT record, plus whether a code is currently showing. As a last resort
+the phone accepts a typed host and port.
 
 ### 11.2 Generating the code (Mac)
 

@@ -533,7 +533,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Plugin routes handle their own auth per-route, so skip the global gate.
             // Loopback connections (CLI / local tools) are trusted without a token.
             let publicPaths: Set<String> = [
-                "/", "/health", "/pair", "/pair/challenge", "/pair/code", "/pair-invite", "/secure/session",
+                "/", "/health", "/pair", "/pair/hello", "/pair/challenge", "/pair/code", "/pair-invite", "/secure/session",
             ]
             let isPluginRoute = path.hasPrefix("/plugins/")
             // Agent Channel webhook routes are authenticated by the connection's
@@ -878,6 +878,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } else if head.method == .POST, path == "/pair" {
                 handlePairEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .GET, path == "/pair/hello" {
+                handlePairHelloEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/pair/code" {
                 handlePairCodeEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/pair/unpair" {
@@ -4556,6 +4558,51 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     // MARK: - /pair/code (Osaurus Connect 6-digit pairing)
+
+    /// GET /pair/hello — "is there an Osaurus here?" for a phone whose Bonjour
+    /// is blocked: it probes the addresses on its own subnet and pairs with
+    /// whichever answers. Public and LAN-only, and it says nothing a Bonjour
+    /// TXT record does not already say: the Mac's name, the wire version,
+    /// and whether a pairing code is currently showing.
+    private func handlePairHelloEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let path = "/pair/hello"
+        let cors = stateRef.value.corsHeaders
+        guard !stateRef.value.isRelayOrigin else {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(
+                context: context, version: head.version, status: .forbidden, headers: headers,
+                body: #"{"error":"lan_only"}"#
+            )
+            return
+        }
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let (name, pairing) = await MainActor.run {
+                (Host.current().localizedName ?? "Osaurus", MobilePairingService.shared.activeCode != nil)
+            }
+            let body =
+                (try? JSONSerialization.data(withJSONObject: [
+                    "v": MobilePairingService.wireVersion, "name": name, "pairing": pairing,
+                ])).map { String(decoding: $0, as: UTF8.self) } ?? #"{"v":1}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: body)
+                self.logRequest(
+                    method: "GET", path: path, userAgent: userAgent, requestBody: nil,
+                    responseBody: body, responseStatus: 200, startTime: startTime
+                )
+            }
+        }
+    }
 
     /// POST /pair/code — redeem the 6-digit code shown in Settings → Osaurus
     /// Connect for a master-scoped access key and the agent roster, HPKE-sealed
