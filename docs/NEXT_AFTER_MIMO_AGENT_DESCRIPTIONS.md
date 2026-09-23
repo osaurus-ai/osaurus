@@ -4,7 +4,7 @@ Requested by Eric on 2026-09-23. Queue this immediately after the current MiMo r
 
 ## Problem and intended behavior
 
-Small orchestrator models choose agents from names with insufficient purpose/context and may call Osaurus Helper or another default agent when it cannot help. Every available agent must expose a concise human-authored description beside its name so the calling model can distinguish purpose and when delegation is useful.
+Small orchestrator models choose agents from names with insufficient purpose/context and may call Osaurus Helper or another default agent when it cannot help. Every available agent must expose a concise explicitly supplied description beside its name so the calling model can distinguish purpose and when delegation is useful.
 
 ## Required scope
 
@@ -30,3 +30,22 @@ Small orchestrator models choose agents from names with insufficient purpose/con
 ## Acceptance evidence
 
 A PR must include exact source/app/model identities, before/after routing observations, full denominators and failure attribution, screenshots inspected locally (not committed), persisted-state receipts, and actual in-app tool/delegation results. Source inspection or a rendered field alone is not live proof. Eric requested this as the next task; it is documented, not implemented in the MiMo change.
+
+## Queue order and next performance item
+
+Owner clarified on 2026-09-23: finish MiMo runtime/audio/visual and merge its proven PR; then implement/prove/merge this agent-description task; then optimize Raptor 0.6 JANG6M (Spark x2.5 architecture). No release cuts, release tags, or release-workflow dispatches in any of these tasks.
+
+Raptor acceptance/work checklist:
+
+- [ ] Identify the exact installed bundle/version, architecture contract, native quantization/dtypes and generation defaults before making changes. Confirm the Product Hunt deadline with the current calendar; Eric described it as next Monday.
+- [ ] Read internal runtime/cache documentation and inspect relevant merged and open Osaurus/vmlx-swift PRs from the preceding week, including the new SSD-cache location/designation and retention/eviction rules. Trace the actual app dependency pin and executed paths.
+- [ ] Establish controlled real-app/engine prefill and decode baselines with identical workloads, warm/cold phases, sufficient decode length, median/p95/max latency, synchronization, physical footprint and disk reads. Keep prompt, sampler and quantization unchanged.
+- [ ] Profile concrete bottlenecks and evaluate custom fused Metal kernels for supported M-chip generations. Measure hardware-specific shape/layout/dtype paths and fallback correctness; do not assume one chip result generalizes to every M series.
+- [ ] Evaluate TensorOps and CoreML only where supported by the installed OS/toolchain and compatible with this architecture. Count conversion/copy/synchronization costs; retain only measured end-to-end wins with numerical and semantic parity. No speculative speedup claims.
+- [ ] Prove coherent multi-turn reasoning/tool/media behavior as applicable, including cached versus uncached equivalence and native defaults. Reject faster looping/truncated/hidden-reasoning-only rows.
+- [ ] Exercise prefix/paged/L2 and architecture companion-state topology as actually enabled; validate disk restore and cache identity after model/source/quantization changes. Prove current locations and scoped model/conversation designation, quota behavior, eviction order, stale/oversized entry handling, and cleanup safety.
+- [ ] Stress growing chats and quota pressure to detect eviction stalls, excessive synchronous I/O, repeated cache misses, disk-write amplification and throughput regressions. Preserve live/active entries and unrelated model/chat data; never hide a slowdown with a disabled cache or relaxed quota.
+- [ ] Build an isolated development Osaurus app, exercise relevant settings/save/navigation/relaunch and actual cache-hit turns, inspect controls through completion/follow-up, and record exact source/app/model identity, tokens/s, memory, latency and disk/cache counters.
+- [ ] Run required regressions/evals and Osaurus CI. Document failures, hardware limitations and unsupported paths. Merge proven task PRs; do not cut a release.
+
+Additional recommendation: maintain a small device/shape matrix and numerical fallback contract so each fused path has explicit dispatch conditions. The product showcase claim should use measured end-to-end prefill/decode results on named hardware, not isolated kernel ratios.

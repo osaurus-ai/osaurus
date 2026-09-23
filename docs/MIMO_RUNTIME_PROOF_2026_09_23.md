@@ -16,7 +16,7 @@ R19 Release app SHA256 `434d3057aa9467a36ccd227f06c0565551f3df786268cea38786f001
 
 Private evidence root: `~/vmlx-private-evidence/mimo26-swift-2026-09-22/`. Screenshots remain private and are not committed.
 
-## Model and defaults
+## R19 model and defaults (historical bundle)
 
 `JANGQ-AI/MiMo-V2.6-Flash-RL-JANG_2L`; 52 bundle files verified, publication manifest SHA256 `d4ce2f3eb49e5ff40676f0eb5c4b3bd5d85840169e1a579f067591b664666b03`. Packed weights resident; GPU routing; original affine/MXFP4/FP8-derived bundle representation retained. Temperature 1, top-p 0.95, native thinking default from bundle, no hidden prompt/sampler changes. Optional fused gate/up and down kernels remain off. Effective KV: nine full + 39 rotating BF16, disk-backed restore, paged RAM off, zero TurboQuant layers.
 
@@ -33,11 +33,23 @@ Private evidence root: `~/vmlx-private-evidence/mimo26-swift-2026-09-22/`. Scree
 
 A prior R14 host watchdog restart remains documented. New host supervision/admission reduce risk, not prove immunity. Full-model jobs run serially on this Mac, with Warp/Terminal protected.
 
+## Final-pin R20b and changed-bundle R20c
+
+App commit `a285a38515bc18d5124618003803c23a821fc0ec`, engine pin `454e5258641f1c004fcc86b1944ce40e0b4f7a5f`: Release build succeeded; app binary SHA256 `ef5b459af145548d1780a75552c7cd6e94645ef802aed238d93dadbe4984144c`. Focused regressions passed 253 tests in nine suites, including both pin checks. All Osaurus CI checks on this commit passed (run `35844779539`). Receipts: `local-app-r20b-build-outputs.json`, `post-pin-r20b-tests-receipt.json`, `r19-r20b-source-comparison.json`. These source/build results do not qualify a changed model bundle.
+
+The installed bundle changed during this build. Current config SHA256 `2fdc2c0f420230a56990aaafd2939fc63e0c44a2b07bae8e98c466b25f689263`, JANG config `0f9bd72fb8837307732ce16766ed2eb62057383cb19696702f466d03ed31a0eb`, index `309688f0a8083543f17180a495cd468d1b61122ba61a02ece456ac366a67ae16`; root publication manifest absent. New quantization metadata includes 22 affine 3-bit/group128 units. Prior R19 scores apply only to the prior bundle. Current payload hashes/publication provenance have not been verified.
+
+Actual R20c audio attachment/send failed before generation: `Invalid native affine expert companions: model.layers.11.mlp.switch_mlp.gate_proj`. Its U32 weight shape `[256,2048,384]` and BF16 scales/biases `[256,2048,32]` imply native 3-bit/group128 at input width4096. The catalog currently rejects widths outside `[2,4,8]`, although native MLX accepts `[2,3,4,5,6,8]`. A bounded regression for 3/5/6-bit packed loading and mapped/resident routing is underway before extending this check. Optional specialized fusion must keep its format fallback. No full-model retry until identity and safe admission are resolved.
+
+Live artifacts: `local-app-r20c-load-failure.json`, `r20c-current-bundle-inventory.json`, `local-app-r20c-ui-actions.jsonl`, `local-app-r20c-audio-loading.png`, `local-app-r20c-memory-summary.json`. App exited normally, peak physical footprint1198196656 bytes, no guard trip; token/s is N/A because load failed before generation. Audio/video/tool-card UI remains unproven on this current bundle.
+
 ## Remaining before companion merge
 
-- [ ] Final-pin build and affected focused pin/runtime regressions.
+- [x] R20b final-pin build and 253 focused pin/runtime regressions passed.
+- [ ] Fix and prove current native affine-width loading; merge paired engine fix, consume its merged SHA, rebuild and repeat affected proof for the current bundle.
 - [ ] Final-pin actual audio/video and tool-card UI with follow-up, source identity, tokens/s and cache telemetry; retain any semantic failures.
 - [ ] Required remote-model AgentLoop/AgentLoopFrontier comparison. Supported environment keys absent; configured endpoint unreachable. `r19-remote-comparison-prerequisites.json`. Existing credential source requested without requesting a pasted secret.
-- [ ] Osaurus exact-head CI and review. Engine CI waiver does not apply here.
+- [x] Osaurus CI on `a285a38515bc18d5124618003803c23a821fc0ec` passed.
+- [ ] Final amended-head CI and review. Engine CI waiver does not apply here.
 
 Next requested task after MiMo: [required agent descriptions](NEXT_AFTER_MIMO_AGENT_DESCRIPTIONS.md). This is queued only, not implemented in the runtime change.
