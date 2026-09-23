@@ -54,3 +54,56 @@ Live artifacts: `local-app-r20c-load-failure.json`, `r20c-current-bundle-invento
 - [ ] Final amended-head CI and review. Engine CI waiver does not apply here.
 
 Next requested task after MiMo: [required agent descriptions](NEXT_AFTER_MIMO_AGENT_DESCRIPTIONS.md). This is queued only, not implemented in the runtime change.
+
+
+## R21 rebuilt app, iteration 2: live results
+
+App commit `c0b3b280c3ce132b63fca9b657714ee17f6d2a3c` consumed engine
+`cd63706f8302b8cd5d9224b26787d85b473aebc2`. Release development build passed;
+binary SHA256 `30e160427d0f669c0f72c9027962a72335985afd13463844c568827fb9045c39`.
+Focused tests passed 346/346 across ten suites. The rebuilt eval runner also
+built successfully, but its updated-bundle full matrix has not run yet.
+
+The actual UI loaded the updated bundle without the affine-companion error.
+Native WAV attachments were selected through the file picker and attachment
+chips inspected before Send. Clean audio and changed audio are **FAIL**:
+the model recognized blue7/green9 but denied receiving recordings. Decode was
+45.2 and 44.7 tok/s; media-history follow-up also failed provenance at 44.4 tok/s.
+Do not call native audio fully working or alter prompts/sampling to hide this.
+The video attachment passed: red circle then blue square, 44.8 tok/s.
+Two real get_current_time calls passed at 45.8/45.1 tok/s; the second used
+Asia/Tokyo and correctly quoted the prior UTC result. Tool cards settled,
+reasoning closed, Stop disappeared and input unlocked. All seven recorded
+turns stopped naturally; these short turns do not establish a controlled
+128-step speed baseline.
+
+Raw conversations, viewed screenshots and per-row status:
+`local-app-r21c-ui-conversations.json`, `local-app-r21c-live-proof-summary.json`.
+Cache telemetry after tools: 3 disk-L2 hits, 52 misses, 25 stores; nine full KV
+and 39 rotating layers, zero TurboQuant layers, paged RAM off, disk-backed
+restore. Runtime trace includes post-answer disk boundary restores and the
+updated weight fingerprint `fedc13adfc70a313`. This does not establish a disk
+hit on every tool boundary. The app quit through its actual Quit menu with
+exit0, no host-guard trip; peak phys_footprint109862712936 bytes. Protected
+Warp/Terminal and unrelated active jobs remained running.
+
+Owner requested coverage across quant variants. The expanded bounded matrix
+first passed 36 affine configurations and 14 MXFP4 combinations with exact
+native output equality; additional FP8/format-dispatch checks are in progress.
+These tensor tests generate no language; token/s is not applicable.
+
+
+## R22 quant-format follow-up
+
+Engine [#495](https://github.com/osaurus-ai/vmlx-swift/pull/495) merged as
+`fce53ef0e5cf5eb052a5a38490661bc48218917f`; merged tree equals tested feature
+`b2ae8cb868f8d4bdaacf68223186152317ad5d51`. It fixes native MXFP8 expert
+loading and quant-dependent architecture selection. Bounded Metal proof passed
+18 default-flags tests and27 optional-flags/runtime tests, including64 format
+matrix configurations, dtype/packed-byte retention, malformed companions,
+legacy dispatch and indexed-model rotating-cache parity. Receipts:
+`native-quant-matrix-r4-defaults-receipt.json`,
+`native-quant-matrix-r5-optins-receipt.json`. All four app pins and both source
+tripwires now reference the merged SHA. Fresh app/eval rebuild and affected
+current-bundle proof are required; the R21 audio failures remain open.
+Osaurus CI passed at R21 head c0b3b280 before this next dependency update.

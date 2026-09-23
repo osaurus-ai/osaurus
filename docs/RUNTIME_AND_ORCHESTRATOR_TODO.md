@@ -16,18 +16,22 @@ Owner: Eric. Updated 2026-09-23. Work through these tasks in order; merge each p
 - [x] Native mixed-quant runtime, resident packed expert dispatch, multimodal inputs and cache work implemented in vmlx-swift.
 - [x] Engine PR [#493](https://github.com/osaurus-ai/vmlx-swift/pull/493) merged at `454e5258641f1c004fcc86b1944ce40e0b4f7a5f`; owner engine-CI waiver recorded.
 - [x] Osaurus integration implemented and pinned to merged runtime in all four locations; two source tripwires updated.
-- [x] Osaurus draft PR [#2863](https://github.com/osaurus-ai/osaurus/pull/2863) opened. Current runtime source commit `a285a38515bc18d5124618003803c23a821fc0ec`.
+- [x] Osaurus draft PR [#2863](https://github.com/osaurus-ai/osaurus/pull/2863) opened. R21 runtime source commit `c0b3b280c3ce132b63fca9b657714ee17f6d2a3c`; later pin work remains separately identified.
 - [x] Final remote-pin Release development app built successfully; source manifest and binary hash recorded.
 - [x] Final-pin focused regressions: 253 tests in nine suites passed, including both dependency-pin checks.
 - [x] Full R19 local matrix completed on identical runtime source: ReasoningChannel13/13, CacheProof14/14, AgentLoopFrontier42/42, AgentLoop41/56 passed, 11 failed, four skipped. Every non-pass attributed; scores unchanged. R19-to-final-pin source comparison recorded separately from live proof.
 - [x] Actual R19 Chat/Settings proof: load cancellation/cleanup/recovery, allocator override/persistence, image attachments/changed images, prefix off/on/save/reload/history. Prior evidence is explicitly tied to its source/app identity.
 - [x] Loader follow-up [vmlx-swift#494](https://github.com/osaurus-ai/vmlx-swift/pull/494) merged at `cd63706f8302b8cd5d9224b26787d85b473aebc2`: native 3/5/6-bit packed loading and mapped/resident routing proved, 13 tests passed with default flags and 13 with optional fusions enabled; all four Osaurus pins and both source tripwires updated.
 - [x] Updated installed iteration2 explicitly selected by Eric; all 54 manifest files passed checksum verification.
-- [ ] Rebuild and requalify current bundle with the follow-up pin; do not carry R19 scores over.
-- [ ] Finish final-pin actual native audio/video/history UI and real tool cards with follow-up. Inspect reasoning, visible answers, card settlement, Stop/input state, tokens/s, memory and cache telemetry. Preserve any semantic failure.
+- [x] R21 rebuilt app and eval runner; 346/346 focused app tests passed. Actual iteration2 loads without the old affine-companion error.
+- [x] Native quant follow-up [vmlx-swift#495](https://github.com/osaurus-ai/vmlx-swift/pull/495) merged at `fce53ef0e5cf5eb052a5a38490661bc48218917f`: native MXFP8 and quant-independent fused dispatch; 18 default-flags and 27 optional-flags/runtime tests passed. All four app pins and both tripwires updated.
+- [ ] Finish current-bundle qualification; do not carry R19 scores over. Expand bounded coverage across quant widths, projection roles, group sizes, scale dtypes and native floating quant formats.
+- [x] R21 actual audio/video/history UI and tool cards with follow-up exercised and recorded: video/tool calls pass; audio and media-history provenance fail. Natural stops, settled UI, tokens/s, memory and cache telemetry captured.
+- [ ] Diagnose retained audio semantic failure and repeat affected proof after any further runtime pin.
 - [ ] Required remote-model AgentLoop/AgentLoopFrontier comparison. Existing supported credential source requested; none in environment, configured endpoint unreachable. No pasted secrets or invented keys.
 - [ ] Resolve/attribute any remaining in-scope failures; do not call every media/agent row passed. API media recall currently has a retained 3/4 semantic result.
 - [x] Osaurus CI passed at `a285a38515bc18d5124618003803c23a821fc0ec`.
+- [x] R21 Osaurus CI passed at `c0b3b280c3ce132b63fca9b657714ee17f6d2a3c`.
 - [ ] Final amended-head CI and review complete.
 - [ ] Update final proof/limitations in PR and repo docs, then merge Osaurus#2863. No release/tag.
 
