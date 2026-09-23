@@ -373,9 +373,17 @@ struct CoreModelServiceFallbackTests {
     }
 
     @Test
-    func transientErrors_neverFallBack() {
+    func hangsFallBack_breakerOpenNeverDoes() {
+        // A hung primary hands over to the chat model (the hang is still
+        // counted against the primary's breaker); an open breaker is handled
+        // structurally in `generate` and never reaches this decision.
         #expect(
-            !CoreModelService.shouldFallBackToChatModel(for: .timedOut, allowResidencyRefusal: true)
+            CoreModelService.shouldFallBackToChatModel(for: .timedOut, allowResidencyRefusal: false)
+        )
+        #expect(
+            CoreModelService.shouldFallBackToChatModel(
+                for: .unresponsive("foundation"), allowResidencyRefusal: false
+            )
         )
         #expect(
             !CoreModelService.shouldFallBackToChatModel(

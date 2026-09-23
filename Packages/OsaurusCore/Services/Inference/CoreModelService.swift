@@ -17,6 +17,11 @@ public enum CoreModelError: Error, LocalizedError, Equatable {
     case modelUnavailable(String)
     case circuitBreakerOpen
     case timedOut
+    /// The primary core model accepted the request but produced no output
+    /// within its service's first-token deadline. Distinct from `.timedOut`
+    /// (the whole-call budget) so logs and the breaker can tell "wedged
+    /// before the first token" from "slow generation".
+    case unresponsive(String)
     /// A background call wanted a local MLX model that isn't the one
     /// currently resident (or loading). Serving it would evict the
     /// user's model, so the call was declined instead. Best-effort
@@ -31,6 +36,8 @@ public enum CoreModelError: Error, LocalizedError, Equatable {
             return "Core model temporarily unavailable (too many recent failures)"
         case .timedOut:
             return "Core model call timed out"
+        case .unresponsive(let model):
+            return "Core model '\(model)' produced no output within its first-token deadline"
         case .backgroundWouldEvictUserModel(let model):
             return "Skipped background call to '\(model)': loading it would evict the model in use"
         }
@@ -62,12 +69,13 @@ public enum CoreModelStatus: Sendable, Equatable {
     /// Configured and the router can resolve it to a live service.
     case available(modelId: String, serviceId: String, effectiveModel: String)
     /// Configured but no available service handles the identifier.
-    /// Most common reason: Foundation Model on a pre-macOS-26 system,
-    /// or a remote provider that was disconnected.
+    /// Most common reasons: Apple Intelligence turned off / model still
+    /// downloading for Foundation, or a remote provider that was disconnected.
     case unavailable(modelId: String, reason: String)
-    /// Breaker is currently open after consecutive failures; the next
-    /// call will probe the model anyway, but distillation will see
-    /// `circuitBreakerOpen` until the cooldown elapses.
+    /// Breaker is currently open after consecutive failures. Calls that
+    /// carry a chat-model fallback are served from the fallback for the
+    /// duration; calls without one see `circuitBreakerOpen` until the
+    /// cooldown elapses.
     case breakerOpen(modelId: String?, until: Date)
 }
 
@@ -79,7 +87,24 @@ public actor CoreModelService {
     private static let maxRetries = 3
     private static let baseRetryDelayNanoseconds: UInt64 = 1_000_000_000
 
+    // MARK: Breaker state
+    //
+    // The breaker protects the *primary* core model (the configured one, or
+    // the per-call override). It is opened by primary failures — including
+    // failures that the chat-model fallback then rescued — and cleared only
+    // by a primary success. A fallback success must not clear it: that would
+    // hide a wedged primary and re-probe it on every call. While it is open,
+    // calls that carry a distinct fallback skip the primary entirely; only
+    // calls without one see `circuitBreakerOpen`.
+
+    /// Generic failures (framework errors, remote 5xx, …) since the last
+    /// primary success. Opens the breaker at `circuitBreakerThreshold`.
     private var consecutiveFailures = 0
+    /// Hang-type failures (`.timedOut`, `.unresponsive`) since the last
+    /// primary success. A hang burns the caller's whole first-token or
+    /// timeout budget, so the breaker opens after far fewer of them
+    /// (`hangBreakerThreshold`) to stop paying that cost on every call.
+    private var consecutiveHangs = 0
     private var circuitOpenUntil: Date?
     /// Last error that contributed to the breaker opening. Surfaced
     /// in log messages so callers (and humans reading the log) can
@@ -89,9 +114,16 @@ public actor CoreModelService {
     /// intervening successful call. Drives exponential cooldown so a
     /// genuinely-broken backend (Foundation framework lock contention,
     /// crashed remote provider) doesn't get hammered every minute
-    /// forever. Reset to zero on any successful generation.
+    /// forever. Reset to zero on any successful primary generation.
     private var consecutiveBreakerCycles = 0
-    private static let circuitBreakerThreshold = 5
+    /// Set when a cooldown has elapsed and the next primary attempt is a
+    /// probe. A single counted failure while probing re-opens the breaker
+    /// at the next cooldown bucket instead of needing a full threshold's
+    /// worth of failures again.
+    private var halfOpenProbe = false
+
+    static let circuitBreakerThreshold = 5
+    static let hangBreakerThreshold = 2
     /// Base cooldown after the breaker first opens. Doubles each cycle
     /// the breaker re-opens without a success in between (60s, 120s,
     /// 240s, …) up to `circuitBreakerMaxCooldownSeconds`.
@@ -114,13 +146,15 @@ public actor CoreModelService {
     ///   - maxTokens: Maximum response tokens (default 2048).
     ///   - timeout: Maximum wall-clock seconds for the call (default 60).
     ///   - fallbackModel: Model identifier to fall back to when the configured
-    ///     core model is unset or `modelUnavailable` on this machine. Callers
+    ///     core model is unset or cannot serve on this machine. Callers
     ///     should pass the active conversation model so preflight and other
     ///     background calls work out of the box without an explicit Core Model
     ///     setting (root cause of GitHub issue #823 — macOS < 26 ships with
     ///     `coreModelName = "foundation"` persisted but the router can't
-    ///     satisfy it). Transient failures (timeouts, breaker open) do NOT
-    ///     trigger the fallback.
+    ///     satisfy it). When a distinct fallback is supplied the primary gets
+    ///     exactly one attempt (with its service's first-token deadline) and
+    ///     every failure except cancellation and an un-opted residency
+    ///     refusal moves to the fallback immediately.
     /// - Returns: The model's text response.
     public func generate(
         prompt: String,
@@ -173,8 +207,6 @@ public actor CoreModelService {
         fallBackOnResidencyRefusal: Bool = false,
         modelOptions: [String: ModelOptionValue]
     ) async throws -> String {
-        try checkBreakerOrEnterHalfOpen()
-
         // A per-call override wins over the shared Core Model setting; empty
         // strings are treated as "no override" so callers can pass raw config.
         // The `await` can't live in a `??` autoclosure, so resolve it up front
@@ -208,24 +240,57 @@ public actor CoreModelService {
             auxiliaryCacheIntent: true
         )
 
-        do {
-            return try await runWithChatModelFallback(
-                primary: configured,
-                fallback: fallback,
-                messages: messages,
-                params: params,
-                timeout: timeout,
-                intent: intent,
-                fallBackOnResidencyRefusal: fallBackOnResidencyRefusal
-            )
-        } catch {
-            try recordFailureAndThrow(error)
+        let distinctFallback: String? = {
+            guard let fb = fallback, fb != configured else { return nil }
+            return fb
+        }()
+
+        if breakerIsOpen() {
+            // The primary is cooling down. A call that carries a distinct
+            // fallback is served from it directly — the chat model is healthy
+            // and the user is waiting on a title / follow-ups / distillation.
+            // Fallback failures here are not counted: the breaker is about
+            // the primary.
+            if let primary = configured, let fb = distinctFallback {
+                logger.info(
+                    "Core model '\(primary)' breaker open; serving from chat model '\(fb)' during cooldown")
+                return try await runWithRetries(
+                    model: fb, messages: messages, params: params, timeout: timeout, intent: intent,
+                    role: .fallback)
+            }
+            throw CoreModelError.circuitBreakerOpen
         }
+
+        return try await runWithChatModelFallback(
+            primary: configured,
+            fallback: distinctFallback,
+            messages: messages,
+            params: params,
+            timeout: timeout,
+            intent: intent,
+            fallBackOnResidencyRefusal: fallBackOnResidencyRefusal
+        )
     }
 
-    /// Single-attempt run with at most one chat-model fallback. Split out so
-    /// `generate(...)` reads as a flat "run + bookkeeping" pair instead of
-    /// nested do-catch arms.
+    /// Which model a `runWithRetries` pass is running. Decides the retry
+    /// budget, whether the first-token deadline applies, and how the result
+    /// feeds the breaker.
+    private enum ModelRole {
+        /// The only model this call can use (configured without a fallback,
+        /// or the chat model when nothing is configured). Full retry budget;
+        /// success clears the breaker, failure counts toward it.
+        case solo
+        /// The configured / override model when a distinct fallback exists.
+        /// Single attempt with the service's first-token deadline; success
+        /// clears the breaker, failure counts toward it and hands over.
+        case primaryWithFallback
+        /// The chat model after the primary failed or while the breaker is
+        /// open. Full retry budget; neither outcome touches the breaker.
+        case fallback
+    }
+
+    /// Run the primary with at most one chat-model fallback, doing all breaker
+    /// accounting so `generate` reads as a flat "resolve + run" pair.
     private func runWithChatModelFallback(
         primary: String?,
         fallback: String?,
@@ -233,86 +298,100 @@ public actor CoreModelService {
         params: GenerationParameters,
         timeout: TimeInterval,
         intent: CoreModelIntent,
-        fallBackOnResidencyRefusal: Bool = false
+        fallBackOnResidencyRefusal: Bool
     ) async throws -> String {
         guard let primary else {
             guard let fb = fallback else { throw CoreModelError.modelUnavailable("none") }
             logger.info("Core model unset; using chat model '\(fb)' as fallback")
-            return try await runWithRetries(
-                model: fb, messages: messages, params: params, timeout: timeout, intent: intent)
+            do {
+                return try await runWithRetries(
+                    model: fb, messages: messages, params: params, timeout: timeout, intent: intent,
+                    role: .solo)
+            } catch {
+                recordPrimaryFailure(error)
+                throw error
+            }
         }
 
+        guard let fb = fallback else {
+            do {
+                return try await runWithRetries(
+                    model: primary, messages: messages, params: params, timeout: timeout, intent: intent,
+                    role: .solo)
+            } catch {
+                recordPrimaryFailure(error)
+                throw error
+            }
+        }
+
+        let started = Date()
+        let primaryError: Error
         do {
             return try await runWithRetries(
-                model: primary, messages: messages, params: params, timeout: timeout, intent: intent)
-        } catch let coreErr as CoreModelError {
-            // Which CoreModelErrors are worth retrying on the chat model:
-            //  - `.modelUnavailable`: the primary's identifier can't be routed
-            //    at all (Foundation on pre-26 macOS, a deleted MLX model, a
-            //    disconnected remote provider).
-            //  - `.backgroundWouldEvictUserModel`: only when the caller opted in
-            //    (follow-ups). The primary was refused because loading it would
-            //    evict a resident; the chat model is already resident/remote, so
-            //    running there generates without eviction.
-            // `.timedOut` and `.circuitBreakerOpen` are deliberately excluded —
-            // transient, and a different model would just mask the real issue.
-            let shouldFallBack = Self.shouldFallBackToChatModel(
-                for: coreErr,
-                allowResidencyRefusal: fallBackOnResidencyRefusal
-            )
-            guard shouldFallBack, let fb = fallback, fb != primary else { throw coreErr }
-            logger.info("Core model '\(primary)' unavailable; falling back to chat model '\(fb)'")
-            return try await runWithRetries(
-                model: fb, messages: messages, params: params, timeout: timeout, intent: intent)
-        } catch is CancellationError {
-            // Caller walked away mid-flight — don't spend the fallback
-            // model on a generation no one is waiting for.
-            throw CancellationError()
+                model: primary, messages: messages, params: params, timeout: timeout, intent: intent,
+                role: .primaryWithFallback)
         } catch {
-            // Runtime failure that isn't a CoreModelError. The primary
-            // backend is wedged below the routing layer — Foundation
-            // framework lock contention (the OS-level "Too many open
-            // files" / `failedToRetrieveAssetSet` cycle), MLX runtime
-            // crashes, or a remote provider returning malformed JSON.
-            // `runWithRetries` already gave the primary three chances;
-            // try the chat-model fallback once before bubbling so
-            // best-effort callers still get useful output. If the fallback
-            // isn't viable (missing or
-            // identical to primary), preserve the original error.
-            guard let fb = fallback, fb != primary else { throw error }
-            logger.warning(
-                "Core model '\(primary)' exhausted retries (\(error.localizedDescription)); falling back to chat model '\(fb)'"
-            )
-            return try await runWithRetries(
-                model: fb,
-                messages: messages,
-                params: params,
-                timeout: timeout,
-                intent: intent
-            )
+            primaryError = error
         }
+
+        // Caller walked away mid-flight — don't spend the fallback model on a
+        // generation no one is waiting for, and don't blame the primary.
+        if primaryError is CancellationError { throw primaryError }
+
+        recordPrimaryFailure(primaryError)
+
+        // Which primary failures hand over to the chat model:
+        //  - `.modelUnavailable`: the identifier can't be routed at all
+        //    (Foundation not available on this Mac, a deleted MLX model, a
+        //    disconnected remote provider).
+        //  - `.timedOut` / `.unresponsive`: the primary is wedged; the chat
+        //    model is resident or remote and can answer now.
+        //  - `.backgroundWouldEvictUserModel`: only when the caller opted in
+        //    (follow-ups). The primary was refused because loading it would
+        //    evict a resident; the chat model is already resident/remote, so
+        //    running there generates without eviction.
+        //  - Any non-`CoreModelError` (typed Foundation failure, remote 5xx,
+        //    MLX runtime error): the backend is wedged below the routing
+        //    layer; try the chat model once so best-effort callers still get
+        //    useful output.
+        if let coreErr = primaryError as? CoreModelError,
+            !Self.shouldFallBackToChatModel(for: coreErr, allowResidencyRefusal: fallBackOnResidencyRefusal)
+        {
+            throw coreErr
+        }
+
+        let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
+        logger.warning(
+            "Core model '\(primary)' failed after \(elapsedMs)ms (\(primaryError.localizedDescription)); falling back to chat model '\(fb)'"
+        )
+        return try await runWithRetries(
+            model: fb, messages: messages, params: params, timeout: timeout, intent: intent,
+            role: .fallback)
     }
 
     /// Whether a failed primary attempt should retry on the chat model.
     /// Pure so the fallback contract can be pinned without a live runtime.
     ///   - `.modelUnavailable`: the primary can't be routed at all — always
     ///     retry the chat model (issue #823).
+    ///   - `.timedOut` / `.unresponsive`: the primary is hung. The chat model
+    ///     is the one actually in use (resident or remote), so it can answer
+    ///     now; the hang is still counted against the primary's breaker.
     ///   - `.backgroundWouldEvictUserModel`: only when the caller opted in
     ///     (follow-ups). The primary was refused to protect a resident; the
-    ///     chat model is the one actually in use (resident or remote), so
-    ///     retrying there generates without evicting anything.
-    ///   - everything else (`.timedOut`, `.circuitBreakerOpen`, …): transient
-    ///     or fatal in a way a different model won't fix — don't fall back.
+    ///     chat model is the one actually in use, so retrying there
+    ///     generates without evicting anything.
+    ///   - `.circuitBreakerOpen`: never reaches this decision — an open
+    ///     breaker is handled structurally in `generate` before routing.
     static func shouldFallBackToChatModel(
         for error: CoreModelError,
         allowResidencyRefusal: Bool
     ) -> Bool {
         switch error {
-        case .modelUnavailable:
+        case .modelUnavailable, .timedOut, .unresponsive:
             return true
         case .backgroundWouldEvictUserModel:
             return allowResidencyRefusal
-        default:
+        case .circuitBreakerOpen:
             return false
         }
     }
@@ -332,17 +411,22 @@ public actor CoreModelService {
         clearBreakerState()
     }
 
+    /// Cooldown end while the breaker is open, else nil. Test hook.
+    func breakerOpenUntil() -> Date? {
+        guard let until = circuitOpenUntil, Date() < until else { return nil }
+        return until
+    }
+
     /// Probe whether the configured core model can be resolved by the
     /// router right now. Does NOT make an LLM call — only iterates the
     /// candidate services' `isAvailable()` / `handles(...)` functions,
     /// which are cheap and side-effect-free.
     ///
-    /// Used by the Memory diagnostics panel to surface "Foundation
-    /// Model unavailable on this OS" / "remote provider disconnected"
-    /// instead of letting those failures live as `.info` log messages
-    /// the user never sees.
+    /// Used by the Memory diagnostics panel to surface "Apple Intelligence
+    /// is turned off" / "remote provider disconnected" instead of letting
+    /// those failures live as `.info` log messages the user never sees.
     public func resolveStatus() async -> CoreModelStatus {
-        if let openUntil = circuitOpenUntil, Date() < openUntil {
+        if let openUntil = breakerOpenUntil() {
             let configured = await MainActor.run {
                 ChatConfigurationStore.load().coreModelIdentifier
             }
@@ -377,11 +461,14 @@ public actor CoreModelService {
     }
 
     /// Best-effort human-readable reason for why the router couldn't
-    /// satisfy `modelId`. Pure heuristics — no I/O.
-    private static func unavailableReason(modelId: String) -> String {
+    /// satisfy `modelId`. For Foundation this is the framework's own
+    /// availability reason (Apple Intelligence off, model downloading, …);
+    /// everything else is a heuristic on the identifier shape. No I/O.
+    static func unavailableReason(modelId: String) -> String {
         let lowered = modelId.lowercased()
         if lowered == "foundation" || lowered.hasSuffix("/foundation") {
-            return "Foundation Model not available on this OS (requires macOS 26+)."
+            return FoundationModelService.defaultModelAvailability().unavailableReason?.userDescription
+                ?? "Foundation Model is not available on this Mac."
         }
         if lowered.contains("/") {
             let provider = lowered.split(separator: "/").first.map(String.init) ?? lowered
@@ -394,64 +481,142 @@ public actor CoreModelService {
 
     // MARK: - Private — breaker bookkeeping
 
-    /// Throws `circuitBreakerOpen` while the cooldown is active.
-    /// When the cooldown has elapsed, transitions the breaker to a
-    /// "half-open" probe state: the failure counter, cooldown
-    /// window, and last-error are cleared so the next call runs,
-    /// but `consecutiveBreakerCycles` is PRESERVED so a failed probe
-    /// escalates to the next cooldown bucket (60s → 120s → 240s …)
-    /// instead of restarting at 60s — without that, a wedged backend
-    /// would stay pinned in fast-retry mode forever.
-    private func checkBreakerOrEnterHalfOpen() throws {
-        guard let openUntil = circuitOpenUntil else { return }
-        if Date() < openUntil {
-            throw CoreModelError.circuitBreakerOpen
-        }
+    /// True while the cooldown is active. When the cooldown has elapsed,
+    /// transitions the breaker to a "half-open" probe state — counters,
+    /// cooldown window, and last-error are cleared so the next primary
+    /// attempt runs, but `consecutiveBreakerCycles` is PRESERVED and
+    /// `halfOpenProbe` is set so a failed probe re-opens immediately at the
+    /// next cooldown bucket (60s → 120s → 240s …) instead of restarting the
+    /// count — without that, a wedged backend would stay pinned in
+    /// fast-retry mode forever.
+    private func breakerIsOpen() -> Bool {
+        guard let openUntil = circuitOpenUntil else { return false }
+        if Date() < openUntil { return true }
         consecutiveFailures = 0
+        consecutiveHangs = 0
         circuitOpenUntil = nil
         lastBreakerError = nil
+        halfOpenProbe = true
         logger.info("Circuit breaker cooldown elapsed — entering half-open probe")
+        return false
     }
 
     private func clearBreakerState() {
         consecutiveFailures = 0
+        consecutiveHangs = 0
         circuitOpenUntil = nil
         lastBreakerError = nil
+        halfOpenProbe = false
         // A success between cycles resets the exponential cooldown so
         // the next genuine outage starts at the fast 60s cadence
         // again rather than inheriting yesterday's backoff.
         consecutiveBreakerCycles = 0
     }
 
-    /// Returns the model's response on success (and clears breaker
-    /// state). Throws the final error after all retries are
-    /// exhausted; the caller is responsible for the failure-
-    /// accounting path via `recordFailureAndThrow`.
+    /// Whether a primary failure should count toward opening the breaker.
+    ///
+    /// `modelUnavailable` is a **configuration** error, not a flaky
+    /// backend — the user's `coreModelIdentifier` points at something
+    /// the router can't service (Foundation with Apple Intelligence off,
+    /// a remote provider that was uninstalled, an MLX model that was
+    /// deleted). Counting it would lock the user out of the preflight
+    /// path with a misleading "circuitBreakerOpen" that hides the real fix.
+    /// A declined background call is a policy decision, not a backend
+    /// fault: counting it would let a long chat session — where a model is
+    /// legitimately resident the whole time — trip the breaker and lock the
+    /// *user's* own interactive calls out. Cancellation isn't a fault either.
+    static func countsTowardBreaker(_ error: Error) -> Bool {
+        if error is CancellationError { return false }
+        guard let coreErr = error as? CoreModelError else { return true }
+        switch coreErr {
+        case .modelUnavailable, .backgroundWouldEvictUserModel, .circuitBreakerOpen:
+            return false
+        case .timedOut, .unresponsive:
+            return true
+        }
+    }
+
+    /// Hang-type failures open the breaker after `hangBreakerThreshold`.
+    static func isHang(_ error: Error) -> Bool {
+        guard let coreErr = error as? CoreModelError else { return false }
+        switch coreErr {
+        case .timedOut, .unresponsive: return true
+        default: return false
+        }
+    }
+
+    /// Account a primary (or solo) failure. Opens the breaker when a
+    /// threshold is reached or when this was the half-open probe.
+    private func recordPrimaryFailure(_ error: Error) {
+        guard Self.countsTowardBreaker(error) else { return }
+        if Self.isHang(error) {
+            consecutiveHangs += 1
+        } else {
+            consecutiveFailures += 1
+        }
+        let thresholdReached =
+            consecutiveHangs >= Self.hangBreakerThreshold
+            || consecutiveFailures >= Self.circuitBreakerThreshold
+        guard halfOpenProbe || thresholdReached else { return }
+
+        // Exponential cooldown: each consecutive open without an
+        // intervening success doubles the wait, capped at 30 min.
+        // The shift saturates at cycle 5 anyway (60s × 32 = 1920s
+        // already past the 1800s ceiling), so clamping there
+        // keeps the multiplier well within `Int` range and the
+        // arithmetic readable. Bit-shift over `pow(2, …)` so the
+        // type stays `Int`.
+        let cycles = min(consecutiveBreakerCycles, 5)
+        let multiplier = TimeInterval(1 << cycles)
+        let cooldown = min(
+            Self.circuitBreakerCooldownSeconds * multiplier,
+            Self.circuitBreakerMaxCooldownSeconds
+        )
+        circuitOpenUntil = Date().addingTimeInterval(cooldown)
+        lastBreakerError = error
+        consecutiveBreakerCycles += 1
+        halfOpenProbe = false
+        logger.error(
+            "Circuit breaker opened (failures \(self.consecutiveFailures), hangs \(self.consecutiveHangs), cycle \(self.consecutiveBreakerCycles), cooldown \(Int(cooldown))s); last error: \(error.localizedDescription)"
+        )
+    }
+
+    // MARK: - Private — execution
+
+    /// Returns the model's response on success. Throws the final error after
+    /// the role's attempt budget is exhausted; breaker accounting for
+    /// failures is the caller's job (`recordPrimaryFailure`).
     private func runWithRetries(
         model: String,
         messages: [ChatMessage],
         params: GenerationParameters,
         timeout: TimeInterval,
-        intent: CoreModelIntent
+        intent: CoreModelIntent,
+        role: ModelRole
     ) async throws -> String {
+        // With a healthy fallback waiting, a second or third attempt on a
+        // failing primary only delays the answer the user is waiting on.
+        let attempts = role == .primaryWithFallback ? 1 : Self.maxRetries
+        let applyFirstTokenDeadline = role == .primaryWithFallback
         var lastError: Error?
-        for attempt in 0 ..< Self.maxRetries {
+        for attempt in 0 ..< attempts {
             do {
                 let result = try await withTimeout(seconds: timeout) {
                     try await self.executeModelCall(
-                        model: model, messages: messages, params: params, intent: intent)
+                        model: model, messages: messages, params: params, intent: intent,
+                        applyFirstTokenDeadline: applyFirstTokenDeadline)
                 }
-                clearBreakerState()
+                if role != .fallback { clearBreakerState() }
                 return result
             } catch {
                 lastError = error
                 // Cancellation is cooperative — retrying a torn-down call
                 // just burns inference. Propagate instead of retrying.
                 if error is CancellationError || Task.isCancelled { throw error }
-                if !Self.isRetryable(error) || attempt == Self.maxRetries - 1 { break }
+                if !Self.isRetryable(error) || attempt == attempts - 1 { break }
                 let delay = Self.baseRetryDelayNanoseconds * UInt64(1 << attempt)
                 logger.warning(
-                    "Core model call failed (attempt \(attempt + 1)/\(Self.maxRetries)), retrying: \(error.localizedDescription)"
+                    "Core model call failed (attempt \(attempt + 1)/\(attempts)), retrying: \(error.localizedDescription)"
                 )
                 try? await Task.sleep(nanoseconds: delay)
             }
@@ -459,75 +624,23 @@ public actor CoreModelService {
         throw lastError ?? CoreModelError.modelUnavailable(model)
     }
 
-    /// Bookkeeping for a final failure: throws-through configuration
-    /// errors (`modelUnavailable`) without touching the breaker, and
-    /// otherwise increments the failure counter and opens the breaker
-    /// once the threshold is reached. Always throws.
-    ///
-    /// `modelUnavailable` is a **configuration** error, not a flaky
-    /// backend — the user's `coreModelIdentifier` points at something
-    /// the router can't service (Foundation Model on pre-26 macOS, a
-    /// remote provider that was uninstalled, an MLX model that was
-    /// deleted). Counting it toward the breaker would lock the user
-    /// out of the preflight path permanently with a misleading
-    /// "circuitBreakerOpen" symptom that hides the real fix.
-    private func recordFailureAndThrow(_ error: Error) throws -> Never {
-        // Cancellation isn't a backend fault — don't let it trip the
-        // breaker and lock out real calls.
-        if error is CancellationError {
-            throw error
-        }
-        if let coreErr = error as? CoreModelError, case .modelUnavailable = coreErr {
-            throw coreErr
-        }
-        // A declined background call is a policy decision, not a backend fault.
-        // Counting it would let a long chat session — where a model is legitimately
-        // resident the whole time — trip the breaker and lock the *user's* own
-        // interactive calls out behind a bogus "circuitBreakerOpen".
-        if let coreErr = error as? CoreModelError, case .backgroundWouldEvictUserModel = coreErr {
-            throw coreErr
-        }
-
-        consecutiveFailures += 1
-        if consecutiveFailures >= Self.circuitBreakerThreshold {
-            // Exponential cooldown: each consecutive open without an
-            // intervening success doubles the wait, capped at 30 min.
-            // The shift saturates at cycle 5 anyway (60s × 32 = 1920s
-            // already past the 1800s ceiling), so clamping there
-            // keeps the multiplier well within `Int` range and the
-            // arithmetic readable. Bit-shift over `pow(2, …)` so the
-            // type stays `Int`.
-            let cycles = min(consecutiveBreakerCycles, 5)
-            let multiplier = TimeInterval(1 << cycles)
-            let cooldown = min(
-                Self.circuitBreakerCooldownSeconds * multiplier,
-                Self.circuitBreakerMaxCooldownSeconds
-            )
-            circuitOpenUntil = Date().addingTimeInterval(cooldown)
-            lastBreakerError = error
-            consecutiveBreakerCycles += 1
-            logger.error(
-                "Circuit breaker opened after \(self.consecutiveFailures) consecutive failures (cycle \(self.consecutiveBreakerCycles), cooldown \(Int(cooldown))s); last error: \(error.localizedDescription)"
-            )
-        }
-
-        throw error
-    }
-
     /// Whether an error from `executeModelCall` should trigger a
     /// retry within the same `generate` call. The contract:
-    /// non-`CoreModelError` failures (network blips, decode errors,
-    /// service-specific transient errors) are retryable; the only
-    /// `CoreModelError` worth retrying is `.timedOut`, since
-    /// `.modelUnavailable` and `.circuitBreakerOpen` won't change
-    /// shape across consecutive sub-second attempts. Cancellation is
-    /// never retryable.
+    /// unknown failures (network blips, decode errors, service-specific
+    /// transient errors) are retryable; typed Foundation failures are
+    /// retryable only when the framework says the condition is momentary
+    /// (`rateLimited`, `concurrentRequests`) — assets, locale, guardrail,
+    /// and context-window failures won't change shape across consecutive
+    /// sub-second attempts; the only `CoreModelError` worth retrying is
+    /// `.timedOut`, since `.modelUnavailable`, `.unresponsive`, and
+    /// `.circuitBreakerOpen` won't either. Cancellation is never retryable.
     static func isRetryable(_ error: Error) -> Bool {
         if error is CancellationError { return false }
         // A second Claude Code subprocess would spend the same subscription
         // quota (or repeat the same auth/install failure). The CLI already owns
         // its transport retries, so never replay a failed turn here.
         if error is ClaudeCodeError { return false }
+        if let fm = error as? FoundationModelServiceError { return fm.isTransient }
         guard let coreErr = error as? CoreModelError else { return true }
         return coreErr == .timedOut
     }
@@ -542,13 +655,12 @@ public actor CoreModelService {
         return [ChatMessage(role: "user", content: prompt)]
     }
 
-    // MARK: - Private — execution
-
     private func executeModelCall(
         model: String,
         messages: [ChatMessage],
         params: GenerationParameters,
-        intent: CoreModelIntent
+        intent: CoreModelIntent,
+        applyFirstTokenDeadline: Bool
     ) async throws -> String {
         let remoteServices: [ModelService] = await MainActor.run {
             RemoteProviderManager.shared.connectedServices()
@@ -567,6 +679,16 @@ public actor CoreModelService {
                 "Routing to \(service.id) (model: \(effectiveModel), prompt: \(promptLen) chars)"
             )
             do {
+                if applyFirstTokenDeadline, let deadline = service.firstTokenDeadline {
+                    let stream = try await service.streamDeltas(
+                        messages: messages,
+                        parameters: params,
+                        requestedModel: model,
+                        stopSequences: []
+                    )
+                    return try await Self.collect(
+                        stream, firstTokenDeadline: deadline, model: effectiveModel)
+                }
                 return try await service.generateOneShot(
                     messages: messages,
                     parameters: params,
@@ -581,6 +703,59 @@ public actor CoreModelService {
             }
         case .none:
             throw CoreModelError.modelUnavailable(model)
+        }
+    }
+
+    /// Drain a delta stream into a single string, giving up with
+    /// `.unresponsive` when no first token arrives within `firstTokenDeadline`.
+    /// Once the first token is in, generation may take as long as the
+    /// caller's overall `timeout` allows — a slow-but-progressing answer is
+    /// never cut off here. On the deadline the consumer task is cancelled,
+    /// which terminates the stream and (via the service's `onTermination`)
+    /// the producer behind it.
+    static func collect(
+        _ stream: AsyncThrowingStream<String, Error>,
+        firstTokenDeadline: TimeInterval,
+        model: String
+    ) async throws -> String {
+        let (firstToken, signal) = AsyncStream<Void>.makeStream()
+        let consumer = Task<String, Error> {
+            defer { signal.finish() }
+            var text = ""
+            var signalled = false
+            for try await delta in stream {
+                text += delta
+                if !signalled, !delta.isEmpty {
+                    signalled = true
+                    signal.yield(())
+                }
+            }
+            return text
+        }
+
+        do {
+            // Resolves on the first non-empty delta, or when the stream ends /
+            // fails before producing one (the consumer then reports why).
+            try await valueWithDeadline(seconds: firstTokenDeadline, operationName: "first token") {
+                var iterator = firstToken.makeAsyncIterator()
+                _ = await iterator.next()
+            }
+        } catch is DeadlineExceededError {
+            consumer.cancel()
+            logger.warning(
+                "Core model '\(model)' produced no output within \(Int(firstTokenDeadline))s; abandoning")
+            throw CoreModelError.unresponsive(model)
+        } catch is CancellationError {
+            consumer.cancel()
+            throw CancellationError()
+        }
+
+        // The overall `timeout` racer cancels this task when it fires; pass
+        // that on so the producer stops generating for a caller that is gone.
+        return try await withTaskCancellationHandler {
+            try await consumer.value
+        } onCancel: {
+            consumer.cancel()
         }
     }
 
