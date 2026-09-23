@@ -70,8 +70,9 @@ struct InjectedContextSpansTests {
         let message = "My name is Alice Smith, call me on 0211238389"
         let text = screen + "\n\n" + memory + "\n\n" + timeBlock + "\n\n" + message
         let pieces = InjectedContextSpans.modelPieces(in: text).map { String(text[$0]) }
-        // The time block is skipped outright; blank stretches are dropped.
-        #expect(pieces == [screen, memory, "\n\n" + message])
+        // The time block is skipped outright; blank stretches are dropped
+        // and the message is trimmed to its first and last character.
+        #expect(pieces == [screen, memory, message])
     }
 
     @Test func modelPiecesKeepAPlainMessageWhole() {

@@ -79,8 +79,15 @@ enum InjectedContextSpans {
             cursor = block.upperBound
         }
         if cursor < text.endIndex { pieces.append(cursor ..< text.endIndex) }
-        return pieces.filter { piece in
-            !skipped.contains(piece) && !text[piece].allSatisfy(\.isWhitespace)
+        // Trimmed to the first and last real character, the shape of text the
+        // classifier tags reliably (its warm-up sentence); a message piece
+        // opening on the blank lines after a block came back all outside.
+        return pieces.compactMap { piece in
+            guard !skipped.contains(piece),
+                let first = text[piece].firstIndex(where: { !$0.isWhitespace }),
+                let last = text[piece].lastIndex(where: { !$0.isWhitespace })
+            else { return nil }
+            return first ..< text.index(after: last)
         }
     }
 
