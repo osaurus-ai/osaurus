@@ -1418,6 +1418,20 @@ enum ConfigApplier {
         }
     }
 
+    /// What a phone run is told for a provider whose key only the Mac can
+    /// take: the model relays it, so it names where to go. A new provider
+    /// is not created at all, since it cannot exist without its key.
+    static func credentialsNeedTheMac(providerName: String, isNew: Bool = false) -> String {
+        if isNew {
+            return "'\(providerName)' was not added: its API key has to be entered on the Mac, "
+                + "and it was not requested from the phone. Tell the user to add it in Osaurus → "
+                + "Settings → Providers on their Mac, or to run this setup from the Mac."
+        }
+        return "The API key for '\(providerName)' has to be entered on the Mac: Osaurus → Settings → "
+            + "Providers. It was not requested from the phone and nothing was stored; tell the user "
+            + "to add it there, then this provider will work."
+    }
+
     /// Existing provider whose secret is missing: open the credential sheet
     /// in rotate mode (same preset card and fields Settings' "rotate key"
     /// shows) and persist the outcome through the manager. Secrets never
@@ -1428,6 +1442,14 @@ enum ConfigApplier {
         let request = ProviderCredentialRequest(
             provider: provider, providerName: provider.name,
             mode: .rotate(existingId: provider.id))
+        // From the paired phone there is nobody at this Mac to type the key:
+        // the panel would hold the run with nothing on the phone saying why.
+        // Leave it for the Mac and say so.
+        if ChatExecutionContext.hasRemoteReviewer {
+            return ConfigApplyResult(
+                section: "providers", target: entryName, status: .needsUserAction,
+                message: Self.credentialsNeedTheMac(providerName: provider.name))
+        }
         let outcome = await ProviderCredentialPromptService.requestCredentials(request)
         if Task.isCancelled {
             return ConfigApplyResult(
@@ -1535,6 +1557,13 @@ enum ConfigApplier {
                 providerType: .osaurus, providerName: entry.name, mode: .addNew)
         }
 
+        // See `requestCredentials(forExisting:)`: no key panel for a phone run.
+        if ChatExecutionContext.hasRemoteReviewer {
+            return ProviderAddOutcome(
+                result: ConfigApplyResult(
+                    section: "providers", target: entry.name, status: .needsUserAction,
+                    message: Self.credentialsNeedTheMac(providerName: entry.name, isNew: true)))
+        }
         let outcome = await ProviderCredentialPromptService.requestCredentials(request)
         if Task.isCancelled {
             return ProviderAddOutcome(

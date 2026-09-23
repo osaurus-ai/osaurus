@@ -619,7 +619,24 @@ public final class ToolRegistry: ObservableObject {
     /// The structured refusal handed to external callers for denied
     /// tool classes.
     nonisolated static func externalSurfaceDenialEnvelope(tool: String) -> String {
-        ToolEnvelope.failure(
+        if ChatExecutionContext.hasRemoteReviewer {
+            // The owner's own phone: say why in terms they can act on, so the
+            // model's reply tells them to pick this up on the Mac instead of
+            // just reporting a failure. `requires_mac` lets the phone label
+            // the tool row "Needs your Mac" rather than "Failed"
+            // (MOBILE_PROTOCOL §16).
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message:
+                    "'\(tool)' can't run from the Osaurus phone app: it writes files, runs commands "
+                    + "or uses the user's personal apps on their Mac, which only the Mac itself may do. "
+                    + "Tell the user this step needs their Mac and they can continue this chat there.",
+                tool: tool,
+                retryable: false,
+                metadata: ["requires_mac": true]
+            )
+        }
+        return ToolEnvelope.failure(
             kind: .rejected,
             message:
                 "'\(tool)' is not available to external callers. This tool can only run from the Osaurus app.",
