@@ -32,7 +32,36 @@ final class MobileConnectAdvertiser: NSObject {
         stopAdvertising()
         self.port = port
         retries = 0
+        // What the running binary actually declares: a publish refused with
+        // -72008 (policy denied) is either a type missing from this list or
+        // the app being denied local-network access altogether.
+        let declared = Bundle.main.object(forInfoDictionaryKey: "NSBonjourServices") as? [String] ?? []
+        let usage = Bundle.main.object(forInfoDictionaryKey: "NSLocalNetworkUsageDescription") as? String
+        MobileConnectLog.write(
+            "bonjour: bundle declares NSBonjourServices=\(declared) usageDescription=\(usage == nil ? "missing" : "present") macOS \(ProcessInfo.processInfo.operatingSystemVersionString)"
+        )
         publish()
+    }
+
+    /// Publishes a throwaway service of the AGENT type for a moment. If it
+    /// goes through while the pairing type is refused, the pairing type is
+    /// missing from the bundle's declared list; if both are refused, the
+    /// app itself is denied local-network access.
+    private var probe: NetService?
+    private var hasProbed = false
+
+    private func probeAgentType() {
+        guard !hasProbed else { return }
+        hasProbed = true
+        let service = NetService(domain: "", type: BonjourAdvertiser.serviceType, name: "osaurus-probe", port: Int32(port))
+        service.delegate = self
+        service.publish()
+        probe = service
+        MobileConnectLog.write("bonjour: probing \(BonjourAdvertiser.serviceType) as 'osaurus-probe'")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.probe?.stop()
+            self?.probe = nil
+        }
     }
 
     func stopAdvertising() {
@@ -80,12 +109,15 @@ final class MobileConnectAdvertiser: NSObject {
 extension MobileConnectAdvertiser: NetServiceDelegate {
 
     nonisolated func netServiceDidPublish(_ sender: NetService) {
-        MobileConnectLog.write("bonjour: advertised '\(sender.name)' on port \(sender.port)")
+        MobileConnectLog.write("bonjour: advertised '\(sender.name)' (\(sender.type)) on port \(sender.port)")
+        if sender.name == "osaurus-probe" { return }
         Self.logger.info("Advertised pairing service '\(sender.name, privacy: .public)' on port \(sender.port)")
     }
 
     nonisolated func netService(_ sender: NetService, didNotPublish errorDict: [String: NSNumber]) {
-        MobileConnectLog.write("bonjour: FAILED to advertise '\(sender.name)': \(errorDict)")
+        MobileConnectLog.write("bonjour: FAILED to advertise '\(sender.name)' (\(sender.type)): \(errorDict)")
+        if sender.name == "osaurus-probe" { return }
+        Task { @MainActor [weak self] in self?.probeAgentType() }
         Self.logger.error(
             "Failed to advertise pairing service '\(sender.name, privacy: .public)': \(errorDict, privacy: .public)"
         )
