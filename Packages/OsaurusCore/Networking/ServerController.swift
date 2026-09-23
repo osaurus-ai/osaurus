@@ -203,6 +203,9 @@ final class ServerController: ObservableObject {
                 configuration.exposeToNetwork ? self.getLocalIPAddress() : "127.0.0.1"
 
             print("[Osaurus] Starting NIO server on \(bindHost):\(configuration.port)")
+            MobileConnectLog.write(
+                "server: starting on \(bindHost):\(configuration.port) exposeToNetwork=\(configuration.exposeToNetwork) lan=\(localNetworkAddress)"
+            )
 
             // Ensure any previous instance is shut down
             try await stopServerIfNeeded()
@@ -240,6 +243,7 @@ final class ServerController: ObservableObject {
                 BonjourAdvertiser.shared.startAdvertising(port: configuration.port)
                 MobileConnectAdvertiser.shared.startAdvertising(port: configuration.port)
             } else {
+                MobileConnectLog.write("server: not exposed to the network, so nothing is advertised for pairing")
                 BonjourAdvertiser.shared.stopAdvertising()
                 MobileConnectAdvertiser.shared.stopAdvertising()
             }

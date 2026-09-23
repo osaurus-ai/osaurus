@@ -4589,6 +4589,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         guard !stateRef.value.isRelayOrigin else {
+            MobileConnectLog.write("pair/code: refused a relay-origin request (LAN only)")
             reply(
                 status: .forbidden,
                 body: #"{"error":"lan_only","message":"Pair on the same network as this Mac."}"#
@@ -4596,6 +4597,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
         let pairingIP = remoteIP(context)
+        MobileConnectLog.write("pair/code: request from \(pairingIP)")
         guard PairingRateLimiter.shared.allow(ip: pairingIP) else {
             sendPairingRateLimited(
                 head: head,
@@ -4631,16 +4633,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 var logBody: String?
                 switch outcome {
                 case .paired(let response, _):
+                    MobileConnectLog.write("pair/code: paired a phone from \(pairingIP)")
                     status = .ok
                     body =
                         (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) }
                         ?? #"{"error":"encoding_failed"}"#
                     logBody = #"{"v":1,"sealed":"<redacted>"}"#
                 case .invalidCode:
+                    MobileConnectLog.write("pair/code: wrong or expired code from \(pairingIP)")
                     PairingRateLimiter.shared.penalize(ip: pairingIP)
                     status = .unauthorized
                     body = #"{"error":"invalid_code","message":"That code is wrong or has expired."}"#
                 case .badRequest(let message):
+                    MobileConnectLog.write("pair/code: bad request from \(pairingIP): \(message)")
                     status = .badRequest
                     let encoded =
                         (try? JSONEncoder().encode(["error": "bad_request", "message": message]))

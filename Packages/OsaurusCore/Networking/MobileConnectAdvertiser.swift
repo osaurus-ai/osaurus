@@ -36,6 +36,7 @@ final class MobileConnectAdvertiser: NSObject {
     }
 
     func stopAdvertising() {
+        if service != nil { MobileConnectLog.write("bonjour: stopped advertising") }
         service?.stop()
         service = nil
     }
@@ -56,11 +57,13 @@ final class MobileConnectAdvertiser: NSObject {
         service.delegate = self
         service.publish()
         self.service = service
+        MobileConnectLog.write("bonjour: publishing \(Self.serviceType) as '\(name)' on port \(port)")
         Self.logger.info("Publishing pairing service '\(name, privacy: .public)' on port \(self.port)")
     }
 
     private func retryPublish() async {
         guard retries < Self.maxPublishRetries else {
+            MobileConnectLog.write("bonjour: giving up after \(Self.maxPublishRetries) failed publishes")
             Self.logger.error("Giving up advertising the pairing service after \(Self.maxPublishRetries) attempts")
             return
         }
@@ -77,10 +80,12 @@ final class MobileConnectAdvertiser: NSObject {
 extension MobileConnectAdvertiser: NetServiceDelegate {
 
     nonisolated func netServiceDidPublish(_ sender: NetService) {
+        MobileConnectLog.write("bonjour: advertised '\(sender.name)' on port \(sender.port)")
         Self.logger.info("Advertised pairing service '\(sender.name, privacy: .public)' on port \(sender.port)")
     }
 
     nonisolated func netService(_ sender: NetService, didNotPublish errorDict: [String: NSNumber]) {
+        MobileConnectLog.write("bonjour: FAILED to advertise '\(sender.name)': \(errorDict)")
         Self.logger.error(
             "Failed to advertise pairing service '\(sender.name, privacy: .public)': \(errorDict, privacy: .public)"
         )

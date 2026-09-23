@@ -149,7 +149,9 @@ final class MobilePairingService: ObservableObject {
             let code = PairingCode(code: PairingCode.generate(), issuedAt: Date())
             activeCode = code
             scheduleExpiry(of: code)
+            MobileConnectLog.write("pairing: code generated, valid for \(Int(PairingCode.ttl))s")
         } catch {
+            MobileConnectLog.write("pairing: could not create an access key: \(error.localizedDescription)")
             lastError = L("Couldn't create an access key: \(error.localizedDescription)")
         }
     }
