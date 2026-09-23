@@ -13,6 +13,8 @@ Owner: Eric. Updated 2026-09-23. Work through these tasks in order; merge each p
 
 ## 1. MiMo runtime and Osaurus integration — ACTIVE
 
+Current merge lane: [Osaurus #2865](https://github.com/osaurus-ai/osaurus/pull/2865) isolates the eval residency/runtime snapshot correction from #2863 on current main. It includes migration provenance and isolated writable cache paths. **Merged at `70546416f55184d1534ecc91a3c162a169280469`** after 27/27 local bootstrap/isolation tests, 29/29 deterministic eval cases in each of two settings setups, and all CI green (358 eval tests in 44 suites). It does not qualify MiMo audio. Main #2863 CI at `374714d06179f3f9f20e7ad0f9b7368e0c372b4a` is now green. Audio/current-bundle eval gates below remain open.
+
 - [x] Native mixed-quant runtime, resident packed expert dispatch, multimodal inputs and cache work implemented in vmlx-swift.
 - [x] Engine PR [#493](https://github.com/osaurus-ai/vmlx-swift/pull/493) merged at `454e5258641f1c004fcc86b1944ce40e0b4f7a5f`; owner engine-CI waiver recorded.
 - [x] Osaurus integration implemented and pinned to merged runtime in all four locations; two source tripwires updated.
