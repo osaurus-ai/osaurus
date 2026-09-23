@@ -145,6 +145,10 @@ final class CreateAgentState: ObservableObject {
 
 struct CreateAgentStepView: View {
     @ObservedObject var state: CreateAgentState
+    /// `true` when this is the last onboarding step — the full distribution
+    /// already has its bundled brain installed, so the CTA also starts chat
+    /// (see `OnboardingView.continueFromCreateAgent`).
+    var isFinalStep: Bool = false
     let onContinue: () -> Void
 
     @FocusState private var nameFocused: Bool
@@ -193,7 +197,7 @@ struct CreateAgentStepView: View {
             Spacer().frame(height: 40)
 
             OnboardingPillButton(
-                title: "Create your Dino",
+                title: isFinalStep ? "Create your Dino and start chatting" : "Create your Dino",
                 style: .primary,
                 size: .large,
                 isEnabled: state.canSave,

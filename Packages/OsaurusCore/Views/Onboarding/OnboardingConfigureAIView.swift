@@ -310,6 +310,57 @@ final class ConfigureAIState: ObservableObject {
     /// rule, and Gemma E4B is also a 4B Top Pick that could steal 8 GB.
     static let preferredOnboardingModelId = "OsaurusAI/Raptor-0.6-4B-JANG_6M"
 
+    /// The bundled local brain the full distribution can commit without
+    /// showing the Configure AI step, or `nil` when that step must run.
+    ///
+    /// All four gates must hold; any miss falls back to the normal step so
+    /// the light build, a seed that has not landed yet (cross-volume models
+    /// directory still copying), a user who deleted the seeded model, and a
+    /// Mac where Raptor 0.6 only fits in the `.tight` band all get the full
+    /// chooser:
+    ///
+    ///   1. `isFullDistribution` — the app shipped with `BundledModels`.
+    ///   2. The preferred onboarding model is a curated Top Pick (so it is
+    ///      what the chooser would have offered).
+    ///   3. It is on disk (`isDownloaded`, i.e. `BundledModelSeeder` finished).
+    ///   4. It fits **comfortably** (`.compatible`) — the same rule
+    ///      `recommendedLocalPick` uses for the auto-default.
+    static func bundledLocalBrainReady(
+        from candidates: [MLXModel],
+        totalMemoryGB: Double,
+        isFullDistribution: Bool = BundledModelSeeder.isFullDistribution
+    ) -> MLXModel? {
+        guard isFullDistribution else { return nil }
+        guard
+            let bundled = candidates.first(where: {
+                $0.isTopSuggestion && $0.id == preferredOnboardingModelId
+            })
+        else { return nil }
+        guard bundled.isDownloaded else { return nil }
+        guard bundled.compatibility(totalMemoryGB: totalMemoryGB) == .compatible else { return nil }
+        return bundled
+    }
+
+    /// App-facing wrapper over `bundledLocalBrainReady(from:totalMemoryGB:)`
+    /// that reads the live catalog (curated entries merged with the on-disk
+    /// scan, so `isDownloaded` reflects the seeded bundle).
+    func bundledLocalBrainReady(totalMemoryGB: Double) -> MLXModel? {
+        Self.bundledLocalBrainReady(
+            from: ModelManager.shared.deduplicatedModels(),
+            totalMemoryGB: totalMemoryGB
+        )
+    }
+
+    /// Commit the bundled brain exactly as `chooseLocalAndContinue` would for
+    /// an on-disk model — no download, no disk preflight — so
+    /// `finishOnboarding` pins it through `localDefaultModelIdToPin`.
+    func commitBundledLocalBrain(_ model: MLXModel) {
+        selectedModel = model
+        diskSpaceWarning = nil
+        selectedBrainSource = .local
+        OnboardingTelemetry.brainSourceSelected(.local, downloadStarted: false)
+    }
+
     /// Parameter-count floor that marks the large-RAM upgrade lane (Gemma 12B,
     /// Ornith 35B). Comfortable models at or above this beat the preferred
     /// Raptor 0.6 default. v0.5's 8B name sits below this on purpose.
