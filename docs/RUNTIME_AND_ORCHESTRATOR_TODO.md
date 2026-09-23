@@ -31,6 +31,7 @@ Current merge lane: [Osaurus #2865](https://github.com/osaurus-ai/osaurus/pull/2
 - [x] R22 Release app/eval rebuild completed; 346/346 focused app tests passed, exact source/binary hashes recorded.
 - [x] Resolve R22 diagnostic admission before retry: protected file-cache is excluded, actual-free admission strengthened,13 guard tests pass. R22e full load/generation and normal Quit pass with no guard trip, normal pressure/zero swap, peak107.53GB physical. Earlier three aborted runs remain retained; no safety limit raised. This private guard correction is not a production app admission change.
 - [x] MiMo string-transport fix [vmlx-swift #500](https://github.com/osaurus-ai/vmlx-swift/pull/500) merged at `6b8dda85a3659b255377a76caf8914c005d2eef1`: literal newlines/backslashes preserved, 108 strict tests passed; normal TF32 run retains four existing known issues. All four Osaurus pins and both tripwires updated.
+- [x] R28 current-source Release app/eval builds and 346 focused app tests passed at `b32a57b50e6a90786d230e24538b9d641f88d3b6`. Live byte-exact file-write regression now passes; ReasoningChannel13/13 and CacheProof14/14 pass. Agent-loop/subagent matrix remains active.
 - [ ] Finish current-bundle qualification and updated full local eval matrix; do not carry R19 scores over.
 - [x] R21 actual audio/video/history UI and tool cards with follow-up exercised and recorded: video/tool calls pass; audio and media-history provenance fail. Natural stops, settled UI, tokens/s, memory and cache telemetry captured.
 - [ ] Diagnose retained audio semantic failure and repeat affected proof after any further runtime pin. R22e native API transcribes correctly but reasoning-only at49.0/48.4tok/s; fresh UI still denies attachment at46.4tok/s. Independent Python native-default generation now reproduces the exact double-opener/transcript/EOS failure; BF16 codec differential also retains that sequence as top1 in all12positions. Shared architecture/bundle attribution and visible-answer resolution remain open; no masking.
@@ -39,6 +40,7 @@ Current merge lane: [Osaurus #2865](https://github.com/osaurus-ai/osaurus/pull/2
 - [x] Osaurus CI passed at `a285a38515bc18d5124618003803c23a821fc0ec`.
 - [x] R21 Osaurus CI passed at `c0b3b280c3ce132b63fca9b657714ee17f6d2a3c`.
 - [x] R22 Osaurus CI passed at `ec6e370487a57aa0d3516e05aaf752a7a175fbe9`; receipt `osaurus-pr2863-ec6-ci.json`.
+- [x] R28 code-head Osaurus CI passed at `b32a57b50e6a90786d230e24538b9d641f88d3b6`, run35899508536.
 - [ ] Final amended-head CI and review complete after any further commits.
 - [ ] Update final proof/limitations in PR and repo docs, then merge Osaurus#2863. No release/tag.
 
