@@ -274759,6 +274759,76 @@
           }
         }
       }
+    },
+    "Check it out": {
+      "comment": "Primary button of the launch-day Product Hunt dialog; opens the Product Hunt page.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jetzt ansehen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "去看看"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "去看看"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "보러 가기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Посмотреть"
+          }
+        }
+      }
+    },
+    "We're live on Product Hunt! 🥳": {
+      "comment": "Title of the one-time launch-day Product Hunt dialog for the Raptor campaign.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wir sind live auf Product Hunt! 🥳"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "我们在 Product Hunt 上线了！🥳"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "我們在 Product Hunt 上線了！🥳"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Product Hunt에 출시했습니다! 🥳"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Мы на Product Hunt! 🥳"
+          }
+        }
+      }
     }
   },
   "version": "1.1"
