@@ -222,6 +222,7 @@ final class ServerController: ObservableObject {
             serverHealth = .running
             lastErrorMessage = nil
             FeatureTelemetry.serverStarted()
+            MobileConnectLog.write("server: listening on \(bindHost):\(configuration.port)")
             print("[Osaurus] NIO server started successfully on port \(configuration.port)")
             // One-line record of the effective inference policy so any
             // benchmark or bug report can state exactly which knobs were in
@@ -627,6 +628,7 @@ final class ServerController: ObservableObject {
     /// Handles server startup errors
     private func handleServerError(_ error: Error) {
         print("[Osaurus] Failed to start server: \(error)")
+        MobileConnectLog.write("server: FAILED to start on port \(configuration.port): \(error)")
         isRunning = false
         let desc = error.localizedDescription.lowercased()
         if desc.contains("address already in use") || desc.contains("eaddrinuse") {
