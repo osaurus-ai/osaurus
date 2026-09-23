@@ -131,11 +131,13 @@ final class PrivacyReviewService {
             // fine-grained version that's preserved across review
             // sheets in the same conversation.
             if configSnapshot.alwaysApproveByDefault {
+                print("[PrivacyReview] auto-approved \(detections.count) item(s): global always-approve is on")
                 return .approved(detections)
             }
 
             // Honor per-session auto-approve.
             if await SessionRedactionStore.shared.isAutoApproveEnabled(sessionId) {
+                print("[PrivacyReview] auto-approved \(detections.count) item(s): session \(sessionId) has always-approve on")
                 return .approved(detections)
             }
         }
@@ -143,6 +145,7 @@ final class PrivacyReviewService {
         // The owner's paired phone is a real pair of eyes, just not this
         // window: hand it the review instead of failing closed (§19).
         if !allowInteractive, allowRemote {
+            print("[PrivacyReview] handing \(detections.count) item(s) to the paired phone for session \(sessionId)")
             return await reviewRemotely(detections: detections, sessionId: sessionId)
         }
 
@@ -173,6 +176,7 @@ final class PrivacyReviewService {
                 )
                 return .blockedNonInteractive
             }
+            print("[PrivacyReview] auto-approved \(detections.count) item(s): no reviewer and non-interactive review is not required")
             return .approved(detections)
         }
 
@@ -187,6 +191,7 @@ final class PrivacyReviewService {
         state.alwaysApprove = await SessionRedactionStore.shared.isAutoApproveEnabled(sessionId)
         let stateId = state.id
         openStates[stateId] = state
+        print("[PrivacyReview] showing the Mac review sheet \(stateId) for \(detections.count) item(s)")
 
         // `withTaskCancellationHandler` lets us forward `Task.cancel()`
         // (e.g. the Stop button) into a `.canceled` resolution. Without
@@ -265,7 +270,11 @@ final class PrivacyReviewService {
     /// unknown — already answered, or the run ended.
     @discardableResult
     func resolveRemotely(id: UUID, redactedIds: Set<UUID>) -> Bool {
-        guard let state = remoteStates[id] else { return false }
+        guard let state = remoteStates[id] else {
+            print("[PrivacyReview] phone answered review \(id), but it is no longer pending")
+            return false
+        }
+        print("[PrivacyReview] phone answered review \(id): redact \(redactedIds.intersection(Set(state.entities.map(\.id))).count) of \(state.entities.count)")
         remoteStates.removeValue(forKey: id)
         for entity in state.entities {
             state.setApproval(entity, to: redactedIds.contains(entity.id))
@@ -278,7 +287,11 @@ final class PrivacyReviewService {
     /// reaches the provider.
     @discardableResult
     func cancelRemotely(id: UUID) -> Bool {
-        guard let state = remoteStates[id] else { return false }
+        guard let state = remoteStates[id] else {
+            print("[PrivacyReview] phone cancelled review \(id), but it is no longer pending")
+            return false
+        }
+        print("[PrivacyReview] phone cancelled review \(id)")
         remoteStates.removeValue(forKey: id)
         state.cancel()
         return true
@@ -295,6 +308,7 @@ final class PrivacyReviewService {
         let state = RedactionReviewState(detections: detections, sessionId: sessionId)
         let stateId = state.id
         remoteStates[stateId] = state
+        print("[PrivacyReview] remote review \(stateId) parked for session \(sessionId): \(detections.count) item(s), waiting on the phone")
         return await withTaskCancellationHandler {
             await withCheckedContinuation { (cont: CheckedContinuation<PrivacyReviewOutcome, Never>) in
                 state.onResolve = { outcome in
@@ -312,6 +326,9 @@ final class PrivacyReviewService {
     }
 
     private func cancelRemoteState(id: UUID) {
+        if remoteStates[id] != nil {
+            print("[PrivacyReview] remote review \(id) cancelled: its run was cancelled (client hung up or the run was stopped)")
+        }
         remoteStates[id]?.cancel()
     }
 

@@ -55,6 +55,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     /// AppKit gets one or more frames where a stale/auto-presented window
     /// can flash before our real window is up.
     public func applicationWillFinishLaunching(_ notification: Notification) {
+        // First, so the launch itself lands in tmp/osaurus.log (debug only).
+        ConsoleLogFile.start()
         UncaughtExceptionLogger.install()
 
         AppDelegate.shared = self

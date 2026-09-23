@@ -364,6 +364,9 @@ public actor RemoteProviderService: ToolCapableService {
         let invalidateNow: Bool = sessionLifecycle.withLock { state in
             guard !state.invalidationRequested else { return false }
             state.invalidationRequested = true
+            print(
+                "[Osaurus] Remote Provider '\(self.provider.name)': session invalidated with \(state.inFlightRequests) request(s) in flight; requests that have not started will fail with sessionReplaced"
+            )
             if state.inFlightRequests == 0 { return true }
             state.deferredInvalidation = currentSession
             return false

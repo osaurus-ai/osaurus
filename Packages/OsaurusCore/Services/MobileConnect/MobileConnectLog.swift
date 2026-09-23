@@ -41,6 +41,7 @@ enum MobileConnectLog {
 
     /// Appends one line, timestamped. Safe from any thread; never throws.
     static func write(_ message: String) {
+        ConsoleLogFile.append("[MobileConnect] \(message)")
         let now = Date()
         queue.async {
             // Formatted on the queue: `ISO8601DateFormatter` is not Sendable,
