@@ -22,7 +22,7 @@ final class MobileConnectAdvertiser: NSObject {
     static let shared = MobileConnectAdvertiser()
     static let serviceType = "_osaurus-mobile._tcp."
     private static let maxPublishRetries = 3
-    private static let logger = Logger(subsystem: "com.osaurus", category: "bonjour")
+    private nonisolated static let logger = Logger(subsystem: "com.osaurus", category: "bonjour")
 
     private var service: NetService?
     private var port: Int = 0
