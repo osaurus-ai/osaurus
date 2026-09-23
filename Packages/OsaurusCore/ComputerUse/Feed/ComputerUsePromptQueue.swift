@@ -18,11 +18,16 @@ public struct ConfirmRequest: Identifiable, Sendable, Equatable {
     public let id: UUID
     public let toolCallId: String
     public let preview: ActionPreview
+    /// Raised by a run from the owner's paired phone: listed on
+    /// `GET /computer-use/prompts` for the phone to answer (MOBILE_PROTOCOL
+    /// §16.4). Every Mac chat window still shows it too.
+    public let fromPairedPhone: Bool
 
-    public init(id: UUID = UUID(), toolCallId: String, preview: ActionPreview) {
+    public init(id: UUID = UUID(), toolCallId: String, preview: ActionPreview, fromPairedPhone: Bool = false) {
         self.id = id
         self.toolCallId = toolCallId
         self.preview = preview
+        self.fromPairedPhone = fromPairedPhone
     }
 }
 
@@ -41,10 +46,13 @@ public enum CloudVisionConsentChoice: String, Sendable, Equatable {
 public struct CloudVisionConsentRequest: Identifiable, Sendable, Equatable {
     public let id: UUID
     public let toolCallId: String
+    /// See `ConfirmRequest.fromPairedPhone`.
+    public let fromPairedPhone: Bool
 
-    public init(id: UUID = UUID(), toolCallId: String) {
+    public init(id: UUID = UUID(), toolCallId: String, fromPairedPhone: Bool = false) {
         self.id = id
         self.toolCallId = toolCallId
+        self.fromPairedPhone = fromPairedPhone
     }
 }
 
@@ -106,7 +114,11 @@ public final class ComputerUsePromptQueue: ObservableObject {
             )
             return true
         }
-        let request = ConfirmRequest(toolCallId: toolCallId, preview: preview)
+        let request = ConfirmRequest(
+            toolCallId: toolCallId,
+            preview: preview,
+            fromPairedPhone: ChatExecutionContext.hasRemoteReviewer
+        )
         ComputerUseTraceLog.recordConfirmationQueue(
             toolCallId: toolCallId,
             requestId: request.id,
@@ -173,7 +185,10 @@ public final class ComputerUsePromptQueue: ObservableObject {
     /// Park a cloud-vision consent prompt and suspend until the user resolves it.
     /// Cancellation-aware (resolves as `.deny`) so the loop never hangs.
     public func requestCloudVisionConsent(toolCallId: String) async -> CloudVisionConsentChoice {
-        let request = CloudVisionConsentRequest(toolCallId: toolCallId)
+        let request = CloudVisionConsentRequest(
+            toolCallId: toolCallId,
+            fromPairedPhone: ChatExecutionContext.hasRemoteReviewer
+        )
         return await withTaskCancellationHandler {
             await withCheckedContinuation {
                 (continuation: CheckedContinuation<CloudVisionConsentChoice, Never>) in
@@ -217,5 +232,62 @@ public final class ComputerUsePromptQueue: ObservableObject {
         for request in affectedConsent {
             consentContinuations.removeValue(forKey: request.id)?.resume(returning: .deny)
         }
+    }
+}
+
+// MARK: - Paired phone (MOBILE_PROTOCOL §16.4)
+
+extension ComputerUsePromptQueue {
+    /// The phone's pending confirm and consent cards as
+    /// `GET /computer-use/prompts` JSON, confirmations first.
+    public func pairedPhoneListJSON() -> Data {
+        var rows: [[String: Any]] = pending.filter(\.fromPairedPhone).map { request in
+            let preview = request.preview
+            var row: [String: Any] = [
+                "id": request.id.uuidString,
+                "kind": "action",
+                "action": preview.actionLabel,
+                "effect": preview.effect.rawValue,
+                // "Approve the rest" needs an app to scope the lease to.
+                "offers_approve_rest": !(preview.appName ?? "").isEmpty,
+            ]
+            if let app = preview.appName { row["app"] = app }
+            if let target = preview.targetLabel { row["target"] = target }
+            if let note = preview.note { row["note"] = note }
+            if let typed = preview.typedText { row["typed_text"] = typed }
+            if let script = preview.scriptBody { row["script"] = script }
+            return row
+        }
+        rows += pendingConsent.filter(\.fromPairedPhone).map { request -> [String: Any] in
+            ["id": request.id.uuidString, "kind": "cloud_vision_consent"]
+        }
+        return (try? JSONSerialization.data(withJSONObject: ["prompts": rows], options: [.sortedKeys]))
+            ?? Data(#"{"prompts":[]}"#.utf8)
+    }
+
+    /// Answers one of the phone's cards. Actions take `approve | deny |
+    /// approve_rest`; consent takes `allow_once | allow_always | deny`.
+    /// False when the id is not a pending phone card, or the decision does
+    /// not fit its kind (never read as an approval).
+    public func resolveFromPairedPhone(id: UUID, decision: String) -> Bool {
+        if pending.contains(where: { $0.id == id && $0.fromPairedPhone }) {
+            switch decision {
+            case "approve": resolve(id: id, approved: true)
+            case "deny": resolve(id: id, approved: false)
+            case "approve_rest": resolveApprovingRest(id: id)
+            default: return false
+            }
+            return true
+        }
+        if pendingConsent.contains(where: { $0.id == id && $0.fromPairedPhone }) {
+            switch decision {
+            case "allow_once": resolveConsent(id: id, choice: .allowOnce)
+            case "allow_always": resolveConsent(id: id, choice: .allowAlways)
+            case "deny": resolveConsent(id: id, choice: .deny)
+            default: return false
+            }
+            return true
+        }
+        return false
     }
 }

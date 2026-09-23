@@ -201,6 +201,32 @@ struct SandboxSecretSetTool: OsaurusTool, @unchecked Sendable {
             return SecretToolResult.stored(key: key)
         }
 
+        // A run from the owner's paired phone never reaches the chat view
+        // that turns the marker below into a prompt, so the marker would go
+        // to the model and nothing would be stored. Ask the phone directly
+        // (MOBILE_PROTOCOL §16.5) and store what it sends, as the Mac's card
+        // does.
+        if ChatExecutionContext.hasRemoteReviewer, let uuid = UUID(uuidString: agentId) {
+            let value = await RemoteSecretPromptQueue.shared.request(
+                key: key,
+                description: desc,
+                instructions: instructions
+            )
+            guard let value, !value.isEmpty else { return SecretToolResult.cancelled(key: key) }
+            guard AgentSecretsKeychain.saveSecret(value, id: key, agentId: uuid) else {
+                return ToolEnvelope.failure(
+                    kind: .executionError,
+                    message:
+                        "Secret storage failed for `\(key)`: the Keychain write "
+                        + "did not succeed, so the value will NOT be available to "
+                        + "sandbox commands. Do not report the secret as stored.",
+                    tool: name,
+                    retryable: false
+                )
+            }
+            return SecretToolResult.stored(key: key)
+        }
+
         // No value — return the special prompt marker for the execution
         // loop to intercept. The marker is intentionally NOT an envelope
         // because `SecretPromptParser` keys off the `action` field at the

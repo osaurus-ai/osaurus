@@ -318,7 +318,8 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
             },
             confirmUnavailable: {
                 await MainActor.run {
-                    ComputerUsePromptQueue.shared.canPresent
+                    // The paired phone shows the card for its own runs.
+                    ComputerUsePromptQueue.shared.canPresent || ChatExecutionContext.hasRemoteReviewer
                         ? nil
                         : "no chat window is open to show the approval card"
                 }

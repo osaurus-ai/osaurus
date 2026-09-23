@@ -934,6 +934,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     userAgent: userAgent
                 )
+            } else if head.method == .GET, path == "/computer-use/prompts" || path == "/secrets/prompts" {
+                handleListPhonePromptsEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .POST,
+                path.hasPrefix("/computer-use/prompts/") || path.hasPrefix("/secrets/prompts/")
+            {
+                handleAnswerPhonePromptEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .GET, path == "/approvals" {
                 handleListApprovalsEndpoint(
                     head: head,
@@ -5832,6 +5850,139 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             let status: HTTPResponseStatus = answered ? .ok : .notFound
             let json = answered ? #"{"ok":true}"# : #"{"error":"approval_not_pending"}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: status, headers: headers, body: json)
+                self.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: json,
+                    responseStatus: Int(status.code),
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// GET /computer-use/prompts and GET /secrets/prompts — the confirm,
+    /// cloud-vision consent and secret cards a run from the paired phone is
+    /// waiting on (docs/MOBILE_PROTOCOL.md §16.4, §16.5). Owner-only.
+    private func handleListPhonePromptsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let isSecrets = path == "/secrets/prompts"
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let data = await MainActor.run {
+                isSecrets
+                    ? RemoteSecretPromptQueue.shared.listJSON()
+                    : ComputerUsePromptQueue.shared.pairedPhoneListJSON()
+            }
+            let json = String(decoding: data, as: UTF8.self)
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: json,
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    private struct PhonePromptAnswerRequest: Decodable {
+        /// Computer use: `approve | deny | approve_rest`; cloud-vision consent:
+        /// `allow_once | allow_always | deny`; secrets: `cancel` or absent.
+        let decision: String?
+        /// Secrets only: the value to store.
+        let value: String?
+    }
+
+    /// POST /computer-use/prompts/{id} and POST /secrets/prompts/{id} (§16.4,
+    /// §16.5). Owner-only. The request body is never logged: for a secret it
+    /// is the secret.
+    private func handleAnswerPhonePromptEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        func reply(_ status: HTTPResponseStatus, _ body: String) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            logRequest(
+                method: "POST",
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        let components = path.split(separator: "/")
+        guard components.count == 3, let promptId = UUID(uuidString: String(components[2])) else {
+            reply(.badRequest, #"{"error":"invalid_prompt_id"}"#)
+            return
+        }
+        let isSecrets = components[0] == "secrets"
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(PhonePromptAnswerRequest.self, from: data) else {
+            reply(.badRequest, #"{"error":"bad_request"}"#)
+            return
+        }
+        // A secret is stored only when one is sent and the phone did not
+        // cancel; anything else cancels the prompt.
+        let secretValue: String? =
+            request.decision == "cancel" ? nil : request.value.flatMap { $0.isEmpty ? nil : $0 }
+        if !isSecrets && request.decision == nil {
+            reply(.badRequest, #"{"error":"bad_request","message":"Expected {decision}"}"#)
+            return
+        }
+        let decision = request.decision ?? ""
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let answered = await MainActor.run {
+                isSecrets
+                    ? RemoteSecretPromptQueue.shared.resolve(id: promptId, value: secretValue)
+                    : ComputerUsePromptQueue.shared.resolveFromPairedPhone(id: promptId, decision: decision)
+            }
+            let status: HTTPResponseStatus = answered ? .ok : .notFound
+            let json = answered ? #"{"ok":true}"# : #"{"error":"prompt_not_pending"}"#
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
                 headers.append(contentsOf: cors)

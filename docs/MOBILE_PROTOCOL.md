@@ -1084,6 +1084,44 @@ approval_not_pending` when it was answered on the Mac or timed out. A caller
 that is not the paired phone is refused outright and the model is told no
 one could be asked, not that the user declined.
 
+### 16.4 Computer use: `GET /computer-use/prompts`, `POST /computer-use/prompts/{id}`
+
+Computer use, AppleScript and browser actions ask before each gated step,
+and a run can ask once for consent to send screenshots to a cloud model. For
+a run from the paired phone those cards are listed here as well as shown in
+any open Mac chat window; whichever answers first wins. They wait until
+answered or the run is cancelled.
+
+```json
+{"prompts":[{"id":"<uuid>","kind":"action","app":"Mail","action":"Click",
+             "target":"Send","effect":"consequential","note":"…",
+             "typed_text":"…","script":"…","offers_approve_rest":true},
+            {"id":"<uuid>","kind":"cloud_vision_consent"}]}
+```
+
+`effect` is `read | navigate | edit | consequential`. `typed_text` and
+`script` appear only for actions that type text or run an AppleScript, and
+should be shown in full before approving.
+
+Answer with `{"decision":…}`: for `action`, `approve | deny | approve_rest`
+(approve this and any later action in the same app at the same or lower
+effect, for the rest of the run; only when `offers_approve_rest`); for
+`cloud_vision_consent`, `allow_once | allow_always | deny`. A decision that
+does not fit the card is a `404`, never an approval.
+
+### 16.5 Secrets: `GET /secrets/prompts`, `POST /secrets/prompts/{id}`
+
+`sandbox_secret_set` without a value asks the user for the secret. A run
+from the paired phone parks the request here for up to five minutes:
+
+```json
+{"prompts":[{"id":"<uuid>","key":"NOTION_API_KEY",
+             "description":"…","instructions":"…"}]}
+```
+
+Answer with `{"value":"…"}` to store it in this Mac's Keychain for the agent,
+or `{"decision":"cancel"}`. The value is never logged or listed back.
+
 ---
 
 ## 17. Creating an agent
