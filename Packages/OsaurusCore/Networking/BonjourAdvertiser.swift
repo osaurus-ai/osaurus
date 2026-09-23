@@ -269,6 +269,7 @@ extension BonjourAdvertiser: NetServiceDelegate {
     }
 
     public nonisolated func netServiceDidPublish(_ sender: NetService) {
+        MobileConnectLog.write("bonjour: advertised agent '\(sender.name)' (\(Self.serviceType)) on port \(sender.port)")
         Self.delegateLogger.info(
             "Advertised agent '\(sender.name, privacy: .public)' on port \(sender.port)"
         )
@@ -279,6 +280,7 @@ extension BonjourAdvertiser: NetServiceDelegate {
     }
 
     public nonisolated func netService(_ sender: NetService, didNotPublish errorDict: [String: NSNumber]) {
+        MobileConnectLog.write("bonjour: FAILED to advertise agent '\(sender.name)' (\(Self.serviceType)): \(errorDict)")
         Self.delegateLogger.error(
             "Failed to advertise agent '\(sender.name, privacy: .public)': \(errorDict, privacy: .public)"
         )
