@@ -329,7 +329,19 @@ public enum EvalBootstrap {
         // configure tool) writes them back — the write lands in the copy.
         let realConfig = realRoot.appendingPathComponent("config", isDirectory: true)
         let isolatedConfig = isolatedRoot.appendingPathComponent("config", isDirectory: true)
-        for fileName in ["chat.json", "sandbox.json", "prefill-tuning.json"] {
+        // Migration provenance is part of the settings contract: without it,
+        // explicit bundle defaults, fp16 heads, or cache choices may be reset
+        // when the runtime store first loads the copied configuration.
+        for fileName in [
+            "chat.json", "sandbox.json", "prefill-tuning.json",
+            ".model-idle-residency-warm-default-migrated",
+            ".server-runtime-cache-defaults-v2-migrated",
+            ".server-runtime-paged-cache-default-off-v3-migrated",
+            ".server-runtime-memory-safety-cache-defaults-v4-migrated",
+            ".server-runtime-legacy-concurrency-migrated",
+            "diffusion-defaults-migrated.marker",
+            "tied-head-q6-default-migrated.marker",
+        ] {
             let source = realConfig.appendingPathComponent(fileName)
             guard fm.fileExists(atPath: source.path) else { continue }
             try? fm.createDirectory(at: isolatedConfig, withIntermediateDirectories: true)

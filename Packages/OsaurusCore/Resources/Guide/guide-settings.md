@@ -6,7 +6,7 @@ order: 120
 
 # Settings Overview
 
-Osaurus settings live in the Management window (⌘⇧M). Type a name in the sidebar search to jump to a control. The built-in assistant uses the same catalog via `osaurus_help` `{action: find}` — it will quote a breadcrumb, not invent a path.
+Settings… (⌘,) opens the Management window. Type a name in the sidebar search to jump to a control. The built-in assistant uses the same catalog via `osaurus_help` `{action: find}` — it will quote a breadcrumb, not invent a path.
 
 Ask the assistant to change declarative settings in chat (`osaurus_config`); each change shows a one-tap approval card first (see the Declarative Configuration topic).
 
@@ -29,25 +29,25 @@ Ask the assistant to change declarative settings in chat (`osaurus_config`); eac
 - Themes: theme gallery, custom theme editor, import/export.
 - Computer Use / Browser / Sandbox: autonomy presets, app allowlists, resources.
 - Permissions: macOS TCC grants (Accessibility, Screen Recording, …). Tool Auto/Ask/Deny policies live on the Tools tab.
-- Identity, Storage (encryption/backup), Privacy, Channels credentials.
+- Identity, Privacy → Storage (encryption/backup), Channels credentials.
 - Secrets of any kind (API keys, tokens) are always entered in native secure fields, never chat.
 
 ## Common names that are different controls
 
 | You might say | Actual control | Path |
 |---|---|---|
-| Context window / context budget / context length | Context Window Cap (tokens) | ⌘⇧M → Server → Settings → Cache → Context & KV Policy |
+| Context window / context budget / context length | Context Window Cap (tokens) | Settings… (⌘,) → Server → Settings → Cache → Context & KV Policy |
 | Context budget (in chat) | Context Budget popover | Chat composer — read-only; Open Context Window Cap jumps to Server → Cache |
-| Memory budget / token budget (memories) | Memory Budget | ⌘⇧M → Memory → Configuration |
-| Max tokens (reply length) | Max Output Tokens | ⌘⇧M → Orchestrator → Model & Generation |
-| Subagent limits / "agents end too fast" | Limits (Max output tokens per subagent, Max turns per subagent, Time limit per subagent) | ⌘⇧M → Orchestrator → Subagents → Limits |
-| Orchestrator folder / file access | Working Folder | ⌘⇧M → Orchestrator → Working Folder (or the chat Folder chip) |
-| Ask before delegating | Permission / Permission for shared (workspace) agents | ⌘⇧M → Orchestrator → Subagents → Permission |
-| Max tokens (API defaults) | Generation Defaults → Max Tokens | ⌘⇧M → Server → Settings → Sampling Defaults |
+| Memory budget / token budget (memories) | Memory Budget | Settings… (⌘,) → Memory → Configuration |
+| Max tokens (reply length) | Max Output Tokens | Settings… (⌘,) → Orchestrator → Model & Generation |
+| Subagent limits / "agents end too fast" | Limits (Max output tokens per subagent, Max turns per subagent, Time limit per subagent) | Settings… (⌘,) → Orchestrator → Subagents → Limits |
+| Orchestrator folder / file access | Working Folder | Settings… (⌘,) → Orchestrator → Working Folder (or the chat Folder chip) |
+| Ask before delegating | Permission / Permission for shared (workspace) agents | Settings… (⌘,) → Orchestrator → Subagents → Permission |
+| Max tokens (API defaults) | Generation Defaults → Max Tokens | Settings… (⌘,) → Server → Settings → Sampling Defaults |
 | KV / cache window | KV Retention Override | Same Cache panel as the context cap |
 | Tool permissions | Could be Tools catalog, Chat folder tools, or macOS Permissions — ask `find` |
-| Calendar / Reminders / Contacts / Notes / Mail / Messages / Maps / Music / Shortcuts access for an agent | Apple app groups in the tool picker (one group per app, toggled per app) | ⌘⇧M → Agents → *custom agent* → Abilities → Tools (declarative: `agents[].capabilities.apple_apps`) |
-| Calendar / Contacts / Automation grant for the whole app | macOS permission | ⌘⇧M → Permissions (or the **Permission needed** badge on the app's group under Agents → Abilities → Tools) |
+| Calendar / Reminders / Contacts / Notes / Mail / Messages / Maps / Music / Shortcuts access for an agent | Apple app groups in the tool picker (one group per app, toggled per app) | Settings… (⌘,) → Agents → *custom agent* → Abilities → Tools (declarative: `agents[].capabilities.apple_apps`) |
+| Calendar / Contacts / Automation grant for the whole app | macOS permission | Settings… (⌘,) → Permissions (or the **Permission needed** badge on the app's group under Agents → Abilities → Tools) |
 
 ## Apple Apps (built-in)
 
@@ -132,7 +132,7 @@ macOS manages swap. Osaurus no longer shows swap warnings or requires a
 
 ## Management sidebar
 
-General, Chat, Voice, Themes, Credits, Workspaces, Identity, Permissions, Privacy, Local Models, Cloud Models, Media, Orchestrator, Agents, Channels, Web Search, Knowledge, Memory, Tools, Skills, Commands, Schedules, Watchers, Computer Use, Browser Use, Server, Sandbox, Insights.
+General, Chat, Voice, Themes, Credits, Workspaces, Identity, Permissions, Privacy, Local Models, Providers, Media, Orchestrator, Agents, Channels, Web Search, Knowledge, Memory, Tools, Skills, Commands, Schedules, Watchers, Computer Use, Browser Use, Server, Sandbox, Insights.
 
 ## Where settings are stored
 
@@ -146,7 +146,7 @@ chat's latest saved progress exceeds the cache limit. Shorter cached prefixes ma
 still be reusable; this notice does not mean that all progress was lost.
 
 **Increase Cache Size** opens **Disk Cache Size (% of disk)** under
-Management → Server → Settings → Cache and highlights the control. **Don't show
+Settings… (⌘,) → Server → Settings → Cache and highlights the control. **Don't show
 this again** suppresses inline notices across launches. To restore them, turn on
 **Show SSD Cache Capacity Notices** in the same Cache section; that preference
 applies immediately.

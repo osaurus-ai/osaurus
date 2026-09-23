@@ -17,12 +17,12 @@ Osaurus is a free, open-source macOS AI app: agents, memory, tools, and identity
 ## Finding your way around
 
 - Chat window: global hotkey (default ⌘;) or launch Osaurus from Spotlight.
-- Management window: ⌘⇧M — the sidebar has every area: General, Chat, Voice, Themes, Credits, Workspaces, Identity, Permissions, Privacy, Local Models, Cloud Models, Media, Orchestrator, Agents, Channels, Web Search, Knowledge, Memory, Tools, Skills, Commands, Schedules, Watchers, Computer Use, Browser Use, Server, Sandbox, Insights. Type a setting name in the sidebar search to jump to it.
-- CLI (install from Settings → Developer → Install CLI): `osaurus ui`, `osaurus serve`, `osaurus status`.
+- Settings… (⌘,) opens the Management window. The sidebar has every area: General, Chat, Voice, Themes, Credits, Workspaces, Identity, Permissions, Privacy, Local Models, Providers, Media, Orchestrator, Agents, Channels, Web Search, Knowledge, Memory, Tools, Skills, Commands, Schedules, Watchers, Computer Use, Browser Use, Server, Sandbox, Insights. Type a setting name in the sidebar search to jump to it.
+- CLI (install from Settings… (⌘,) → General → Command Line Tool → Install CLI): `osaurus ui`, `osaurus serve`, `osaurus status`.
 
 ## First steps
 
-1. Download a local model (Models tab) or add a cloud provider (Providers tab).
+1. Download a local model (Local Models tab) or add a cloud provider (Providers tab).
 2. Open chat and talk to the default Osaurus assistant — it can configure the app for you (download models, add providers, change settings) and answer questions about any feature.
 3. Create custom agents (Agents tab) for real work: coding, research, files, web — each with its own prompt, tools, memory, and theme.
 

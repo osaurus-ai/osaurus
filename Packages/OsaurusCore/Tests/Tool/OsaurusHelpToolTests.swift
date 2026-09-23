@@ -52,6 +52,24 @@ struct OsaurusGuideTests {
     }
 
     @Test
+    func topics_quoteTheSettingsShortcutAndCurrentSidebarNames() {
+        let corpus = OsaurusGuide.topics.map(\.body).joined(separator: "\n")
+        #expect(corpus.contains("⌘,"), "guide should tell the user Settings… is ⌘,")
+        #expect(!corpus.contains("⌘⇧M"))
+        #expect(!corpus.contains("Cmd+Shift+M"))
+        #expect(!corpus.contains("Cloud Models"))
+        #expect(!corpus.contains("Tools → Available"))
+        #expect(!corpus.contains("Generation defaults"))
+    }
+
+    @Test
+    func providersOverview_usesTheSidebarTitleAndKeepsTheOldAlias() throws {
+        let entry = try #require(SettingsSearchIndex.entries.first { $0.id == "providers.overview" })
+        #expect(entry.title == "Providers")
+        #expect(SettingsSearchIndex.search("cloud models").contains { $0.id == "providers.overview" })
+    }
+
+    @Test
     func topics_coverTheCoreFeatureAreas() {
         let ids = Set(OsaurusGuide.topics.map { $0.id })
         // The prompt and onboarding rely on these existing. Adding topics is

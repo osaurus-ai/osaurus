@@ -141709,37 +141709,37 @@
         }
       }
     },
-    "Open Management → Server → Cache → Context Window Cap": {
-      "comment": "Tooltip on the Context Budget popover link that opens Server → Cache → Context Window Cap.",
+    "Open Settings… (⌘,) → Server → Settings → Cache → Context Window Cap": {
+      "comment": "Tooltip on the Context Budget popover link that opens Server → Settings → Cache → Context Window Cap.",
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Verwaltung → Server → Cache → Kontextfenster-Limit öffnen"
+            "value": "Einstellungen… (⌘,) → Server → Einstellungen → Cache → Kontextfenster-Limit öffnen"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "관리 → 서버 → 캐시 → 컨텍스트 윈도우 상한 열기"
+            "value": "설정… (⌘,) → 서버 → 설정 → 캐시 → 컨텍스트 윈도우 상한 열기"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Открыть Управление → Сервер → Кэш → Лимит окна контекста"
+            "value": "Открыть «Настройки…» (⌘,) → Сервер → Настройки → Кэш → Лимит окна контекста"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "打开“管理 → 服务端 → 缓存 → 上下文窗口上限”"
+            "value": "打开“设置… (⌘,) → 服务端 → 设置 → 缓存 → 上下文窗口上限”"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "打開「管理 → 伺服器 → 快取 → 上下文視窗上限」"
+            "value": "打開「設定… (⌘,) → 伺服器 → 設定 → 快取 → 上下文視窗上限」"
           }
         }
       }

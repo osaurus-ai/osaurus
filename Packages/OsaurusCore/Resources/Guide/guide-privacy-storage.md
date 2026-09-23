@@ -22,13 +22,13 @@ Osaurus is local-first: chats, memory, agents, and config all live under `~/.osa
 ## Encryption
 
 - Default: plaintext SQLite protected by macOS FileVault. If you don't use FileVault, backups of `~/.osaurus` are readable.
-- Opt-in at-rest encryption: Management (⌘⇧M) → Storage → "Encrypt local data at rest (SQLCipher)". Migration runs both ways.
+- Opt-in at-rest encryption: Settings… (⌘,) → Privacy → Storage → "Encrypt local data at rest (SQLCipher)". Migration runs both ways.
 - The encryption key lives in this device's Keychain only (not iCloud-synced). Losing the key means losing the data — export a plaintext backup first.
 - Rotate storage key is available while encryption is on.
 
 ## Backup and recovery
 
-- Storage → "Export plaintext backup…" copies databases, attachments, and config to a folder you choose (decrypting if needed). Do this before a macOS reinstall or Mac migration.
+- Privacy → Storage → "Export plaintext backup…" copies databases, attachments, and config to a folder you choose (decrypting if needed). Do this before a macOS reinstall or Mac migration.
 - "Stores needing attention" lists degraded stores with Retry / Reset; Reset quarantines the file to `~/.osaurus/quarantine/` — nothing is deleted.
 
 ## Secrets

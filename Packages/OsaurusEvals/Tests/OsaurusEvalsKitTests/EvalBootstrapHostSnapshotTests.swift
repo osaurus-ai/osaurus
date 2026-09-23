@@ -77,6 +77,51 @@ struct EvalBootstrapHostSnapshotTests {
         #expect(try Data(contentsOf: source) == original)
     }
 
+    @Test func migratedRuntimeChoicesSurviveTheProductionSettingsLoader() throws {
+        let real = try makeRealRoot()
+        let isolated = try makeIsolatedRoot()
+        let oldDirectory = ServerRuntimeSettingsStore.overrideDirectory
+        defer {
+            ServerRuntimeSettingsStore.overrideDirectory = oldDirectory
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            try? FileManager.default.removeItem(at: real)
+            try? FileManager.default.removeItem(at: isolated)
+        }
+        let markers = [
+            ".model-idle-residency-warm-default-migrated",
+            ".server-runtime-cache-defaults-v2-migrated",
+            ".server-runtime-paged-cache-default-off-v3-migrated",
+            ".server-runtime-memory-safety-cache-defaults-v4-migrated",
+            ".server-runtime-legacy-concurrency-migrated",
+            "diffusion-defaults-migrated.marker",
+            "tied-head-q6-default-migrated.marker",
+        ]
+        for name in markers {
+            try Data().write(to: real.appendingPathComponent("config/\(name)"))
+        }
+        var settings = VMLXServerRuntimeSettings()
+        settings.performance = VMLXServerPerformanceSettings(compiledDecode: false)
+        settings.performance?.tiedHeadCodec = .fp16Passthrough
+        settings.generation.diffusionMaxDenoisingSteps = nil
+        let source = real.appendingPathComponent("config/server-runtime.json")
+        let original = try JSONEncoder().encode(settings)
+        try original.write(to: source)
+
+        EvalBootstrap.seedHostSnapshots(realRoot: real, isolatedRoot: isolated, symlinkTools: false)
+        for name in markers {
+            #expect(isRegularFile(isolated.appendingPathComponent("config/\(name)")))
+        }
+        ServerRuntimeSettingsStore.overrideDirectory = isolated.appendingPathComponent("config")
+        ServerRuntimeSettingsStore.invalidateSnapshot()
+        let loaded = try #require(ServerRuntimeSettingsStore.load())
+        #expect(loaded.performance?.tiedHeadCodec == .fp16Passthrough)
+        #expect(loaded.performance?.compiledDecode == false)
+        #expect(loaded.generation.diffusionMaxDenoisingSteps == nil)
+        #expect(loaded.cache.blockDisk.directory == isolated.appendingPathComponent("cache/kv_v2").path)
+        #expect(loaded.cache.legacyDisk.directory == isolated.appendingPathComponent("cache/legacy-kv").path)
+        #expect(try Data(contentsOf: source) == original)
+    }
+
     private func makeRealRoot() throws -> URL {
         let fm = FileManager.default
         let root = fm.temporaryDirectory
