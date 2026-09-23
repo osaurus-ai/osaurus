@@ -2,7 +2,7 @@
 //  ConsoleLogFile.swift
 //  osaurus
 //
-//  Debug builds copy everything the app prints, stdout and stderr, into
+//  Debug builds copy everything the app prints to stdout into
 //  `tmp/osaurus.log` in the checkout, one timestamped line at a time, while
 //  the Xcode console keeps showing it exactly as before. That picks up the
 //  `[PrivacyFilter]`, `[PrivacyReview]` and `[Osaurus]` lines without
@@ -33,8 +33,13 @@ enum ConsoleLogFile {
         @MainActor private static var started = false
     #endif
 
-    /// Starts copying stdout and stderr into the file. Call once, as early
-    /// in launch as possible; later calls do nothing.
+    /// Starts copying stdout into the file. Call once, as early in launch as
+    /// possible; later calls do nothing.
+    ///
+    /// stderr is left alone: a crash writes its reason (`fatalError`, an
+    /// uncaught exception) to stderr just before the process dies, and a
+    /// pipe read on another queue would lose exactly that line, from Xcode
+    /// and the file alike.
     @MainActor
     static func start() {
         #if DEBUG
@@ -46,7 +51,6 @@ enum ConsoleLogFile {
             sink.appendLine(
                 "===== Osaurus launched, pid \(ProcessInfo.processInfo.processIdentifier) =====")
             tee(STDOUT_FILENO)
-            tee(STDERR_FILENO)
         #endif
     }
 
