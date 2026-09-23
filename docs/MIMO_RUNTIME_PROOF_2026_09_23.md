@@ -214,10 +214,60 @@ Artifacts: `local-app-r22e-live-proof-summary.json`,
 `local-app-r22e-neutral-ui-clean-ready.png`,
 `local-app-r22e-neutral-ui-result.png`, `local-app-r22e-memory-summary.json`.
 
-Next is a bounded raw-token audio diagnostic to distinguish model-emitted
-reasoning markers from parser behavior. Full current-bundle eval and remote
+Audio attribution is extended below. Full current-bundle eval and remote
 comparison gates remain open. Osaurus#2863 remains draft; no release/tag.
 
 All checks also passed at documentation head ed9630328a01197a59ff5e072a9a1ecb7b9ff262: `osaurus-pr2863-ed963-ci.json`. Runtime inputs remain identical to the R22 build.
 
-The private raw-token audio probe built successfully (`raw-audio-r22-build-outputs.json`), but its next full-model attempt was refused before child launch by strict admission (`raw-audio-r22-host-memory.jsonl`). Raw-token attribution remains unproven. Identity hashing now uses bounded uncached reads in the private API/eval harnesses, avoiding whole-binary allocations. No production runtime change was made by these diagnostics.
+The private raw-token audio probe built successfully (`raw-audio-r22-build-outputs.json`), but its next full-model attempt was refused before child launch by strict admission (`raw-audio-r22-host-memory.jsonl`). It was not run. Identity hashing now uses bounded uncached reads in the private API/eval harnesses, avoiding whole-binary allocations. No production runtime change was made by these diagnostics.
+
+CPU-only cache-key reconstruction subsequently corroborated the prior API output tokens: code clip emitted one `<think>` opener, neutral clip two, then transcript and EOS151645 without a closer. Both original prompt hashes and post-answer hashes match the persisted cache index exactly. This is identity evidence from the earlier live run, not a new generation. See `local-app-r22e-audio-cache-token-identity.json` and `local-app-r22e-neutral-cache-token-markers.json`. The actual app WAV normalization was also tested: all2,940RVQcodes remained exact, so its small amplitude difference does not explain these rows (`actual-audio-r22-app-pcm-reference.json`).
+
+## Independent backbone reproduction and dtype diagnostic
+
+The updated installed bundle was evaluated through the independent Python
+MiMo backbone, loading and releasing one decoder layer at a time to stay within
+an8GiB diagnostic cap. All48layers, full256expert banks and native quantization
+were retained. This private diagnostic does not change the resident app path.
+The neutral audio features reused here were independently bit-exact against
+the Python encoder, rather than freshly recomputed in the language run.
+
+Teacher-forced logits ranked all12observed tokens first, including EOS
+(`r22-layerwise-audio-r2-reference.json`). More decisively, free-running native
+temperature1/top-p0.95 generation reproduced the exact sequence
+`<think><think>A red bicycle is beside the wooden fence.<|im_end|>`.
+It stopped naturally, with no fabricated tags, parser repair or prompt changes.
+Receipt `r22-streamed-audio-receipt.json`: exit0, no guard trip,
+peak6,656,349,800bytes. Raw result `r22-streamed-audio-reference.json`:
+270.377s,12tokens including EOS,0.04438tokens/s end-to-end and0.04606decode
+tokens/s. These intentionally slow diagnostic rates include per-token layer
+reloads (1,220,649,802,240bytes read), and are not app performance results.
+The actual app remains the46.4–49.0tokens/s rows above. This reproduces a
+model/backbone failure independently of Swift's output parser; it does not
+prove whether the shared architecture, bundle conversion or source weights
+caused it.
+
+The FP32 codec policy originated in the local Python omni wrapper
+(`v26_omni.py:39–43`); it differs from Xiaomi's bundled loader default BF16 and
+SGLang's BF16 load followed by FP32 RVQ. A bounded BF16 diagnostic changed
+207/920,142/840and215/1180codes for the three clips, but the neutral backbone
+still ranks every token of the same invalid output first, with probability
+at least0.97135 (`r23-audio-dtype-reference.json`,
+`r23-layerwise-audio-bf16-reference.json`). These are component/logit rows,
+not free-running BF16 generation or proof of a semantic fix. The production
+dtype path has not been changed on this evidence.
+
+The updated full local eval matrix was then attempted with the rebuilt CLI,
+but refused before child launch: safe capacity115,852,132,352bytes versus
+119,382,780,232required (`local-evals-r22-host-memory.jsonl`). No model was
+loaded for that attempt. Read-only invalidation had already reclaimed
+78,237,827,072bytes of clean cache from the completed reference's inactive
+model files; every target had no open handles and unchanged size/mtime
+(`r23-after-reference-cache-invalidation.json`). The remaining owned build
+and proof files account for only38,600,704cached bytes
+(`r23-after-reference-owned-file-cache-census.json`). Closing the small vMLX
+GUI would not recover the missing3.3GiB; protected terminals, active jobs,
+system processes and unrelated files remain untouched. This refusal is not
+an eval score. Remote-model comparison also still needs an existing reachable
+provider/credential source; the configured endpoint's latest probe failed
+with curl7/HTTP000 (`r22-latest-provider-probe.json`).
