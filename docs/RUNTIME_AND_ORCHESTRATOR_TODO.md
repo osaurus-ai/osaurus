@@ -37,6 +37,7 @@ Do not begin implementation before Task1 is finished/proven/merged.
 
 - [ ] Audit all agent/default-agent discovery, metadata, creation, storage, prompt/tool/spawn and allowed-target paths.
 - [ ] Implement one canonical short required description, consistent validation, manual UI and model-driven creation, specific reviewed descriptions for existing defaults, and safe migration/persistence for existing agents.
+- [ ] Upgrade existing user agents: actionable “Description required” notices and direct editing; require explicit completion, preserve data/settings/IDs, and prevent name-only delegation until corrected. Prove old profiles and skipped-version/legacy-import paths in the dev app.
 - [ ] Verify actual model-visible descriptions beside agent names everywhere targets are selected; protect permissions/target boundaries and invalidate stale metadata caches.
 - [ ] Test UI and tool-driven creation/edit/errors/save/relaunch, defaults/migrations/import/export, and controlled small-model routing versus baseline.
 - [ ] Fresh development app live proof, applicable full evals and Osaurus CI; document exact identities, rates, failures and recommendations.

@@ -19,6 +19,17 @@ Small orchestrator models choose agents from names with insufficient purpose/con
 - [ ] Build an isolated development Osaurus app and inspect actual controls. Create/edit/save/relaunch, exercise small-model agent discovery and meaningful delegation, inspect the exact payload seen by the caller, wait for child cards/reasoning/Stop/input to settle, and complete a follow-up turn. Record model defaults, tokens/s, source/app hashes, actual results and failures.
 - [ ] Run applicable focused tests plus required local/frontier AgentLoop and AgentLoopFrontier comparisons. Use a controlled baseline with the same small model and tasks to measure unnecessary Helper calls and correct delegation. Do not force desired behavior via hidden prompt/sampler changes or cherry-pick outcomes.
 
+## Required upgrade flow for existing user agents
+
+Eric explicitly requested this on 2026-09-23: users updating later may already have saved agents without descriptions. They must be told to add one; a creation-only requirement is insufficient.
+
+- [ ] Detect missing, empty and whitespace-only descriptions when loading legacy saved agents, including users skipping several versions. Preserve IDs, chat history, models, tools, permissions and other settings.
+- [ ] Show an actionable “Description required” notice with a direct edit action and identify every affected agent. Keep the incomplete state visible after dismissing a notice, navigating away or relaunching; avoid repeated modal interruptions for the same unresolved state.
+- [ ] Require the user to explicitly supply and save a valid concise description. Do not silently generate a description for a user-created agent or accept a generic fallback as completed migration. Reviewed descriptions may seed built-in agents; do not overwrite user edits or infer built-in identity from a matching display name alone.
+- [ ] Prevent incomplete legacy agents from appearing as name-only delegation targets in any prompt/tool/allowed-pool surface, including stale cached lists. Expose the actionable reason in the UI and validate again when spawning by stored ID. Preserve existing chats and data while descriptions are completed.
+- [ ] Treat legacy imports, sync arrivals, duplication and later restoration consistently. Migration must be idempotent and must not block app startup; validation belongs at editing/creation and delegation boundaries.
+- [ ] Live-test an old profile with several agents, one built-in, one renamed built-in and one custom agent named like a built-in. Prove notices, edit/save, cancellation, partial completion, relaunch, valid agents remaining usable, invalid agents not leaking into delegation, and corrected descriptions reaching an already-open chat.
+
 ## Recommendations to evaluate, not silently add to scope
 
 1. Descriptions should answer both what the agent does and when it is useful; names alone, generic biographies, and duplicated system prompts are poor routing metadata.
