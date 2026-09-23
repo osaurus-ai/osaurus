@@ -38,16 +38,16 @@ enum MobileConnectLog {
     }()
 
     private static let queue = DispatchQueue(label: "com.osaurus.mobile-connect-log", qos: .utility)
-    private static let stamp: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
 
     /// Appends one line, timestamped. Safe from any thread; never throws.
     static func write(_ message: String) {
-        let line = "\(stamp.string(from: Date())) \(message)\n"
+        let now = Date()
         queue.async {
+            // Formatted on the queue: `ISO8601DateFormatter` is not Sendable,
+            // so a shared instance cannot be touched from arbitrary threads.
+            let stamp = ISO8601DateFormatter()
+            stamp.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let line = "\(stamp.string(from: now)) \(message)\n"
             guard let data = line.data(using: .utf8) else { return }
             if let handle = try? FileHandle(forWritingTo: fileURL) {
                 defer { try? handle.close() }
