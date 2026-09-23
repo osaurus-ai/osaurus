@@ -216,24 +216,31 @@ public final class PrivacyFilterEngine {
             switch backend {
             case .openai:
                 guard let kit else { throw PrivacyFilterEngineError.notLoaded }
-                let entities: [Entity]
-                do {
-                    entities = try await kit.extractEntities(from: scanText)
-                } catch {
-                    throw PrivacyFilterEngineError.detectionFailed(error.localizedDescription)
-                }
-                modelRawCount = entities.count
-                for entity in entities {
-                    guard let category = EntityCategory(entity.type) else { continue }
-                    modelPending.append(
-                        PendingMatch(
-                            category: category,
-                            original: entity.text,
-                            range: entity.range,
-                            source: .model,
-                            label: nil
+                // One pass per piece: the user's words apart from each
+                // injected block (see `InjectedContextSpans.modelPieces`).
+                for piece in InjectedContextSpans.modelPieces(in: scanText) {
+                    let pieceText = String(scanText[piece])
+                    let entities: [Entity]
+                    do {
+                        entities = try await kit.extractEntities(from: pieceText)
+                    } catch {
+                        throw PrivacyFilterEngineError.detectionFailed(error.localizedDescription)
+                    }
+                    modelRawCount += entities.count
+                    for entity in entities {
+                        guard let category = EntityCategory(entity.type),
+                            let range = Self.rebase(entity.range, from: pieceText, onto: piece, in: scanText)
+                        else { continue }
+                        modelPending.append(
+                            PendingMatch(
+                                category: category,
+                                original: entity.text,
+                                range: range,
+                                source: .model,
+                                label: nil
+                            )
                         )
-                    )
+                    }
                 }
             case .rampart:
                 let spans = await RampartModelManager.shared.modelSpans(in: scanText)
@@ -326,6 +333,27 @@ public final class PrivacyFilterEngine {
             )
         }
         return out
+    }
+
+    /// Moves `range`, an index range into `piece` (a copy of `pieceRange`
+    /// of `whole`), onto the same characters of `whole`. Nil when the
+    /// result would not land on character boundaries.
+    private static func rebase(
+        _ range: Range<String.Index>,
+        from piece: String,
+        onto pieceRange: Range<String.Index>,
+        in whole: String
+    ) -> Range<String.Index>? {
+        let base = whole.utf8.distance(from: whole.startIndex, to: pieceRange.lowerBound)
+        let lower = piece.utf8.distance(from: piece.startIndex, to: range.lowerBound)
+        let upper = piece.utf8.distance(from: piece.startIndex, to: range.upperBound)
+        let utf8 = whole.utf8
+        guard let start = utf8.index(utf8.startIndex, offsetBy: base + lower, limitedBy: utf8.endIndex),
+            let end = utf8.index(utf8.startIndex, offsetBy: base + upper, limitedBy: utf8.endIndex),
+            let startIndex = start.samePosition(in: whole),
+            let endIndex = end.samePosition(in: whole)
+        else { return nil }
+        return startIndex ..< endIndex
     }
 
     /// Model-only NER spans (`person` / `address` / `date` / `secret`, plus

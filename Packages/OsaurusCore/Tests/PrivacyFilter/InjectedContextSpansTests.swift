@@ -63,4 +63,19 @@ struct InjectedContextSpansTests {
         )
         #expect(counts[.phone] == nil)
     }
+
+    @Test func modelPiecesSeparateTheMessageFromEachInjectedBlock() {
+        let screen = "[Screen Context]\nDoing: In Safari\n[/Screen Context]"
+        let memory = "[Memory]\nfact\n[/Memory]"
+        let message = "My name is Alice Smith, call me on 0211238389"
+        let text = screen + "\n\n" + memory + "\n\n" + timeBlock + "\n\n" + message
+        let pieces = InjectedContextSpans.modelPieces(in: text).map { String(text[$0]) }
+        // The time block is skipped outright; blank stretches are dropped.
+        #expect(pieces == [screen, memory, "\n\n" + message])
+    }
+
+    @Test func modelPiecesKeepAPlainMessageWhole() {
+        let text = "My name is Alice Smith"
+        #expect(InjectedContextSpans.modelPieces(in: text).map { String(text[$0]) } == [text])
+    }
 }
