@@ -1029,6 +1029,14 @@ waits on it. These routes let a paired phone answer that card instead of the
 run stalling until someone is back at the Mac. Owner-only: answering a card
 is consent to run something on this Mac.
 
+The phone's own runs raise these cards too. A run started over the Secure
+Channel by the owner (the paired phone) is not refused as an external caller:
+its `ask` tools, and those of the sub-agents it spawns, queue here for the
+phone to answer, and its sub-agents' redaction reviews go to §19 rather than
+the Mac's sheet. The external deny list (host file writes, shell, agent
+channels, Apple app tools) still applies to it. Any other HTTP caller,
+including a plain loopback script, keeps failing closed.
+
 ### 16.1 `GET /approvals`
 
 ```json

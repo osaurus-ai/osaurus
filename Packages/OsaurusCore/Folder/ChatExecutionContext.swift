@@ -373,10 +373,13 @@ public enum ChatExecutionContext {
     @TaskLocal static var isUnattendedDispatch: Bool = false
 
     /// True when the run was started by the user's own paired phone, which
-    /// can answer the Privacy Filter's redaction review that this Mac would
-    /// otherwise have no way to ask about (docs/MOBILE_PROTOCOL.md §19).
-    /// Bound by `handleAgentRunEndpoint` only for owner callers — a workspace
-    /// peer or a plain HTTP client still fails closed. Module-internal so
+    /// polls for and answers the cards this Mac would otherwise have no way
+    /// to show: the Privacy Filter's redaction review (§19) and `.ask` tool
+    /// approvals, which then queue for `GET /approvals` instead of being
+    /// refused as an external surface (§16). The external deny list still
+    /// applies. Bound by `handleAgentRunEndpoint` only for an owner caller on
+    /// the Secure Channel — a workspace peer, a plain HTTP client or a bare
+    /// loopback script still fails closed. Module-internal so
     /// out-of-module callers cannot bind it.
     @TaskLocal static var hasRemoteReviewer: Bool = false
 

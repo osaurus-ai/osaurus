@@ -554,7 +554,10 @@ enum PrivacyFilterPipeline {
             outcome = await PrivacyReviewService.shared.review(
                 detections: newDetections,
                 sessionId: sid,
-                allowInteractive: requestSource == .chatUI,
+                // A sub-agent of a phone run is built as a chat-UI engine
+                // (`AgentSubagentRunner`), but the person is on the phone, not
+                // at this Mac: its review goes where the parent's would.
+                allowInteractive: requestSource == .chatUI && !ChatExecutionContext.hasRemoteReviewer,
                 // A non-interactive caller normally fails closed; the owner's
                 // paired phone can answer instead of blocking the send.
                 allowRemote: ChatExecutionContext.hasRemoteReviewer

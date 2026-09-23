@@ -8056,6 +8056,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // Read on the event loop: it gates the built-in agent below and, deeper
         // in the run, whether the Privacy Filter may ask the phone to review.
         let ownerRun = callerOwnsThisMac(context)
+        // The owner's paired phone: owner scope AND the Secure Channel it
+        // always speaks. Only this caller gets cards relayed (privacy reviews,
+        // tool approvals); a bare loopback script is still owner but has no
+        // one polling for cards, so it keeps failing closed instead of
+        // waiting on an answer that never comes.
+        let remoteReviewer = ownerRun && stateRef.value.isSecureChannel
         if !ownerRun,
             let rejection = Agent.rejectBuiltInForExternalSurface(agentId, source: "http/agents/run")
         {
@@ -9274,7 +9280,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // `currentFolderRoot` scopes the folder tools + undo +
                 // change checkpoints to THIS run's granted folder.
                 let runResult = try await ChatExecutionContext.$hasRemoteReviewer
-                    .withValue(ownerRun) {
+                    .withValue(remoteReviewer) {
                     try await ChatExecutionContext.$workspaceBillingContext
                     .withValue(workspaceBilling) {
                         try await ChatExecutionContext.$currentFolderRoot
