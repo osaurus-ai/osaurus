@@ -8209,7 +8209,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // synthesized. Each loop iteration derives a per-step key from it.
         let idempotencyBase = Self.httpIdempotencyKey(head: head)
 
+        // SSE keepalive, as on the chat-completions stream. A run can sit
+        // silent for minutes before its first byte — a cold privacy model
+        // loading, or a redaction review waiting on the paired phone — and
+        // the phone's request idles out at 120s. It then replays the run on
+        // its other route, which cancels this one and its pending review.
+        let keepaliveTask = Self.startSSEKeepalive(
+            writer: writerBound,
+            channel: context.channel,
+            loop: loop,
+            ctx: ctx,
+            disconnected: disconnected
+        )
         runRequestTask(priority: .userInitiated) {
+            defer { keepaliveTask.cancel() }
             defer { admissionToken.release() }
             // HTTP inference bypasses the in-app "generating" dot; drive it for
             // the whole run (incl. remote-peer runs). `defer` balances all exits.
