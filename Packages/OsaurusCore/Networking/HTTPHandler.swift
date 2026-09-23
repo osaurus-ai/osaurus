@@ -4572,6 +4572,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) {
         let path = "/pair/hello"
         let cors = stateRef.value.corsHeaders
+        MobileConnectLog.write("pair/hello: probed from \(remoteIP(context))")
         guard !stateRef.value.isRelayOrigin else {
             var headers = [("Content-Type", "application/json; charset=utf-8")]
             headers.append(contentsOf: cors)
