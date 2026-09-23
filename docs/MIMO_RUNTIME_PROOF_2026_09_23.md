@@ -181,3 +181,43 @@ full-load/audio/eval gates. No host-guard trips, no language generation.
 All Osaurus CI checks passed at R22 runtime head
 `ec6e370487a57aa0d3516e05aaf752a7a175fbe9`; receipt
 `osaurus-pr2863-ec6-ci.json`. This does not waive the live/eval gates above.
+
+
+## R22e stricter-admission full load and retained audio failures
+
+The private admission correction now subtracts kernel-protected file-cache
+pages and also requires actual free RAM sufficient for the expected footprint.
+All previous running guards remain unchanged. Thirteen guard regressions pass;
+no OS limit, runtime quantization or production app source was changed. The
+written hold was resolved only after bounded validation and a fresh passing
+preflight. Earlier failed rows remain retained. Receipts:
+`host-guard-tests-r22-filecache.log`, `R22-FULL-MODEL-HOLD-RESOLUTION-E.json`,
+`local-app-r22e-host-memory.jsonl`.
+
+R22e loaded the complete updated iteration2 bundle in the rebuilt development
+app. It exited normally through Quit Osaurus, return0, no guard trip, peak
+physical footprint107,530,104,360 bytes, normal pressure and zero swap. The
+frozen R22 runtime inputs are unchanged; app head ed963032 is documentation
+only, verified by `r22-documentation-only-source-comparison.json`.
+This proves this guarded run, not a guarantee against future driver/OS faults.
+
+Native-default API audio transcriptions were accurate but entirely in the
+reasoning field, with empty visible content: neutral recording49.0189tok/s,
+code recording48.3717tok/s. Both are FAILED visible-answer rows despite natural
+stop. Fresh actual UI audio also FAILS at46.4tok/s (317tokens, TTFT5.85s): the
+reasoning hears the recording, but the visible answer denies an attachment.
+The attachment and settled result were visually inspected. No forced tags,
+prompt changes or sampler overrides were introduced to mask these failures.
+Artifacts: `local-app-r22e-live-proof-summary.json`,
+`local-app-r22e-api-neutral-result.json`, `local-app-r22e-api-code-result.json`,
+`local-app-r22e-neutral-ui-conversation.json`,
+`local-app-r22e-neutral-ui-clean-ready.png`,
+`local-app-r22e-neutral-ui-result.png`, `local-app-r22e-memory-summary.json`.
+
+Next is a bounded raw-token audio diagnostic to distinguish model-emitted
+reasoning markers from parser behavior. Full current-bundle eval and remote
+comparison gates remain open. Osaurus#2863 remains draft; no release/tag.
+
+All checks also passed at documentation head ed9630328a01197a59ff5e072a9a1ecb7b9ff262: `osaurus-pr2863-ed963-ci.json`. Runtime inputs remain identical to the R22 build.
+
+The private raw-token audio probe built successfully (`raw-audio-r22-build-outputs.json`), but its next full-model attempt was refused before child launch by strict admission (`raw-audio-r22-host-memory.jsonl`). Raw-token attribution remains unproven. Identity hashing now uses bounded uncached reads in the private API/eval harnesses, avoiding whole-binary allocations. No production runtime change was made by these diagnostics.
