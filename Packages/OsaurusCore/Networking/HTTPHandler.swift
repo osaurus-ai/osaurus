@@ -4585,12 +4585,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask(priority: .userInitiated) {
-            let (name, pairing) = await MainActor.run {
-                (Host.current().localizedName ?? "Osaurus", MobilePairingService.shared.activeCode != nil)
+            let (name, pairing, version) = await MainActor.run {
+                (
+                    Host.current().localizedName ?? "Osaurus",
+                    MobilePairingService.shared.activeCode != nil,
+                    MobilePairingService.wireVersion
+                )
             }
             let body =
                 (try? JSONSerialization.data(withJSONObject: [
-                    "v": MobilePairingService.wireVersion, "name": name, "pairing": pairing,
+                    "v": version, "name": name, "pairing": pairing,
                 ])).map { String(decoding: $0, as: UTF8.self) } ?? #"{"v":1}"#
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
