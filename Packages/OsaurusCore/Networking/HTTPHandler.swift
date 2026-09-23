@@ -5953,8 +5953,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let content: String
         let thinking: String?
         let thinking_duration_ms: Int?
+        /// A document attached to a user turn: what the model was given,
+        /// so a client can show and open it. Images are still only counted.
+        struct AttachmentDTO: Encodable {
+            let filename: String
+            let file_size: Int
+            let content: String
+        }
         let tool_calls: [ToolCallDTO]?
         let attachment_count: Int
+        let attachments: [AttachmentDTO]?
         let created_at: String?
         let completed_at: String?
         let token_count: Int?
@@ -6261,6 +6269,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 duration_ms: turn.toolCallDurations[call.id].map { Int(($0 * 1000).rounded()) }
             )
         }
+        // Documents travel with their text (spilled ones are read back from
+        // the blob store); a phone away from the Mac can then open them.
+        let documents: [SessionTurnDTO.AttachmentDTO] = turn.attachments.compactMap { attachment in
+            guard attachment.isDocument, let filename = attachment.filename,
+                let content = attachment.loadDocumentContent()
+            else { return nil }
+            let size: Int
+            switch attachment.kind {
+            case .document(_, _, let fileSize), .documentRef(_, _, let fileSize): size = fileSize
+            default: size = content.utf8.count
+            }
+            return SessionTurnDTO.AttachmentDTO(filename: filename, file_size: size, content: content)
+        }
         return SessionTurnDTO(
             id: turn.id.uuidString,
             role: turn.role.rawValue,
@@ -6269,6 +6290,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             thinking_duration_ms: turn.thinkingDuration.map { Int(($0 * 1000).rounded()) },
             tool_calls: (calls?.isEmpty ?? true) ? nil : calls,
             attachment_count: turn.attachments.count,
+            attachments: documents.isEmpty ? nil : documents,
             created_at: turn.createdAt.map(sessionDateFormatter.string(from:)),
             completed_at: turn.completedAt.map(sessionDateFormatter.string(from:)),
             token_count: turn.generationTokenCount

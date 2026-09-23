@@ -909,11 +909,17 @@ The same fields plus `turns`, in the Mac's block shape:
            "thinking_duration_ms":2500,
            "tool_calls":[{"call_id":"…","name":"web_search","arguments":"{…}",
                           "result":"…","duration_ms":1250}],
-           "attachment_count":0,"created_at":"…","completed_at":"…","token_count":42}]}
+           "attachment_count":1,
+           "attachments":[{"filename":"budget.md","file_size":664,"content":"…"}],
+           "created_at":"…","completed_at":"…","token_count":42}]}
 ```
 
 Tool-result turns are folded into the assistant turn that called them, so a
-client renders one timeline per turn. Attachments are counted, not inlined.
+client renders one timeline per turn. `attachment_count` counts everything
+attached; `attachments` carries the documents among them with their text —
+what the model was given — so a phone away from the Mac can open them.
+Images, audio and video are counted only. Absent when the turn has no
+documents.
 `404 session_not_found` for an unknown id.
 
 ### 14.3 `PATCH /sessions/{id}`
