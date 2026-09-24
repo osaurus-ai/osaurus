@@ -315,7 +315,7 @@ let package = Package(
         // resident expert dispatch, and correct post-answer cache boundaries.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "63a10f3ab61c36cb978fcd7d74208c746930006d"
+            revision: "27d4d7bd93e5ade91a32de614883541a9514d54f"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
