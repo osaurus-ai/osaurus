@@ -1,13 +1,4 @@
-                    available: source != "local" || item.isMLXFormat,
-                    description: item.description,
-                    tab: tab.key,
-                    tabTitle: tab.title,
-                    favoriteKey: item.favoriteKey,
-                    contextLength: item.contextLength,
-                    inputPrice: item.inputPriceMicroPerMTok,
-                    outputPrice: item.outputPriceMicroPerMTok,
-                    externalSource: item.externalSource
-                )//
+//
 //  HTTPHandler.swift
 //  osaurus
 //
@@ -4922,7 +4913,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Grouped as the Mac picker groups them, so the phone shows the
             // same tabs in the same order.
             let tabbed = items.groupedByTab().flatMap { tab in tab.models.map { (tab: tab, item: $0) } }
-            let models = tabbed.map { tab, item -> PickerModelDTO in
+            let models = tabbed.map { entry -> PickerModelDTO in
+                let (tab, item) = entry
                 let source: String
                 switch item.source {
                 case .foundation: source = "foundation"
