@@ -658,6 +658,19 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         windowStates[id]
     }
 
+    /// A chat's title or flags changed from outside any window (the paired
+    /// phone). The sidebar callbacks sync only their own window's open
+    /// chat; this updates every tab holding it, so none of their next full
+    /// saves writes the old values back, and refreshes every sidebar.
+    func syncOpenSessions(id: UUID, _ update: (ChatSession) -> Void) {
+        for state in windowStates.values {
+            for session in state.tabSessions where session.sessionId == id {
+                update(session)
+            }
+            state.refreshSessions()
+        }
+    }
+
     /// Returns the set of local model names selected by currently-open chat
     /// windows plus any active registry-owned (detached) background tasks.
     /// Used as a "keep loaded for next interaction" hint for GC.

@@ -6941,18 +6941,38 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask(priority: .userInitiated) {
             if let patch {
-                // Targeted column updates: the in-memory sessions carry no
-                // turns, so a full save here would wipe the transcript.
+                // Any chat `GET /sessions` lists, including one not in the
+                // sidebar's in-memory list yet.
+                let inMemory = await MainActor.run { ChatSessionsManager.shared.session(for: sessionId) != nil }
+                let exists: Bool
+                if inMemory {
+                    exists = true
+                } else {
+                    exists = await ChatSessionStore.loadAsync(id: sessionId) != nil
+                }
+                // Through the manager, as the sidebar does: targeted column
+                // updates (a full save of the metadata-only copy would wipe the
+                // transcript), plus the in-memory list and any live instance.
+                // Then every window's open copy, which the sidebar callbacks
+                // would otherwise sync — else its next save puts the old values back.
                 let applied: Bool = await MainActor.run {
-                    guard ChatSessionsManager.shared.session(for: sessionId) != nil else { return false }
-                    if let title = patch.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
-                        ChatSessionStore.renameTitleAsync(id: sessionId, title: String(title.prefix(200)))
+                    guard exists else { return false }
+                    let manager = ChatSessionsManager.shared
+                    let title = patch.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .map { String($0.prefix(200)) }
+                    if let title, !title.isEmpty {
+                        manager.rename(id: sessionId, title: title)
                     }
                     if let archived = patch.archived {
-                        ChatSessionStore.setArchivedAsync(id: sessionId, archived: archived)
+                        manager.setArchived(id: sessionId, archived: archived)
                     }
                     if let pinned = patch.pinned {
-                        ChatSessionStore.setPinnedAsync(id: sessionId, pinned: pinned)
+                        manager.setPinned(id: sessionId, pinned: pinned)
+                    }
+                    ChatWindowManager.shared.syncOpenSessions(id: sessionId) { session in
+                        if let title, !title.isEmpty { session.title = title }
+                        if let archived = patch.archived { session.archived = archived }
+                        if let pinned = patch.pinned { session.pinned = pinned }
                     }
                     return true
                 }
