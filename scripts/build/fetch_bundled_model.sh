@@ -73,7 +73,9 @@ if [[ -n "$SOURCE_DIR" ]]; then
   done < <(ls -1 "$SOURCE_DIR")
 else
   echo "Resolving ${MODEL_ID}@${REVISION} file list..."
-  LISTING="$(curl -fsSL --retry 3 "${AUTH_ARGS[@]}" \
+  # `${arr[@]+"${arr[@]}"}` keeps `set -u` happy on the runner's bash 3.2,
+  # which treats an empty array expansion as an unbound variable.
+  LISTING="$(curl -fsSL --retry 3 ${AUTH_ARGS[@]+"${AUTH_ARGS[@]}"} \
     "https://huggingface.co/api/models/${MODEL_ID}/revision/${REVISION}")"
   while IFS= read -r name; do
     wanted "$name" && FILES+=("$name")
@@ -109,7 +111,7 @@ for name in "${FILES[@]}"; do
     continue
   fi
   echo "  fetch   ${name}"
-  curl -fL --retry 5 --retry-delay 5 -C - "${AUTH_ARGS[@]}" \
+  curl -fL --retry 5 --retry-delay 5 -C - ${AUTH_ARGS[@]+"${AUTH_ARGS[@]}"} \
     -o "$target" \
     "https://huggingface.co/${MODEL_ID}/resolve/${REVISION}/${name}"
 done
