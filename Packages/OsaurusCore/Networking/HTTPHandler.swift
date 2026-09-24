@@ -2237,6 +2237,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     private static func configAdminBody(_ object: [String: Any]) -> String {
+        jsonObjectString(object)
+    }
+
+    /// A response body from a dictionary, properly escaped whatever the
+    /// strings in it hold.
+    private static func jsonObjectString(_ object: [String: Any]) -> String {
         let data = try? JSONSerialization.data(withJSONObject: object, options: .osaurusCanonical)
         return data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
     }
@@ -5032,9 +5038,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
                 AgentManager.shared.updateDefaultModel(for: agentId, model: normalized)
                 let effective = AgentManager.shared.effectiveModel(for: agentId) ?? ""
-                let escaped = effective.replacingOccurrences(of: "\\", with: "\\\\")
-                    .replacingOccurrences(of: "\"", with: "\\\"")
-                return (.ok, #"{"ok":true,"effective_model":"\#(escaped)"}"#)
+                return (.ok, Self.jsonObjectString(["ok": true, "effective_model": effective]))
             }
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -5778,9 +5782,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 return (agent.id.uuidString, agent.name)
             }
-            let escapedName = created.name.replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "\"", with: "\\\"")
-            let json = #"{"id":"\#(created.id)","name":"\#(escapedName)"}"#
+            // Encoded, not interpolated: a name can hold any character, and a
+            // control one left raw made a 201 the phone could not decode.
+            let json = Self.jsonObjectString(["id": created.id, "name": created.name])
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
                 headers.append(contentsOf: cors)
