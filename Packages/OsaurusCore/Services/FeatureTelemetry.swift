@@ -344,6 +344,177 @@ enum FeatureTelemetry {
         service.track("server_started")
     }
 
+    // MARK: - Install cohort / age (retention without an identifier)
+
+    // Aptabase never receives a user id from Osaurus and its own daily-user
+    // hash rotates, so `app_launched` alone can't yield cohort retention.
+    // Retention only needs COUNTS per (install cohort, install age), which a
+    // locally persisted first-launch date provides with no identifier — the
+    // same pattern as `brain_source` and `total_memory_gb`: a local fact
+    // attached as a coarse dimension. Day-N retention for cohort W is
+    // `count(daily_active | cohort=W, age=N) / count(daily_active | cohort=W, age=0)`.
+
+    /// Persisted first-launch date. Written once by
+    /// `stampFirstLaunchIfNeeded` and never overwritten.
+    nonisolated static let firstLaunchDateKey = "ai.osaurus.telemetry.first_launch_date"
+
+    /// Persisted provenance of `firstLaunchDateKey` (one of the closed
+    /// `installCohortSource*` tokens below).
+    nonisolated static let installCohortSourceKey = "ai.osaurus.telemetry.install_cohort_source"
+
+    /// Calendar day (`yyyy-MM-dd`) on which `daily_active` last fired.
+    private static let dailyActiveLastDayKey = "ai.osaurus.telemetry.daily_active_last_day"
+
+    /// The stamp was written at the install's first-ever launch.
+    nonisolated static let installCohortSourceInstall = "install"
+    /// The install predates this dimension; the date is the earliest
+    /// filesystem birth time of the data roots (day-level precision).
+    nonisolated static let installCohortSourceInferred = "inferred"
+    /// The install predates this dimension and no data root could be
+    /// inspected; the stamp is the launch that introduced the dimension.
+    nonisolated static let installCohortSourceUnknown = "unknown"
+
+    /// Ages at or above this many days collapse into the `installAgeCapLabel`
+    /// bucket so the dimension stays bounded.
+    nonisolated static let installAgeCapDays = 365
+    nonisolated static let installAgeCapLabel = "365+"
+
+    /// ISO-8601 calendar in the user's current time zone: cohorts and ages
+    /// are computed on the user's local day boundaries, matching what
+    /// "came back the next day" means to them.
+    nonisolated static let installCalendar: Calendar = {
+        var calendar = Calendar(identifier: .iso8601)
+        calendar.timeZone = .current
+        return calendar
+    }()
+
+    /// Birth times of the on-disk data roots, used to back-date installs
+    /// that predate this dimension. Two `stat` calls: the active root
+    /// (`~/.osaurus`) and the retired Application Support root, which
+    /// `OsaurusPaths.migrateLegacyApplicationSupportRootIfNeeded` copies
+    /// but never deletes — the copy gives `~/.osaurus` a fresh birth time,
+    /// so the older legacy root is the truthful anchor for those installs.
+    /// No Keychain, no database open. Missing paths are simply absent.
+    nonisolated static func defaultInstallBirthDates() -> [Date] {
+        let fm = FileManager.default
+        var candidates: [URL] = [OsaurusPaths.root()]
+        if let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            candidates.append(support.appendingPathComponent("com.dinoki.osaurus", isDirectory: true))
+        }
+        return candidates.compactMap { url in
+            try? url.resourceValues(forKeys: [.creationDateKey]).creationDate
+        }
+    }
+
+    /// One-time launch stamp. Resolution order, first hit wins:
+    ///   1. Fresh install (onboarding never completed): `now`, `install`.
+    ///   2. Existing install: earliest data-root birth time, `inferred`.
+    ///   3. Existing install with no readable data root: `now`, `unknown`.
+    /// Never re-stamps, so re-running onboarding or a later upgrade can't
+    /// move a user between cohorts. Birth times in the future are ignored
+    /// (a clock skew can't produce a negative age). The freshness key is
+    /// `OnboardingService`'s completion flag.
+    static func stampFirstLaunchIfNeeded(
+        now: Date = Date(),
+        birthDates: () -> [Date] = defaultInstallBirthDates,
+        defaults: UserDefaults = .standard
+    ) {
+        guard defaults.object(forKey: firstLaunchDateKey) == nil else { return }
+
+        let isFreshInstall = !defaults.bool(forKey: "hasCompletedOnboarding")
+        if isFreshInstall {
+            defaults.set(now, forKey: firstLaunchDateKey)
+            defaults.set(installCohortSourceInstall, forKey: installCohortSourceKey)
+            return
+        }
+
+        if let earliest = birthDates().filter({ $0 <= now }).min() {
+            defaults.set(earliest, forKey: firstLaunchDateKey)
+            defaults.set(installCohortSourceInferred, forKey: installCohortSourceKey)
+        } else {
+            defaults.set(now, forKey: firstLaunchDateKey)
+            defaults.set(installCohortSourceUnknown, forKey: installCohortSourceKey)
+        }
+    }
+
+    /// The persisted first-launch date, or `nil` before the stamp has run.
+    nonisolated static func persistedFirstLaunchDate(defaults: UserDefaults = .standard) -> Date? {
+        defaults.object(forKey: firstLaunchDateKey) as? Date
+    }
+
+    /// ISO week the install belongs to, e.g. `2026-W38`. ~52 values per year.
+    nonisolated static func installCohort(
+        firstLaunch: Date,
+        calendar: Calendar = installCalendar
+    ) -> String {
+        let components = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: firstLaunch)
+        let year = components.yearForWeekOfYear ?? 0
+        let week = components.weekOfYear ?? 0
+        return String(format: "%04d-W%02d", year, week)
+    }
+
+    /// Whole calendar days between the first launch and `now` on the
+    /// calendar's day boundaries (not raw seconds, so a launch at 23:59 and
+    /// one at 00:01 are one day apart). Clamped at zero and capped at
+    /// `installAgeCapLabel`.
+    nonisolated static func installAgeDays(
+        firstLaunch: Date,
+        now: Date,
+        calendar: Calendar = installCalendar
+    ) -> String {
+        let start = calendar.startOfDay(for: firstLaunch)
+        let end = calendar.startOfDay(for: now)
+        let days = max(0, calendar.dateComponents([.day], from: start, to: end).day ?? 0)
+        return days >= installAgeCapDays ? installAgeCapLabel : String(days)
+    }
+
+    /// The three retention dimensions for the current install, or `nil`
+    /// before `stampFirstLaunchIfNeeded` has run (callers must stamp first;
+    /// emitting without the props would silently reopen a coverage gap).
+    nonisolated static func installProps(
+        now: Date = Date(),
+        calendar: Calendar = installCalendar,
+        defaults: UserDefaults = .standard
+    ) -> [String: Value]? {
+        guard let firstLaunch = persistedFirstLaunchDate(defaults: defaults) else { return nil }
+        let source = defaults.string(forKey: installCohortSourceKey) ?? installCohortSourceUnknown
+        return [
+            "install_cohort": installCohort(firstLaunch: firstLaunch, calendar: calendar),
+            "install_age_days": installAgeDays(firstLaunch: firstLaunch, now: now, calendar: calendar),
+            "install_cohort_source": source,
+        ]
+    }
+
+    /// Emits `daily_active` at most once per local calendar day per install,
+    /// carrying the three retention dimensions. Gated by a persisted
+    /// last-emitted-day key so launch frequency can't inflate the count and
+    /// no dependence on Aptabase's IP/UA daily-user hash is needed. Silent
+    /// until the install has been stamped.
+    static func dailyActive(
+        now: Date = Date(),
+        calendar: Calendar = installCalendar,
+        service: TelemetryService = .shared,
+        defaults: UserDefaults = .standard
+    ) {
+        guard let props = installProps(now: now, calendar: calendar, defaults: defaults) else { return }
+        let today = dayToken(now, calendar: calendar)
+        guard defaults.string(forKey: dailyActiveLastDayKey) != today else { return }
+        defaults.set(today, forKey: dailyActiveLastDayKey)
+        service.track("daily_active", props)
+    }
+
+    /// `yyyy-MM-dd` in the calendar's time zone; only ever compared for
+    /// equality, never sent.
+    nonisolated private static func dayToken(_ date: Date, calendar: Calendar) -> String {
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(
+            format: "%04d-%02d-%02d",
+            components.year ?? 0,
+            components.month ?? 0,
+            components.day ?? 0
+        )
+    }
+
     /// A sandbox VM boot reached `.running`. `kind` is the closed
     /// `SandboxBootSample.BootKind` token (`cold` | `warm` |
     /// `warmFallback`); `durationBucket` is a coarse
@@ -495,20 +666,41 @@ enum FeatureTelemetry {
         }
     }
 
-    // MARK: - Product Hunt launch dialog (July 2026, one-shot)
+    // MARK: - Product Hunt launch dialogs (one-shot per campaign phase)
 
-    /// The one-time Product Hunt launch dialog was presented. Count only.
-    static func productHuntLaunchDialogShown(service: TelemetryService = .shared) {
-        service.track("product_hunt_launch_dialog_shown")
+    /// A Product Hunt campaign dialog was presented. `campaign` separates
+    /// the Raptor run (Sept 2026) from the July 2026 launch, which emitted
+    /// the same event name without props; `phase` is `teaser` or `launch`.
+    static func productHuntLaunchDialogShown(
+        phase: ProductHuntLaunchCampaign.Phase,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "product_hunt_launch_dialog_shown",
+            [
+                "campaign": ProductHuntLaunchCampaign.campaignId,
+                "phase": phase.rawValue,
+            ]
+        )
     }
 
-    /// The user dismissed the Product Hunt launch dialog. `action` is a
-    /// closed two-value enum token: `launch` (opened the PH page) or `later`.
+    /// The user dismissed a Product Hunt campaign dialog. `action` is a
+    /// closed enum token: `later` (dismiss button, Escape, outside click —
+    /// the teaser's only button) or `launch` (launch-day primary, opened
+    /// the PH page).
     static func productHuntLaunchDialogClicked(
+        phase: ProductHuntLaunchCampaign.Phase,
         action: String,
         service: TelemetryService = .shared
     ) {
-        service.track("product_hunt_launch_dialog_clicked", ["action": action])
+        service.track(
+            "product_hunt_launch_dialog_clicked",
+            [
+                "campaign": ProductHuntLaunchCampaign.campaignId,
+                "phase": phase.rawValue,
+                "action": action,
+            ]
+        )
     }
 
     // MARK: - Import history prompt (post-onboarding, one-shot)

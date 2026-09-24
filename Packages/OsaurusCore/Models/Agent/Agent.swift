@@ -778,6 +778,11 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// the proposal architecture. Kept so existing agent JSON still decodes;
     /// nothing reads it, and writing follows the collection grant instead.
     public var knowledgeCuratorEnabled: Bool
+    /// Built-in Apple app tool families (Calendar, Reminders, Mail, …) this
+    /// agent may use. Custom agents opt in per app; the Default agent is
+    /// always empty (it configures these on other agents via `osaurus_config`
+    /// rather than calling them itself).
+    public var enabledAppleApps: Set<AppleApp>
 
     public init(
         toolsEnabled: Bool,
@@ -800,7 +805,8 @@ public struct AgentCapabilities: Sendable, Equatable {
         spawnableWorkspaceAgents: [WorkspaceAgentRef] = [],
         knowledgeEnabled: Bool = false,
         knowledgeCollectionIds: [UUID] = [],
-        knowledgeCuratorEnabled: Bool = false
+        knowledgeCuratorEnabled: Bool = false,
+        enabledAppleApps: Set<AppleApp> = []
     ) {
         self.toolsEnabled = toolsEnabled
         self.memoryEnabled = memoryEnabled
@@ -823,6 +829,7 @@ public struct AgentCapabilities: Sendable, Equatable {
         self.knowledgeEnabled = knowledgeEnabled
         self.knowledgeCollectionIds = knowledgeCollectionIds
         self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
+        self.enabledAppleApps = enabledAppleApps
     }
 }
 
@@ -1176,6 +1183,12 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// the proposal architecture. Kept so existing agent JSON still decodes;
     /// nothing reads it, and writing follows the collection grant instead.
     public var knowledgeCuratorEnabled: Bool
+    /// Per-agent opt-in for the built-in Apple app tools (Calendar,
+    /// Reminders, Contacts, Notes, Mail, Messages, Maps, Music,
+    /// Shortcuts). Empty by default; each enabled app gates its
+    /// `AppleApp.toolNames` into the model-visible schema. The Default agent
+    /// ignores this (it never calls Apple tools directly).
+    public var enabledAppleApps: Set<AppleApp>
 
     public init(
         dbEnabled: Bool,
@@ -1210,7 +1223,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         knowledgeEnabled: Bool = false,
         knowledgeCollectionIds: [UUID] = [],
         knowledgeCuratorEnabled: Bool = false,
-        spawnableWorkspaceAgents: [WorkspaceAgentRef] = []
+        spawnableWorkspaceAgents: [WorkspaceAgentRef] = [],
+        enabledAppleApps: Set<AppleApp> = []
     ) {
         self.dbEnabled = dbEnabled
         self.schedule = schedule
@@ -1248,6 +1262,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.knowledgeCollectionIds = knowledgeCollectionIds
         self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
         self.spawnableWorkspaceAgents = SubagentConfiguration.normalizedWorkspaceAgents(spawnableWorkspaceAgents)
+        self.enabledAppleApps = enabledAppleApps
     }
 
     public init(from decoder: Decoder) throws {
@@ -1347,6 +1362,11 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         spawnableWorkspaceAgents = SubagentConfiguration.normalizedWorkspaceAgents(
             (try? c.decodeIfPresent([WorkspaceAgentRef].self, forKey: .spawnableWorkspaceAgents)) ?? []
         )
+        // Built-in Apple apps: absent for every agent written before they
+        // shipped → empty (off). Unknown names (a removed app) are dropped
+        // rather than failing the decode.
+        let rawAppleApps = (try? c.decodeIfPresent([String].self, forKey: .enabledAppleApps)) ?? []
+        enabledAppleApps = Set(rawAppleApps.compactMap(AppleApp.init(rawValue:)))
     }
 
     /// Trim values and drop blank entries so a cleared override (empty string)
@@ -1411,6 +1431,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case knowledgeCollectionIds
         case knowledgeCuratorEnabled
         case spawnableWorkspaceAgents
+        case enabledAppleApps
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -1451,6 +1472,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         if !spawnableWorkspaceAgents.isEmpty {
             try c.encode(spawnableWorkspaceAgents, forKey: .spawnableWorkspaceAgents)
         }
+        // Sorted for a stable on-disk shape.
+        try c.encode(AppleApp.sorted(enabledAppleApps).map(\.rawValue), forKey: .enabledAppleApps)
     }
 
     /// Default settings for newly created agents (and for back-compat decoding of

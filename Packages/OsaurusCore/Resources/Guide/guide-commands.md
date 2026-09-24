@@ -20,7 +20,7 @@ Built-ins are fixed and cannot be edited or deleted.
 
 ## Custom commands
 
-- Create them in Management (⌘⇧M) → Commands → New Command: pick a name, a description, an icon, and a template.
+- Create them in Settings… (⌘,) → Commands → New Command: pick a name, a description, an icon, and a template.
 - Typing `/name` in chat replaces the token with your template, and you keep typing from there. Examples: `/translate` → "Please translate the following to Spanish:", `/summarize` → "Summarize the following in 3 bullet points:".
 - Custom commands are stored on disk and survive restarts; edit or delete them from the same tab.
 

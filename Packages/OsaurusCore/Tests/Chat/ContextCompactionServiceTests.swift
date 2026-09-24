@@ -47,6 +47,44 @@ struct CompactionModelConfigurationTests {
         #expect(decoded.compactionModelIdentifier == "anthropic/claude-haiku")
     }
 
+    @Test("effective model prefers the configured compaction model")
+    @MainActor
+    func effectiveModelPrefersConfigured() {
+        #expect(
+            ContextCompactionService.effectiveModelIdentifier(
+                configured: "openai/gpt-4o-mini", fallback: "qwen3-4b"
+            ) == "openai/gpt-4o-mini"
+        )
+    }
+
+    @Test("effective model falls back to the chat model when unset or blank")
+    @MainActor
+    func effectiveModelFallsBackToChatModel() {
+        #expect(
+            ContextCompactionService.effectiveModelIdentifier(configured: nil, fallback: "qwen3-4b")
+                == "qwen3-4b"
+        )
+        #expect(
+            ContextCompactionService.effectiveModelIdentifier(configured: "  ", fallback: "qwen3-4b")
+                == "qwen3-4b"
+        )
+    }
+
+    @Test("effective model is nil only when neither source is known")
+    @MainActor
+    func effectiveModelNilWhenNothingKnown() {
+        #expect(ContextCompactionService.effectiveModelIdentifier(configured: nil, fallback: nil) == nil)
+        #expect(ContextCompactionService.effectiveModelIdentifier(configured: "", fallback: "") == nil)
+    }
+
+    @Test("chat-model fallback flag tracks whether a compaction model is configured")
+    @MainActor
+    func usesChatModelFallbackFlag() {
+        #expect(ContextCompactionService.usesChatModelFallback(configured: nil))
+        #expect(ContextCompactionService.usesChatModelFallback(configured: ""))
+        #expect(!ContextCompactionService.usesChatModelFallback(configured: "qwen3-4b"))
+    }
+
     @Test("legacy JSON without compaction keys decodes to unset")
     func legacyDecode() throws {
         let data = try JSONEncoder().encode(ChatConfiguration.default)

@@ -68,6 +68,17 @@ struct SettingsSearchSelfFindProbe {
             ("disk cache", "server.cache"),
             ("ssd cache", "server.cache"),
             ("disk cache size", "server.cache"),
+            ("Prefix Cache", "settings.server.prefixCache"),
+            ("Enable GPU Cache", "settings.server.gpuCache"),
+            ("Block Size (tokens)", "settings.server.gpuCacheBlockSize"),
+            ("Max Blocks", "settings.server.gpuCacheMaxBlocks"),
+            ("Disk Cache", "settings.server.diskCache"),
+            ("Clear SSD Cache", "settings.server.clearDiskCache"),
+            ("Disk Cache Directory", "settings.server.diskCacheDirectory"),
+            ("Re-derive SSM State After Generation", "settings.server.ssmReDerive"),
+            ("Disk Cache Size (% of disk)", "settings.server.diskCacheSize"),
+            ("Increase Cache Size", "settings.server.diskCacheSize"),
+            ("Use Automatic Cache Size", "settings.server.diskCacheAutomatic"),
             ("clear ssd cache", "server.cache"),
             ("gpu cache", "server.cache"),
             ("context window cap", "settings.chat.contextLength"),
@@ -99,6 +110,8 @@ struct SettingsSearchSelfFindProbe {
             ("enable memory", "memory.settings.enabled"),
             ("consolidation interval", "memory.settings.consolidation"),
             ("share my models", "server.peerInference"),
+            ("use with codex", "server.codexCLI"),
+            ("codex cli", "server.codexCLI"),
             ("schedules", "schedules.overview"),
             ("sandbox", "sandbox.overview"),
             ("macos permissions", "permissions.tools"),
@@ -124,6 +137,10 @@ struct SettingsSearchSelfFindProbe {
             ("allowed senders", "agentChannels.n8n.pendingApprovals"),
             ("edit allowlists by hand", "agentChannels.n8n.pendingApprovals"),
             ("channel enabled", "agentChannels.n8n.enabled"),
+            // Settings → Channels → Incoming.
+            ("focus chat on incoming messages", "agentChannels.focusOnInbound"),
+            ("bring to front", "agentChannels.focusOnInbound"),
+            ("steal focus", "agentChannels.focusOnInbound"),
             // Settings → Orchestrator controls.
             ("model readiness", "settings.orchestrator.modelReadiness"),
             ("working folder", "settings.orchestrator.workingFolder"),
@@ -146,6 +163,20 @@ struct SettingsSearchSelfFindProbe {
             // Workspaces → Shared agents: the per-workspace auto-join switch.
             ("let the orchestrator delegate to shared agents", "workspaces.agents.orchestratorAutoJoin"),
             ("auto-join", "workspaces.agents.orchestratorAutoJoin"),
+            // Agents → Abilities → Tools: the Apple Apps group row and one picker group per app,
+            // by the exact title each picker group shows.
+            ("apple apps", "agents.appleApps"),
+            ("Calendar", "agents.appleApps.calendar"),
+            ("Reminders", "agents.appleApps.reminders"),
+            ("Contacts", "agents.appleApps.contacts"),
+            ("Notes", "agents.appleApps.notes"),
+            ("Mail", "agents.appleApps.mail"),
+            ("Messages", "agents.appleApps.messages"),
+            ("Maps & Location", "agents.appleApps.maps"),
+            ("Music", "agents.appleApps.music"),
+            ("Shortcuts", "agents.appleApps.shortcuts"),
+            ("imessage", "agents.appleApps.messages"),
+            ("apple_apps", "agents.appleApps"),
         ]
 
         let missed = labels.filter { label in

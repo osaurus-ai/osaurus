@@ -334,6 +334,13 @@ public struct AgentCapabilitiesEntry: Codable, Equatable, Sendable {
     public var renderChartEnabled: Bool?
     /// Whether the relay tunnel forwards to this agent (Wave 3b).
     public var relayEnabled: Bool?
+    /// Built-in Apple app tool families enabled on this agent
+    /// (`AgentSettings.enabledAppleApps`): `calendar`, `reminders`,
+    /// `contacts`, `notes`, `mail`, `messages`, `maps`, `music`,
+    /// `shortcuts`. The provided list REPLACES the set (`[]` disables all).
+    /// Custom agents only — the Orchestrator configures these, never calls
+    /// them.
+    public var appleApps: [String]?
 
     public init() {}
 
@@ -353,6 +360,7 @@ public struct AgentCapabilitiesEntry: Codable, Equatable, Sendable {
         case speakEnabled = "speak_enabled"
         case renderChartEnabled = "render_chart_enabled"
         case relayEnabled = "relay_enabled"
+        case appleApps = "apple_apps"
     }
 }
 

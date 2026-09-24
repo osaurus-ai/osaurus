@@ -23,7 +23,8 @@ import Testing
         limit: Int = 100,
         evictions: Int = 0,
         disabled: Bool = false,
-        root: String = "/cache/shared"
+        root: String = "/cache/shared",
+        pressure: (kind: String, chat: String, seq: Int)? = nil
     ) -> DiskCacheQuotaSnapshot {
         DiskCacheQuotaSnapshot(
             directory: URL(fileURLWithPath: root),
@@ -31,63 +32,25 @@ import Testing
                 usedBytes: used,
                 maxBytes: limit,
                 evictions: evictions,
-                isDisabled: disabled
+                isDisabled: disabled,
+                pressureKind: pressure?.kind,
+                pressureChainId: pressure?.chat,
+                pressureSeq: pressure?.seq ?? 0
             )
         )
     }
 
-    @Test func belowLimitUnknownAndDisabledDoNotConsumeNotice() {
-        var policy = DiskCacheQuotaNoticePolicy()
-        let claimed1 = policy.claim(snapshot(used: 99))
-        #expect(!claimed1)
-        let claimed2 = policy.claim(snapshot(used: 100, limit: 0, evictions: 1))
-        #expect(!claimed2)
-        let claimed3 = policy.claim(snapshot(used: 100, evictions: 1, disabled: true))
-        #expect(!claimed3)
-        let claimed4 = policy.claim(snapshot(used: 100))
-        #expect(claimed4)
+    /// Fullness and trims are not sufficient evidence of a capacity problem.
+    @Test func theNoticeNamesTheCapWithoutClaimingAllReuseIsLost() {
+        let me = UUID().uuidString
+        let dropped = snapshot(used: 0, limit: 4_000_000_000, pressure: ("activeTipDropped", me, 1)).usage
+        let trimmed = snapshot(used: 100, pressure: ("activeChainTrimmed", me, 1)).usage
+        #expect(dropped.pressureAffects(session: me))
+        #expect(!trimmed.pressureAffects(session: me), "a trim is not a warning")
+        #expect(dropped.pressureText.contains("3.7 GB"), "names the cap that is too small")
+        #expect(dropped.pressureText.contains("Increase Disk Cache Size"))
+        #expect(!dropped.pressureText.contains("starts from scratch"))
+        #expect(!dropped.pressureAffects(session: UUID().uuidString))
     }
 
-    @Test func janitorEvictionStillNotifiesAfterUsageDropsBelowLimit() {
-        var policy = DiskCacheQuotaNoticePolicy()
-        let claimed5 = policy.claim(snapshot(used: 40, evictions: 1))
-        #expect(claimed5)
-        let claimed6 = policy.claim(snapshot(used: 20, evictions: 2))
-        #expect(!claimed6)
-        let claimed7 = policy.claim(snapshot(used: 101, evictions: 3))
-        #expect(!claimed7)
-    }
-
-    @Test func sharedRootDeduplicatesAcrossViewsAndModelsAfterClearAndRefill() {
-        var policy = DiskCacheQuotaNoticePolicy()
-        let claimed8 = policy.claim(snapshot(used: 100))
-        #expect(claimed8)
-        let claimed9 = policy.claim(snapshot(used: 0))
-        #expect(!claimed9)
-        let claimed10 = policy.claim(snapshot(used: 100, root: "/cache/other/../shared"))
-        #expect(!claimed10)
-        let claimed11 = policy.claim(snapshot(used: 200, limit: 200))
-        #expect(claimed11)
-        let claimed12 = policy.claim(snapshot(used: 100, root: "/cache/second"))
-        #expect(claimed12)
-    }
-
-    @Test func dontShowAgainPersistsAcrossLaunches() throws {
-        let suite = "disk-cache-quota-notice-tests-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        #expect(!DiskCacheQuotaNoticeSuppression.isSuppressed(defaults: defaults))
-        DiskCacheQuotaNoticeSuppression.suppress(defaults: defaults)
-        let relaunched = try #require(UserDefaults(suiteName: suite))
-        #expect(DiskCacheQuotaNoticeSuppression.isSuppressed(defaults: relaunched))
-    }
-
-    @Test func aNewAppSessionCanRemindAgain() {
-        var oldSession = DiskCacheQuotaNoticePolicy()
-        var newSession = DiskCacheQuotaNoticePolicy()
-        let claimed13 = oldSession.claim(snapshot(used: 100))
-        #expect(claimed13)
-        let claimed14 = newSession.claim(snapshot(used: 100))
-        #expect(claimed14)
-    }
 }

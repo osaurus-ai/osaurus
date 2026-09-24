@@ -962,7 +962,8 @@ extension MemoryView {
             return reason
         case .breakerOpen(_, let until):
             let secs = max(1, Int(until.timeIntervalSinceNow))
-            return "Cooling down for ~\(secs)s after consecutive failures. Next call will probe."
+            return
+                "Cooling down for ~\(secs)s after consecutive failures. Titles and follow-ups run on your active chat model meanwhile; distillation waits, then the next call probes the core model."
         case .available:
             return nil
         }

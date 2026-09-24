@@ -441,6 +441,7 @@ enum ConfigApplier {
         if let v = caps.selfSchedulingEnabled { agent.settings.selfSchedulingEnabled = v }
         if let v = caps.computerUseEnabled { agent.settings.computerUseEnabled = v }
         if let v = caps.browserUseEnabled { agent.settings.browserUseEnabled = v }
+        if let apps = ConfigPlanner.appleApps(from: caps) { agent.settings.enabledAppleApps = apps }
         if let v = caps.imageEnabled { agent.settings.imageEnabled = v }
         if let v = caps.applescriptEnabled { agent.settings.appleScriptEnabled = v }
         if let v = caps.speakEnabled { agent.settings.speakEnabled = v }
@@ -1179,7 +1180,7 @@ enum ConfigApplier {
                 results.append(
                     ConfigApplyResult(
                         section: "plugins", target: pluginId, status: .needsUserAction,
-                        message: "Installed. Needs secrets in Settings → Plugins → Secrets: "
+                        message: "Installed. Needs secrets in Settings… (⌘,) → Tools → Native Plugins (Configure Secrets on the plugin card): "
                             + missingSecretLabels.joined(separator: ", ")))
             }
         }

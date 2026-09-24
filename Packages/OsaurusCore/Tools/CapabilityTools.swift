@@ -1317,6 +1317,18 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         let isDeferredDefaultConfigureWrite =
             isDefaultAgent && configureWrites.contains(toolId)
         let isOnDemandBuiltIn = ToolRegistry.onDemandBuiltInToolNames.contains(toolId)
+        if let app = AppleApp.app(forTool: toolId) {
+            // Never reachable when the app is on (the tool is already in the
+            // baseline and returned "already loaded" above); this is the
+            // off-agent path, so name the real switch.
+            return .failure(
+                LoadFailure(
+                    kind: .rejected,
+                    message:
+                        "Tool '\(toolId)' belongs to the built-in \(app.displayName) app, which is off for this agent and cannot be enabled with capabilities_load. Ask the user to turn on \(app.displayName) under this agent's Abilities → Tools → Apple Apps, or have the Orchestrator set capabilities.apple_apps for this agent."
+                )
+            )
+        }
         if isBuiltIn, !isDeferredDefaultConfigureWrite, !isOnDemandBuiltIn {
             return .failure(
                 LoadFailure(

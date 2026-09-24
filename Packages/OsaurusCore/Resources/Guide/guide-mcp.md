@@ -10,7 +10,7 @@ MCP connects Osaurus to external tool servers — issue trackers, docs, code hos
 
 ## Connecting an MCP provider
 
-- Management (⌘⇧M) → Tools → Connections tab → Add Provider → pick from the MCP catalog or Custom Server.
+- Settings… (⌘,) → Tools → MCP → Add Provider → pick from the MCP catalog or Custom Server.
 - Note: use the Tools sidebar item (under Agents & Automation), not the top-level Providers item — that one is for inference endpoints, not MCP tool servers.
 - Catalog includes Linear, Notion, GitHub, Atlassian, Vercel, Supabase, Stripe, Zapier, Exa Search, DeepWiki, Hugging Face, Sentry, and more.
 - Auth: Sign In (OAuth), API key, or none — tokens are stored in the Keychain. Non-secret config lives in `~/.osaurus/providers/mcp.json`.
@@ -19,7 +19,7 @@ MCP connects Osaurus to external tool servers — issue trackers, docs, code hos
 
 ## Using MCP tools
 
-- Tools are namespaced `provider_toolname` (e.g. `linear_search_issues`); exact names appear under Tools → Available.
+- Tools are namespaced `provider_toolname` (e.g. `linear_search_issues`); exact names appear under Tools → All Tools.
 - In Auto tool mode, agents discover and load remote tools on demand; in Manual mode you pick them explicitly. Per-agent allowlists live in the agent editor's Capabilities section.
 - The default permission for remote MCP tools is Ask (one-tap approval per call until you grant always-allow).
 - Start a new chat after adding providers so the session's capability manifest refreshes.

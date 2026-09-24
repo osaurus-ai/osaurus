@@ -492,6 +492,36 @@ struct ConfigPlannerTests {
     }
 
     @Test
+    func autoToolPolicy_onPerCallSendOrDeleteTool_saysTheSettingIsInert() throws {
+        // `messages_send` / `calendar_delete_event` ask on every call no
+        // matter what is configured, so the plan must not promise "it will
+        // run without asking" — it says the stored `auto` has no effect.
+        // `mail_compose` is argument-aware: drafts go auto, sends still ask.
+        let registry = ToolRegistry.shared
+        let perCall = ["messages_send", "calendar_delete_event"].filter { registry.isRegistered($0) }
+        let argumentAware = ["mail_compose"].filter { registry.isRegistered($0) }
+        try #require(!perCall.isEmpty, "Apple tools must be registered for this probe")
+
+        for tool in perCall + argumentAware { registry.setPolicy(.ask, for: tool) }
+        defer { for tool in perCall + argumentAware { registry.setPolicy(.ask, for: tool) } }
+
+        var document = OsaurusConfigDocument()
+        var tools = ToolsSection()
+        tools.policies = Dictionary(uniqueKeysWithValues: (perCall + argumentAware).map { ($0, "auto") })
+        document.tools = tools
+
+        let plan = try ConfigPlanner.plan(document: document, prune: false)
+        for tool in perCall {
+            #expect(plan.risks.contains(ConfigRisk.autoPolicyIgnoredPerCall(tool)), "\(tool)")
+            #expect(!plan.risks.contains(ConfigRisk.autoPolicy(tool)), "\(tool)")
+        }
+        for tool in argumentAware {
+            #expect(plan.risks.contains(ConfigRisk.autoPolicySendsStillAsk(tool)), "\(tool)")
+            #expect(!plan.risks.contains(ConfigRisk.autoPolicy(tool)), "\(tool)")
+        }
+    }
+
+    @Test
     func newMCPServer_isFlaggedHighRiskAndNeverCarriesSecrets() throws {
         var document = OsaurusConfigDocument()
         var entry = MCPServerEntry(name: "Planner Probe MCP")

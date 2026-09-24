@@ -55,6 +55,7 @@ enum AgentCapabilitiesPayload {
             "self_scheduling_enabled": agent.settings.selfSchedulingEnabled,
             "computer_use_enabled": agent.settings.computerUseEnabled,
             "browser_use_enabled": agent.settings.browserUseEnabled,
+            "apple_apps": AppleApp.sorted(agent.settings.enabledAppleApps).map(\.rawValue),
             "speak_enabled": agent.settings.speakEnabled,
             "render_chart_enabled": agent.settings.renderChartEnabled,
             "theme_id": agent.themeId?.uuidString ?? "",
@@ -721,11 +722,18 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
             let payload: [String: Any]
             switch scope {
             case "agents":
+                // Capability flags ride along on the list rows so the model
+                // can pick the right agent (or see that none has Mail on)
+                // without a `describe` round-trip per agent.
                 let agents = AgentManager.shared.agents.map { agent -> [String: Any] in
                     return [
                         "id": agent.id.uuidString,
                         "name": agent.name,
                         "is_built_in": agent.isBuiltIn,
+                        "tools_enabled": agent.toolsEnabled,
+                        "computer_use_enabled": agent.settings.computerUseEnabled,
+                        "browser_use_enabled": agent.settings.browserUseEnabled,
+                        "apple_apps": AppleApp.sorted(agent.settings.enabledAppleApps).map(\.rawValue),
                     ]
                 }
                 payload = ["scope": "agents", "items": agents]
@@ -1551,15 +1559,15 @@ extension OsaurusInspectTool {
             switch scope.lowercased() {
             case "server":
                 path =
-                    "Management ⌘⇧M → Server → Settings (port, sampling, Cache → Context Window Cap, KV). "
+                    "Settings… (⌘,) → Server → Settings (port, sampling, Cache → Context Window Cap, KV). "
                     + "Find the exact control with osaurus_help {action: 'find', query: '…'}."
             case "chat":
                 path =
-                    "Management ⌘⇧M → Chat (compaction, clipboard, streaming). "
+                    "Settings… (⌘,) → Chat (compaction, clipboard, streaming). "
                     + "Context Window Cap is Server → Settings → Cache, not Chat."
             default:
                 path =
-                    "Management ⌘⇧M → General (login, dock icon, hotkey, toasts). "
+                    "Settings… (⌘,) → General (login, dock icon, hotkey, toasts). "
                     + "Find the exact control with osaurus_help {action: 'find', query: '…'}."
             }
             return ToolEnvelope.failure(

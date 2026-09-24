@@ -1,4 +1,5 @@
 import Foundation
+import MLXLLM
 import MLXVLM
 
 /// Installed-checkpoint evidence, not a claim about inference quality. Names are
@@ -15,13 +16,16 @@ enum LocalVisionEvidence {
         /// body pass. Re-running substring matches over every tensor name of a
         /// large checkpoint on each of those reads stalled the main thread.
         let hasAudioTensors: Bool
+        let hasNativeVideo: Bool
 
-        init(modelType: String, hasVision: Bool, reason: String, tensorNames: Set<String>) {
+        init(modelType: String, hasVision: Bool, reason: String, tensorNames: Set<String>,
+             hasNativeAudio: Bool = false, hasNativeVideo: Bool = false) {
             self.modelType = modelType
             self.hasVision = hasVision
             self.reason = reason
             self.tensorNames = tensorNames
-            hasAudioTensors = tensorNames.contains {
+            self.hasNativeVideo = hasVision && hasNativeVideo
+            hasAudioTensors = hasNativeAudio || tensorNames.contains {
                 $0.contains("embed_audio.embedding_projection.") && $0.hasSuffix(".weight")
             } || (modelType.lowercased().contains("omni") && tensorNames.contains {
                 $0.contains("sound_projection.") && $0.hasSuffix(".weight")
@@ -45,7 +49,7 @@ enum LocalVisionEvidence {
 
     static func inspect(_ directory: URL, refresh: Bool = false) -> Result {
         _ = observer
-        let key = directory.standardizedFileURL.path
+        let key = directory.path
         let processorVersion = VLMProcessorTypeRegistry.shared.registrationVersion
         lock.lock()
         let version = generation
@@ -81,7 +85,7 @@ enum LocalVisionEvidence {
     /// authoritative gate never sees a pending nil.
     static func cachedOrWarm(_ directory: URL) -> Result? {
         _ = observer
-        let key = directory.standardizedFileURL.path
+        let key = directory.path
         let processorVersion = VLMProcessorTypeRegistry.shared.registrationVersion
         lock.lock()
         if let cached = cache[key], cached.processorVersion == processorVersion {
@@ -114,14 +118,21 @@ enum LocalVisionEvidence {
     private static func read(_ directory: URL) -> Result {
         var modelType = ""
         var names = Set<String>()
+        var nativeAudio = false
+        var nativeVideo = false
         func result(_ supported: Bool, _ reason: String) -> Result {
-            Result(modelType: modelType, hasVision: supported, reason: reason, tensorNames: names)
+            Result(modelType: modelType, hasVision: supported, reason: reason, tensorNames: names,
+                   hasNativeAudio: nativeAudio, hasNativeVideo: nativeVideo)
         }
         guard let config = object(directory.appendingPathComponent("config.json")) else {
             return result(false, "The installed bundle has no readable config.json.")
         }
         let omni = object(directory.appendingPathComponent("config_omni.json"))
         modelType = (omni?["model_type"] ?? config["model_type"]) as? String ?? ""
+        let mimo = (try? JSONSerialization.data(withJSONObject: config)).map(MiMoV26Contract.matches) ?? false
+        if modelType == "mimo_v2", !mimo {
+            return result(false, "The configured MiMo representation has no registered multimodal runtime.")
+        }
         guard VLMTypeRegistry.supportedModelTypes.contains(modelType) else {
             return result(false, "The configured architecture has no local vision runtime.")
         }
@@ -131,8 +142,19 @@ enum LocalVisionEvidence {
             "audio_preprocessor/preprocessor_config.json"]
             .map { directory.appendingPathComponent($0) }
             .first { FileManager.default.fileExists(atPath: $0.path) }
-        guard let processorURL, let processor = object(processorURL), !processor.isEmpty else {
-            return result(false, "The installed bundle has no readable processor configuration.")
+        let processor: [String: Any]
+        if mimo {
+            // Match vMLX's factory: this representation uses the nested native
+            // configuration, even when an older Qwen sidecar is present.
+            guard let native = config["processor_config"] as? [String: Any], !native.isEmpty else {
+                return result(false, "The MiMo bundle has no native processor configuration.")
+            }
+            processor = native.merging(["processor_class": "MiMoV26Processor"]) { _, new in new }
+        } else {
+            guard let processorURL, let selected = object(processorURL), !selected.isEmpty else {
+                return result(false, "The installed bundle has no readable processor configuration.")
+            }
+            processor = selected
         }
         let processorClass = processor["processor_class"] as? String ?? ""
         let processorType = VLMProcessorTypeRegistry.processorType(
@@ -148,6 +170,17 @@ enum LocalVisionEvidence {
         guard ModelFormatDetection.isMLXFormat(at: directory, refresh: true) else {
             return result(false, "The installed weight format is rejected by the local runtime preflight.")
         }
+        if mimo {
+            nativeAudio = mimoAudioEvidence(directory: directory, config: config,
+                                            processor: processor, names: names)
+            nativeVideo = (config["video_token_id"] as? Int).map {
+                $0 >= 0 && $0 == (processor["video_token_id"] as? Int)
+            } ?? false
+            nativeVideo = nativeVideo && (processor["fps"] as? Double ?? 0) > 0
+                && (processor["video_start_token_id"] as? Int ?? -1) >= 0
+                && (processor["video_end_token_id"] as? Int ?? -1) >= 0
+                && ((config["vision_config"] as? [String: Any])?["temporal_patch_size"] as? Int ?? 0) > 0
+        }
         // Retain independent audio tensor evidence even when this configured
         // multimodal architecture has no vision tower. Gemma supports optional
         // vision and audio components; one missing modality must not hide another.
@@ -157,6 +190,16 @@ enum LocalVisionEvidence {
             !vision.isEmpty
         else {
             return result(false, "The installed bundle has no nonempty vision configuration.")
+        }
+        if mimo {
+            guard let depth = vision["depth"] as? Int, (1...1024).contains(depth),
+                names.contains("visual.patch_embed.proj.weight"),
+                names.contains("visual.merger.mlp.0.weight"),
+                names.contains("visual.merger.mlp.2.weight"),
+                (0..<depth).allSatisfy({ names.contains("visual.blocks.\($0).attn.qkv.weight") }) else {
+                return result(false, "The MiMo vision configuration is missing encoder or projection weights.")
+            }
+            return result(true, "Media input is backed by the native MiMo processor and installed component weights.")
         }
         if modelType == "apertus1p5" {
             let required = ["vision_tokenizer.encoder.conv_in.weight",
@@ -230,7 +273,62 @@ enum LocalVisionEvidence {
         var errorDescription: String? { detail }
     }
 
+    private static func mimoAudioEvidence(
+        directory: URL, config: [String: Any], processor: [String: Any], names: Set<String>
+    ) -> Bool {
+        let sidecar = directory.appendingPathComponent("audio_tokenizer")
+        guard let audio = config["audio_config"] as? [String: Any],
+            let tokenizer = object(sidecar.appendingPathComponent("config.json")),
+            let channels = audio["audio_channels"] as? Int, (1...1024).contains(channels),
+            let layers = audio["input_local_layers"] as? Int, (1...1024).contains(layers),
+            let encoderLayers = tokenizer["encoder_layers"] as? Int, (1...1024).contains(encoderLayers),
+            channels == (tokenizer["num_quantizers"] as? Int),
+            let inputDimension = audio["input_local_dim"] as? Int, inputDimension > 0,
+            inputDimension == (tokenizer["d_model"] as? Int),
+            (processor["audio_sampling_rate"] as? Int) == (tokenizer["sampling_rate"] as? Int),
+            (processor["audio_sampling_rate"] as? Int ?? 0) > 0,
+            let token = config["audio_token_id"] as? Int, token >= 0,
+            token == (processor["audio_token_id"] as? Int),
+            names.contains("audio_encoder.projection.mlp.0.weight"),
+            names.contains("audio_encoder.projection.mlp.2.weight"),
+            (0..<channels).allSatisfy({ names.contains("speech_embeddings.\($0).weight") }),
+            (0..<layers).allSatisfy({ names.contains("audio_encoder.input_local_transformer.layers.\($0).self_attn.q_proj.weight") }),
+            let encoder = try? tensorNames(sidecar) else { return false }
+        return ["encoder.conv1.weight", "encoder.conv2.weight", "encoder.down_sample_layer.0.weight"]
+            .allSatisfy(encoder.contains)
+            && (0..<encoderLayers).allSatisfy { encoder.contains("encoder.layers.\($0).self_attn.q_proj.weight") }
+            && (0..<channels).allSatisfy { encoder.contains("encoder.quantizer.vq.layers.\($0)._codebook.embed") }
+    }
+
+    /// Budget every auxiliary tower too, although the runtime loads them lazily.
+    /// MTP and a separate draft directory are not part of this AR-only runtime.
+    static func residentMiMoPayloadBytes(_ directory: URL) -> UInt64? {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent("config.json")),
+            MiMoV26Contract.matches(data),
+            let tensors = try? tensorPayloadSizes(directory) else { return nil }
+        var total: UInt64 = 0
+        for (name, bytes) in tensors where !name.hasPrefix("model.mtp") {
+            let sum = total.addingReportingOverflow(bytes)
+            guard !sum.overflow else { return nil }
+            total = sum.partialValue
+        }
+        let audio = directory.appendingPathComponent("audio_tokenizer")
+        if FileManager.default.fileExists(atPath: audio.path) {
+            guard let tensors = try? tensorPayloadSizes(audio) else { return nil }
+            for bytes in tensors.values {
+                let sum = total.addingReportingOverflow(bytes)
+                guard !sum.overflow else { return nil }
+                total = sum.partialValue
+            }
+        }
+        return total > 0 ? total : nil
+    }
+
     private static func tensorNames(_ directory: URL) throws -> Set<String> {
+        Set(try tensorPayloadSizes(directory).keys)
+    }
+
+    private static func tensorPayloadSizes(_ directory: URL) throws -> [String: UInt64] {
         let indexURL = directory.appendingPathComponent("model.safetensors.index.json")
         let indexExists = FileManager.default.fileExists(atPath: indexURL.path)
         let index = object(indexURL)?["weight_map"] as? [String: String]
@@ -250,7 +348,7 @@ enum LocalVisionEvidence {
                 .filter { $0.pathExtension == "safetensors" && !$0.lastPathComponent.hasPrefix("jangtq_runtime") }
         }
         guard !files.isEmpty else { throw InvalidWeights(detail: "no safetensors weight files") }
-        var keys = Set<String>()
+        var sizes: [String: UInt64] = [:]
         for file in files {
             let handle = try FileHandle(forReadingFrom: file)
             defer { try? handle.close() }
@@ -274,6 +372,9 @@ enum LocalVisionEvidence {
                     SafetensorsPayloadSize.matches(dtype: dtype, shape: shape, byteCount: offsets[1] - offsets[0])
                 else { throw InvalidWeights(detail: "invalid tensor metadata: \(name)") }
                 fileKeys.insert(name)
+                guard sizes.updateValue(offsets[1] - offsets[0], forKey: name) == nil else {
+                    throw InvalidWeights(detail: "duplicate tensor: \(name)")
+                }
             }
             if let index {
                 let declared = Set(index.filter { $0.value == file.lastPathComponent }.keys)
@@ -283,8 +384,7 @@ enum LocalVisionEvidence {
                 // Use the selected shard's actual header, including legitimate
                 // preserved tensors omitted by an older index.
             }
-            keys.formUnion(fileKeys)
         }
-        return keys
+        return sizes
     }
 }

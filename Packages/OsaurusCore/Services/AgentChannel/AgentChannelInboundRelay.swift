@@ -85,6 +85,8 @@ final class AgentChannelInboundRelay {
     private let auditLog: AgentChannelAuditLog
     private let taskManager: BackgroundTaskManager
     private let activityCenter: AgentChannelInboundActivityCenter
+    private let focusPreference: AgentChannelInboundFocusPreference
+    private let revealTask: @MainActor (UUID) -> Void
     private var activePartitions = Set<String>()
 
     init(
@@ -92,13 +94,27 @@ final class AgentChannelInboundRelay {
         safetyGate: ChannelRemoteSafetyGate = .shared,
         auditLog: AgentChannelAuditLog = .shared,
         taskManager: BackgroundTaskManager = .shared,
-        activityCenter: AgentChannelInboundActivityCenter = .shared
+        activityCenter: AgentChannelInboundActivityCenter = .shared,
+        focusPreference: AgentChannelInboundFocusPreference = .shared,
+        revealTask: @escaping @MainActor (UUID) -> Void = { ChatWindowManager.shared.revealTask($0) }
     ) {
         self.substrate = substrate
         self.safetyGate = safetyGate
         self.auditLog = auditLog
         self.taskManager = taskManager
         self.activityCenter = activityCenter
+        self.focusPreference = focusPreference
+        self.revealTask = revealTask
+    }
+
+    /// Settings → Channels → Incoming → Focus Chat on Incoming Messages: when
+    /// enabled, every inbound message brings its conversation forward (focus
+    /// the tab, order the chat window front, open one if none is up). Off by
+    /// default; a monitoring/dedicated machine turns it on to see each
+    /// channel activation as it happens.
+    func revealConversationIfPreferred(taskId: UUID) {
+        guard focusPreference.isEnabled else { return }
+        revealTask(taskId)
     }
 
     func submit(_ request: AgentChannelInboundRelayRequest) async -> AgentChannelInboundRelaySubmission {
@@ -290,6 +306,8 @@ final class AgentChannelInboundRelay {
             }
             taskId = handle.id
         }
+
+        revealConversationIfPreferred(taskId: taskId)
 
         let terminal = await waitForReply(taskId: taskId, runStartedAt: runStartedAt)
         switch terminal {

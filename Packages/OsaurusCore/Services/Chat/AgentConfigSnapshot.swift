@@ -197,6 +197,12 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// `agent_channel_*` catalog stays deferred behind capability loading.
     public let hasChannelPublishDestinations: Bool
 
+    /// Built-in Apple app families enabled for this agent. Enforced
+    /// authoritatively in `resolveTools`: every `AppleApp.toolNames` entry for
+    /// an app NOT in this set is stripped in both auto and manual mode, and
+    /// the Default agent never receives any Apple tool (its allowlist wins).
+    public let enabledAppleApps: Set<AppleApp>
+
     public init(
         agentId: UUID,
         toolsDisabled: Bool,
@@ -228,7 +234,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         knowledgeCuratorEnabled: Bool = false,
         knowledgeCollections: [KnowledgeGrantDescriptor] = [],
         hasChannelPublishDestinations: Bool = false,
-        projectId: UUID? = nil
+        projectId: UUID? = nil,
+        enabledAppleApps: Set<AppleApp> = []
     ) {
         self.agentId = agentId
         self.projectId = projectId
@@ -261,6 +268,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
         self.knowledgeCollections = knowledgeCollections
         self.hasChannelPublishDestinations = hasChannelPublishDestinations
+        self.enabledAppleApps = enabledAppleApps
     }
 
     /// Read every `effective*` field in one MainActor batch.
@@ -383,7 +391,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
                     source: ChatExecutionContext.currentSessionSource
                 )
                 .isEmpty,
-            projectId: projectId
+            projectId: projectId,
+            enabledAppleApps: caps.enabledAppleApps
         )
     }
 }

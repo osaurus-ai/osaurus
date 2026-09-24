@@ -1,6 +1,251 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Use the current chat model (default)": {
+      "comment": "Placeholder for the Compaction Model picker when no dedicated model is set.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktuelles Chat-Modell verwenden (Standard)"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "현재 채팅 모델 사용 (기본값)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Использовать текущую модель чата (по умолчанию)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用当前聊天模型（默认）"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用目前聊天模型（預設）"
+          }
+        }
+      }
+    },
+    "Model used to summarize older messages when a chat outgrows its context window (context compaction). Compaction runs automatically near the limit and on demand from the context budget popover. Remote models pass through your Privacy Filter. If unset, the chat's current model summarizes.": {
+      "comment": "Description of the Compaction Model setting.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modell, das ältere Nachrichten zusammenfasst, wenn ein Chat sein Kontextfenster überschreitet (Kontextkompaktierung). Die Kompaktierung läuft automatisch nahe der Grenze und auf Wunsch über das Kontextbudget-Popover. Remote-Modelle durchlaufen deinen Datenschutzfilter. Ohne Auswahl fasst das aktuelle Chat-Modell zusammen."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "채팅이 컨텍스트 창을 초과할 때 이전 메시지를 요약하는 모델입니다(컨텍스트 압축). 압축은 한도에 가까워지면 자동으로, 그리고 컨텍스트 예산 팝오버에서 요청 시 실행됩니다. 원격 모델은 개인정보 필터를 거칩니다. 설정하지 않으면 현재 채팅 모델이 요약합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Модель, которая суммирует старые сообщения, когда чат перерастает контекстное окно (уплотнение контекста). Уплотнение запускается автоматически вблизи лимита и по запросу из всплывающего окна бюджета контекста. Удалённые модели проходят через ваш фильтр приватности. Если не задано, суммирует текущая модель чата."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当聊天超出上下文窗口时用于总结较早消息的模型（上下文压缩）。压缩会在接近上限时自动运行，也可在上下文预算弹窗中手动触发。远程模型会经过你的隐私过滤器。未设置时由当前聊天模型进行总结。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "當聊天超出上下文視窗時用於摘要較早訊息的模型（上下文壓縮）。壓縮會在接近上限時自動執行，也可在上下文預算彈出視窗中手動觸發。遠端模型會經過你的隱私過濾器。未設定時由目前聊天模型進行摘要。"
+          }
+        }
+      }
+    },
+    "Send without compacting": {
+      "comment": "Dialog button: proceed with the pending message without a compaction summary.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ohne Kompaktierung senden"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "압축 없이 보내기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отправить без уплотнения"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不压缩直接发送"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不壓縮直接傳送"
+          }
+        }
+      }
+    },
+    "Your message hasn't been sent yet. Retry, or send it without a summary — older messages will be trimmed to fit instead.": {
+      "comment": "Explains the options after an automatic compaction fails while a send is waiting.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deine Nachricht wurde noch nicht gesendet. Versuche es erneut oder sende sie ohne Zusammenfassung — ältere Nachrichten werden dann stattdessen gekürzt."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "메시지가 아직 전송되지 않았습니다. 다시 시도하거나 요약 없이 보내세요. 이 경우 이전 메시지는 맞추기 위해 잘립니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ваше сообщение ещё не отправлено. Повторите попытку или отправьте его без сводки — тогда старые сообщения будут обрезаны."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你的消息尚未发送。请重试，或不带摘要直接发送——较早的消息将被裁剪以适应窗口。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你的訊息尚未傳送。請重試，或不帶摘要直接傳送——較早的訊息將被裁剪以符合視窗。"
+          }
+        }
+      }
+    },
+    "Summarizes older messages with the current chat model to free up context. The visible chat is unchanged. Pick a dedicated model in Settings → Chat → Compaction Model.": {
+      "comment": "Helper text under the Compact conversation button when no dedicated compaction model is set.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fasst ältere Nachrichten mit dem aktuellen Chat-Modell zusammen, um Kontext freizugeben. Der sichtbare Chat bleibt unverändert. Ein eigenes Modell wählst du unter Einstellungen → Chat → Kompaktierungsmodell."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "현재 채팅 모델로 이전 메시지를 요약하여 컨텍스트를 확보합니다. 표시되는 채팅은 변경되지 않습니다. 전용 모델은 설정 → 채팅 → 압축 모델에서 선택하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Суммирует старые сообщения текущей моделью чата, чтобы освободить контекст. Видимый чат не меняется. Отдельную модель можно выбрать в Настройки → Чат → Модель уплотнения."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用当前聊天模型总结较早的消息以释放上下文。可见的聊天内容保持不变。可在设置 → 聊天 → 压缩模型中选择专用模型。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用目前聊天模型摘要較早的訊息以釋放上下文。可見的聊天內容保持不變。可在設定 → 聊天 → 壓縮模型中選擇專用模型。"
+          }
+        }
+      }
+    },
+    "Summarizes older messages with %@ to free up context. The visible chat is unchanged.": {
+      "comment": "Helper text under the Compact conversation button. %@ is the configured compaction model name.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fasst ältere Nachrichten mit %@ zusammen, um Kontext freizugeben. Der sichtbare Chat bleibt unverändert."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 모델로 이전 메시지를 요약하여 컨텍스트를 확보합니다. 표시되는 채팅은 변경되지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Суммирует старые сообщения с помощью %@, чтобы освободить контекст. Видимый чат не меняется."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 %@ 总结较早的消息以释放上下文。可见的聊天内容保持不变。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 %@ 摘要較早的訊息以釋放上下文。可見的聊天內容保持不變。"
+          }
+        }
+      }
+    },
+    "Compaction": {
+      "comment": "Section eyebrow in the context budget popover.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kompaktierung"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "압축"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Уплотнение"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "压缩"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "壓縮"
+          }
+        }
+      }
+    },
     "Controls image-model cleanup after a job. The shared Swap local models for subagents setting controls whether the invoking chat model unloads. Restoring that parent always unloads the image model first.": {},
     "For text, Browser Use, Computer Use, AppleScript, local image jobs and context compaction using a different local model: On unloads the invoking model, runs the job, then reloads it. AppleScript keep-warm can defer the reload. Off keeps the invoking model loaded during the job, including under Server Strict. Memory checks still apply. Same-model and cloud jobs never swap.": {},
     "For text, Browser Use, Computer Use and AppleScript subagents using a different local model: On unloads the invoking model, runs the subagent, then reloads it. AppleScript keep-warm can defer the reload. Off keeps the invoking model loaded during the job, including under Server Strict. Memory checks still apply. Same-model and cloud subagents never swap.": {},
@@ -32229,10 +32474,6 @@
         }
       }
     },
-    "Ask on first use (default)": {
-      "comment": "A label for the \"Ask on first use\" option.",
-      "isCommentAutoGenerated": true
-    },
     "Ask the agent in chat to remember or track something — it will set up its own tables, and this overview fills in as it works.": {
       "comment": "A subtitle for the \"This agent hasn't stored anything yet.\" empty state in the DatabaseOverviewView.",
       "isCommentAutoGenerated": true,
@@ -45335,6 +45576,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "頻道寫入"
+          }
+        }
+      }
+    },
+    "Channel messages run quietly in the background; watch them in Activity or open the tab yourself. Turn on for a dedicated machine you keep an eye on.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Channel messages run quietly in the background; watch them in Activity or open the tab yourself. Turn on for a dedicated machine you keep an eye on."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Channel messages run quietly in the background; watch them in Activity or open the tab yourself. Turn on for a dedicated machine you keep an eye on."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Channel messages run quietly in the background; watch them in Activity or open the tab yourself. Turn on for a dedicated machine you keep an eye on."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Channel messages run quietly in the background; watch them in Activity or open the tab yourself. Turn on for a dedicated machine you keep an eye on."
           }
         }
       }
@@ -83800,6 +84069,34 @@
         }
       }
     },
+    "Every channel message brings its conversation forward: the tab is selected and the chat window comes to the front (opening one if needed).": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Every channel message brings its conversation forward: the tab is selected and the chat window comes to the front (opening one if needed)."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Every channel message brings its conversation forward: the tab is selected and the chat window comes to the front (opening one if needed)."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Every channel message brings its conversation forward: the tab is selected and the chat window comes to the front (opening one if needed)."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Every channel message brings its conversation forward: the tab is selected and the chat window comes to the front (opening one if needed)."
+          }
+        }
+      }
+    },
     "Every post waits for your approval first.": {
       "comment": "Plain-language description of a channel outbound mode.",
       "isCommentAutoGenerated": true,
@@ -90390,6 +90687,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "跟隨系統外觀"
+          }
+        }
+      }
+    },
+    "Focus Chat on Incoming Messages": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Focus Chat on Incoming Messages"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Focus Chat on Incoming Messages"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Focus Chat on Incoming Messages"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Focus Chat on Incoming Messages"
           }
         }
       }
@@ -103506,6 +103831,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "已包含"
+          }
+        }
+      }
+    },
+    "Incoming": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Incoming"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Incoming"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Incoming"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Incoming"
           }
         }
       }
@@ -124387,10 +124740,6 @@
         }
       }
     },
-    "Model used to summarize older messages when a chat outgrows its context window (context compaction). Remote models pass through your Privacy Filter. If unset, you'll be asked to pick a model the first time compaction runs.": {
-      "comment": "A description of the compaction model.",
-      "isCommentAutoGenerated": true
-    },
     "models": {
       "localizations": {
         "de": {
@@ -141360,37 +141709,37 @@
         }
       }
     },
-    "Open Management → Server → Cache → Context Window Cap": {
-      "comment": "Tooltip on the Context Budget popover link that opens Server → Cache → Context Window Cap.",
+    "Open Settings… (⌘,) → Server → Settings → Cache → Context Window Cap": {
+      "comment": "Tooltip on the Context Budget popover link that opens Server → Settings → Cache → Context Window Cap.",
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Verwaltung → Server → Cache → Kontextfenster-Limit öffnen"
+            "value": "Einstellungen… (⌘,) → Server → Einstellungen → Cache → Kontextfenster-Limit öffnen"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "관리 → 서버 → 캐시 → 컨텍스트 윈도우 상한 열기"
+            "value": "설정… (⌘,) → 서버 → 설정 → 캐시 → 컨텍스트 윈도우 상한 열기"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Открыть Управление → Сервер → Кэш → Лимит окна контекста"
+            "value": "Открыть «Настройки…» (⌘,) → Сервер → Настройки → Кэш → Лимит окна контекста"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "打开“管理 → 服务端 → 缓存 → 上下文窗口上限”"
+            "value": "打开“设置… (⌘,) → 服务端 → 设置 → 缓存 → 上下文窗口上限”"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "打開「管理 → 伺服器 → 快取 → 上下文視窗上限」"
+            "value": "打開「設定… (⌘,) → 伺服器 → 設定 → 快取 → 上下文視窗上限」"
           }
         }
       }
@@ -205692,10 +206041,6 @@
     },
     "Summarized by %@. The visible chat is unchanged; the model sees this summary in place of the messages above.": {
       "comment": "A tooltip for the \"Older messages summarized\" section. The argument is the name of the LLM model.",
-      "isCommentAutoGenerated": true
-    },
-    "Summarizes older messages with your compaction model to free up context. The visible chat is unchanged.": {
-      "comment": "A description of the purpose of the compact button.",
       "isCommentAutoGenerated": true
     },
     "Summarizing older messages…": {
@@ -272830,6 +273175,1741 @@
           "stringUnit": {
             "state": "translated",
             "value": "顯示 %lld / %lld 個字元"
+          }
+        }
+      }
+    },
+    "Allows Osaurus to control other applications using AppleScript and Apple Events.": {},
+    "Allows Osaurus to control the Maps app via Apple Events.": {},
+    "Allows Osaurus to interact with UI elements, simulate input, and control the computer.": {},
+    "Allows Osaurus to read and create events in Calendar.app via AppleScript.": {},
+    "Allows Osaurus to read protected files such as the Messages database and other app data.": {},
+    "Allows the Calendar tools to read, create, and update events directly.": {},
+    "Allows the Contacts tools to look up, create, and update contacts.": {},
+    "Allows the Mail tools to read, search, and send email through Mail.app via Apple Events.": {},
+    "Allows the Maps & Location tools to use your current location.": {},
+    "Allows the Music tools to control playback and browse your library in Music.app via Apple Events.": {},
+    "Allows the Notes tools to read and create notes in the Notes app via Apple Events.": {},
+    "Allows the Reminders tools to read, create, and complete reminders.": {},
+    "Apple Apps": {},
+    "Apple apps: %@": {},
+    "Automation (Music)": {},
+    "Maps & Location": {},
+    "Music": {},
+    "Per app": {},
+    "Permission needed": {},
+    "Permissions needed": {},
+    "Shortcuts": {},
+    "Unnamed contact": {},
+    "macOS has not granted: %@. Click to grant or open System Settings.": {},
+    "Apple apps are now built into Osaurus": {},
+    "%@ no longer need a plugin. Turn each app on per agent under Agents → Abilities → Tools → Apple Apps.": {},
+    "%@ no longer need a plugin. Already turned on for %@; for other agents use Agents → Abilities → Tools → Apple Apps.": {},
+    "More SSD cache space would help this chat": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mehr SSD-Cache würde diesem Chat helfen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "增加 SSD 缓存空间有助于此聊天"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SSD 캐시 공간을 늘리면 이 채팅에 도움이 됩니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Этому чату поможет увеличение кэша на SSD"
+          }
+        }
+      }
+    },
+    "Increase Cache Size": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cache vergrößern"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "增加缓存大小"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "캐시 크기 늘리기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Увеличить размер кэша"
+          }
+        }
+      }
+    },
+    "Show SSD Cache Capacity Notices": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hinweise zur SSD-Cache-Kapazität anzeigen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示 SSD 缓存容量提示"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SSD 캐시 용량 알림 표시"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показывать уведомления об объёме кэша SSD"
+          }
+        }
+      }
+    },
+    "Show one notice per chat per app launch when its latest saved progress exceeds the SSD cache limit. Changes apply immediately.": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pro Chat und App-Start einen Hinweis anzeigen, wenn der zuletzt gespeicherte Fortschritt das SSD-Cache-Limit überschreitet. Änderungen gelten sofort."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当聊天最近保存的进度超出 SSD 缓存上限时，每次启动应用为每个聊天显示一次提示。更改立即生效。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "최근 저장된 진행 내용이 SSD 캐시 한도를 초과하면 앱을 실행할 때마다 채팅별로 알림을 한 번 표시합니다. 변경 사항은 즉시 적용됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показывать одно уведомление на чат за запуск приложения, если последние сохранённые данные превышают лимит кэша SSD. Изменения применяются сразу."
+          }
+        }
+      }
+    },
+    "This chat's latest saved progress exceeds the %@ SSD cache limit. Replies may need to process more of the conversation again. Increase Disk Cache Size to retain more progress.": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der zuletzt gespeicherte Fortschritt dieses Chats überschreitet das SSD-Cache-Limit von %@. Für Antworten muss möglicherweise mehr vom Gespräch erneut verarbeitet werden. Vergrößern Sie den Festplatten-Cache, um mehr Fortschritt zu behalten."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此聊天最近保存的进度超出了 %@ 的 SSD 缓存上限。回复时可能需要重新处理更多对话内容。增加磁盘缓存大小可保留更多进度。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 채팅의 최근 저장된 진행 내용이 SSD 캐시 한도 %@를 초과합니다. 응답 시 대화 내용을 더 많이 다시 처리해야 할 수 있습니다. 더 많은 진행 내용을 보관하려면 디스크 캐시 크기를 늘리세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Последние сохранённые данные этого чата превышают лимит кэша SSD (%@). Для ответа может потребоваться повторно обработать больше сообщений. Увеличьте размер дискового кэша, чтобы сохранять больше данных."
+          }
+        }
+      }
+    },
+    "No request yet": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Noch keine Anfrage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚无请求"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "아직 요청 없음"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запросов пока нет"
+          }
+        }
+      }
+    },
+    "none (cold)": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "keine (kalt)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无（冷启动）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "없음 (콜드 시작)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "нет (холодный запуск)"
+          }
+        }
+      }
+    },
+    "Disk Cache Size (% of disk)": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Festplatten-Cache-Größe (% der Festplatte)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "磁盘缓存大小（占磁盘百分比）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "디스크 캐시 크기 (디스크 비율 %)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Размер дискового кэша (% диска)"
+          }
+        }
+      }
+    },
+    "none": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "keine"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "없음"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "нет"
+          }
+        }
+      }
+    },
+    "Automatic: %@ (30%% of free space plus this cache)": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatisch: %@ (30%% des freien Speicherplatzes plus dieses Caches)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动：%@（可用空间加此缓存的 30%%）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "자동: %@ (여유 공간과 이 캐시 합계의 30%%)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Автоматически: %@ (30%% свободного места и этого кэша)"
+          }
+        }
+      }
+    },
+    "%@%% of disk: %@ effective": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@%% des Laufwerks: %@ effektiv"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "磁盘的 %@%%：实际 %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "디스크의 %@%%: 실제 %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@%% диска: фактически %@"
+          }
+        }
+      }
+    },
+    "Saved legacy size: %@ effective": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gespeicherte bisherige Größe: %@ effektiv"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已保存的旧版大小：实际 %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "저장된 이전 크기: 실제 %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сохранённый прежний размер: фактически %@"
+          }
+        }
+      }
+    },
+    "Disk measurement unavailable: %@ fallback": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Laufwerksmessung nicht verfügbar: Ersatzwert %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法测量磁盘：备用值 %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "디스크 측정 불가: 대체값 %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Измерение диска недоступно: резервное значение %@"
+          }
+        }
+      }
+    },
+    "Requested %@; limited to 25%% of free space plus this cache.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Angefordert: %@; begrenzt auf 25%% des freien Speicherplatzes plus dieses Caches."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请求 %@；限制为可用空间加此缓存的 25%%。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "요청한 크기 %@; 여유 공간과 이 캐시 합계의 25%%로 제한됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запрошено %@; ограничено 25%% свободного места и этого кэша."
+          }
+        }
+      }
+    },
+    "Disk space is low. SSD caching remains enabled.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wenig freier Speicherplatz. SSD-Caching bleibt aktiviert."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "磁盘空间不足。SSD 缓存仍保持启用。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "디스크 여유 공간이 부족합니다. SSD 캐시는 계속 활성화됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Мало места на диске. SSD-кэширование остаётся включённым."
+          }
+        }
+      }
+    },
+    "Blank = Automatic (30% of available space)": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leer = Automatisch (30% des verfügbaren Speicherplatzes)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "留空 = 自动（可用空间的 30%）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "비워 두면 자동 (사용 가능한 공간의 30%)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пусто = автоматически (30% доступного места)"
+          }
+        }
+      }
+    },
+    "Automatic uses 30% of free space plus this cache's own bytes. An explicit percentage uses total disk size, bounded by 25% of free space plus this cache. Saving a size change updates loaded models without unloading them; a lower cap is enforced on the next cache write.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatisch nutzt 30% des freien Speicherplatzes plus der Cache-Daten. Ein expliziter Prozentsatz bezieht sich auf die gesamte Laufwerksgröße und ist auf 25% des freien Speicherplatzes plus des Caches begrenzt. Größenänderungen gelten nach dem Speichern ohne Entladen der Modelle; eine kleinere Grenze wird beim nächsten Schreiben durchgesetzt."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动模式使用可用空间加此缓存自身字节数的 30%。指定百分比基于磁盘总容量，并限制为可用空间加此缓存的 25%。保存大小更改会更新已加载模型而无需卸载；降低的上限在下次写入缓存时执行。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "자동은 여유 공간과 이 캐시 크기 합계의 30%를 사용합니다. 명시한 비율은 전체 디스크 크기를 기준으로 하며, 여유 공간과 이 캐시 합계의 25%로 제한됩니다. 크기 변경을 저장하면 모델을 내리지 않고 적용하며, 낮아진 한도는 다음 캐시 쓰기 때 적용됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Автоматический режим использует 30% свободного места и объёма этого кэша. Явный процент относится ко всему диску и ограничивается 25% свободного места и кэша. Сохранение размера обновляет загруженные модели без выгрузки; уменьшенный лимит применяется при следующей записи в кэш."
+          }
+        }
+      }
+    },
+    "Live coordinator policy, including saved disk-size changes. It is not inferred from the unsaved draft.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktuelle Koordinator-Richtlinie einschließlich gespeicherter Cache-Größenänderungen. Sie wird nicht aus ungespeicherten Einstellungen abgeleitet."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "实时协调器策略，包括已保存的磁盘缓存大小更改。不根据未保存的草稿推断。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "저장한 디스크 크기 변경을 포함한 실제 실행 정책입니다. 저장하지 않은 초안에서 추정하지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Текущая политика координатора с сохранёнными изменениями размера кэша. Она не выводится из несохранённого черновика."
+          }
+        }
+      }
+    },
+    "Use Automatic Cache Size": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatische Cache-Größe verwenden"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用自动缓存大小"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "자동 캐시 크기 사용"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Использовать автоматический размер кэша"
+          }
+        }
+      }
+    },
+    "Finishing up…": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wird abgeschlossen…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "마무리 중…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Завершение…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在完成…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在完成…"
+          }
+        }
+      }
+    },
+    "Use with Codex CLI": {
+      "comment": "Title of the Server → Overview card that configures OpenAI's Codex CLI to use this Osaurus.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mit Codex CLI verwenden"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex CLI와 함께 사용"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Использовать с Codex CLI"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "与 Codex CLI 一起使用"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "與 Codex CLI 一起使用"
+          }
+        }
+      }
+    },
+    "Run OpenAI's Codex CLI against your local models. Osaurus registers itself as a Codex model provider and adds an `osaurus` profile; nothing else in your Codex config is touched.": {
+      "comment": "Description under the Use with Codex CLI card title.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Führe OpenAIs Codex CLI mit deinen lokalen Modellen aus. Osaurus registriert sich als Codex-Modellanbieter und fügt ein `osaurus`-Profil hinzu; alles andere in deiner Codex-Konfiguration bleibt unverändert."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "로컬 모델로 OpenAI의 Codex CLI를 실행하세요. Osaurus가 Codex 모델 제공자로 등록되고 `osaurus` 프로필이 추가되며, Codex 설정의 다른 부분은 변경되지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запускайте Codex CLI от OpenAI на своих локальных моделях. Osaurus регистрируется как поставщик моделей Codex и добавляет профиль `osaurus`; остальная конфигурация Codex не затрагивается."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "让 OpenAI 的 Codex CLI 使用你的本地模型。Osaurus 会将自己注册为 Codex 模型提供方并添加一个 `osaurus` 配置档；你的 Codex 配置中的其他内容不会被更改。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "讓 OpenAI 的 Codex CLI 使用你的本機模型。Osaurus 會將自己註冊為 Codex 模型提供者並新增一個 `osaurus` 設定檔；你的 Codex 設定中的其他內容不會被更動。"
+          }
+        }
+      }
+    },
+    "No local models installed. Download one from the Models manager first.": {
+      "comment": "Shown in the Use with Codex CLI card when the model picker has nothing to list.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keine lokalen Modelle installiert. Lade zuerst eines im Modell-Manager herunter."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설치된 로컬 모델이 없습니다. 먼저 모델 관리자에서 하나를 다운로드하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Локальные модели не установлены. Сначала загрузите модель в менеджере моделей."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未安装本地模型。请先在模型管理器中下载一个。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚未安裝本機模型。請先在模型管理器中下載一個。"
+          }
+        }
+      }
+    },
+    "%@ context": {
+      "comment": "Context window badge next to the Codex CLI model picker. %@ is a formatted token count, e.g. 262,144.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ Kontext"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "컨텍스트 %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Контекст %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 上下文"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 上下文"
+          }
+        }
+      }
+    },
+    "Copy both files and the command": {
+      "comment": "Tooltip for the Copy button in the Use with Codex CLI card.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beide Dateien und den Befehl kopieren"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "두 파일과 명령을 복사"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Скопировать оба файла и команду"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "复制两个文件和命令"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "複製兩個檔案和指令"
+          }
+        }
+      }
+    },
+    "Add to %@": {
+      "comment": "Primary button in the Use with Codex CLI card. %@ is the Codex home directory, e.g. ~/.codex.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zu %@ hinzufügen"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@에 추가"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавить в %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加到 %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加入到 %@"
+          }
+        }
+      }
+    },
+    "Write config.toml and osaurus.config.toml": {
+      "comment": "Tooltip for the Add to ~/.codex button in the Use with Codex CLI card.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "config.toml und osaurus.config.toml schreiben"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "config.toml 및 osaurus.config.toml 작성"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Записать config.toml и osaurus.config.toml"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写入 config.toml 和 osaurus.config.toml"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "寫入 config.toml 和 osaurus.config.toml"
+          }
+        }
+      }
+    },
+    "Network exposure is on, so Codex must send an access key even from this Mac. Create one under Access Keys and export %@ in the shell that runs codex.": {
+      "comment": "Warning footer in the Use with Codex CLI card when Expose to Network is on. %@ is the environment variable name OSAURUS_API_KEY.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Netzwerkfreigabe ist aktiv, daher muss Codex auch von diesem Mac einen Zugangsschlüssel senden. Erstelle einen unter Zugangsschlüssel und exportiere %@ in der Shell, die codex ausführt."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "네트워크 노출이 켜져 있어 이 Mac에서도 Codex가 액세스 키를 보내야 합니다. 액세스 키에서 하나를 만들고 codex를 실행하는 셸에서 %@를 export하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Доступ из сети включён, поэтому Codex должен передавать ключ доступа даже с этого Mac. Создайте ключ в разделе «Ключи доступа» и экспортируйте %@ в оболочке, где запускается codex."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已开启网络暴露，因此即使在这台 Mac 上 Codex 也必须发送访问密钥。请在“访问密钥”中创建一个，并在运行 codex 的 shell 中导出 %@。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已開啟網路公開，因此即使在這台 Mac 上 Codex 也必須傳送存取金鑰。請在「存取金鑰」中建立一個，並在執行 codex 的 shell 中匯出 %@。"
+          }
+        }
+      }
+    },
+    "Updated %@ and wrote %@. Run `%@`.": {
+      "comment": "Success status after re-writing an existing Osaurus block. First %@ is config.toml path, second is the profile path, third is the codex command to run.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ aktualisiert und %2$@ geschrieben. Führe `%3$@` aus."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@을(를) 업데이트하고 %2$@을(를) 작성했습니다. `%3$@`을(를) 실행하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Обновлён %1$@, записан %2$@. Запустите `%3$@`."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已更新 %1$@ 并写入 %2$@。运行 `%3$@`。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已更新 %1$@ 並寫入 %2$@。執行 `%3$@`。"
+          }
+        }
+      }
+    },
+    "Added the provider to %@ and wrote %@. Run `%@`.": {
+      "comment": "Success status after the first write. First %@ is config.toml path, second is the profile path, third is the codex command to run.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anbieter zu %1$@ hinzugefügt und %2$@ geschrieben. Führe `%3$@` aus."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@에 제공자를 추가하고 %2$@을(를) 작성했습니다. `%3$@`을(를) 실행하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Поставщик добавлен в %1$@, записан %2$@. Запустите `%3$@`."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已将提供方添加到 %1$@ 并写入 %2$@。运行 `%3$@`。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已將提供者加入 %1$@ 並寫入 %2$@。執行 `%3$@`。"
+          }
+        }
+      }
+    },
+    "%@ already defines model_providers.osaurus outside the Osaurus-managed block. Remove that definition (or move it between the markers) and try again.": {
+      "comment": "Write refusal when the user's config.toml has an unmanaged [model_providers.osaurus] table. %@ is the config.toml path.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ definiert model_providers.osaurus bereits außerhalb des von Osaurus verwalteten Blocks. Entferne diese Definition (oder verschiebe sie zwischen die Markierungen) und versuche es erneut."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@에 Osaurus 관리 블록 밖에서 model_providers.osaurus가 이미 정의되어 있습니다. 해당 정의를 제거하거나 마커 사이로 옮긴 뒤 다시 시도하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ уже определяет model_providers.osaurus вне блока, управляемого Osaurus. Удалите это определение (или перенесите его между маркерами) и повторите попытку."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 已在 Osaurus 托管块之外定义了 model_providers.osaurus。请删除该定义（或将其移到标记之间）后重试。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 已在 Osaurus 管理區塊之外定義了 model_providers.osaurus。請移除該定義（或將其移到標記之間）後再試一次。"
+          }
+        }
+      }
+    },
+    "Couldn't write Codex configuration: %@": {
+      "comment": "Failure status in the Use with Codex CLI card. %@ is the underlying error.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex-Konfiguration konnte nicht geschrieben werden: %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex 설정을 쓸 수 없습니다: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось записать конфигурацию Codex: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法写入 Codex 配置：%@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法寫入 Codex 設定：%@"
+          }
+        }
+      }
+    },
+    "%@ is not readable as UTF-8 text.": {
+      "comment": "Write failure when the existing config.toml is not UTF-8. %@ is the file path.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ kann nicht als UTF-8-Text gelesen werden."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@을(를) UTF-8 텍스트로 읽을 수 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ не читается как текст в кодировке UTF-8."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 无法作为 UTF-8 文本读取。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 無法作為 UTF-8 文字讀取。"
+          }
+        }
+      }
+    },
+    "Hugging Face token needed": {
+      "comment": "Alert title when a Hugging Face model link was refused with 401/403 (private or gated repo, or mistyped id) and no usable token is configured.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging-Face-Token erforderlich"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要 Hugging Face 令牌"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要 Hugging Face 權杖"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face 토큰이 필요합니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Требуется токен Hugging Face"
+          }
+        }
+      }
+    },
+    "Hugging Face would not show %@ without a token. If it is a private or gated repository, add a Hugging Face token for an account that has access and Osaurus will open the model. If you did not expect that, check the repository id.": {
+      "comment": "Alert body for a 401/403 model link. %@ is the repository id.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face zeigt %@ ohne Token nicht an. Wenn es sich um ein privates oder zugangsbeschränktes Repository handelt, füge ein Hugging-Face-Token eines Kontos mit Zugriff hinzu, und Osaurus öffnet das Modell. Falls das unerwartet ist, prüfe die Repository-ID."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有令牌时 Hugging Face 不会显示 %@。如果这是私有或受限仓库，请添加一个有访问权限账户的 Hugging Face 令牌，Osaurus 会打开该模型。如果这不在预期之内，请检查仓库 ID。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "沒有權杖時 Hugging Face 不會顯示 %@。如果這是私有或受限的儲存庫，請加入具有存取權帳號的 Hugging Face 權杖，Osaurus 會開啟該模型。如果這不在預期之內，請檢查儲存庫 ID。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "토큰이 없으면 Hugging Face에서 %@을(를) 표시하지 않습니다. 비공개 또는 접근 제한 저장소라면 접근 권한이 있는 계정의 Hugging Face 토큰을 추가하세요. 그러면 Osaurus가 모델을 엽니다. 예상하지 못한 상황이라면 저장소 ID를 확인하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face не показывает %@ без токена. Если это приватный или закрытый репозиторий, добавьте токен Hugging Face от учётной записи с доступом, и Osaurus откроет модель. Если это неожиданно, проверьте идентификатор репозитория."
+          }
+        }
+      }
+    },
+    "Add Token…": {
+      "comment": "Alert button that opens the Hugging Face token sheet.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Token hinzufügen …"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加令牌…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加入權杖…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "토큰 추가…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавить токен…"
+          }
+        }
+      }
+    },
+    "Model not found": {
+      "comment": "Alert title when Hugging Face answered 404 for a model link.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modell nicht gefunden"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未找到模型"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "找不到模型"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모델을 찾을 수 없음"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Модель не найдена"
+          }
+        }
+      }
+    },
+    "Hugging Face has no repository called %@.": {
+      "comment": "Alert body for a 404 model link. %@ is the repository id.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face hat kein Repository namens %@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face 上没有名为 %@ 的仓库。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face 上沒有名為 %@ 的儲存庫。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face에 %@ 저장소가 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "На Hugging Face нет репозитория с именем %@."
+          }
+        }
+      }
+    },
+    "Hugging Face rate limit": {
+      "comment": "Alert title when Hugging Face answered 429 for a model link.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging-Face-Ratenlimit"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face 速率限制"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face 速率限制"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face 요청 제한"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ограничение запросов Hugging Face"
+          }
+        }
+      }
+    },
+    "Hugging Face is rate-limiting anonymous requests from this Mac. Add a free Hugging Face token under Local Models, or try again in a minute.": {
+      "comment": "Alert body for a 429 model link.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face begrenzt anonyme Anfragen von diesem Mac. Füge unter „Lokale Modelle“ ein kostenloses Hugging-Face-Token hinzu oder versuche es in einer Minute erneut."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face 正在限制来自这台 Mac 的匿名请求。请在“本地模型”中添加免费的 Hugging Face 令牌，或稍后再试。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face 正在限制來自這台 Mac 的匿名請求。請在「本機模型」中加入免費的 Hugging Face 權杖，或稍後再試。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face가 이 Mac의 익명 요청을 제한하고 있습니다. 로컬 모델에서 무료 Hugging Face 토큰을 추가하거나 잠시 후 다시 시도하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face ограничивает анонимные запросы с этого Mac. Добавьте бесплатный токен Hugging Face в разделе «Локальные модели» или повторите попытку через минуту."
+          }
+        }
+      }
+    },
+    "Hugging Face unreachable": {
+      "comment": "Alert title when huggingface.co could not be reached to check a model link.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face nicht erreichbar"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法连接 Hugging Face"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法連線至 Hugging Face"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face에 연결할 수 없음"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face недоступен"
+          }
+        }
+      }
+    },
+    "Osaurus could not reach huggingface.co to check %@. Check your connection and open the link again.": {
+      "comment": "Alert body when the Hub was unreachable. %@ is the repository id.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus konnte huggingface.co nicht erreichen, um %@ zu prüfen. Prüfe deine Verbindung und öffne den Link erneut."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus 无法连接 huggingface.co 来检查 %@。请检查网络连接后重新打开链接。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus 無法連線至 huggingface.co 來檢查 %@。請檢查網路連線後重新開啟連結。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus가 %@을(를) 확인하기 위해 huggingface.co에 연결할 수 없습니다. 연결을 확인한 후 링크를 다시 여세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus не удалось подключиться к huggingface.co, чтобы проверить %@. Проверьте подключение и откройте ссылку снова."
+          }
+        }
+      }
+    },
+    "Not in the Osaurus catalog": {
+      "comment": "Alert title when a model link points at a public OsaurusAI repository that is not part of the language-model catalog.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nicht im Osaurus-Katalog"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不在 Osaurus 目录中"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不在 Osaurus 目錄中"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus 카탈로그에 없음"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нет в каталоге Osaurus"
+          }
+        }
+      }
+    },
+    "%@ is an OsaurusAI repository that is not part of the language-model catalog, so it cannot be opened here.": {
+      "comment": "Alert body for a registry-gated OsaurusAI repository. %@ is the repository id.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ ist ein OsaurusAI-Repository, das nicht zum Sprachmodell-Katalog gehört und daher hier nicht geöffnet werden kann."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 是 OsaurusAI 的仓库，但不属于语言模型目录，因此无法在此打开。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 是 OsaurusAI 的儲存庫，但不屬於語言模型目錄，因此無法在此開啟。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@은(는) 언어 모델 카탈로그에 속하지 않는 OsaurusAI 저장소이므로 여기에서 열 수 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ — репозиторий OsaurusAI, не входящий в каталог языковых моделей, поэтому здесь его открыть нельзя."
+          }
+        }
+      }
+    },
+    "Got it": {
+      "comment": "Dismiss button of the Product Hunt teaser dialog.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verstanden"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "知道了"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "知道了"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "확인"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Понятно"
+          }
+        }
+      }
+    },
+    "A note from the Osaurus team": {
+      "comment": "Title of the pre-launch Product Hunt teaser dialog for the Raptor campaign.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eine Nachricht vom Osaurus-Team"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "来自 Osaurus 团队的一封信"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "來自 Osaurus 團隊的一封信"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osaurus 팀의 메시지"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сообщение от команды Osaurus"
+          }
+        }
+      }
+    },
+    "Raptor is live on Product Hunt": {
+      "comment": "Title of the one-time launch-day Product Hunt dialog for the Raptor campaign.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Raptor ist live auf Product Hunt"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Raptor 已在 Product Hunt 上线"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Raptor 已在 Product Hunt 上線"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Raptor가 Product Hunt에 출시되었습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Raptor вышел на Product Hunt"
+          }
+        }
+      }
+    },
+    "Support the launch": {
+      "comment": "Primary button of the launch-day Product Hunt dialog; opens the Product Hunt page.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Launch unterstützen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "支持发布"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "支持發佈"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "출시 응원하기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Поддержать запуск"
+          }
+        }
+      }
+    },
+    "ERROR: Write-only access. Full access is required.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "FEHLER: Nur Schreibzugriff. Vollzugriff ist erforderlich."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "오류: 쓰기 전용 접근입니다. 전체 접근 권한이 필요합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "ОШИБКА: доступ только для записи. Требуется полный доступ."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "错误：仅写入权限。需要完全访问权限。"
+          }
+        }
+      }
+    },
+    "SUCCESS: Authorized (fetching a contact failed: %@)": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "ERFOLG: Autorisiert (Abruf eines Kontakts fehlgeschlagen: %@)"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "성공: 인증됨 (연락처 가져오기 실패: %@)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "SUCCESS: авторизовано (не удалось получить контакт: %@)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "成功：已授权（获取联系人失败：%@）"
+          }
+        }
+      }
+    },
+    "SUCCESS: Protected files are readable.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "ERFOLG: Geschützte Dateien sind lesbar."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "성공: 보호된 파일을 읽을 수 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "SUCCESS: защищённые файлы доступны для чтения."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "成功：受保护的文件可读。"
+          }
+        }
+      }
+    },
+    "Check it out": {
+      "comment": "Primary button of the launch-day Product Hunt dialog; opens the Product Hunt page.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jetzt ansehen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "去看看"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "去看看"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "보러 가기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Посмотреть"
+          }
+        }
+      }
+    },
+    "We're live on Product Hunt! 🥳": {
+      "comment": "Title of the one-time launch-day Product Hunt dialog for the Raptor campaign.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wir sind live auf Product Hunt! 🥳"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "我们在 Product Hunt 上线了！🥳"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "我們在 Product Hunt 上線了！🥳"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Product Hunt에 출시했습니다! 🥳"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Мы на Product Hunt! 🥳"
           }
         }
       }

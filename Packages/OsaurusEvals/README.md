@@ -70,6 +70,13 @@ make evals-watcher-report EVALS_WATCHER_CHANNEL=main EVALS_REPORT_PRESET=local-f
 make evals-scoreboard EVALS_SCOREBOARD_ROOT=build/evals/watcher/main EVALS_MAX_REGRESSIONS=0
 ```
 
+Hugging Face Inference Providers are also available with an existing `HF_TOKEN`
+and `--model huggingface/<model-id>` (for example,
+`huggingface/deepseek-ai/DeepSeek-V4.1-Flash:novita`). The token needs Inference
+Providers permission. Bootstrap keeps it in memory and does not write it to
+provider configuration or Keychain. Set `JUDGE_MODEL` explicitly to a different
+model when independent rubric grading is required.
+
 ### Asset prerequisites (handled automatically)
 
 Local MLX model evals and `capability_search` need two assets that the SwiftPM

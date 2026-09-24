@@ -1,6 +1,6 @@
 # Storage
 
-Osaurus stores your local data — chats, memory, methods, tool indexes, plugin databases, and large attachments — under `~/.osaurus/`. As of 0.21.0, that data is stored **as plaintext SQLite by default**, relying on macOS **FileVault** for at-rest protection, with **SQLCipher whole-database encryption available as an explicit opt-in** in **Settings → Storage**.
+Osaurus stores your local data — chats, memory, methods, tool indexes, plugin databases, and large attachments — under `~/.osaurus/`. As of 0.21.0, that data is stored **as plaintext SQLite by default**, relying on macOS **FileVault** for at-rest protection, with **SQLCipher whole-database encryption available as an explicit opt-in** in **Privacy → Storage**.
 
 This is a deliberate change from the earlier always-on encryption model. The "why" is documented in [Why encryption is opt-in](#why-encryption-is-opt-in) below — the short version is reliability: an always-required Keychain key coupled every store's ability to open to a secret that breaks on Mac migration, app re-signing, or a Keychain wipe, and when it broke it failed closed with no recovery.
 
@@ -31,7 +31,7 @@ This document covers how data is stored, how opening is decided per-file, how to
 Everything Osaurus persists lives under `~/.osaurus/`:
 
 - **Default (plaintext).** Every SQLite database is a normal SQLite file, and large attachments / `.osec`-class artifacts are written as plaintext. On a modern Mac, **FileVault** already encrypts the entire disk at rest, so plaintext-on-disk is still protected when the Mac is powered off or logged out — without depending on an app-managed key that can go missing.
-- **Opt-in (encrypted).** When you enable encryption in **Settings → Storage**, every SQLite database is converted to a [SQLCipher 4.6.1](https://www.zetetic.net/sqlcipher/) database keyed with a 32-byte symmetric key, and app-layer artifacts are written as AES-GCM `.osec` files. The data-encryption key (DEK) lives in the macOS Keychain, scoped to your account on this device.
+- **Opt-in (encrypted).** When you enable encryption in **Privacy → Storage**, every SQLite database is converted to a [SQLCipher 4.6.1](https://www.zetetic.net/sqlcipher/) database keyed with a 32-byte symmetric key, and app-layer artifacts are written as AES-GCM `.osec` files. The data-encryption key (DEK) lives in the macOS Keychain, scoped to your account on this device.
 
 The posture (plaintext vs. encrypted) is your choice and is persisted in a small, deliberately **non-encrypted** marker file (`~/.osaurus/.storage-encryption.json`). It cannot itself be encrypted — that would reintroduce the chicken-and-egg key dependency this design removes.
 
@@ -85,11 +85,11 @@ Nothing to configure. On first launch of a fresh install:
 1. The posture marker is created in plaintext mode (`~/.osaurus/.storage-encryption.json`).
 2. Each database is created as a plaintext SQLite file on first open via [`OsaurusStorageOpener`](../Packages/OsaurusCore/Storage/OsaurusStorageOpener.swift).
 
-If you upgraded from a version that used always-on encryption, your existing encrypted data is **migrated automatically and invisibly on first launch** (see [Migration and Convergence](#migration-and-convergence)): it is decrypted to plaintext when macOS FileVault is enabled, or kept encrypted when FileVault is off so the migration never silently removes its only at-rest protection. There is no prompt or notice — the change is seamless, and you can always flip the posture later from **Settings → Storage**.
+If you upgraded from a version that used always-on encryption, your existing encrypted data is **migrated automatically and invisibly on first launch** (see [Migration and Convergence](#migration-and-convergence)): it is decrypted to plaintext when macOS FileVault is enabled, or kept encrypted when FileVault is off so the migration never silently removes its only at-rest protection. There is no prompt or notice — the change is seamless, and you can always flip the posture later from **Privacy → Storage**.
 
-To turn encryption back on, open **Settings → Storage** and enable **Encrypt local data at rest (SQLCipher)**.
+To turn encryption back on, open **Settings… (⌘,) → Privacy → Storage** and enable **Encrypt local data at rest (SQLCipher)**.
 
-To back up your data in plaintext (for example, before reinstalling macOS), open **Settings → Storage → Export plaintext backup**.
+To back up your data in plaintext (for example, before reinstalling macOS), open **Settings… (⌘,) → Privacy → Storage → Export plaintext backup**.
 
 ---
 
@@ -134,7 +134,7 @@ On launch, `convergeOnLaunch()` first resolves *which* posture to converge to vi
   - Existing **encrypted** install + FileVault **off** → **keep encrypted** (decrypting would silently strip the data's only at-rest protection).
   - Fresh / already-plaintext install → **plaintext**.
 
-The resolved posture is persisted as the marker, then convergence runs to match. The whole sequence is **invisible** — there is no migration prompt or "What's New" notice. An explicit choice in **Settings → Storage** always converts regardless of FileVault.
+The resolved posture is persisted as the marker, then convergence runs to match. The whole sequence is **invisible** — there is no migration prompt or "What's New" notice. An explicit choice in **Privacy → Storage** always converts regardless of FileVault.
 
 For each database in [`StorageDatabaseCatalog`](../Packages/OsaurusCore/Storage/StorageDatabaseCatalog.swift) whose detected format differs from the desired mode:
 
@@ -153,7 +153,7 @@ Convergence **never auto-deletes data**. If a store can't be converted or opened
 
 - Failures are classified by [`PersistenceHealth`](../Packages/OsaurusCore/Storage/PersistenceHealth.swift) into `locked` (key unavailable), `corrupt` (unreadable / key mismatch), `migration` (schema upgrade failed), or `unknown`, with the underlying error message and file path retained.
 - The **Memory → Diagnostics** panel shows the real cause for the memory DB and offers inline **Retry** and **Reset** actions.
-- **Settings → Storage** shows a "Stores needing attention" panel listing every degraded store with its cause and the same actions.
+- **Privacy → Storage** shows a "Stores needing attention" panel listing every degraded store with its cause and the same actions.
 
 Recovery actions are provided by [`StorageRecoveryService`](../Packages/OsaurusCore/Storage/StorageRecoveryService.swift):
 
@@ -205,7 +205,7 @@ For users who want their DEK reproducible across devices via the iCloud-synced I
 
 ## Storage Settings
 
-Open the Management window (`Cmd+Shift+M`) → **Storage** ([`StorageSettingsView`](../Packages/OsaurusCore/Views/Settings/StorageSettingsView.swift)). The panel reflects the **detected on-disk reality** (plaintext / encrypted / mixed), not a flag guess.
+Open **Settings… (⌘,) → Privacy → Storage** ([`StorageSettingsView`](../Packages/OsaurusCore/Views/Settings/StorageSettingsView.swift), embedded in the Privacy tab). The panel reflects the **detected on-disk reality** (plaintext / encrypted / mixed), not a flag guess.
 
 ### Encrypt local data at rest (the opt-in toggle)
 

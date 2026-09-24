@@ -203,7 +203,7 @@ public enum ModelMediaCapabilities {
         let type = evidence.modelType.lowercased()
         return Capabilities(
             supportsImage: evidence.hasVision,
-            supportsVideo: evidence.hasVision && videoCapableModelTypes.contains(type),
+            supportsVideo: evidence.hasVision && (evidence.hasNativeVideo || videoCapableModelTypes.contains(type)),
             supportsAudio: evidence.hasAudioTensors
         )
     }

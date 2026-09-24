@@ -1926,6 +1926,20 @@ public final class BackgroundTaskManager: ObservableObject {
     /// Called only after an explicit reply/open action on a dehydrated tab.
     private func hydrateRetainedTask(_ state: BackgroundTaskState) -> ExecutionContext? {
         if let context = state.executionContext { return context }
+        // A window tab (or a shared director/registry owner) may still hold
+        // the live instance of this conversation after terminal cleanup
+        // dropped the registry's reference. Reuse that exact object: hydrating
+        // a second copy from disk would route follow-up turns (e.g. the next
+        // channel message) into an instance the visible tab never observes,
+        // and let tab-close save the stale transcript over them.
+        if let shown = ChatWindowManager.shared.session(forSessionId: state.id)
+            ?? LiveChatSessionRegistry.shared.liveSession(for: state.id),
+            !shown.isHydratingTranscript
+        {
+            let context = ExecutionContext(adopting: shown)
+            state.restoreReferences(context: context)
+            return context
+        }
         guard var sessionData = ChatSessionStore.load(id: state.id) else { return nil }
         // The retained record is the user's latest explicit rename. If a
         // storage-key transition deferred the original DB rename, reconcile

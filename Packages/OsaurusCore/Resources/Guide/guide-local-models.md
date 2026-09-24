@@ -10,7 +10,7 @@ Osaurus runs open-weight models locally on Apple Silicon using MLX — no intern
 
 ## Downloading models
 
-- Management (⌘⇧M) → Models shows the curated catalog with size estimates; download, pause, and delete from there.
+- Settings… (⌘,) → Local Models shows the curated catalog with size estimates; download, pause, and delete from there.
 - Or just ask the default Osaurus assistant in chat to download a model — it can list recommended models and start the download for you.
 - Models are stored in `~/MLXModels` (override with the `OSU_MODELS_DIR` environment variable). Model weights live outside `~/.osaurus/`.
 
@@ -26,7 +26,7 @@ managed by their original application.
 
 - Bigger models are smarter but slower and need more RAM; quantized variants (4-bit/8-bit) trade a little quality for much lower memory.
 - The Models catalog is curated for Osaurus (tool calling, reasoning, and template support are validated), and the OsaurusAI page on Hugging Face hosts optimized bundles.
-- Generation defaults (temperature, top-k, etc.) come from each model bundle's own configuration unless you explicitly override them in Server → Settings → Generation defaults.
+- Temperature, top-k, and the other sampling values come from each model bundle's own configuration unless you explicitly override them in Server → Settings → Sampling Defaults.
 
 ## Speculative Depth
 
@@ -41,7 +41,7 @@ your configured sampling settings or guarantee a throughput floor.
 
 ## Apple Foundation Models
 
-On macOS 26+ with Apple Intelligence, the on-device Apple Foundation model is available as `foundation` — used out of the box as the "core model" for background jobs like memory distillation and chat titles (configurable in Settings → General → Core Model).
+On macOS 26+ with Apple Intelligence, the on-device Apple Foundation model is available as `foundation` — used out of the box as the "core model" for background jobs like memory distillation and chat titles (configurable in Settings → General → Core Model). It requires Apple Intelligence to be enabled in System Settings → Apple Intelligence & Siri. When it is turned off, the model is still downloading, or a request stalls, background jobs automatically run on your active chat model instead; the Core Model picker and Memory diagnostics show the reason.
 
 ## Model memory and loading
 

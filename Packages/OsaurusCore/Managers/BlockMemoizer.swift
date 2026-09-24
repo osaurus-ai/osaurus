@@ -55,6 +55,9 @@ final class BlockMemoizer {
     private var lastSessionSource: SessionSource?
     /// Must match `streamingTurnId` for the fast path — `generateBlocks` depends on it for typing / prefill UI.
     private var lastStreamingTurnId: UUID?
+    /// Must match `activeTurnId` for the fast path — it drives the pending
+    /// tool chip and the finishing-phase indicator during the engine tail.
+    private var lastActiveTurnId: UUID?
     private let streamingMaxBlocks = 80
     private let nonStreamingMaxBlocks = 400
     /// callId → occurrence ordinal of that exact call (name + canonical args)
@@ -75,11 +78,16 @@ final class BlockMemoizer {
     func blocks(
         from turns: [ChatTurn],
         streamingTurnId: UUID?,
+        activeTurnId: UUID? = nil,
         agentName: String,
         sessionSource: SessionSource = .chat,
         version: Int = 0
     ) -> [ContentBlock] {
         let count = turns.count
+        // The last turn is "live" for incremental purposes while either id
+        // points at it: deltas painting (`streamingTurnId`) or the run still
+        // open on the engine tail (`activeTurnId`, e.g. pending-tool arg ticks).
+        let liveTurnId = streamingTurnId ?? activeTurnId
         let lastId = turns.last?.id
         let contentLen = turns.last?.contentLength ?? 0
         let thinkingLen = turns.last?.thinkingLength ?? 0
@@ -101,8 +109,9 @@ final class BlockMemoizer {
             && remoteToolTick == lastRemoteToolTick
             && version == lastVersion && !cached.isEmpty
             && streamingTurnId == lastStreamingTurnId
+            && activeTurnId == lastActiveTurnId
         {
-            return limited(streaming: streamingTurnId != nil)
+            return limited(streaming: liveTurnId != nil)
         }
 
         // Refresh the repeat-badge map when the set of calls could have
@@ -118,7 +127,7 @@ final class BlockMemoizer {
         // Incremental: only last turn's content changed during streaming
         let canIncrement =
             !agentNameChanged
-            && streamingTurnId != nil
+            && liveTurnId != nil
             && count == lastCount && lastId == lastTurnId
             && lastId != nil && !cached.isEmpty
 
@@ -138,6 +147,7 @@ final class BlockMemoizer {
                 at: count - 1,
                 in: turns,
                 streamingTurnId: streamingTurnId,
+                activeTurnId: activeTurnId,
                 agentName: agentName,
                 sessionSource: sessionSource
             )
@@ -149,6 +159,7 @@ final class BlockMemoizer {
                 at: lastCount - 1,
                 in: turns,
                 streamingTurnId: streamingTurnId,
+                activeTurnId: activeTurnId,
                 agentName: agentName,
                 sessionSource: sessionSource
             )
@@ -158,6 +169,7 @@ final class BlockMemoizer {
             blocks = ContentBlock.generateBlocks(
                 from: turns,
                 streamingTurnId: streamingTurnId,
+                activeTurnId: activeTurnId,
                 agentName: agentName,
                 sessionSource: sessionSource,
                 repeatCounts: cachedRepeatCounts
@@ -177,6 +189,7 @@ final class BlockMemoizer {
         lastRemoteToolTick = remoteToolTick
         lastVersion = version
         lastStreamingTurnId = streamingTurnId
+        lastActiveTurnId = activeTurnId
         lastAgentName = agentName
         lastSessionSource = sessionSource
 
@@ -189,7 +202,7 @@ final class BlockMemoizer {
             cachedGroupHeaderMap = Self.buildGroupHeaderMap(from: cached)
         }
 
-        return limited(streaming: streamingTurnId != nil)
+        return limited(streaming: liveTurnId != nil)
     }
 
     // MARK: - Private Helpers
@@ -202,6 +215,7 @@ final class BlockMemoizer {
         at turnIndex: Int,
         in turns: [ChatTurn],
         streamingTurnId: UUID?,
+        activeTurnId: UUID?,
         agentName: String,
         sessionSource: SessionSource
     ) -> [ContentBlock] {
@@ -213,6 +227,7 @@ final class BlockMemoizer {
             return ContentBlock.generateBlocks(
                 from: turns,
                 streamingTurnId: streamingTurnId,
+                activeTurnId: activeTurnId,
                 agentName: agentName,
                 sessionSource: sessionSource,
                 repeatCounts: cachedRepeatCounts
@@ -232,6 +247,7 @@ final class BlockMemoizer {
         let freshBlocks = ContentBlock.generateBlocks(
             from: turnsToGenerate,
             streamingTurnId: streamingTurnId,
+            activeTurnId: activeTurnId,
             agentName: agentName,
             previousTurn: previousTurn,
             sessionSource: sessionSource,
@@ -278,6 +294,7 @@ final class BlockMemoizer {
         lastPendingToolArgSize = 0
         lastVersion = -1
         lastStreamingTurnId = nil
+        lastActiveTurnId = nil
         lastAgentName = nil
         lastSessionSource = nil
         cachedRepeatCounts = [:]

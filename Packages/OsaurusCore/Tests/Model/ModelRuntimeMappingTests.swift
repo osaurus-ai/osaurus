@@ -12,6 +12,16 @@ import Testing
 @testable import OsaurusCore
 
 struct ModelRuntimeMappingTests {
+    @Test func richContentOrderSurvivesLocalRuntimeMapping() throws {
+        let message = ChatMessage(role: "user", content: "beforeafter", contentParts: [
+            .text("before"), .videoUrl(url: "file:///tmp/mimo-order-test.mp4"),
+            .imageUrl(url: try validImageURL(), detail: nil), .text("after"),
+        ])
+        let mapped = try #require(ModelRuntime.mapOpenAIChatToMLX([message]).first)
+        #expect(mapped.contentParts == [.text("before"), .video, .image, .text("after")])
+        #expect(mapped.images.count == 1 && mapped.videos.count == 1)
+    }
+
     private func imageMessage(_ urls: [String]) throws -> ChatMessage {
         var parts: [[String: Any]] = [["type": "text", "text": "Describe these images."]]
         parts += urls.map { ["type": "image_url", "image_url": ["url": $0]] }

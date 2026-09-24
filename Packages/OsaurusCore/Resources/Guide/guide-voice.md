@@ -10,7 +10,7 @@ All voice features run on-device — no audio ever leaves your Mac.
 
 ## Voice input (speech-to-text)
 
-- Management (⌘⇧M) → Voice: grant Microphone access, download a Parakeet model (~600 MB), and test with the mic button.
+- Settings… (⌘,) → Voice: grant Microphone access, download a Parakeet model (~600 MB), and test with the mic button.
 - Models: Parakeet TDT v3 (multilingual, 25 European languages — recommended) or v2 (English-only, slightly better English recall). Runs on the Neural Engine.
 - In chat: tap the mic button. Settings include Sensitivity, Pause Duration (default 2.0s auto-send; 0 = manual send), and Confirmation Delay.
 - Audio Input can also capture System Audio (needs Screen Recording permission; excludes Osaurus's own output).

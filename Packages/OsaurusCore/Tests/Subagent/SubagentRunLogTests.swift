@@ -90,7 +90,7 @@ struct SubagentRunLogTests {
         let db = ChatHistoryDatabase()
         try db.openInMemory()
         defer { db.close() }
-        #expect(ChatHistoryDatabase.latestSchemaVersion == 17)
+        #expect(ChatHistoryDatabase.latestSchemaVersion == 18)
 
         let log = try #require(Self.finishedFeed().finishedRunLog())
         let session = ChatSessionData(

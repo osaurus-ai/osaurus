@@ -22,6 +22,7 @@ struct CacheSection: View {
     @State private var loadedModels: [ModelRuntime.ModelCacheSummary] = []
     @State private var isClearingDiskCache = false
     @State private var clearedCacheSummary: String?
+    @State private var diskCacheResolution: DiskCacheCapPolicy.Resolution?
 
     var body: some View {
         ServerSettingsCard(
@@ -33,7 +34,6 @@ struct CacheSection: View {
             SettingsSubsection(label: "Context & KV Policy") {
                 contextAndKVPolicyControls
             }
-            .settingsLandingAnchor("settings.chat.contextLength")
 
             SettingsDivider()
 
@@ -43,6 +43,7 @@ struct CacheSection: View {
                     "Reuse cached prompt prefixes across requests for faster TTFT. When off, GPU and disk reuse are also disabled.",
                 isOn: $draft.cache.prefix.enabled
             )
+            .settingsLandingAnchor("settings.server.prefixCache")
 
             SettingsDivider()
 
@@ -54,6 +55,7 @@ struct CacheSection: View {
                             "Optional hot tier held in GPU memory. SSD cache can still restore prefixes across requests when this is off.",
                         isOn: $draft.cache.pagedKV.enabled
                     )
+                    .settingsLandingAnchor("settings.server.gpuCache")
 
                     OptionalIntField(
                         label: "Block Size (tokens)",
@@ -61,6 +63,7 @@ struct CacheSection: View {
                         help: "Tokens per paged block.",
                         value: $draft.cache.pagedKV.blockSize
                     )
+                    .settingsLandingAnchor("settings.server.gpuCacheBlockSize")
 
                     OptionalIntField(
                         label: "Max Blocks",
@@ -68,6 +71,7 @@ struct CacheSection: View {
                         help: "Upper bound on GPU cache memory.",
                         value: $draft.cache.pagedKV.maxBlocks
                     )
+                    .settingsLandingAnchor("settings.server.gpuCacheMaxBlocks")
                 }
             }
 
@@ -91,12 +95,28 @@ struct CacheSection: View {
                     "Hybrid Mamba models only. On by default so SSM companion state can be restored with prefix/L2 cache hits.",
                 isOn: $draft.cache.enableSSMReDerive
             )
+            .settingsLandingAnchor("settings.server.ssmReDerive")
 
             SettingsDivider()
 
             SettingsSubsection(label: "Planned Cache Controls") {
                 plannedControls
             }
+        }
+        .task(id: draft.cache) {
+            let cache = draft.cache
+            diskCacheResolution = nil
+            // Coalesce edits before opening the index; cancellation also keeps
+            // an older draft's measurement from replacing the current label.
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled else { return }
+            let resolution = await Task.detached(priority: .utility) {
+                ModelRuntime.diskCacheCap(
+                    for: cache, directory: ModelRuntime.diskCacheDirectoryForDisplay(for: cache)
+                )
+            }.value
+            guard !Task.isCancelled else { return }
+            diskCacheResolution = resolution
         }
         .task {
             while !Task.isCancelled {
@@ -214,7 +234,7 @@ struct CacheSection: View {
                             value:
                                 "KV \(tokenSummary(active.maxKVSize)); RAM \(active.pagedRAMEnabled ? "on" : "off"); SSD \(active.diskL2Enabled ? diskSizeSummary(active.diskL2MaxGB) : "off")",
                             detail:
-                                "Live coordinator captured at this model's last load. It is intentionally not inferred from the saved draft."
+                                "Live coordinator policy, including saved disk-size changes. It is not inferred from the unsaved draft."
                         )
                     }
                 }
@@ -222,72 +242,36 @@ struct CacheSection: View {
         }
     }
 
-    /// "10% of 3.7 TB ≈ 372 GB" — what the chosen share comes out to here.
-    ///
-    /// Resolved through `VMLXServerRuntimeSettings.resolveDiskCacheMaxGB`, the
-    /// same function the engine uses to build `CacheCoordinatorConfig`. A
-    /// second, independent estimate in the UI could disagree with the cap
-    /// actually enforced, and the user would have no way to tell which was
-    /// real. Nil when the volume cannot be measured — better to show nothing
-    /// than a fabricated number.
-    private var resolvedDiskCacheLabel: String? {
-        let dir =
-            ModelRuntime.cacheDiskDirectoryOverride(for: draft.cache)
-            ?? OsaurusPaths.diskKVCache()
-        guard let capacity = VMLXServerRuntimeSettings.cacheVolumeCapacityGB(for: dir) else {
-            return nil
+    private var resolvedDiskCacheLabel: String {
+        guard let result = diskCacheResolution else { return "—" }
+        let effective = DiskCacheUsage.format(bytes: Int(clamping: result.capBytes))
+        let requested = DiskCacheUsage.format(bytes: Int(clamping: result.requestedBytes))
+        let label: String
+        switch result.rule {
+        case .automatic:
+            label = String(format: L("Automatic: %@ (30%% of free space plus this cache)"), effective)
+        case .explicitPercent:
+            label = String(format: L("%@%% of disk: %@ effective"), String(format: "%g", draft.cache.blockDisk.maxSizePercent ?? 0), effective)
+        case .legacyGB:
+            label = String(format: L("Saved legacy size: %@ effective"), effective)
+        case .unknownVolume:
+            label = String(format: L("Disk measurement unavailable: %@ fallback"), effective)
         }
-        let resolved = VMLXServerRuntimeSettings.resolveDiskCacheMaxGB(
-            percent: draft.cache.blockDisk.maxSizePercent,
-            legacyGB: draft.cache.blockDisk.maxSizeGB,
-            directory: dir
-        )
-        // The share the resolver will ACTUALLY use. A stored value of 0 (or
-        // negative) is not honoured — `resolveDiskCacheMaxGB` requires
-        // `percent > 0` and falls back to the default share — so echoing the
-        // raw field would print "0% ... ≈ 372.2 GB", a label that contradicts
-        // itself and hides which number is real.
-        let stored = draft.cache.blockDisk.maxSizePercent
-        let share =
-            (stored.map { $0 > 0 } ?? false)
-            ? stored! : (VMLXServerRuntimeSettings.autoDiskCacheFraction * 100)
+        let limit = result.limitedByHost
+            ? String(format: L("Requested %@; limited to 25%% of free space plus this cache."), requested) : ""
+        let warning = result.lowFreeSpace && ModelRuntime.cacheDiskDirectoryOverride(for: draft.cache) != nil ? L("Disk space is low. SSD caching remains enabled.") : ""
+        return [label, limit, warning].filter { !$0.isEmpty }.joined(separator: "\n")
+    }
 
-        // Report what the engine will ACTUALLY enforce, not what the share
-        // resolves to in isolation.
-        //
-        // `applyHostAwareDiskCacheCeiling` additionally bounds the cap to a
-        // quarter of the free bytes at load, so a share is not the last word:
-        // measured live, 10% of a 3.7 TB volume resolved to 372 GB but the
-        // coordinator enforced 242 GB, because only 969 GB was free. A label
-        // showing the unbounded number would over-promise by 130 GB and
-        // disagree with the "Active" row a few lines below it.
-        let effective: Double
-        if let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: dir.path), freeBytes > 0 {
-            let decision = ModelRuntime.hostAwareDiskCacheDecision(
-                configuredCapGB: resolved,
-                freeBytes: freeBytes
-            )
-            effective = decision.enabled ? decision.capGB : 0
-        } else {
-            effective = resolved
-        }
-
-        if effective < resolved {
-            // Say WHY it is lower, or a user who set 10% and sees a smaller
-            // number reads it as the setting being ignored.
-            return String(
-                format: L("%@%% of %@ ≈ %@ (limited to %@ — disk is nearly full)"),
-                String(format: "%g", share),
-                DiskCacheUsage.format(bytes: Int(capacity * 1_073_741_824)),
-                DiskCacheUsage.format(bytes: Int(resolved * 1_073_741_824)),
-                DiskCacheUsage.format(bytes: Int(effective * 1_073_741_824))
-            )
-        }
-        return String(
-            format: L("%@%% of %@ ≈ %@"),
-            String(format: "%g", share),
-            DiskCacheUsage.format(bytes: Int(capacity * 1_073_741_824)),
-            DiskCacheUsage.format(bytes: Int(resolved * 1_073_741_824))
+    private var diskCachePercentBinding: Binding<Double?> {
+        Binding(
+            get: { draft.cache.blockDisk.maxSizePercent },
+            set: {
+                draft.cache.blockDisk.maxSizePercent = $0
+                // Explicitly editing this control supersedes a saved legacy GB choice.
+                draft.cache.blockDisk.maxSizeGB = nil
+                draft.cache.legacyDisk.maxSizeGB = nil
+            }
         )
     }
 
@@ -299,39 +283,28 @@ struct CacheSection: View {
                     "Persist content-addressed prompt checkpoints on SSD. Works with paged RAM cache off and restores the longest matching prefix after restart; turn off to disable disk reuse.",
                 isOn: $draft.cache.blockDisk.enabled
             )
-            // A PERCENT of the disk, not a byte count. KV size scales with the
-            // model — a 27B stores ~256 KiB per token, so a 222k window needs
-            // ~54 GB — which means one GB figure is simultaneously too small on
-            // a 4 TB machine and too large on a 256 GB one. Shipping both units
-            // just asked the user to reconcile them.
+            .settingsLandingAnchor("settings.server.diskCache")
             OptionalDoubleField(
                 label: "Disk Cache Size (% of disk)",
-                placeholder: "Blank = 10%",
-                help:
-                    "Soft cap before older entries are evicted, shared across all models. "
-                    + "A share of your disk rather than a fixed size, because cache size "
-                    + "scales with the model: a 27B stores ~256 KiB per token, so a fixed "
-                    + "cap that suits one machine starves another and long chats re-prefill "
-                    + "instead of resuming.",
-                value: $draft.cache.blockDisk.maxSizePercent,
-                // NOT "%.1f". A share is meaningful far below a tenth of a
-                // percent — 0.005% of a 3.7 TB disk is ~190 MB, a perfectly
-                // reasonable cap for someone who wants the cache small — and
-                // one decimal place silently rewrote it to 0.0 before saving.
-                // The stored 0 then failed the resolver's `percent > 0` check
-                // and fell back to the 10% auto share, so typing 0.005 handed
-                // the user 372 GB while the label read "0%". Found by typing
-                // it into the running app.
+                placeholder: "Blank = Automatic (30% of available space)",
+                help: "Automatic uses 30% of free space plus this cache's own bytes. An explicit percentage uses total disk size, bounded by 25% of free space plus this cache. Saving a size change updates loaded models without unloading them; a lower cap is enforced on the next cache write.",
+                value: diskCachePercentBinding,
                 format: "%g"
             )
-            // What that share actually comes out to on THIS machine, using the
-            // same resolver the engine enforces rather than a second estimate
-            // that could disagree with it.
-            if let resolved = resolvedDiskCacheLabel {
-                Text(verbatim: resolved)
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+            .settingsLandingAnchor("settings.server.diskCacheSize")
+            Button {
+                draft.cache.blockDisk.maxSizePercent = nil
+                draft.cache.blockDisk.maxSizeGB = nil
+                draft.cache.legacyDisk.maxSizeGB = nil
+            } label: {
+                Text("Use Automatic Cache Size", bundle: .module)
             }
+            .disabled(draft.cache.blockDisk.maxSizePercent == nil
+                && draft.cache.blockDisk.maxSizeGB == nil && draft.cache.legacyDisk.maxSizeGB == nil)
+            .settingsLandingAnchor("settings.server.diskCacheAutomatic")
+            Text(verbatim: resolvedDiskCacheLabel)
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
             HStack(spacing: 10) {
                 Button {
                     Task {
@@ -356,6 +329,7 @@ struct CacheSection: View {
                 }
                 .disabled(isClearingDiskCache)
                 .accessibilityLabel(Text("Clear SSD Cache", bundle: .module))
+                .settingsLandingAnchor("settings.server.clearDiskCache")
                 if let clearedCacheSummary {
                     Text(verbatim: clearedCacheSummary)
                         .font(.caption)
@@ -376,6 +350,7 @@ struct CacheSection: View {
                 help: "Absolute path or ~/... path for persisted disk-cache entries.",
                 value: $draft.cache.blockDisk.directory
             )
+            .settingsLandingAnchor("settings.server.diskCacheDirectory")
         }
     }
 

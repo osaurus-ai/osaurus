@@ -1419,6 +1419,25 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
+        // Apple apps guidance: rendered only when an enabled app's tool
+        // actually resolved into the schema (custom agents only — the
+        // Default agent never carries Apple tools). Lists the enabled apps
+        // so a change to the Abilities toggles re-renders the block.
+        if !effectiveToolsOff {
+            let resolvedApps = AppleApp.allCases.filter {
+                !resolvedNames.isDisjoint(with: $0.toolNames)
+            }
+            if !resolvedApps.isEmpty {
+                composer.append(
+                    .static(
+                        id: "appleApps",
+                        label: L("Apple Apps"),
+                        content: SystemPromptTemplates.appleAppsGuidance(apps: resolvedApps)
+                    )
+                )
+            }
+        }
+
         // Agent-loop guidance: short cheat-sheet for the chat-layer-
         // intercepted tools (todo / complete / clarify / share_artifact).
         // Always rendered when any loop tool resolves into the schema:
@@ -2819,6 +2838,18 @@ public struct SystemPromptComposer: Sendable {
             }
         }
 
+        // Built-in Apple apps: authoritative per-agent gate. Every tool of an
+        // app the agent has NOT enabled is stripped in BOTH auto and manual
+        // mode, with no `additionalToolNames` / ticked-manual-name bypass —
+        // the Abilities → Tools toggle is the only switch (a stale
+        // `manualToolNames` entry or a session `capabilities_load` must not
+        // resurrect a tool the user turned off). `ToolRegistry.execute`
+        // enforces the same gate at call time. The Default agent is
+        // additionally excluded wholesale by `orchestratorExcludedToolNames`.
+        for name in AppleApp.disabledToolNames(enabled: snapshot.enabledAppleApps) {
+            byName.removeValue(forKey: name)
+        }
+
         // Authoritative per-agent subagent gates, driven by ONE loop over the
         // capability registry (no per-kind branches here) so adding a kind needs
         // no edit to this strip. Each capability's `gate` decides the rule:
@@ -3142,6 +3173,7 @@ public struct SystemPromptComposer: Sendable {
             allowed.formUnion(visibleDelegation)
             if snapshot.computerUseEnabled { allowed.insert(ComputerUseTool.toolName) }
             if snapshot.browserUseEnabled { allowed.insert(BrowserUseTool.toolName) }
+            allowed.formUnion(AppleApp.toolNames(for: snapshot.enabledAppleApps))
             if byName["capabilities"] != nil { allowed.insert("capabilities") }
             if snapshot.hasChannelPublishDestinations {
                 allowed.insert(AgentChannelPublishTool.toolName)

@@ -71,6 +71,12 @@ public enum EvalRemoteProviderBootstrap {
             providerType: .gemini,
             headers: { ["x-goog-api-key": $0] }
         ),
+        "huggingface": Preset(
+            name: "HuggingFace",
+            host: "router.huggingface.co",
+            basePath: "/v1",
+            envKey: "HF_TOKEN"
+        ),
         "deepseek": Preset(
             name: "DeepSeek",
             host: "api.deepseek.com",

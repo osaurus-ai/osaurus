@@ -270,7 +270,7 @@ struct IMessageSettingsView: View {
     private var legacyPluginWarning: some View {
         Label {
             Text(
-                "The legacy “osaurus.messages” plugin is installed. It sends iMessages through its own path and does not use these allowlists. To avoid double-sends and confusing permissions prompts, remove that plugin once this channel is set up.",
+                "The legacy “osaurus.messages” plugin is still installed. It is superseded — its tools no longer load, and the built-in Messages tools (Agents → Abilities → Tools → Messages) send through their own path that does not use these allowlists. Uninstall the plugin from Settings… (⌘,) → Tools → Native Plugins to clear this notice.",
                 bundle: .module
             )
             .font(.system(size: 11))

@@ -190,13 +190,15 @@ In the other direction, Osaurus can also act as an MCP client and aggregate tool
 ## Tools & Plugins
 
 ```bash
-osaurus tools install osaurus.calendar   # Install from registry
+osaurus tools install osaurus.xlsx       # Install from registry
 osaurus tools list                       # List installed
 osaurus tools create MyPlugin --swift    # Create a plugin
 osaurus tools dev com.acme.my-plugin     # Dev with hot reload
 ```
 
-20+ native plugins: Mail, Calendar, Vision, XLSX, PPTX, Music, Git, Filesystem, Fetch, and more. (Web search, browsing, and macOS control are core Osaurus capabilities now — no plugin needed.) Plugins target the v3 host API surface — register HTTP routes, serve web apps, persist data in SQLite, dispatch agent tasks, and call inference through any model. Older v1/v2 plugins continue to load unchanged. See the [Plugin Authoring Guide](docs/plugins/README.md).
+**Apple apps are built in.** Calendar, Reminders, Contacts, Notes, Mail, Messages, Maps & Location, Music, and Shortcuts ship as native tools you turn on per custom agent under Agents → Abilities → Tools — off by default, with the macOS permission prompt on enable and an approval card for every send or delete. See the [Apple Apps guide](docs/APPLE_APPS.md).
+
+Native plugins cover the rest: Vision, XLSX, PPTX, Images, Telegram, Resend, Fetch, and more. (Web search, browsing, macOS control, and the Apple apps are core Osaurus capabilities now — no plugin needed.) Plugins target the v3 host API surface — register HTTP routes, serve web apps, persist data in SQLite, dispatch agent tasks, and call inference through any model. Older v1/v2 plugins continue to load unchanged. See the [Plugin Authoring Guide](docs/plugins/README.md).
 
 Document attachments keep structure where the file format exposes it: CSV/TSV tables, XLSX workbooks, PPTX decks, PDF page anchors, and rich document sections are parsed through the document adapter registry before they reach the agent.
 

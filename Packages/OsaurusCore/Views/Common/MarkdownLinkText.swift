@@ -29,7 +29,7 @@ struct MarkdownLinkText: View {
             .environment(
                 \.openURL,
                 OpenURLAction { url in
-                    NSWorkspace.shared.open(url)
+                    Task.detached { NSWorkspace.shared.open(url) }
                     return .handled
                 }
             )

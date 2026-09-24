@@ -115,6 +115,38 @@ public final class ManagementStateManager: ObservableObject {
     /// `ModelDownloadView` observes this and resets it to nil after applying.
     @Published public var pendingModelDetailId: String?
 
+    /// A Hugging Face model link to apply on the Models tab: prefill the
+    /// search with the repo, make sure it is in the catalog, and pin the
+    /// Catalog list so the card is visible. Delivered through shared state
+    /// rather than by rebuilding the management window's hosting controller:
+    /// that rebuild orphans any SwiftUI sheet that is up (the linked model's
+    /// own detail sheet, after the previous link) and traps inside SwiftUI
+    /// on the next window resize (Sentry APPLE-MACOS-EF, reproduced live
+    /// with two consecutive links). `ModelDownloadView` consumes and clears.
+    public struct ModelDeepLinkRequest: Equatable, Sendable {
+        public let modelId: String
+        public let file: String?
+        /// Distinguishes two links to the same repo in a row.
+        public let id: UUID
+
+        public init(modelId: String, file: String?) {
+            self.modelId = modelId
+            self.file = file
+            self.id = UUID()
+        }
+    }
+    @Published public var pendingModelDeepLink: ModelDeepLinkRequest?
+
+    /// One-shot request to pop the Hugging Face token sheet on the Models
+    /// tab. Set by the deep-link handler when the Hub answered 401/403 for
+    /// the linked repo. `HuggingFaceTokenCard` observes this and resets it.
+    @Published public var pendingHuggingFaceTokenPrompt: Bool = false
+
+    /// Repo id to re-resolve once a token has been saved from that prompt,
+    /// so the user lands on the model they clicked instead of an empty
+    /// search. Cleared by `HuggingFaceTokenCard` after the retry.
+    @Published public var pendingDeepLinkRetryModelId: String?
+
     /// One-shot request to pop the "Add Collection" sheet on the Knowledge
     /// tab — e.g. from the project page's Add Collection shortcut, so the
     /// user isn't dropped on the tab just to click the same button again.

@@ -302,7 +302,12 @@ public enum SettingsSearchIndex {
             tab: .chat,
             section: "Chat",
             title: "Compaction Model",
-            keywords: ["compaction", "compact", "summarize", "context", "summary model"]
+            keywords: [
+                "compaction", "compact", "summarize", "context", "summary model",
+                "auto compact", "compact conversation", "fallback", "context full",
+            ],
+            disambiguation:
+                "Which model writes the summary. Unset means the chat's current model. Compaction runs automatically near the limit and from the Compact button in the context budget popover."
         ),
         .init(
             id: "settings.orchestrator.temperature",
@@ -640,6 +645,86 @@ public enum SettingsSearchIndex {
             subTab: "cache"
         ),
         .init(
+            id: "settings.server.prefixCache",
+            tab: .server,
+            section: "Cache",
+            title: "Prefix Cache",
+            keywords: ["prefix reuse", "master reuse switch"],
+            subTab: "cache"
+        ),
+        .init(
+            id: "settings.server.gpuCache",
+            tab: .server,
+            section: "Cache",
+            title: "Enable GPU Cache",
+            keywords: ["paged kv", "hot tier"],
+            subTab: "cache"
+        ),
+        .init(
+            id: "settings.server.gpuCacheBlockSize",
+            tab: .server,
+            section: "Cache",
+            title: "Block Size (tokens)",
+            keywords: ["paged block tokens"],
+            subTab: "cache"
+        ),
+        .init(
+            id: "settings.server.gpuCacheMaxBlocks",
+            tab: .server,
+            section: "Cache",
+            title: "Max Blocks",
+            keywords: ["gpu cache memory"],
+            subTab: "cache"
+        ),
+        .init(
+            id: "settings.server.diskCache",
+            tab: .server,
+            section: "Cache",
+            title: "Disk Cache",
+            keywords: ["ssd reuse", "l2"],
+            subTab: "cache"
+        ),
+        .init(
+            id: "settings.server.clearDiskCache",
+            tab: .server,
+            section: "Cache",
+            title: "Clear SSD Cache",
+            keywords: ["purge cached conversations"],
+            subTab: "cache"
+        ),
+        .init(
+            id: "settings.server.diskCacheDirectory",
+            tab: .server,
+            section: "Cache",
+            title: "Disk Cache Directory",
+            keywords: ["ssd path", "cache folder"],
+            subTab: "cache"
+        ),
+        .init(
+            id: "settings.server.ssmReDerive",
+            tab: .server,
+            section: "Cache",
+            title: "Re-derive SSM State After Generation",
+            keywords: ["hybrid", "mamba", "companion"],
+            subTab: "cache"
+        ),
+        .init(
+            id: "settings.server.diskCacheSize",
+            tab: .server,
+            section: "Cache",
+            title: "Disk Cache Size (% of disk)",
+            keywords: ["ssd cache size", "increase cache size", "disk cache limit", "cache capacity"],
+            subTab: "cache"
+        ),
+        .init(
+            id: "settings.server.diskCacheAutomatic",
+            tab: .server,
+            section: "Cache",
+            title: "Use Automatic Cache Size",
+            keywords: ["automatic ssd", "reset cache size", "legacy cache size", "available disk space"],
+            subTab: "cache"
+        ),
+        .init(
             id: "server.memorySafety",
             tab: .server,
             section: "Memory Safety",
@@ -743,6 +828,17 @@ public enum SettingsSearchIndex {
             keywords: ["peer inference", "share models", "lan inference", "expose models"]
         ),
         .init(
+            id: "server.codexCLI",
+            tab: .server,
+            title: "Use with Codex CLI",
+            keywords: [
+                "codex", "codex cli", "openai codex", "config.toml", "model_providers",
+                "codex profile", "external client", "coding agent",
+            ],
+            disambiguation:
+                "Points OpenAI's Codex CLI at this Osaurus as a local model provider. Not the \"OpenAI Codex\" remote provider under Providers, which is Osaurus using a ChatGPT subscription."
+        ),
+        .init(
             id: "computerUse.enable",
             tab: .computerUse,
             title: "Computer Use",
@@ -786,6 +882,19 @@ public enum SettingsSearchIndex {
                 "kill switch", "disable writes", "remote writes", "channel writes",
                 "sending", "read-only", "pause sending",
             ]
+        ),
+        .init(
+            id: "agentChannels.focusOnInbound",
+            tab: .agentChannels,
+            section: "Incoming",
+            title: "Focus Chat on Incoming Messages",
+            keywords: [
+                "focus", "bring to front", "bring forward", "activate window", "popup",
+                "pop up", "attention", "dedicated device", "kiosk", "monitor", "incoming",
+                "inbound", "channel window", "channel tab", "new message", "steal focus",
+            ],
+            disambiguation:
+                "Channels-only: brings the channel conversation's chat tab and window forward when a message arrives. Toast notifications are under Settings → General → Notifications."
         ),
         .init(
             id: "agentChannels.discord",
@@ -1351,6 +1460,25 @@ public enum SettingsSearchIndex {
                 "agent data", "structured data", "encrypted database", "db",
             ]
         ),
+        // Agents → (custom agent) → Abilities → Tools. The built-in Apple
+        // apps are groups in the tool picker (one per app, toggled per app);
+        // the anchor sits on the picker. Also writable via
+        // `capabilities.apple_apps`.
+        .init(
+            id: "agents.appleApps",
+            tab: .agents,
+            section: "Abilities → Tools",
+            title: "Apple Apps",
+            keywords: [
+                "apple apps", "apple", "native apps", "mac apps", "built-in apps", "apple tools",
+                "calendar", "reminders", "contacts", "notes", "mail", "messages", "imessage",
+                "maps", "location", "music", "shortcuts", "apple_apps",
+            ],
+            subTab: "capabilities",
+            disambiguation:
+                "Per-custom-agent groups in Abilities → Tools for the built-in Apple app tools (off by default, toggled per app). The Orchestrator never uses them directly; it enables them on a custom agent via osaurus_config capabilities.apple_apps.",
+            declarativeSection: "agents"
+        ),
 
         // MARK: Search
         .init(
@@ -1415,8 +1543,8 @@ public enum SettingsSearchIndex {
         .init(
             id: "providers.overview",
             tab: .providers,
-            title: "Cloud Models",
-            keywords: ["provider", "api key", "openai", "anthropic", "openrouter", "xai"],
+            title: "Providers",
+            keywords: ["cloud models", "provider", "api key", "openai", "anthropic", "openrouter", "xai"],
             declarativeSection: "providers"
         ),
         .init(
@@ -1477,5 +1605,40 @@ public enum SettingsSearchIndex {
             title: "Insights",
             keywords: ["analytics", "usage", "charts", "metrics"]
         ),
-    ]
+    ] + appleAppEntries
+
+    /// One row per Apple app group in a custom agent's Abilities → Tools
+    /// picker (`agents.appleApps.<app>`), with the exact group title and the
+    /// tool verbs the model or a user might type. Generated from `AppleApp`
+    /// so a new family cannot ship without a catalog row.
+    static let appleAppEntries: [SettingsSearchEntry] = AppleApp.allCases.map { app in
+        SettingsSearchEntry(
+            id: "agents.appleApps.\(app.rawValue)",
+            tab: .agents,
+            section: "Abilities → Tools",
+            title: app.displayName,
+            keywords: appleAppKeywords(app),
+            subTab: "capabilities",
+            disambiguation:
+                "Abilities → Tools group on a custom agent; the master checkbox (or any row switch) turns all \(app.displayName) tools on or off together (off by default). Not the \(app.displayName) plugin, which is built in now; not the macOS Permissions tab. Declarative: capabilities.apple_apps includes \"\(app.rawValue)\".",
+            declarativeSection: "agents"
+        )
+    }
+
+    private static func appleAppKeywords(_ app: AppleApp) -> [String] {
+        var words = ["apple", "apple apps", "apple app", app.rawValue, "apple_apps"]
+        words += app.toolNames.sorted()
+        switch app {
+        case .calendar: words += ["events", "schedule", "meeting", "ical", "eventkit", "agenda"]
+        case .reminders: words += ["todo", "to-do", "task list", "due date", "reminder"]
+        case .contacts: words += ["address book", "phone number", "email address", "people", "my card"]
+        case .notes: words += ["apple notes", "note", "folders", "notebook"]
+        case .mail: words += ["email", "inbox", "mailbox", "compose", "reply", "apple mail"]
+        case .messages: words += ["imessage", "sms", "text message", "chat.db", "conversations"]
+        case .maps: words += ["maps & location", "location", "directions", "geocode", "eta", "places", "nearby", "current location"]
+        case .music: words += ["apple music", "now playing", "playlist", "play", "pause", "volume", "itunes"]
+        case .shortcuts: words += ["shortcut", "run shortcut", "automation", "workflow"]
+        }
+        return words
+    }
 }

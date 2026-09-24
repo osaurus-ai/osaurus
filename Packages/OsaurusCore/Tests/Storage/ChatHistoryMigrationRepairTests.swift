@@ -293,7 +293,7 @@ struct ChatHistoryMigrationRepairTests {
                 INSERT INTO turns (id, session_id, seq, role, content)
                 VALUES ('\(UUID().uuidString)', '\(sid.uuidString)', 0, 'user', 'written before the downgrade')
                 """,
-                "PRAGMA user_version = 17",
+                "PRAGMA user_version = \(Self.foreignAheadStamp)",
             ]
             try self.seedChatHistoryDB(statements)
 
@@ -302,7 +302,7 @@ struct ChatHistoryMigrationRepairTests {
             defer { db.close() }
 
             // Version stamp is left intact so a future newer build still owns it.
-            #expect(self.diskUserVersion() == 17)
+            #expect(self.diskUserVersion() == Self.foreignAheadStamp)
 
             // Existing history is readable, not lost.
             let loaded = db.loadSession(id: sid)
@@ -361,7 +361,7 @@ struct ChatHistoryMigrationRepairTests {
                 INSERT INTO turns (id, session_id, seq, role, content, raw_model_content)
                 VALUES ('\(UUID().uuidString)', '\(sid.uuidString)', 0, 'user', 'kept', 'raw')
                 """,
-                "PRAGMA user_version = 17",
+                "PRAGMA user_version = \(Self.foreignAheadStamp)",
             ]
             try self.seedChatHistoryDB(statements)
 
@@ -374,7 +374,7 @@ struct ChatHistoryMigrationRepairTests {
             #expect(self.diskColumns(table: "sessions").contains("remote_agent_address"))
             // …the sibling build's columns and stamp are untouched…
             #expect(self.diskColumns(table: "turns").contains("raw_model_content"))
-            #expect(self.diskUserVersion() == 17)
+            #expect(self.diskUserVersion() == Self.foreignAheadStamp)
             // …history survived, and the failing save now lands.
             #expect(db.loadSession(id: sid)?.turns.first?.content == "kept")
             let newId = UUID()
@@ -569,6 +569,68 @@ struct ChatHistoryMigrationRepairTests {
                 }
             }
             return columns
+        }
+    }
+
+    /// A stamp another build could have written that is AHEAD of this one.
+    /// Derived, not a literal: the literal `17` stopped being "ahead" the day
+    /// this build's own ladder reached it.
+    private static var foreignAheadStamp: Int { ChatHistoryDatabase.latestSchemaVersion + 1 }
+
+    /// The frozen `[Current Time]` / memory / screen block a user turn was
+    /// sent with must survive a save → close → reopen → load, or every past
+    /// user turn of a resumed chat renders differently from what the prefix
+    /// cache stored and the whole conversation is prefilled again.
+    @Test
+    func injectedContextPrefixSurvivesReopen() async throws {
+        try await runWithPlaintextRoot {
+            let sid = UUID()
+            let prefix = "[Current Time]\nSunday, September 20, 2026 at 2:34 AM\n[/Current Time]\n\n"
+            let db = ChatHistoryDatabase()
+            try db.open()
+            try db.saveSession(
+                ChatSessionData(
+                    id: sid,
+                    title: "resume",
+                    turns: [
+                        ChatTurnData(role: .user, content: "first question", injectedContextPrefix: prefix),
+                        ChatTurnData(role: .assistant, content: "answer"),
+                        ChatTurnData(role: .user, content: "no block on this one"),
+                    ]
+                )
+            )
+            db.close()
+
+            let reopened = ChatHistoryDatabase()
+            try reopened.open()
+            defer { reopened.close() }
+            let turns = try #require(reopened.loadSession(id: sid)?.turns)
+            try #require(turns.count == 3)
+            #expect(turns[0].injectedContextPrefix == prefix)
+            #expect(turns[1].injectedContextPrefix == nil)
+            #expect(turns[2].injectedContextPrefix == nil)
+        }
+    }
+
+    /// A row first saved WITHOUT its block (the block is stamped at send
+    /// time) must be rewritten once the block lands: the incremental upsert
+    /// keys on the content hash, so the hash has to cover the block.
+    @Test
+    func injectedContextPrefixStampedAfterFirstSaveIsStillWritten() async throws {
+        try await runWithPlaintextRoot {
+            let sid = UUID()
+            var turn = ChatTurnData(role: .user, content: "question")
+            let db = ChatHistoryDatabase()
+            try db.open()
+            defer { db.close() }
+            try db.saveSession(ChatSessionData(id: sid, title: "t", turns: [turn]))
+            #expect(db.loadSession(id: sid)?.turns.first?.injectedContextPrefix == nil)
+
+            turn.injectedContextPrefix = "[Current Time]\nnow\n[/Current Time]\n\n"
+            try db.saveSession(ChatSessionData(id: sid, title: "t", turns: [turn]))
+            #expect(
+                db.loadSession(id: sid)?.turns.first?.injectedContextPrefix
+                    == "[Current Time]\nnow\n[/Current Time]\n\n")
         }
     }
 }

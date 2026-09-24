@@ -1927,8 +1927,8 @@ final class NativeMessageCellView: NSTableCellView {
                 sameKind: sameKind
             )
 
-        case .typingIndicator:
-            configureAsTypingIndicator(context: context, sameKind: sameKind)
+        case let .typingIndicator(phase):
+            configureAsTypingIndicator(phase: phase, context: context, sameKind: sameKind)
 
         case let .sharedArtifact(artifact):
             configureAsArtifact(block: block, artifact: artifact, context: context, sameKind: sameKind)
@@ -2831,7 +2831,11 @@ final class NativeMessageCellView: NSTableCellView {
 
     // MARK: - TypingIndicator
 
-    private func configureAsTypingIndicator(context: CellRenderingContext, sameKind: Bool) {
+    private func configureAsTypingIndicator(
+        phase: TypingIndicatorPhase,
+        context: CellRenderingContext,
+        sameKind: Bool
+    ) {
         if !sameKind || nativeTypingView == nil {
             removeAllContentViews()
             let tv = NativeTypingIndicatorView()
@@ -2845,7 +2849,7 @@ final class NativeMessageCellView: NSTableCellView {
             ])
             nativeTypingView = tv
         }
-        nativeTypingView?.configure(theme: context.theme)
+        nativeTypingView?.configure(theme: context.theme, phase: phase)
     }
 
     // MARK: - GenerationStats

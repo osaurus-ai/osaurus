@@ -10,7 +10,7 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 
 ## Creating and managing agents
 
-- Management (⌘⇧M) → Agents → create, edit, or delete agents.
+- Settings… (⌘,) → Agents → create, edit, or delete agents.
 - Or ask the default Osaurus assistant: "create a coding agent" — it can create, update, and switch agents for you.
 - Switch agents from the agent menu in the chat window.
 

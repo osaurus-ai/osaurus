@@ -253,6 +253,7 @@ public actor ModelRuntime {
         /// Defaults belonging to the weights actually loaded, not a short-name
         /// catalog lookup that may become ambiguous when another org is imported.
         var generationDefaults: LocalGenerationDefaults.Defaults = .empty
+        var cacheDiskDirectory: URL? = nil
     }
 
     struct ActiveCachePolicy: Equatable, Sendable {
@@ -366,6 +367,10 @@ public actor ModelRuntime {
         /// tracked separately
         /// so ordinary models still use Osaurus's dynamic reuse heuristic.
         let allocatorCacheLimitBytes: Int?
+        /// The same per-model working set and process budget used at admission.
+        /// Freed buffers consume the remaining budget, not an additional allowance.
+        let admittedWorkingSetBytes: UInt64?
+        let admittedLoadBudgetBytes: UInt64?
         /// Load-time plain-affine DSV4 fact. Native MTP is deliberately not
         /// frozen here because MTP Off/Auto/manual depth is request-scoped.
         /// Both paths may temporarily use the admitted allocator ceiling while
@@ -388,6 +393,8 @@ public actor ModelRuntime {
             nativeMTPReason: String? = nil,
             nativeMTPAdmission: NativeMTPAdmission = .init(),
             allocatorCacheLimitBytes: Int? = nil,
+            admittedWorkingSetBytes: UInt64? = nil,
+            admittedLoadBudgetBytes: UInt64? = nil,
             requiresAdmittedMLXAllocatorCeiling: Bool = false
         ) {
             self.name = name
@@ -402,6 +409,8 @@ public actor ModelRuntime {
             self.nativeMTPReason = nativeMTPReason
             self.nativeMTPAdmission = nativeMTPAdmission
             self.allocatorCacheLimitBytes = allocatorCacheLimitBytes
+            self.admittedWorkingSetBytes = admittedWorkingSetBytes
+            self.admittedLoadBudgetBytes = admittedLoadBudgetBytes
             self.requiresAdmittedMLXAllocatorCeiling = requiresAdmittedMLXAllocatorCeiling
         }
     }
@@ -1464,7 +1473,8 @@ public actor ModelRuntime {
                         diskL2MaxGB: Double($0.diskCacheMaxGB)
                     )
                 },
-                generationDefaults: holder.generationDefaults
+                generationDefaults: holder.generationDefaults,
+                cacheDiskDirectory: activeConfig?.diskCacheDir
             )
         }.sorted { lhs, rhs in
             if lhs.isCurrent != rhs.isCurrent { return lhs.isCurrent }
@@ -1483,24 +1493,140 @@ public actor ModelRuntime {
         let error: String?
     }
 
-    /// Live quotas may differ from saved settings until the next model load.
-    func diskCacheQuotaSnapshots(matching settings: VMLXServerCacheSettings? = nil) -> [DiskCacheQuotaSnapshot] {
-        modelCache.values.compactMap { holder in
-            if let settings, holder.cacheSettings != settings { return nil }
-            guard let coordinator = holder.container.cacheCoordinator,
-                coordinator.config.enableDiskCache,
-                let stats = coordinator.snapshotStats().diskStats,
-                let directory = coordinator.config.diskCacheDir
+    /// Metadata only; no holder, coordinator, weights or KV arrays survive unload.
+    private struct RetiredDiskQuota: Sendable {
+        let directory: URL
+        let modelKey: String?
+        let settings: VMLXServerCacheSettings
+        let capBytes: Int
+    }
+    private var retiredDiskQuotas: [String: RetiredDiskQuota] = [:]
+
+    private func rememberDiskQuotaBeforeUnload(name: String) {
+        guard let holder = modelCache[name], let settings = holder.cacheSettings,
+            let coordinator = holder.container.cacheCoordinator,
+            coordinator.config.enableDiskCache,
+            let directory = coordinator.config.diskCacheDir,
+            let disk = coordinator.diskCache
+        else { return }
+        retiredDiskQuotas[name] = RetiredDiskQuota(
+            directory: directory, modelKey: coordinator.config.modelKey,
+            settings: settings, capBytes: disk.maxSizeBytes)
+    }
+
+    private var diskCapRefreshTask: Task<VMLXServerCacheSettings, Never>?
+
+    /// Serialize saves without occupying the runtime actor while a store holds
+    /// the quota lock. Read the latest settings after earlier updates finish,
+    /// so delayed notifications cannot replay an older saved size.
+    func refreshDiskCacheCaps() async {
+        let targets = modelCache.values.compactMap { holder -> (CacheCoordinator, VMLXServerCacheSettings)? in
+            guard let previous = holder.cacheSettings,
+                let coordinator = holder.container.cacheCoordinator
             else { return nil }
-            return DiskCacheQuotaSnapshot(
-                directory: directory,
-                usage: DiskCacheUsage(
-                    usedBytes: stats.currentPayloadBytes,
-                    maxBytes: stats.maxSizeBytes,
-                    evictions: stats.evictions
-                )
-            )
+            return (coordinator, previous)
         }
+        let predecessor = diskCapRefreshTask
+        let task = Task.detached(priority: .utility) {
+            _ = await predecessor?.value
+            let cache = ServerRuntimeSettingsStore.snapshot().cache
+            var caps: [URL: Int] = [:]
+            for (coordinator, previous) in targets {
+                guard !previous.requiresModelReload(comparedTo: cache),
+                    coordinator.config.enableDiskCache,
+                    let directory = coordinator.config.diskCacheDir
+                else { continue }
+                let root = directory.standardizedFileURL.resolvingSymlinksInPath()
+                let cap = caps[root] ?? Int(clamping: Self.diskCacheCap(
+                    for: cache, directory: root,
+                    previousCapBytes: coordinator.snapshotStats().diskStats.map { Int64($0.maxSizeBytes) }
+                ).capBytes)
+                caps[root] = cap
+                coordinator.updateDiskCap(bytes: cap)
+            }
+            return cache
+        }
+        diskCapRefreshTask = task
+        let applied = await task.value
+        guard ServerRuntimeSettingsStore.snapshot().cache == applied else { return }
+        for holder in modelCache.values {
+            guard let previous = holder.cacheSettings,
+                !previous.requiresModelReload(comparedTo: applied),
+                let coordinator = holder.container.cacheCoordinator,
+                targets.contains(where: { $0.0 === coordinator })
+            else { continue }
+            holder.cacheSettings = applied
+        }
+    }
+
+    nonisolated static func diskCacheCap(
+        for cache: VMLXServerCacheSettings, directory: URL, previousCapBytes: Int64? = nil
+    ) -> DiskCacheCapPolicy.Resolution {
+        DiskCacheCapPolicy.resolve(
+            percent: cache.blockDisk.maxSizePercent,
+            legacyGB: cache.pagedKV.enabled || cache.blockDisk.enabled
+                ? cache.blockDisk.maxSizeGB : cache.legacyDisk.maxSizeGB,
+            directory: directory, previousCapBytes: previousCapBytes
+        )
+    }
+
+    /// Sample outside the runtime actor: SQLite and cache locks can wait behind
+    /// a store. Retired models retain only their root/fingerprint/settings;
+    /// pressure history itself survives idle unload in the engine.
+    func diskCacheQuotaSnapshots(
+        matching settings: VMLXServerCacheSettings? = nil, modelName: String? = nil,
+        session: String? = nil
+    ) async -> [DiskCacheQuotaSnapshot] {
+        let canonical = modelName.flatMap { ModelManager.findInstalledModelFromCache(named: $0)?.name }
+        func matches(_ name: String) -> Bool {
+            modelName == nil || name == modelName || name == canonical
+        }
+        let resident = modelCache.compactMap { name, holder -> CacheCoordinator? in
+            guard matches(name), settings == nil || holder.cacheSettings == settings else { return nil }
+            return holder.container.cacheCoordinator
+        }
+        let retired = retiredDiskQuotas.compactMap { name, entry -> RetiredDiskQuota? in
+            guard matches(name), modelCache[name] == nil else { return nil }
+            if let settings, entry.settings.requiresModelReload(comparedTo: settings) { return nil }
+            return entry
+        }
+        return await Task.detached(priority: .utility) {
+            let live = resident.compactMap { coordinator -> DiskCacheQuotaSnapshot? in
+                guard coordinator.config.enableDiskCache,
+                    let stats = coordinator.snapshotStats().diskStats,
+                    let directory = coordinator.config.diskCacheDir
+                else { return nil }
+                let pressure = session.flatMap { stats.capacityPressureByChain[$0] }
+                let event = session == nil ? stats.lastPressureEvent : pressure?.event
+                return DiskCacheQuotaSnapshot(
+                    directory: directory,
+                    usage: DiskCacheUsage(
+                        usedBytes: stats.currentPayloadBytes, maxBytes: stats.maxSizeBytes,
+                        evictions: stats.evictions, pressureKind: event?.kind.rawValue,
+                        pressureChainId: event?.chainId,
+                        pressureSeq: Int(clamping: pressure?.sequence ?? stats.pressureEventSeq)))
+            }
+            let idle = retired.compactMap { entry -> DiskCacheQuotaSnapshot? in
+                let cap = Self.diskCacheCap(
+                    for: settings ?? entry.settings, directory: entry.directory,
+                    previousCapBytes: Int64(entry.capBytes))
+                let records = DiskCachePressureHistory.records(
+                    directory: entry.directory, modelKey: entry.modelKey,
+                    maxSizeBytes: Int(clamping: cap.capBytes))
+                let pressure = session.flatMap { records[$0] }
+                    ?? (session == nil ? records.values.max(by: { $0.tick < $1.tick }) : nil)
+                let volume = DiskCacheVolumeSnapshot.read(directory: entry.directory)
+                return DiskCacheQuotaSnapshot(
+                    directory: entry.directory,
+                    usage: DiskCacheUsage(
+                        usedBytes: Int(clamping: volume.ownBytes ?? 0),
+                        maxBytes: Int(clamping: cap.capBytes), evictions: 0,
+                        pressureKind: pressure?.event.kind.rawValue,
+                        pressureChainId: pressure?.event.chainId,
+                        pressureSeq: Int(clamping: pressure?.sequence ?? 0)))
+            }
+            return live + idle
+        }.value
     }
 
     /// Serializes with runtime cache IO and removes indexed payloads and linked
@@ -1513,24 +1639,57 @@ public actor ModelRuntime {
             ?? OsaurusPaths.diskKVCache()
         // A notice clears the root it measured. The Settings action clears
         // both active roots and the saved root, including after a path change.
-        let directories =
-            directory.map { [$0] }
-            ?? (diskCacheQuotaSnapshots().map(\.directory) + [configuredDirectory])
+        let observedDirectories = await diskCacheQuotaSnapshots().map(\.directory)
+        let directories = directory.map { [$0] } ?? (observedDirectories + [configuredDirectory])
         let roots = Set(directories.map(\.standardizedFileURL))
         let hadResidentModel = !modelCache.isEmpty
-        let result = await Task.detached(priority: .utility) {
-            MLXCacheIOLock.withSerializedMLXCacheIO {
-                var combined = SafeDiskCachePurge.Result()
-                var errors: [String] = []
-                for root in roots.sorted(by: { $0.path < $1.path }) {
-                    let result = SafeDiskCachePurge.clear(directory: root)
-                    combined.reclaimedBytes += result.reclaimedBytes
-                    combined.removedFiles += result.removedFiles
-                    if let error = result.error { errors.append(error) }
-                }
-                combined.error = errors.isEmpty ? nil : errors.joined(separator: "\n")
-                return combined
+        // A resident coordinator keeps its own account of what is on disk. The
+        // purge changes the directory behind its back, so each one writing to a
+        // purged root is asked to re-read it afterwards.
+        let residentDiskCoordinators: [(rootPath: String, coordinator: CacheCoordinator)] =
+            modelCache.values.compactMap { holder in
+                guard let coordinator = holder.container.cacheCoordinator,
+                    coordinator.config.enableDiskCache,
+                    let directory = coordinator.config.diskCacheDir
+                else { return nil }
+                return (rootPath: directory.standardizedFileURL.path, coordinator: coordinator)
             }
+        let result = await Task.detached(priority: .utility) { () -> SafeDiskCachePurge.Result in
+            let (combined, changedRootPaths): (SafeDiskCachePurge.Result, Set<String>) =
+                MLXCacheIOLock.withSerializedMLXCacheIO {
+                    var combined = SafeDiskCachePurge.Result()
+                    var errors: [String] = []
+                    var changedRootPaths = Set<String>()
+                    for root in roots.sorted(by: { $0.path < $1.path }) {
+                        let result = SafeDiskCachePurge.clear(directory: root)
+                        combined.reclaimedBytes += result.reclaimedBytes
+                        combined.removedFiles += result.removedFiles
+                        if let error = result.error { errors.append(error) }
+                        // A refused purge touched nothing; a failed one may
+                        // still have removed payloads before it stopped.
+                        if result.error == nil || result.removedFiles > 0 {
+                            changedRootPaths.insert(root.path)
+                            if result.error == nil { DiskCachePressureHistory.clear(directory: root) }
+                        }
+                    }
+                    combined.error = errors.isEmpty ? nil : errors.joined(separator: "\n")
+                    return (combined, changedRootPaths)
+                }
+            // Deliberately after the serialized closure has returned. The
+            // runtime's store path takes its quota lock first and the cache-IO
+            // lock second; reconciling takes the quota lock, so doing it while
+            // still holding the cache-IO lock would invert that order and can
+            // deadlock against an in-flight store. It waits behind such a store
+            // and walks the directory, which is why it runs on this task and
+            // not on the actor.
+            for entry in residentDiskCoordinators where changedRootPaths.contains(entry.rootPath) {
+                // False means the index was busy or the directory could not be
+                // read; the runtime retries on its own after its next store.
+                if !entry.coordinator.reconcileDiskAccounting() {
+                    genLog.notice("disk cache accounting not reconciled after clear; the runtime will retry")
+                }
+            }
+            return combined
         }.value
         return DiskCacheClearResult(
             reclaimedBytes: result.reclaimedBytes,
@@ -1560,7 +1719,12 @@ public actor ModelRuntime {
             diskL2Stores: stats.diskStats?.stores ?? 0,
             ssmCompanionHits: stats.ssmStats.hits,
             ssmCompanionMisses: stats.ssmStats.misses,
-            ssmCompanionReDerives: stats.ssmStats.reDerives
+            ssmCompanionReDerives: stats.ssmStats.reDerives,
+            diskL2Evictions: stats.diskStats?.evictions ?? 0,
+            diskL2EvictedBytes: Int(clamping: stats.diskStats?.evictedBytes ?? 0),
+            diskL2QuotaPasses: stats.diskStats?.quotaPasses ?? 0,
+            diskL2FailedIndexWrites: stats.diskStats?.failedIndexWrites ?? 0,
+            diskL2PressureEventSeq: Int(clamping: stats.diskStats?.pressureEventSeq ?? 0)
         )
     }
 
@@ -2259,6 +2423,7 @@ public actor ModelRuntime {
         let retiredCacheCounters = modelCache[name].flatMap {
             Self.processLifetimeCacheCounters(for: $0)
         }
+        rememberDiskQuotaBeforeUnload(name: name)
         modelCache[name]?.container.disableCaching()
 
         Stream.gpu.synchronize()
@@ -2457,6 +2622,7 @@ public actor ModelRuntime {
         if !quit { await MetalGate.shared.enterModelTeardown(model: "all-models") }
         var retiredCacheCounters = ProcessLifetimeBatchCounters()
         var hasRetiredCacheCounters = false
+        for name in modelCache.keys { rememberDiskQuotaBeforeUnload(name: name) }
         for holder in modelCache.values {
             if let counters = Self.processLifetimeCacheCounters(for: holder) {
                 retiredCacheCounters.absorb(counters)
@@ -2722,8 +2888,40 @@ public actor ModelRuntime {
         let dynamicLimit = min(byModel, bySystem)
         return Self.effectiveMLXCacheLimit(
             dynamicLimit: dynamicLimit,
-            configuredLimits: modelCache.values.map(\.allocatorCacheLimitBytes)
+            configuredLimits: allocatorCacheCaps()
         )
+    }
+
+    /// MLX owns one pool shared by all resident models. Reserve each admitted
+    /// working set once, then limit buffer reuse to the remaining process budget.
+    /// This does not lower Memory.memoryLimit or evict live weights/KV tensors.
+    private func allocatorCacheCaps(including holder: SessionHolder? = nil) -> [Int?] {
+        var residents = Array(modelCache.values)
+        if let holder, !residents.contains(where: { $0 === holder }) {
+            residents.append(holder)
+        }
+        return residents.map(\.allocatorCacheLimitBytes) + [Self.allocatorCacheBudgetHeadroom(
+            workingSets: residents.map(\.admittedWorkingSetBytes),
+            budgets: residents.map(\.admittedLoadBudgetBytes)
+        )]
+    }
+
+    nonisolated static func allocatorCacheBudgetHeadroom(
+        workingSets: [UInt64?],
+        budgets: [UInt64?]
+    ) -> Int? {
+        // An unbounded plan has no capacity clamp. Unknown estimates retain the
+        // existing dynamic policy; strict admission rejects them before load.
+        guard let budget = budgets.compactMap({ $0 }).min() else { return nil }
+        var reserved: UInt64 = 0
+        for estimate in workingSets {
+            guard let estimate else { return nil }
+            let sum = reserved.addingReportingOverflow(estimate)
+            guard !sum.overflow else { return 0 }
+            reserved = sum.partialValue
+        }
+        guard budget > reserved else { return 0 }
+        return Int(min(UInt64(Int.max), budget - reserved))
     }
 
     /// Native MTP and plain affine DSV4 both keep large decode intermediates
@@ -2752,8 +2950,9 @@ public actor ModelRuntime {
         return min(dynamicLimit, max(0, configuredLimit))
     }
 
-    /// The only allocator clamp a session holder may carry is one the user
-    /// explicitly typed into Memory Safety. The memory-safety *profile
+    /// The numeric allocator override a session holder carries is one the user
+    /// explicitly typed into Memory Safety. Separately, the admitted working set
+    /// must leave room for buffer reuse within the total budget. The *profile
     /// defaults* (Safe Auto and Strict both resolve the allocator cap to a
     /// fixed 128 MiB) must not override the weight-scaled `mlxCacheLimit()`
     /// dynamic limit: past roughly 13k tokens of context a 128 MiB
@@ -2840,8 +3039,7 @@ public actor ModelRuntime {
             ),
             // MLX has one process-wide pool. Include every resident's explicit
             // maximum, plus the holder while it is being published/warmed.
-            configuredLimits: modelCache.values.map(\.allocatorCacheLimitBytes)
-                + [holder.allocatorCacheLimitBytes]
+            configuredLimits: allocatorCacheCaps(including: holder)
         )
     }
 
@@ -2971,6 +3169,14 @@ public actor ModelRuntime {
         public let useMmapSafetensors: Bool
         public let blockingIssues: [String]
         public let timestamp: Date
+
+        func refusingHostCapacity(_ message: String) -> Self {
+            Self(modelName: modelName, estimatedWorkingSetBytes: estimatedWorkingSetBytes,
+                resolvedLoadBudgetBytes: resolvedLoadBudgetBytes, allowed: false,
+                displaySummary: displaySummary, useMmapSafetensors: useMmapSafetensors,
+                blockingIssues: blockingIssues + ["host.reclaimableMemory: \(message)"],
+                timestamp: Date())
+        }
     }
 
     /// Estimated KV-cache + activation headroom an incoming load needs beyond
@@ -3114,6 +3320,12 @@ public actor ModelRuntime {
             nope > 0, vDim > 0, heads > 0
         {
             perTokenCacheDims = Int64(heads) * Int64(nope + rope + vDim)
+        } else if stringValue(config["model_type"]) == "mimo_v2",
+            stringValue(config["attention_projection_layout"]) == "fused_qkv" {
+            let slidingHeads = intValue(config["swa_num_key_value_heads"]) ?? kvHeads
+            let slidingKey = intValue(config["swa_head_dim"]) ?? headDim
+            let slidingValue = intValue(config["swa_v_head_dim"]) ?? slidingKey
+            perTokenCacheDims = Int64(slidingHeads) * Int64(slidingKey + slidingValue)
         } else {
             perTokenCacheDims = 2 * Int64(kvHeads) * Int64(headDim)
         }
@@ -3127,7 +3339,10 @@ public actor ModelRuntime {
         // sliding attention. Both K and V remain in the cache even when their
         // projections share weights (attention_k_eq_v).
         let fullAttentionDims: Int64
-        if let globalHeadDim = intValue(config["global_head_dim"]), globalHeadDim > 0 {
+        if stringValue(config["model_type"]) == "mimo_v2",
+            stringValue(config["attention_projection_layout"]) == "fused_qkv" {
+            fullAttentionDims = Int64(kvHeads) * Int64(headDim + (intValue(config["v_head_dim"]) ?? headDim))
+        } else if let globalHeadDim = intValue(config["global_head_dim"]), globalHeadDim > 0 {
             let globalHeads = intValue(config["num_global_key_value_heads"]) ?? kvHeads
             fullAttentionDims = 2 * Int64(max(1, globalHeads)) * Int64(globalHeadDim)
         } else {
@@ -3201,6 +3416,19 @@ public actor ModelRuntime {
             ?? intValue(config["attention_chunk_size"])
 
         let modelType = stringValue(config["model_type"])?.lowercased() ?? ""
+
+        if modelType == "mimo_v2", let pattern = config["hybrid_layer_pattern"] as? [Int] {
+            // Full layers must never inherit the sliding-window clamp.
+            mix.declaredPerLayer = true
+            let layers = intValue(config["num_hidden_layers"]) ?? 0
+            if pattern.count == layers, pattern.allSatisfy({ $0 == 0 || $0 == 1 }) {
+                mix.fullAttention = pattern.filter { $0 == 0 }.count
+                mix.slidingAttention = pattern.filter { $0 == 1 }.count
+            } else {
+                mix.fullAttention = layers
+            }
+            return mix
+        }
 
         if let types = config["layer_types"] as? [Any] {
             // Gemma4 / qwen3_5-style explicit per-layer topology.
@@ -3333,9 +3561,24 @@ public actor ModelRuntime {
 
     static func estimatedMemorySafetyWorkingSetBytes(
         loadFootprintBytes: Int64,
-        physicalMemoryBytes: UInt64
+        physicalMemoryBytes: UInt64,
+        modelDirectory: URL? = nil
     ) -> UInt64? {
         guard physicalMemoryBytes > 0 else { return nil }
+        if let modelDirectory,
+            let payload = LocalVisionEvidence.residentMiMoPayloadBytes(modelDirectory),
+            let architectureHeadroom = estimatedArchitectureKVHeadroomBytes(
+                at: modelDirectory,
+                kvRetentionCap: ServerRuntimeSettingsStore.resolvedKVRetentionCap()) {
+            // Native packed gather matmul never materializes a BF16 expert bank.
+            // Price actual payloads (including lazy media towers) plus the resolved
+            // KV topology. The 2 GiB floor covers load/activation/allocator scratch;
+            // resident text proof used ~1 GiB above its 96 GiB packed payload.
+            // A percentage of all 256 experts invents ~25 GiB of temporary data.
+            let scratch = UInt64(max(2 << 30, architectureHeadroom))
+            let total = payload.addingReportingOverflow(scratch)
+            return total.overflow ? nil : total.partialValue
+        }
         return GPUMemoryBudget.estimatedChatWorkingSetBytes(
             onDiskBytes: loadFootprintBytes
         )
@@ -3436,6 +3679,37 @@ public actor ModelRuntime {
         return Int64(budgetGB * bytesPerGB)
     }
 
+    /// Capacity needed without compressing anonymous pages belonging to other
+    /// processes. File-backed reclaim is already included in `available`; it
+    /// must not be credited again as a percentage of physical memory.
+    static func materializedLoadRequiredAvailableBytes(
+        loadFootprintBytes: Int64,
+        kvHeadroomBytes: Int64,
+        estimatedWorkingSetBytes: UInt64?,
+        inflightOtherBytes: Int64,
+        physicalBytes: Int64
+    ) -> Int64? {
+        guard loadFootprintBytes > 0, kvHeadroomBytes >= 0,
+            inflightOtherBytes >= 0, physicalBytes > 0,
+            let estimate = estimatedWorkingSetBytes, estimate <= UInt64(Int64.max)
+        else { return nil }
+        let (weightsAndKV, overflow1) = loadFootprintBytes.addingReportingOverflow(kvHeadroomBytes)
+        guard !overflow1 else { return nil }
+        let (working, overflow2) = max(weightsAndKV, Int64(estimate))
+            .addingReportingOverflow(inflightOtherBytes)
+        guard !overflow2 else { return nil }
+        // Share the existing handoff admission headroom, rather than inventing
+        // a second hidden percentage limit for ordinary model loads.
+        let reserve = ChatResidencyHandoff.headroomBytes
+        let (required, overflow3) = working.addingReportingOverflow(reserve)
+        return overflow3 ? nil : required
+    }
+
+    static func materializedLoadFits(requiredBytes: Int64?, availableBytes: Int64) -> Bool {
+        guard let requiredBytes, requiredBytes > 0, availableBytes > 0 else { return false }
+        return requiredBytes <= availableBytes
+    }
+
     /// Pre-load RAM feasibility assessment. Records `lastRAMFeasibility` for
     /// observability but does not reject a user-requested load solely because
     /// RAM is currently full or projected pressure crosses a configured
@@ -3480,31 +3754,33 @@ public actor ModelRuntime {
 
         lastRAMFeasibility = assessment
 
-        // Materialized (mmap-off) loads make the verdict authoritative: a
-        // load that truly cannot fit aborts in a Metal command-buffer
-        // completion handler mid-materialization instead of degrading
-        // gracefully. Refuse those with a clear error. macOS does reclaim
-        // its own file cache under allocation pressure (the Python runtime
-        // materializes this same 94 GB pack repeatedly with a warm cache),
-        // so grant the same 10%-of-physical reclaim slack the advisory
-        // verdict uses; the margin covers load-time transients. KV headroom
-        // is deliberately not required up front — KV grows later under the
-        // normal budget.
+        // Resident compute needs actual reclaimable capacity for weights,
+        // KV and working state. The host sample already credits file cache;
+        // adding 10% "slack" would instead borrow from anonymous memory and
+        // leave no host reserve during the first prefill. Zero/failed samples
+        // must also refuse rather than silently bypass this check.
         if refuseOnShortfall {
-            let workingMargin: Int64 = 4 << 30
-            let required = incomingLoadFootprintBytes + workingMargin
+            let required = Self.materializedLoadRequiredAvailableBytes(
+                loadFootprintBytes: incomingLoadFootprintBytes,
+                kvHeadroomBytes: kvHeadroom,
+                estimatedWorkingSetBytes: Self.estimatedMemorySafetyWorkingSetBytes(
+                    loadFootprintBytes: incomingLoadFootprintBytes,
+                    physicalMemoryBytes: UInt64(physical), modelDirectory: modelDirectory),
+                inflightOtherBytes: inflightOther,
+                physicalBytes: physical)
             let available = assessment.availableMemoryBytes
-            let reclaimSlack = physical / 10
-            if available > 0, required > available + reclaimSlack {
+            if !Self.materializedLoadFits(requiredBytes: required, availableBytes: available) {
+                let requiredDescription = required.map { "~\($0 >> 30) GiB" } ?? "an unavailable working-set estimate"
+                let message = "Not enough reclaimable memory to load \(modelName): resident weights, KV, working state and host reserve require \(requiredDescription), but only ~\(max(0, available) >> 30) GiB is available. Close other apps or unload other models, then retry."
+                lastMemorySafetyLoadDecision = lastMemorySafetyLoadDecision?.refusingHostCapacity(message)
                 genLog.error(
-                    "loadContainer: refusing materialized load of \(modelName, privacy: .public): required=\(required, privacy: .public) available=\(available, privacy: .public)"
+                    "loadContainer: refusing materialized load of \(modelName, privacy: .public): required=\(requiredDescription, privacy: .public) available=\(available, privacy: .public)"
                 )
                 throw NSError(
                     domain: "ModelRuntime",
                     code: 507,
                     userInfo: [
-                        NSLocalizedDescriptionKey:
-                            "Not enough free memory to load \(modelName): it needs ~\(required >> 30) GB free (\(incomingLoadFootprintBytes >> 30) GB of weights plus working margin) but only \(available >> 30) GB is available. Close other apps or unload other models, then retry."
+                        NSLocalizedDescriptionKey: message
                     ]
                 )
             }
@@ -3700,7 +3976,8 @@ public actor ModelRuntime {
         let estimatedWorkingSetBytes = targetLoadFootprintBytes.flatMap {
             Self.estimatedMemorySafetyWorkingSetBytes(
                 loadFootprintBytes: $0,
-                physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory
+                physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory,
+                modelDirectory: localURL
             )
         }
         let admissionPlan = Self.resolveMemorySafetyLoadPlan(
@@ -4473,7 +4750,8 @@ public actor ModelRuntime {
 
         let estimatedWorkingSetBytes = Self.estimatedMemorySafetyWorkingSetBytes(
             loadFootprintBytes: loadFootprintBytes,
-            physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory
+            physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory,
+            modelDirectory: localURL
         )
         let admissionPlan = Self.resolveMemorySafetyLoadPlan(
             modelName: name,
@@ -4683,8 +4961,8 @@ public actor ModelRuntime {
                 nativeMTPStatus: mtpPlan.statusLine,
                 nativeMTPReason: mtpPlan.reason,
                 nativeMTPAdmission: mtpPlan.admission,
-                // Only a user-typed Memory Safety override may clamp the MLX
-                // freed-buffer pool below the weight-scaled dynamic limit.
+                // Profile allocator defaults must not replace the dynamic pool.
+                // The total admitted budget also bounds its remaining capacity.
                 // Routing the resolved plan value here folded the profile
                 // default (128 MiB for Safe Auto / Strict) into every load,
                 // which collapses deep-context decode under memory pressure
@@ -4693,6 +4971,8 @@ public actor ModelRuntime {
                     customAllocatorCacheBytes:
                         serverSettings.memorySafety.customAllocatorCacheBytes
                 ),
+                admittedWorkingSetBytes: estimatedWorkingSetBytes,
+                admittedLoadBudgetBytes: admissionPlan.resolvedLoadBudgetBytes,
                 // Store the load-time DSV4 fact. Native MTP is resolved per
                 // request so toggling MTP Off cannot keep using the enlarged
                 // request allocator window.
@@ -4915,7 +5195,6 @@ public actor ModelRuntime {
             config.enableDiskCache = false
             config.diskCacheDir = nil
         }
-        applyHostAwareDiskCacheCeiling(to: &config, diskCacheDir: diskCacheDir)
         return config
     }
 
@@ -4943,109 +5222,11 @@ public actor ModelRuntime {
         }
     }
 
-    /// Bound the L2 disk-cache cap to a fraction of CURRENT free disk so a
-    /// constrained volume can't be driven into disk pressure by the KV cache.
-    ///
-    /// Why: the resolved cap is vmlx's `diskCacheMaxGB` default (10 GB) unless
-    /// the user/profile set one. On a host with tens-of-GB free that 10 GB cap
-    /// can consume most of the volume on big-model agentic runs (see
-    /// `perf-gemma4-12b-mxfp8-baseline.md` Lever 2/5: 9.6 GB written in ~90 s).
-    /// vmlx's own `LOW-SPEC-HOST-GUIDANCE` already recommends host-relative caps
-    /// (4 GB low-spec, 8–16 GB only when > 200 GB free) — this enforces that
-    /// shape automatically.
-    ///
-    /// Invariant: the disk cache may never use more than `freeFraction` of the
-    /// free bytes observed at load. On a healthy host (free ≥ cap / freeFraction,
-    /// i.e. ≥ ~40 GB for the 10 GB default at 0.25) the configured cap is the
-    /// min term and the cap is UNCHANGED → no reuse loss where there's room. If
-    /// even the bounded cap falls below a useful floor, the disk tier is
-    /// disabled rather than left to thrash a near-full volume. Free-space is
-    /// unknowable on some volumes (`volumeFreeBytes == nil`) → leave the
-    /// configured cap as-is rather than guess.
-    private nonisolated static func applyHostAwareDiskCacheCeiling(
-        to config: inout CacheCoordinatorConfig,
-        diskCacheDir: URL?,
-        freeFraction: Double = 0.25,
-        minUsefulGB: Double = 1.0
-    ) {
-        // A non-positive cap is savable through the settings UI and the admin
-        // API (Save is not gated on validation errors). Zero reaches
-        // `DiskCache(maxSizeGB: 0)`, whose quota pass then evicts EVERY entry
-        // at insert — the disk tier reports stores and hits nothing, with no
-        // eviction trace. Normalize here, on the engine-effective path, so
-        // both entry points are covered; the guard below must not run before
-        // this or a 0 cap on an unknown-free-space volume slips through.
-        let rawConfiguredCapGB = Double(config.diskCacheMaxGB)
-        if rawConfiguredCapGB <= 0 {
-            genLog.error(
-                "buildCacheCoordinatorConfig: configured disk-L2 cap \(String(format: "%.1f", rawConfiguredCapGB), privacy: .public) GB is non-positive — a zero cap self-evicts every entry at insert; using engine default 10 GB"
-            )
-            config.diskCacheMaxGB = 10.0
-        }
-        guard config.enableDiskCache, let diskCacheDir,
-            let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: diskCacheDir.path),
-            freeBytes > 0
-        else { return }
-
-        let freeGB = Double(freeBytes) / 1_073_741_824.0
-        let configuredCapGB = Double(config.diskCacheMaxGB)
-        let decision = hostAwareDiskCacheDecision(
-            configuredCapGB: configuredCapGB,
-            freeBytes: freeBytes,
-            freeFraction: freeFraction,
-            minUsefulGB: minUsefulGB
-        )
-
-        if !decision.enabled {
-            genLog.notice(
-                "buildCacheCoordinatorConfig: disabling disk-L2 — only \(String(format: "%.1f", freeGB), privacy: .public) GB free (below host-aware floor of \(String(format: "%.1f", minUsefulGB / freeFraction), privacy: .public) GB)"
-            )
-            config.enableDiskCache = false
-            config.diskCacheDir = nil
-        } else if decision.capGB < configuredCapGB {
-            genLog.notice(
-                "buildCacheCoordinatorConfig: disk-L2 cap \(String(format: "%.1f", configuredCapGB), privacy: .public)→\(String(format: "%.1f", decision.capGB), privacy: .public) GB (host-aware, \(String(format: "%.1f", freeGB), privacy: .public) GB free)"
-            )
-            config.diskCacheMaxGB = Float(decision.capGB)
-        }
-    }
-
-    /// Pure host-aware disk-cap decision (no I/O), extracted so the policy is
-    /// unit-testable. Returns whether the disk tier stays enabled and the
-    /// resulting cap in GB.
-    ///
-    /// - `freeBytes <= 0` (unknown free space) → leave the configured cap as-is.
-    /// - cap is bounded to `freeFraction` of free disk (the cache may never use
-    ///   more than that fraction of what was free at load).
-    /// - if the bounded cap is below `minUsefulGB`, the tier is disabled rather
-    ///   than left to thrash a near-full volume.
-    /// - on a healthy host (free ≥ configuredCap / freeFraction) the configured
-    ///   cap is the min term → returned UNCHANGED (no reuse loss).
-    nonisolated static func hostAwareDiskCacheDecision(
-        configuredCapGB: Double,
-        freeBytes: Int64,
-        freeFraction: Double = 0.25,
-        minUsefulGB: Double = 1.0
-    ) -> (enabled: Bool, capGB: Double) {
-        guard freeBytes > 0 else { return (true, configuredCapGB) }
-        let freeGB = Double(freeBytes) / 1_073_741_824.0
-        let headroomGB = freeGB * freeFraction
-
-        // Disable only when the VOLUME is too full to host a useful cache.
-        //
-        // The old test was `min(configured, headroom) < minUseful`, which also
-        // fired when the user's own share was the smaller term — so choosing a
-        // deliberately small cache silently switched the tier OFF instead of
-        // giving them the small cache they asked for. On a 256 GB disk a 0.2%
-        // share is 0.51 GB, under the 1 GB floor, and the cache just stopped
-        // existing.
-        //
-        // Same shape as the auto-size floor: a bound meant to protect a
-        // nearly-full disk must not override a number the user typed. Their
-        // machine, their call — and a 0.51 GB cache still resumes short
-        // conversations, which beats no cache at all.
-        if headroomGB < minUsefulGB { return (false, configuredCapGB) }
-        return (true, min(configuredCapGB, headroomGB))
+    /// Keep configured-root usage visible even while reuse is disabled.
+    nonisolated static func diskCacheDirectoryForDisplay(for cache: VMLXServerCacheSettings) -> URL {
+        let path = !cache.pagedKV.enabled && !cache.blockDisk.enabled && cache.legacyDisk.enabled
+            ? cache.legacyDisk.directory : cache.blockDisk.directory
+        return resolvedServerRuntimeDirectory(path) ?? OsaurusPaths.diskKVCache()
     }
 
     nonisolated static func cacheDiskDirectoryOverride(
@@ -5751,7 +5932,12 @@ public actor ModelRuntime {
     /// empty list, the single invocation directly for one (backwards
     /// compatibility with consumers that catch `ServiceToolInvocation`),
     /// and a `ServiceToolInvocations` batch for two or more.
-    private static func throwIfTools(_ invs: [ServiceToolInvocation]) throws {
+    private nonisolated static func throwIfTools(
+        _ invs: [ServiceToolInvocation], stopReason: String? = nil
+    ) throws {
+        if stopReason == "length", !invs.isEmpty {
+            throw ServiceToolResponseExhausted(toolCallCount: invs.count)
+        }
         if invs.count == 1 {
             throw invs[0]
         } else if !invs.isEmpty {
@@ -5768,8 +5954,6 @@ public actor ModelRuntime {
         modelId: String,
         modelName: String
     ) async throws -> String {
-        var accumulated = ""
-        var pendingTools: [ServiceToolInvocation] = []
         let forcedToolMessages = ModelRuntime.applyForcedToolChoiceDirective(
             messages,
             toolChoice: toolChoice,
@@ -5791,6 +5975,15 @@ public actor ModelRuntime {
             modelId: modelId,
             modelName: modelName
         )
+        return try await Self.collectToolEventResponse(events)
+    }
+
+    nonisolated static func collectToolEventResponse(
+        _ events: AsyncThrowingStream<ModelRuntimeEvent, Error>
+    ) async throws -> String {
+        var accumulated = ""
+        var pendingTools: [ServiceToolInvocation] = []
+        var terminalStopReason: String?
         // Drain the entire stream so multiple tool invocations parsed by
         // vmlx-swift in a single completion are surfaced together
         // (`BatchEngine.generate` emits one `.toolCall` event per detected
@@ -5817,11 +6010,11 @@ public actor ModelRuntime {
                 // UI-only affordance; only the committed `.toolInvocation`
                 // matters here. Dropped, like `.reasoning`/`.prefillProgress`.
                 break
-            case .completionInfo:
-                break
+            case .completionInfo(_, _, _, let stopReason, _, _):
+                terminalStopReason = stopReason
             }
         }
-        try Self.throwIfTools(pendingTools)
+        try Self.throwIfTools(pendingTools, stopReason: terminalStopReason)
         return accumulated
     }
 
@@ -5935,23 +6128,23 @@ public actor ModelRuntime {
     ) -> AsyncThrowingStream<String, Error> {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let producerTask = Task {
-            var dispatchedTools = false
+            var publishedTerminal = false
             var completedTools: [ServiceToolInvocation] = []
+            var terminalStopReason: String?
             var hasCompletedToolPreview = false
             let traceID = PrefillDebugLog.shared.isEnabled ? UUID().uuidString : ""
 
             func finishTools() {
-                if !completedTools.isEmpty {
+                if !completedTools.isEmpty, terminalStopReason != "length" {
                     PrefillDebugLog.shared.log(
                         "TOOL-BATCH published id=\(traceID) count=\(completedTools.count) completeResponse=\(collectCompleteResponse)"
                     )
                 }
-                if completedTools.count == 1 {
-                    continuation.finish(throwing: completedTools[0])
-                } else if !completedTools.isEmpty {
-                    continuation.finish(throwing: ServiceToolInvocations(invocations: completedTools))
-                } else {
+                do {
+                    try Self.throwIfTools(completedTools, stopReason: terminalStopReason)
                     continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
                 }
             }
 
@@ -5966,7 +6159,7 @@ public actor ModelRuntime {
                     }
                     // Only logical completion closes the batch. Any wrapper
                     // cleanup after it still owns its generation/cache lease.
-                    if dispatchedTools { continue }
+                    if publishedTerminal { continue }
 
                     if case .completionInfo(
                         let tokenCount,
@@ -5976,6 +6169,7 @@ public actor ModelRuntime {
                         let promptTokensPerSecond,
                         let mtp
                     ) = ev {
+                        terminalStopReason = stopReason
                         continuation.yield(
                             StreamingStatsHint.encode(
                                 tokenCount: tokenCount,
@@ -5987,7 +6181,7 @@ public actor ModelRuntime {
                             )
                         )
                         if !collectCompleteResponse, !completedTools.isEmpty {
-                            dispatchedTools = true
+                            publishedTerminal = true
                             finishTools()
                         }
                         continue
@@ -6043,21 +6237,21 @@ public actor ModelRuntime {
                 }
                 if Task.isCancelled {
                     continuation.finish()
-                } else if !dispatchedTools {
+                } else if !publishedTerminal {
                     // Clean EOF also supports producers without a stats event.
                     finishTools()
                 }
             } catch {
                 if Task.isCancelled {
                     continuation.finish()
-                } else if !dispatchedTools {
+                } else if !publishedTerminal {
                     continuation.finish(throwing: error)
                 } else {
-                    // The tool is already executing and cannot receive a
-                    // second terminal result. Keep the cache-drain failure
-                    // visible in diagnostics instead of perturbing the loop.
+                    // Success or exhaustion has already reached the consumer.
+                    // Keep a later cache-drain failure visible without
+                    // publishing a second terminal result.
                     genLog.error(
-                        "tool-call terminal drain failed after dispatch: \(error.localizedDescription, privacy: .public)"
+                        "tool-response drain failed after completion: \(error.localizedDescription, privacy: .public)"
                     )
                 }
             }
@@ -6713,6 +6907,7 @@ public actor ModelRuntime {
         let imageSources = try msgs.map { try extractImageSources(from: $0) }
         var audioMetrics = AudioMaterializationMetrics()
         for (m, images) in zip(msgs, imageSources) {
+            let previousCount = out.count
             let videos = extractVideoSources(from: m)
             let audios = extractAudioSources(from: m, metrics: &audioMetrics)
             switch m.role {
@@ -6797,6 +6992,17 @@ public actor ModelRuntime {
                         audios: audios
                     )
                 )
+            }
+            if out.count > previousCount, let parts = m.contentParts,
+                m.role != "tool" || preserveStructuredToolHistory {
+                out[out.count - 1].contentParts = parts.map { part in
+                    switch part {
+                    case .text(let text): return .text(text)
+                    case .imageUrl: return .image
+                    case .videoUrl: return .video
+                    case .audioInput: return .audio
+                    }
+                }
             }
         }
         if audioMetrics.inputCount > 0 {
