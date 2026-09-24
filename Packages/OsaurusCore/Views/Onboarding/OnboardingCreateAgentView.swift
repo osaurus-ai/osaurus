@@ -73,6 +73,7 @@ final class CreateAgentState: ObservableObject {
     /// Editable name, surfaced in the chip under the avatar. Independent of
     /// the specialty (the Figma name "Helper" doesn't change with the cards).
     @Published var name: String
+    @Published var description: String = ""
     @Published var isSaving: Bool = false
 
     /// ID of the agent created by `saveAgent`. Read by
@@ -91,9 +92,9 @@ final class CreateAgentState: ObservableObject {
 
     var selectedTemplate: AgentStarterTemplate { selectedSpecialty.template }
 
-    /// Always savable — selections always have a default and the name falls
-    /// back to the default, so the CTA is enabled immediately.
-    var canSave: Bool { !isSaving }
+    var canSave: Bool {
+        !isSaving && AgentDescriptionPolicy.violation(in: description) == nil
+    }
 
     var trimmedName: String {
         name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -116,7 +117,7 @@ final class CreateAgentState: ObservableObject {
     /// responsible for advancing the flow afterwards.
     ///
     /// The system prompt is derived from the chosen specialty's archetype and
-    /// the description from its tagline; both are editable later in Settings.
+    /// the description from the user’s required input; both are editable later in Settings.
     ///
     /// Idempotent: if the user navigates back from a later onboarding
     /// step and re-fires the CTA, the previously-created agent's id is
@@ -125,11 +126,13 @@ final class CreateAgentState: ObservableObject {
     @discardableResult
     func saveAgent() -> Bool {
         if createdAgentId != nil { return true }
-        guard !isSaving else { return false }
+        guard canSave,
+            let validDescription = try? AgentDescriptionPolicy.validated(description)
+        else { return false }
         isSaving = true
         var agent = AgentManager.newCustomAgentRecord(
             name: resolvedName,
-            description: selectedTemplate.tagline,
+            description: validDescription,
             systemPrompt: selectedTemplate.systemPrompt
         )
         agent.toolSelectionMode = .auto
@@ -190,7 +193,11 @@ struct CreateAgentStepView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .onboardingEntrance(1)
 
-            Spacer().frame(height: 40)
+            Spacer().frame(height: 20)
+
+            AgentDescriptionField(text: $state.description)
+
+            Spacer().frame(height: 20)
 
             OnboardingPillButton(
                 title: "Create your Dino",

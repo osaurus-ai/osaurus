@@ -10,6 +10,12 @@ Settings… (⌘,) opens the Management window. Type a name in the sidebar searc
 
 Ask the assistant to change declarative settings in chat (`osaurus_config`); each change shows a one-tap approval card first (see the Declarative Configuration topic).
 
+## Required agent descriptions
+
+Every new agent needs an explicit **Agent description (required)** under Settings → Agents → the agent → Configure. Explain what it does and when to delegate to it, in one line of at most 160 characters and 1,024 UTF-8 bytes. Manual creation, onboarding, and `osaurus_config` creation all require this field; a starter template does not replace the required input in those flows.
+
+Existing agents without a valid description retain their IDs, chats, tools, and settings. The Agents page lists each under **Descriptions required**, with a direct edit action. They remain unavailable as delegation targets until repaired; adding a valid description restores their eligibility within the existing allowed pool. Shared workspace agents need a valid description from their owner too. Description text is routing metadata and never grants tools or permissions.
+
 ## What the assistant can change in chat
 
 - The Orchestrator (itself): display name, model, temperature, max output tokens, persona (system prompt).

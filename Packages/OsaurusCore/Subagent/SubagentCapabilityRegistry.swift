@@ -522,7 +522,9 @@ public enum SubagentToolVisibility {
                 perAgentTargets: settings?.spawnableAgentIDs ?? []
             )
             return allowed.compactMap { id in
-                AgentManager.shared.agent(for: id).map { (id, $0.name) }
+                guard let agent = AgentManager.shared.agent(for: id),
+                    !agent.requiresDescriptionRepair else { return nil }
+                return (id, agent.name)
             }
         }
         guard !needle.isEmpty else {
@@ -582,9 +584,13 @@ public enum SubagentToolVisibility {
                 )
                 return (
                     localIDs.compactMap { id in
-                        AgentManager.shared.agent(for: id).map { (id, $0.name) }
+                        guard let agent = AgentManager.shared.agent(for: id),
+                            !agent.requiresDescriptionRepair else { return nil }
+                        return (id, agent.name)
                     },
-                    refs.map { ($0, AgentTargetResolver.displayName(for: $0)) }
+                    SpawnDescriptors.resolveWorkspaceTargets(
+                        configured: refs, sources: SpawnDescriptors.liveWorkspaceAgentSources(for: refs)
+                    ).filter { $0.state == .runnable }.map { ($0.descriptor.ref, $0.descriptor.name) }
                 )
             }
         return resolveSpawnableAgentTarget(needle, local: local, workspace: workspace)

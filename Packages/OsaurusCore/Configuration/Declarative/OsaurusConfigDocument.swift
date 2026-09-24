@@ -369,9 +369,9 @@ public struct AgentCapabilitiesEntry: Codable, Equatable, Sendable {
 public struct AgentEntry: Equatable, Sendable {
     public var name: String
     /// Optional `AgentStarterTemplate` id (`coder`, `researcher`, `writer`,
-    /// `assistant`, `productivity`): seeds description + system prompt when
-    /// the entry omits them, so `agents: [{name: Coder, template: coder}]`
-    /// creates a runnable agent in one line.
+    /// `assistant`, `productivity`): seeds an omitted system prompt.
+    /// New agents also require an explicit concise description; templates
+    /// never substitute for that author-supplied routing metadata.
     public var template: String?
     public var description: String?
     public var systemPrompt: String?

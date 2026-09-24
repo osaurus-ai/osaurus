@@ -729,6 +729,9 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                     return [
                         "id": agent.id.uuidString,
                         "name": agent.name,
+                        "description": agent.description,
+                        "description_required": agent.requiresDescriptionRepair,
+                        "description_validation": AgentDescriptionPolicy.violation(in: agent.description)?.message ?? "",
                         "is_built_in": agent.isBuiltIn,
                         "tools_enabled": agent.toolsEnabled,
                         "computer_use_enabled": agent.settings.computerUseEnabled,
@@ -1234,6 +1237,8 @@ extension OsaurusInspectTool {
                         "id": agent.id.uuidString,
                         "name": agent.name,
                         "description": agent.description,
+                        "description_required": agent.requiresDescriptionRepair,
+                        "description_validation": AgentDescriptionPolicy.violation(in: agent.description)?.message ?? "",
                         "system_prompt": agent.systemPrompt,
                         "model": agent.defaultModel ?? "",
                         "temperature": agent.temperature ?? 0,

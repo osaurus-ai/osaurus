@@ -2025,12 +2025,20 @@ public struct SystemPromptComposer: Sendable {
     /// parameter schema (only the prose description is trimmed).
     static func forcedCompactBootstrapSpec(_ tool: Tool) -> Tool {
         let name = tool.function.name
+        var description = oneLineToolDescription(tool.function.description)
+        if name == SubagentCapabilityRegistry.spawnAgentToolName,
+            let original = tool.function.description,
+            let boundary = original.range(of: SpawnAgentTool.routingMetadataMarker) {
+            // Routing data is required even when a constrained schema is
+            // compacted again by a downstream bootstrap consumer.
+            description = (description ?? "") + String(original[boundary.lowerBound...])
+        }
         if constraintPreservingBootstrapToolNames.contains(name) {
             return Tool(
                 type: tool.type,
                 function: ToolFunction(
                     name: name,
-                    description: oneLineToolDescription(tool.function.description),
+                    description: description,
                     parameters: tool.function.parameters
                 )
             )
@@ -2039,7 +2047,7 @@ public struct SystemPromptComposer: Sendable {
             type: tool.type,
             function: ToolFunction(
                 name: name,
-                description: oneLineToolDescription(tool.function.description),
+                description: description,
                 parameters: compactParameterSkeleton(tool.function.parameters)
             )
         )
@@ -3095,15 +3103,19 @@ public struct SystemPromptComposer: Sendable {
                 perAgentEnabled: snapshot.spawnDelegationEnabled,
                 perAgentTargets: snapshot.spawnableWorkspaceAgents
             )
+        let currentTargets = spawnTargets ?? SpawnDescriptors.resolveForPreview(
+            agentIDs: configuredAgentIDs,
+            launcherModelOverride: configuredSpawnPools(snapshot: snapshot).launcherModelOverride,
+            workspaceAgents: configuredWorkspaceAgents
+        )
         let allowedAgentIDs =
-            (spawnTargets?.runnableAgentIDs ?? configuredAgentIDs)
+            currentTargets.runnableAgentIDs
             .filter { $0 != snapshot.agentId }
         // Workspace targets enter the enum by ADDRESS (durable), never by
         // presence or provider state — see `SpawnDescriptors` and the
         // prefix-cache invariant in `WorkspaceAgentLiveness`.
         let allowedWorkspaceAgents =
-            spawnTargets?.workspaceAgents.map { ($0.ref, $0.name) }
-            ?? configuredWorkspaceAgents.map { ($0, AgentTargetResolver.displayName(for: $0)) }
+            currentTargets.workspaceAgents.map { ($0.ref, $0.name) }
         let allowedWorkspaceAddresses = allowedWorkspaceAgents.map(\.0.agentAddress)
         // Display names for the allow-listed agents, in `allowedAgentIDs` order.
         // Threaded into the schema enums so a strict, enum-enforcing provider
@@ -3114,7 +3126,7 @@ public struct SystemPromptComposer: Sendable {
             + allowedWorkspaceAgents.map(\.1)
 
         if let spawnAgent = byName[SubagentCapabilityRegistry.spawnAgentToolName] {
-            if spawnTargets != nil, allowedAgentIDs.isEmpty, allowedWorkspaceAddresses.isEmpty {
+            if allowedAgentIDs.isEmpty, allowedWorkspaceAddresses.isEmpty {
                 byName.removeValue(forKey: SubagentCapabilityRegistry.spawnAgentToolName)
             } else {
                 byName[SubagentCapabilityRegistry.spawnAgentToolName] =
@@ -3122,7 +3134,9 @@ public struct SystemPromptComposer: Sendable {
                         spawnAgent,
                         allowedAgentIDs: allowedAgentIDs,
                         allowedAgentNames: allowedAgentNames,
-                        allowedWorkspaceAddresses: allowedWorkspaceAddresses
+                        allowedWorkspaceAddresses: allowedWorkspaceAddresses,
+                        agents: currentTargets.agents,
+                        workspaceAgents: currentTargets.workspaceAgents
                     )
             }
         }

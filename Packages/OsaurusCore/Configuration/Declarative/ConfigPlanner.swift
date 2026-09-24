@@ -398,6 +398,14 @@ enum ConfigPlanner {
                 if !seen.insert(key).inserted {
                     issues.append("agents[\(entry.name)]: duplicate agent name in document.")
                 }
+                let existingAgent = AgentManager.shared.agents.first {
+                    !$0.isBuiltIn && $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == key
+                }
+                if entry.description != nil || existingAgent == nil,
+                    let violation = AgentDescriptionPolicy.violation(in: entry.description ?? "")
+                {
+                    issues.append("agents[\(entry.name)].description: \(violation.message)")
+                }
                 checkRange(entry.temperature, 0.0...2.0, "agents[\(entry.name)].temperature", &issues)
                 checkRange(entry.maxTokens, 1...10_000_000, "agents[\(entry.name)].max_tokens", &issues)
                 if let ids = entry.capabilities?.knowledgeCollectionIds {

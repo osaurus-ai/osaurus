@@ -5,9 +5,8 @@
 //  Lightweight presets used by the create-agent flows (both the in-app
 //  AgentEditorSheet and the onboarding "Create your agent" step). Picking
 //  one prefills the system prompt and (only when the user hasn't typed yet)
-//  a default name. Description, generation overrides, and visual theme are
-//  intentionally NOT part of the create flow — they're all editable
-//  post-creation in Configure.
+//  a default name. Creation requires an explicit routing description.
+//  Generation overrides and visual theme remain editable in Configure.
 //
 
 import Foundation
@@ -80,6 +79,19 @@ enum AgentStarterTemplate: String, CaseIterable, Identifiable {
             return L("A pragmatic pair-programmer for reading and writing code.")
         case .productivity:
             return L("A focused helper for planning, todos, and staying on track.")
+        }
+    }
+
+    /// Reviewed metadata for the explicit built-in starter-library action.
+    /// Manual UI/config creation still requires its own description.
+    var routingDescription: String {
+        switch self {
+        case .blank: return ""
+        case .assistant: return "Handles a separate everyday task when an independent assistant is useful. General questions can stay in the current chat."
+        case .writer: return "Drafts, edits and polishes prose. Use for a focused writing or revision task with a specified audience and style."
+        case .researcher: return "Researches questions, compares sources and flags uncertainty. Use when a task needs evidence gathering and synthesis."
+        case .coder: return "Reads, writes and reviews code. Use for a focused programming task with relevant code, requirements and workspace access."
+        case .productivity: return "Organizes plans, priorities and action lists. Use to break a complex goal into practical next steps."
         }
     }
 

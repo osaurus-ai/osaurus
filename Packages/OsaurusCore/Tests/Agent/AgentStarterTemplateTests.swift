@@ -28,7 +28,19 @@ struct AgentStarterTemplateTests {
         #expect(state.selectedTemplate == .assistant)
         #expect(state.selectedAvatar == AgentMascot.green.id)
         #expect(state.name == CreateAgentState.defaultName)
+        #expect(!state.canSave)
+        state.description = "Handles independent everyday tasks when delegation is useful."
         #expect(state.canSave)
+        state.description = "   "
+        #expect(!state.canSave)
+    }
+
+    @Test("Reviewed default and starter descriptions satisfy the routing contract")
+    func reviewedDescriptionsAreValid() {
+        #expect(!Agent.default.requiresDescriptionRepair)
+        for template in AgentStarterTemplate.allCases where template != .blank {
+            #expect(AgentDescriptionPolicy.violation(in: template.routingDescription) == nil)
+        }
     }
 
     @Test("Name is independent of the selected specialty")

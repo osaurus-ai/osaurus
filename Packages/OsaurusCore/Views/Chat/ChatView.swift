@@ -9813,6 +9813,11 @@ struct ChatView: View {
                                     .padding(.horizontal, Self.composerHorizontalInset)
                             }
 
+                            AgentDescriptionRepairNotice()
+                                .padding(.horizontal, Self.composerHorizontalInset)
+                                .frame(maxWidth: 1100)
+                                .frame(maxWidth: .infinity)
+
                             ChatPersistenceNotice(sessionId: observedSession.sessionId)
                                 .padding(.horizontal, Self.composerHorizontalInset)
                                 .frame(maxWidth: 1100)

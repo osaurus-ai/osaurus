@@ -23,6 +23,15 @@ struct SystemPromptComposerToolResolutionTests {
 
     // MARK: - Helpers
 
+    /// These schema tests supply explicit request-local model availability;
+    /// they never install or load a model to exercise metadata composition.
+    private func runnableTargets(_ agents: [Agent]) -> SpawnTargetAvailabilitySnapshot {
+        SpawnTargetAvailabilitySnapshot(agentTargets: agents.map { agent in
+            .init(descriptor: .init(id: agent.id, name: agent.name, description: agent.description,
+                modelId: agent.defaultModel, isLocal: true, providerName: nil), state: .runnable)
+        })
+    }
+
     private func withSandboxAgent(
         autonomous: Bool,
         backgroundProcesses: Bool = false,
@@ -1832,19 +1841,22 @@ struct SystemPromptComposerToolResolutionTests {
     func autoMode_customAgentSurfacesSpawnOnlyWithToggleAndTargets() async {
         await withSubagentSandbox {
             let helperID = UUID(uuidString: "40000000-0000-4000-8000-000000000001")!
+            let helper = Agent(id: helperID, name: "Description fixture", description: "Handles independent test tasks.")
+            AgentManager.shared.add(helper)
             let tools = SystemPromptComposer.resolveTools(
                 snapshot: makeSnapshot(
                     spawnDelegationEnabled: true,
                     spawnableAgentIDs: [helperID]
                 ),
-                executionMode: .none
+                executionMode: .none,
+                spawnTargets: runnableTargets([helper])
             )
             let withAgents = Set(tools.map { $0.function.name })
             #expect(withAgents.contains("spawn_agent"))
             #expect(!withAgents.contains("spawn_model"))
             #expect(!withAgents.contains("spawn_batch"))
             #expect(!withAgents.contains("image"))
-            #expect(spawnAgentEnum(tools) == [helperID.uuidString])
+            #expect(spawnAgentEnum(tools) == [helperID.uuidString, helper.name])
 
             // Toggle on but the list is empty → nothing to spawn → hidden.
             let noTargets = Set(
@@ -1857,6 +1869,7 @@ struct SystemPromptComposerToolResolutionTests {
                 ).map { $0.function.name }
             )
             #expect(!noTargets.contains("spawn_agent"))
+            _ = await AgentManager.shared.delete(id: helperID)
         }
     }
 
@@ -1869,6 +1882,7 @@ struct SystemPromptComposerToolResolutionTests {
             let manager = AgentManager.shared
             let worker = Agent(
                 name: "Frozen delegation target",
+                description: "Handles a stable delegated task.",
                 defaultModel: "local/frozen-agent-model",
                 autonomousExec: AutonomousExecConfig(enabled: false)
             )
@@ -1883,13 +1897,15 @@ struct SystemPromptComposerToolResolutionTests {
             let snapshot = makeSnapshotForDefaultAgent()
             let first = SystemPromptComposer.resolveTools(
                 snapshot: snapshot,
-                executionMode: .none
+                executionMode: .none,
+                spawnTargets: runnableTargets([worker])
             )
             let frozenFollowup = SystemPromptComposer.resolveTools(
                 snapshot: snapshot,
                 executionMode: .none,
                 frozenAlwaysLoadedNames: Set(first.map(\.function.name)),
-                frozenToolSpecs: first
+                frozenToolSpecs: first,
+                spawnTargets: runnableTargets([worker])
             )
 
             #expect(spawnAgentEnum(first) == [worker.id.uuidString, "Frozen delegation target"])
@@ -1911,11 +1927,13 @@ struct SystemPromptComposerToolResolutionTests {
             let manager = AgentManager.shared
             let oldAgent = Agent(
                 name: "Stale delegation target",
+                description: "Handles the previously allowed task.",
                 defaultModel: "local/old-agent-model",
                 autonomousExec: AutonomousExecConfig(enabled: false)
             )
             let newAgent = Agent(
                 name: "Fresh delegation target",
+                description: "Handles the newly allowed task.",
                 defaultModel: "local/new-agent-model",
                 autonomousExec: AutonomousExecConfig(enabled: false)
             )
@@ -1931,7 +1949,8 @@ struct SystemPromptComposerToolResolutionTests {
             let snapshot = makeSnapshotForDefaultAgent()
             let frozen = SystemPromptComposer.resolveTools(
                 snapshot: snapshot,
-                executionMode: .none
+                executionMode: .none,
+                spawnTargets: runnableTargets([oldAgent])
             )
             // The enum carries agent UUIDs then display names (issue #2408).
             #expect(spawnAgentEnum(frozen) == [oldAgent.id.uuidString, "Stale delegation target"])
@@ -1947,7 +1966,8 @@ struct SystemPromptComposerToolResolutionTests {
                 snapshot: snapshot,
                 executionMode: .none,
                 frozenAlwaysLoadedNames: Set(frozen.map(\.function.name)),
-                frozenToolSpecs: frozen
+                frozenToolSpecs: frozen,
+                spawnTargets: runnableTargets([newAgent])
             )
 
             #expect(spawnAgentEnum(refreshed) == [newAgent.id.uuidString, "Fresh delegation target"])

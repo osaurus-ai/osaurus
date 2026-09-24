@@ -142,6 +142,7 @@ public struct SpawnWorkspaceAgentDescriptor: Sendable, Equatable {
 /// or removed in Settings.
 enum SpawnTargetState: Sendable, Equatable {
     case runnable
+    case descriptionRequired
     case checking
     case disconnected
     case missing
@@ -152,7 +153,7 @@ struct SpawnAgentTarget: Sendable, Equatable {
     let state: SpawnTargetState
 }
 
-/// A workspace target is `runnable` or `missing` ONLY (never `checking` /
+/// A workspace target is `runnable`, `descriptionRequired`, or `missing` (never `checking` /
 /// `disconnected`): membership is durable state that changes by user action
 /// (unshare, leave workspace, router off), like deleting a local agent.
 struct SpawnWorkspaceAgentTarget: Sendable, Equatable {
@@ -369,7 +370,8 @@ public enum SpawnDescriptors {
                     providerName: locality.providerName,
                     workingFolderPath: source.workingFolderPath
                 ),
-                state: modelState ?? .missing
+                state: AgentDescriptionPolicy.violation(in: description) == nil
+                    ? (modelState ?? .missing) : .descriptionRequired
             )
         }
 
@@ -413,7 +415,8 @@ public enum SpawnDescriptors {
                     workspaceName: source.workspaceName,
                     ownerName: source.ownerName
                 ),
-                state: .runnable
+                state: AgentDescriptionPolicy.violation(in: description) == nil
+                    ? .runnable : .descriptionRequired
             )
         }
     }

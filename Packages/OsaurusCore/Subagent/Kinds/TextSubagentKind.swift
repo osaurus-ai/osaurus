@@ -492,6 +492,16 @@ final class TextSubagentKind:
                     .owner?.friendlyName
             )
         }
+        let descriptionIsValid = await MainActor.run {
+            SpawnDescriptors.resolveWorkspaceTargets(
+                configured: [ref], sources: SpawnDescriptors.liveWorkspaceAgentSources(for: [ref])
+            ).contains { $0.state == .runnable }
+        }
+        guard descriptionIsValid || isOwn else {
+            throw SubagentError.unavailable(
+                "Workspace agent '\(name)' needs a valid description before delegation. Ask its owner to add one in Agents → Configure, then refresh the workspace."
+            )
+        }
         self.resolvedWorkspaceName = workspaceName
         self.resolvedOwnerName = ownerName
         // One of this instance's own shared agents is a LOCAL agent; running
@@ -577,6 +587,11 @@ final class TextSubagentKind:
         }
         guard let agent else {
             throw SubagentError.unavailable("Agent '\(agentID.uuidString)' not found.")
+        }
+        guard !agent.requiresDescriptionRepair else {
+            throw SubagentError.unavailable(
+                "Agent '\(agent.name)' needs a valid description. Open its Configure tab and add what it does and when to use it before delegating."
+            )
         }
 
         self.resolvedAgentName = agent.name

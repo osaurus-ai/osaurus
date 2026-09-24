@@ -121,6 +121,7 @@ public enum SettingsSearchIndex {
         "insights.overview",
         "agents.overview",
         "agents.configure",
+        "agents.description",
         "agents.database",
         "imageGeneration.tab",
         "imageGeneration.models",
@@ -1448,6 +1449,14 @@ public enum SettingsSearchIndex {
             ],
             disambiguation:
                 "Per-agent Advanced generation and capability toggles. Orchestrator defaults live under Orchestrator → Generation.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.description",
+            tab: .agents,
+            title: "Agent description (required)",
+            keywords: ["descriptions required", "agent description", "purpose", "routing", "legacy agent", "repair", "helper"],
+            disambiguation: "Open an agent's Configure tab to supply its required routing description.",
             declarativeSection: "agents"
         ),
         .init(

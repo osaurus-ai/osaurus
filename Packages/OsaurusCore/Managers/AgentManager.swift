@@ -366,13 +366,14 @@ public final class AgentManager: ObservableObject {
     @discardableResult
     public func create(
         name: String,
-        description: String = "",
+        description: String,
         systemPrompt: String = "",
         themeId: UUID? = nil,
         defaultModel: String? = nil,
         temperature: Float? = nil,
         maxTokens: Int? = nil
-    ) -> Agent {
+    ) throws -> Agent {
+        let description = try AgentDescriptionPolicy.validated(description)
         let agent = Self.newCustomAgentRecord(
             name: name,
             description: description,
@@ -936,12 +937,12 @@ public final class AgentManager: ObservableObject {
         for template in templates where template != .blank {
             let name = template.defaultName
             guard !existing.contains(name.lowercased()) else { continue }
-            let agent = create(
+            guard let agent = try? create(
                 name: name,
-                description: template.tagline,
+                description: template.routingDescription,
                 systemPrompt: template.systemPrompt,
                 defaultModel: model
-            )
+            ) else { continue }
             created.append(agent)
         }
         return created

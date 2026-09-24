@@ -539,6 +539,7 @@ struct ConfigPlannerTests {
     func newAgentWithComputerUse_isFlaggedHighRisk() throws {
         var document = OsaurusConfigDocument()
         var agent = AgentEntry(name: "Planner Probe Agent \(UUID().uuidString.prefix(6))")
+        agent.description = "Performs requested screen-control tasks."
         var caps = AgentCapabilitiesEntry()
         caps.computerUseEnabled = true
         agent.capabilities = caps
@@ -659,9 +660,9 @@ struct ConfigPlannerPruneIntegrityTests {
     private func withSeededAgent(
         _ body: (Agent) async throws -> Void
     ) async throws {
-        let agent = AgentManager.shared.create(
+        let agent = try AgentManager.shared.create(
             name: "Prune Probe Agent \(UUID().uuidString.prefix(6))",
-            description: "", systemPrompt: "")
+            description: "Exercises agent configuration in this isolated test.", systemPrompt: "")
         do {
             try await body(agent)
         } catch {
@@ -815,9 +816,9 @@ struct ConfigPlanFidelityTests {
 
     @Test
     func equivalentFrequencySpellings_doNotPlanAnUpdate() async throws {
-        let agent = AgentManager.shared.create(
+        let agent = try AgentManager.shared.create(
             name: "Fidelity Probe Agent \(UUID().uuidString.prefix(6))",
-            description: "", systemPrompt: "")
+            description: "Exercises agent configuration in this isolated test.", systemPrompt: "")
         let schedule = ScheduleManager.shared.create(
             name: "Fidelity Probe Schedule \(UUID().uuidString.prefix(6))",
             instructions: "do things",
@@ -853,9 +854,9 @@ struct ConfigPlanFidelityTests {
     func floatStoredTemperature_doesNotDiffAgainstYAMLDouble() async throws {
         // Live agent temperatures are Float; 0.7 as YAML Double differs in
         // the last bits. The planner must treat them as equal.
-        var agent = AgentManager.shared.create(
+        var agent = try AgentManager.shared.create(
             name: "Fidelity Probe Agent \(UUID().uuidString.prefix(6))",
-            description: "", systemPrompt: "")
+            description: "Exercises agent configuration in this isolated test.", systemPrompt: "")
         agent.temperature = Float(0.7)
         AgentManager.shared.update(agent)
 

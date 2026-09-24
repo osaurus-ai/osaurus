@@ -83,7 +83,10 @@ struct OrchestratorSchemaBudgetTests {
                     SpawnAgentTool.constrainedSpec(
                         base,
                         allowedAgentIDs: [workerID],
-                        allowedAgentNames: ["Coder"]
+                        allowedAgentNames: ["Coder"],
+                        agents: [.init(id: workerID, name: "Coder",
+                            description: "Implements and reviews focused code changes in the assigned project.",
+                            modelId: nil, isLocal: nil, providerName: nil)]
                     )
                 )
             }

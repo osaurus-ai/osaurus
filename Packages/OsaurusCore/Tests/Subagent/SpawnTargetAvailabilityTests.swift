@@ -266,4 +266,29 @@ struct SpawnTargetAvailabilityTests {
         #expect(snapshot.agents.map(\.modelId) == ["local/helper-write", "local/helper-read"])
         #expect(snapshot.agents.map(\.description) == ["Writable helper", "Read-only helper"])
     }
+    @Test("missing descriptions exclude local and workspace targets without losing identity")
+    func descriptionRepairGatesAvailability() {
+        let modelID = "local/description-fixture"
+        for description in ["", "   ", String(repeating: "x", count: 161)] {
+            let snapshot = resolve(
+                agents: [researcherID],
+                sources: [.init(id: researcherID, name: "Legacy Helper", description: description, modelId: modelID)],
+                locals: [localModel(modelID)], localAuthoritative: true)
+            #expect(snapshot.agentTargets.first?.descriptor.id == researcherID)
+            #expect(snapshot.agentTargets.first?.state == .descriptionRequired)
+            #expect(snapshot.agents.isEmpty)
+            #expect(snapshot.runnableAgentIDs.isEmpty)
+        }
+        let ref = WorkspaceAgentRef(workspaceId: "description-test", agentAddress: "0x0123456789abcdef0123456789abcdef01234567")
+        let invalid = SpawnDescriptors.resolveWorkspaceTargets(configured: [ref], sources: [
+            .init(ref: ref, name: "Remote Helper", description: "", workspaceName: "Team", ownerName: "Owner")
+        ])
+        #expect(invalid.first?.state == .descriptionRequired)
+        #expect(invalid.first?.descriptor.ref == ref)
+        let repaired = SpawnDescriptors.resolveWorkspaceTargets(configured: [ref], sources: [
+            .init(ref: ref, name: "Remote Helper", description: "Reviews research sources.", workspaceName: "Team", ownerName: "Owner")
+        ])
+        #expect(repaired.first?.state == .runnable)
+    }
+
 }

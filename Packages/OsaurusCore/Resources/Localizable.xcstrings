@@ -274913,6 +274913,193 @@
           }
         }
       }
+    },
+    "Agent description (required)": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent description (required)"
+          }
+        }
+      }
+    },
+    "What does this agent do, and when should it be used?": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What does this agent do, and when should it be used?"
+          }
+        }
+      }
+    },
+    "%lld/160 characters · up to 1,024 UTF-8 bytes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld/160 characters · up to 1,024 UTF-8 bytes"
+          }
+        }
+      }
+    },
+    "Add a description explaining what this agent does and when to use it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add a description explaining what this agent does and when to use it."
+          }
+        }
+      }
+    },
+    "Keep the description to 160 characters or fewer.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep the description to 160 characters or fewer."
+          }
+        }
+      }
+    },
+    "The description exceeds 1,024 UTF-8 bytes. Shorten the combined Unicode characters.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The description exceeds 1,024 UTF-8 bytes. Shorten the combined Unicode characters."
+          }
+        }
+      }
+    },
+    "Use one line without control or text-direction characters.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use one line without control or text-direction characters."
+          }
+        }
+      }
+    },
+    "Agent descriptions required": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent descriptions required"
+          }
+        }
+      }
+    },
+    "Add descriptions (%lld)": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add descriptions (%lld)"
+          }
+        }
+      }
+    },
+    "These agents keep their chats and settings, but cannot receive delegated tasks until you add descriptions.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "These agents keep their chats and settings, but cannot receive delegated tasks until you add descriptions."
+          }
+        }
+      }
+    },
+    "Descriptions required": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Descriptions required"
+          }
+        }
+      }
+    },
+    "Description required": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Description required"
+          }
+        }
+      }
+    },
+    "Description required — open Configure": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Description required — open Configure"
+          }
+        }
+      }
+    },
+    "Add description for %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add description for %@"
+          }
+        }
+      }
+    },
+    "Add what each agent does and when to use it. Your chats and settings are preserved; delegation is unavailable until its description is complete.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add what each agent does and when to use it. Your chats and settings are preserved; delegation is unavailable until its description is complete."
+          }
+        }
+      }
+    },
+    "Description changes are not saved until valid. This agent cannot be delegated to while its saved description needs repair.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Description changes are not saved until valid. This agent cannot be delegated to while its saved description needs repair."
+          }
+        }
+      }
+    },
+    "Configures Osaurus settings and manages agents. Use for app setup; general tasks can stay in the current chat.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Configures Osaurus settings and manages agents. Use for app setup; general tasks can stay in the current chat."
+          }
+        }
+      }
     }
   },
   "version": "1.1"

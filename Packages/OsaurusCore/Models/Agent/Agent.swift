@@ -198,6 +198,10 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var name: String
     /// Brief description of what this agent does
     public var description: String
+    /// Legacy/imported records stay accessible while their owner repairs them.
+    public var requiresDescriptionRepair: Bool {
+        AgentDescriptionPolicy.violation(in: description) != nil
+    }
     /// System prompt prepended to all chat sessions with this agent
     public var systemPrompt: String
     /// Optional custom theme ID to apply when this agent is active
@@ -454,7 +458,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         Agent(
             id: defaultId,
             name: defaultAgentNameOverride ?? "Osaurus",
-            description: L("Configures Osaurus and delegates work to your agents"),
+            description: L("Configures Osaurus settings and manages agents. Use for app setup; general tasks can stay in the current chat."),
             systemPrompt: "",
             themeId: nil,
             defaultModel: nil,
@@ -494,7 +498,7 @@ extension Agent {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
-        description = try c.decode(String.self, forKey: .description)
+        description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
         systemPrompt = try c.decode(String.self, forKey: .systemPrompt)
         themeId = try c.decodeIfPresent(UUID.self, forKey: .themeId)
         defaultModel = try c.decodeIfPresent(String.self, forKey: .defaultModel)
