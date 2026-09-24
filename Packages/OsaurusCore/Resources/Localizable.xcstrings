@@ -32,6 +32,64 @@
       },
       "shouldTranslate": false
     },
+    "The model provider reconnected while this message was waiting. Send it again.": {
+      "comment": "A chat send lost when the remote model provider reconnected mid-wait",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Modellanbieter hat sich neu verbunden, während diese Nachricht wartete. Sende sie erneut."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 메시지가 대기하는 동안 모델 제공자가 다시 연결되었습니다. 다시 보내세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Поставщик модели переподключился, пока это сообщение ожидало отправки. Отправьте его ещё раз."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此消息等待期间，模型提供商已重新连接。请重新发送。"
+          }
+        }
+      }
+    },
+    "This send was stopped before it reached the model. Nothing was sent. Try again.": {
+      "comment": "A chat send cancelled before any request reached the model",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieses Senden wurde gestoppt, bevor es das Modell erreicht hat. Es wurde nichts gesendet. Versuche es erneut."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 전송은 모델에 도달하기 전에 중지되었습니다. 아무것도 전송되지 않았습니다. 다시 시도하세요."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отправка была остановлена до того, как дошла до модели. Ничего не отправлено. Попробуйте ещё раз."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此次发送在到达模型之前已停止，未发送任何内容。请重试。"
+          }
+        }
+      }
+    },
     "Add a valid description before duplicating this agent.": {
       "comment": "Repair an existing agent before duplicating it",
       "extractionState": "manual"
