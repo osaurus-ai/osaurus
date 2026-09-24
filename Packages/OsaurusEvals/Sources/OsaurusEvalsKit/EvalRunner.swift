@@ -1815,11 +1815,13 @@ public enum EvalRunner {
         // selections, or the pre-run binding for keep-current ("(unset)"
         // when nothing was configured — fall back to the store for that).
         let pinnedModel = modelId == "(unset)" ? nil : modelId
-        let transcript = await DefaultAgentConfigurationEvaluator.run(
-            query: testCase.query,
-            maxIterations: exp.maxIterations ?? 6,
-            model: pinnedModel
-        )
+        let transcript = await EvalDefaultAgentModelBinding.run(model: pinnedModel) {
+            await DefaultAgentConfigurationEvaluator.run(
+                query: testCase.query,
+                maxIterations: exp.maxIterations ?? 6,
+                model: pinnedModel
+            )
+        }
         await MainActor.run { ChatConfigurationStore.save(chatConfigBeforeCase) }
         PrivacyFilterStore.save(privacyConfigBeforeCase ?? .default)
         // Normalized latency: loop-only (judge timed separately below).
