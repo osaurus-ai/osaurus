@@ -463,11 +463,21 @@ public enum SpawnDescriptors {
             return WorkspaceAgentSource(
                 ref: ref,
                 name: name,
-                description: listed?.description ?? paired?.description ?? "",
+                description: workspaceRoutingDescription(listed: listed?.description, paired: paired?.description),
                 workspaceName: workspaceRoster?.workspace.name,
                 ownerName: listed?.owner?.friendlyName
             )
         }
+    }
+
+    /// The optional public roster blurb can predate required descriptions.
+    /// Prefer it when usable, otherwise use the paired host's description.
+    /// An unusable blurb must not hide a valid description supplied by the host.
+    static func workspaceRoutingDescription(listed: String?, paired: String?) -> String {
+        for candidate in [listed, paired].compactMap({ $0 }) {
+            if let valid = try? AgentDescriptionPolicy.validated(candidate) { return valid }
+        }
+        return ""
     }
 
     /// Execution truth for one model id (an agent's effective model): is it

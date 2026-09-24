@@ -505,7 +505,9 @@ actor WorkspaceAgentAccessHost {
             RedeemGrant(
                 agentAddress: agentAddress,
                 agentName: resolved.name,
-                agentDescription: resolved.description.isEmpty ? nil : resolved.description,
+                // Explicit empty metadata clears a paired client's stale
+                // description; nil is reserved for older hosts omitting it.
+                agentDescription: resolved.description,
                 agentModel: resolved.model,
                 apiKeyForWire: apiKeyForWire,
                 sealedApiKey: sealed

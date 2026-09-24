@@ -291,4 +291,16 @@ struct SpawnTargetAvailabilityTests {
         #expect(repaired.first?.state == .runnable)
     }
 
+    @Test("optional workspace blurbs do not hide a usable paired description")
+    func workspaceDescriptionFallback() {
+        let host = "Reviews supplied research sources."
+        let oldBlurbs: [String?] = [nil, "", "   ", String(repeating: "x", count: 161), "bad\nmetadata"]
+        for listed in oldBlurbs {
+            #expect(SpawnDescriptors.workspaceRoutingDescription(listed: listed, paired: host) == host)
+        }
+        #expect(SpawnDescriptors.workspaceRoutingDescription(listed: "  Reviews code.  ", paired: host) == "Reviews code.")
+        #expect(SpawnDescriptors.workspaceRoutingDescription(listed: "", paired: " ") == "")
+        #expect(SpawnDescriptors.workspaceRoutingDescription(listed: nil, paired: nil) == "")
+    }
+
 }

@@ -74,7 +74,8 @@ final class WorkspaceAgentConnectService: ObservableObject {
     /// Injectable for tests.
     var client: OsaurusRouterAPIClient = .shared
 
-    private init() {
+    init(observeAppActivation: Bool = true) {
+        guard observeAppActivation else { return }
         activationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
             object: nil,
@@ -382,6 +383,20 @@ final class WorkspaceAgentConnectService: ObservableObject {
             // The owner may have switched the agent's model since we paired.
             if let model = outcome.agentModel {
                 RemoteAgentManager.shared.updateModel(model, forAddress: outcome.agentAddress, workspaceId: workspaceId)
+            }
+            // Repairs and edits on the host must reach already-paired clients
+            // without requiring a disconnect. Keep workspace display names and
+            // avatars intact, and scope metadata to this exact provider.
+            if let remote = RemoteAgentManager.shared.remoteAgent(
+                forAddress: outcome.agentAddress, workspaceId: workspaceId
+            ) {
+                RemoteAgentManager.shared.updateLiveMetadata(
+                    forAddress: outcome.agentAddress,
+                    name: nil,
+                    description: outcome.agentDescription,
+                    avatar: remote.avatar,
+                    providerId: remote.providerId
+                )
             }
             scheduleRefresh(
                 workspaceId: workspaceId,
