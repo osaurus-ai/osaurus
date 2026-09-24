@@ -1921,6 +1921,41 @@ struct SystemPromptComposerToolResolutionTests {
         }
     }
 
+    @Test("description edits refresh frozen routing metadata without changing target identity")
+    func descriptionEditRefreshesFrozenRoutingMetadata() async {
+        await withSubagentSandbox {
+            let manager = AgentManager.shared
+            var worker = Agent(
+                name: "Stable identity worker",
+                description: "Reviews provided source code.",
+                defaultModel: "local/description-edit-model",
+                autonomousExec: AutonomousExecConfig(enabled: false)
+            )
+            manager.add(worker)
+            SubagentConfigurationStore.save(SubagentConfiguration(spawnableAgentIDs: [worker.id]))
+            let snapshot = makeSnapshotForDefaultAgent()
+            let first = SystemPromptComposer.resolveTools(
+                snapshot: snapshot, executionMode: .none, spawnTargets: runnableTargets([worker])
+            )
+            worker.description = "Checks documentation against supplied sources."
+            manager.update(worker)
+            let refreshed = SystemPromptComposer.resolveTools(
+                snapshot: snapshot, executionMode: .none,
+                frozenAlwaysLoadedNames: Set(first.map(\.function.name)),
+                frozenToolSpecs: first, spawnTargets: runnableTargets([worker])
+            )
+            let description = refreshed.first { $0.function.name == "spawn_agent" }?.function.description ?? ""
+            #expect(spawnAgentEnum(refreshed) == spawnAgentEnum(first))
+            #expect(description.contains(worker.description))
+            #expect(!description.contains("Reviews provided source code."))
+            #expect(
+                PromptPrefixHasher.hash(systemContent: "prefix", tools: first)
+                    != PromptPrefixHasher.hash(systemContent: "prefix", tools: refreshed)
+            )
+            _ = await manager.delete(id: worker.id)
+        }
+    }
+
     @Test("current delegation constraints override stale frozen spawn schemas")
     func currentDelegationConstraintsOverrideFrozenSpecs() async {
         await withSubagentSandbox {

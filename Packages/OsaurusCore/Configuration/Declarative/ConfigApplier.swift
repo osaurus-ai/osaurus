@@ -396,9 +396,12 @@ enum ConfigApplier {
                     applyRelay(entry.capabilities?.relayEnabled, to: agent.id)
                     return ConfigApplyResult(section: "agents", target: agent.name, status: .done)
                 } else {
-                    // A new agent with no model inherits the Orchestrator's
-                    // current model, so delegation never swaps models by
-                    // accident.
+                    // The live chat can have a selected model without any
+                    // persisted default (for example on first launch). Carry
+                    // that model into the worker instead of creating a target
+                    // that disappears from the next turn's runnable pool.
+                    let chatModel = ChatExecutionContext.currentChatSessionBox?.session?
+                        .selectedModel?.trimmingCharacters(in: .whitespacesAndNewlines)
                     let createdAgent: Agent
                     do {
                         createdAgent = try AgentManager.shared.create(
@@ -406,6 +409,7 @@ enum ConfigApplier {
                             description: entry.description ?? "",
                             systemPrompt: entry.systemPrompt ?? "",
                             defaultModel: entry.model.valueOrNil
+                                ?? (chatModel?.isEmpty == false ? chatModel : nil)
                                 ?? AgentManager.shared.orchestratorModelForNewAgents(),
                             temperature: entry.temperature.valueOrNil.map(Float.init),
                             maxTokens: entry.maxTokens.valueOrNil

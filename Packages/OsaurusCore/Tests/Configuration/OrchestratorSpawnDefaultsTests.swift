@@ -187,6 +187,7 @@ struct SameTurnSpawnStagingTests {
 
             let session = ChatSession()
             session.agentId = Agent.defaultId
+            session.selectedModel = "local/chat-selected-worker-model"
 
             // Bind the task locals exactly like a live orchestrator turn:
             // the session box identifies the conversation, the buffer
@@ -206,6 +207,8 @@ struct SameTurnSpawnStagingTests {
                 return
             }
             defer { Task { _ = await AgentManager.shared.delete(id: created.id) } }
+            #expect(created.defaultModel == "local/chat-selected-worker-model")
+            #expect(AgentManager.shared.effectiveModel(for: created.id) == session.selectedModel)
 
             let staged = await buffer.drain()
             let names = staged.map { $0.function.name }
