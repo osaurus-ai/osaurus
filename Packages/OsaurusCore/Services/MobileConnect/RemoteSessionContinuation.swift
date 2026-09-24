@@ -37,15 +37,35 @@ enum RemoteSessionContinuation {
         )
     }
 
+    /// How often, and for how long at most, `append` waits for the Mac to
+    /// finish a reply in the same chat.
+    private static let streamPollInterval = Duration.milliseconds(250)
+    private static let streamWaitLimit = Duration.seconds(600)
+
     /// Appends the messages produced by a remote run to the session.
-    /// `model` updates the chat's recorded model, matching what the Mac does
-    /// when a turn runs under a different model.
-    static func append(_ messages: [ChatMessage], to sessionId: UUID, model: String?) {
+    /// `model` updates the stored chat's recorded model, matching what the Mac
+    /// does when a turn runs under a different model.
+    static func append(_ messages: [ChatMessage], to sessionId: UUID, model: String?) async {
         let turns = ChatHistoryWriter.turns(from: messages)
         guard !turns.isEmpty else { return }
 
+        // The Mac may be replying in this same chat. Splicing the phone's
+        // turns in now would put them ahead of that reply, in the transcript
+        // and in the next run's context, so they wait for it — they can't be
+        // refused, the phone already has its answer. `truncate` refuses
+        // (`.busy`) instead, as nothing is lost by retrying later.
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: streamWaitLimit)
+        while let live = ChatWindowManager.shared.session(forSessionId: sessionId), live.isStreaming,
+            clock.now < deadline
+        {
+            try? await Task.sleep(for: streamPollInterval)
+        }
+
         // An open window owns the live transcript: append there and let its
         // own save path persist, so the visible chat updates immediately.
+        // Its model stays its own: setting `selectedModel` on a live window
+        // also writes the choice back to the agent, as if picked there.
         if let live = ChatWindowManager.shared.session(forSessionId: sessionId) {
             live.appendHostedTurns(turns)
             live.save()

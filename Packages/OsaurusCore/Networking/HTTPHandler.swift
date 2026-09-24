@@ -9131,7 +9131,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let runModel = model
                     if !appended.isEmpty {
                         Task { @MainActor in
-                            RemoteSessionContinuation.append(
+                            await RemoteSessionContinuation.append(
                                 appended,
                                 to: continuedSessionId,
                                 model: runModel
