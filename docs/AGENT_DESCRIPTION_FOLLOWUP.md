@@ -2,6 +2,23 @@
 
 No release/tag is authorized. This follows merged PR #2867; that PR's main-path proof is not a claim that every consumer was covered.
 
+## Current checkpoint — 2026-09-24
+
+This checkpoint supersedes historical status text below. PR #2869 is still unmerged. The current consuming app source is `7a55f65ead9b933dc430cc0b5fd223e0b964d0f4`, engine `63a10f3ab61c36cb978fcd7d74208c746930006d`. Private evidence root: `/Users/eric/vmlx-private-evidence/agent-descriptions-followup-2026-09-23`.
+
+- Release app build passed; focused tests passed **220 tests in 20 suites** (`pin-r5/build-receipt.json`, `focused-r2-receipt.json`). The first focused attempt caught a stale third tracked lockfile; all three lockfiles and the actual compiled engine now agree (`pin-audit.json`).
+- Actual app automatic generation saved a valid description with native defaults, 597 output tokens at 105.9138 tok/s, normal stop (`pin-r5/live-receipt.json`). Short utility throughput is not a controlled Raptor benchmark.
+- A separate process relaunch reopened the generated agent through Settings → Agents → Configure and retained the exact description (`pin-r5/relaunch-proof/receipt.json`, `reopened.png`). This closes persistence only, not chat/delegation/cache continuation.
+- Legacy absent-description record was loaded in an isolated profile. Actual Agents UI showed the repair notice; its repair action opened Configure. Manual entry saved exact text, removed the notice and survived navigation/reopening (`pin-r5/legacy-repair-proof/receipt.json`). No model was loaded; repaired-record process relaunch/delegation are separate pending rows.
+- Final eval binary build passed with an unchanged source manifest (`pin-r5/eval-build-receipt.json`). Local Raptor and remote adlab AgentLoop, AgentLoopFrontier, Subagent and DefaultAgent runs are active; no final scores claimed.
+- The non-spawnable negative fixture used an unresolved name and errored before its intended production guard. A canonical disallowed UUID reaches the real guard without seeding/allowing a target. Before: 1 error; after: **1/1 pass**, `rejected` and `not spawnable` assertions unchanged. Repeated on the final binary (`nonspawnable-fixture/final-receipt.json`, `final-results/Subagent.json`). This is a fixture correction, not improved model quality.
+- Engine PR #501 closed the auxiliary hybrid-prefill boundary-write defect with a failing-before/passing-after regression, including restore and unchanged payload checks. It is consumed by the current app. Full storage-location/eviction and architecture-wide qualification remain open.
+- Remote eval isolation previously relied on an empty models directory, but external discovery defaults on independently. Current evals use a private bundle preference domain with both external imports disabled. Restore the captured prior keys only after both runs finish; inspect the resulting model catalog before calling isolation proven.
+
+Remaining merge proof: full final eval failure attribution, complete consumer/UI coverage and legacy repair, chat/delegation with refreshed descriptions and disk restore, import/export/workspace compatibility, current-head Osaurus CI. Remaining campaign work: MiMo audio failure, controlled Raptor speed improvements and live SSD migration/eviction. Do not treat historical unchecked boxes or past passing rows as current universal coverage.
+
+## Historical requirements and proof
+
 ## Required behavior
 
 - Preserve and validate descriptions explicitly entered by the user.
@@ -26,7 +43,7 @@ No release/tag is authorized. This follows merged PR #2867; that PR's main-path 
 
 Review the recent engine #489–#492 and app #2836/#2841/#2846 changes against the actual dependency pin. Preserve conversation-aware eviction, protected history boundaries, learned resume rows and hit recency.
 
-CoreModelService utility calls set auxiliaryCacheIntent; MLXBatchAdapter translates it to the engine auxiliary intent. Engine boundary-store paths reject auxiliary requests. This is source evidence only: prove actual writes, cache hits, per-chat/model/weights identity, retained user-chat restore and eviction latency during description requests. Do not clear caches, disable them or relax quota to conceal conflicts.
+CoreModelService utility calls set auxiliaryCacheIntent; MLXBatchAdapter translates it to the engine auxiliary intent. The final-generation boundary-store path rejects auxiliary requests, but the hybrid-pool prefill-seed path requires a separate regression: at engine `6b8dda8`, `BatchEngine.swift` calls `storePrefillCapturedDiskSeed` before the final auxiliary guard. Raptor does not exercise this topology. Do not claim universal auxiliary write isolation. Required proof: prove actual writes, cache hits, per-chat/model/weights identity, retained user-chat restore and eviction latency during description requests. Do not clear caches, disable them or relax quota to conceal conflicts.
 
 ## Remaining campaign
 
@@ -48,10 +65,16 @@ The simple flow is authoritative: preserve a supplied description; otherwise gen
 
 ## Current evidence and discovered issues
 
-Revision 2 Release build completed successfully (private `build-r2-receipt.json`). The focused xcodebuild run completed successfully; its Swift Testing summary reports 54 tests in 8 suites (`focused-r2.log`, `focused-r2-receipt.json`). Requested suite selectors are not proof that every requested suite actually ran; reconcile discovery before claiming full coverage.
+Tested implementation: `a04ed9a724875ba589b343c8f56dc65d9924c158`; consumed engine: `6b8dda85a3659b255377a76caf8914c005d2eef1`. Private receipts are under `/Users/eric/vmlx-private-evidence/agent-descriptions-followup-2026-09-23`. `r4-commit-equivalence.json` verifies the app, focused-test and eval source manifests against that commit.
 
-Live automatic creation is still FAILED: the local Raptor run returned no description after spending its completion budget on character counting. Two app-API diagnostics also returned empty content with `finish_reason=length` at 2048 completion tokens: native defaults 106.2823 tok/s, explicit utility-temperature diagnostic 104.3881 tok/s. These are failure diagnostics, not successful utility-path or controlled speed proof. Artifacts: `live-r2-first-attempt.json`, `description-api-native-r2.json`, `description-api-utility03-r2.json` under the private follow-up evidence directory.
+- Fresh isolated Release app built successfully (`build-r4-receipt.json`). Focused tests passed:108 tests in18 suites (`focused-r4.log`, `focused-r4-receipt.json`).
+- Actual UI automatic creation with a blank description and a supplied prompt saved a valid purpose:795 generated tokens,106.4565 tok/s,normal stop. A blank prompt and description disabled Create. `live-r4-after-create.png` and `live-r4-api-persistence.json` pair visible UI with saved state.
+- Suggest preview did not change the field until Use; a161-character value disabled Create. Manual replacement persisted without another utility generation. Cancellation left no saved agent. Cancellation throughput was not captured and is not a qualified generation-rate row.
+- Onboarding double-click Create produced one Helper with purpose `Everyday user task assistance`:672 tokens,109.6829 tok/s,normal stop. The subsequent transition from provider setup to Chat was not observed in the resumed segment; no clicked Set up later claim. `onboarding-r4.log`, `onboarding-r4-current-front.png` and the isolated profile preserve the evidence. Normal menu quit returned0 with no guard abort (`onboarding-r4-exit.json`).
+- Actual HTTP config plan/apply rejected missing and overlong metadata, preserved manual text, showed generated plan text without creating an agent, and persisted generated apply text (`live-r4-config-api.json`, `live-r4-api-persistence.json`).
+- Raptor utility generation preserved all11 existing cache payloads byte-for-byte and preserved indexed model/token/chain/companion identity (`live-r4-utility-cache-result.json`). This is neither quota-eviction proof nor all-model cache proof.
+- Local Raptor and remote adlab full AgentLoop, AgentLoopFrontier, Subagent and DefaultAgent matrices are running. Final scores, failure attribution, remaining consumer UI rows and exact-head CI are still pending. PR#2869 remains draft; no merge or release claim.
 
-- [ ] Correct the description task instruction/UX and repeat real core-model generation while retaining strict application validation and native reasoning behavior. Do not hide the failure with forced reasoning closure, hidden sampler changes or truncated output.
-- [ ] Fix the onboarding task-handle race identified during review; prove duplicate-click and dismissal cancellation.
-- [ ] Complete live cache restore/eviction and exhaustive consumer coverage; neither is currently proven.
+The earlier r2 empty-output/length-stop failures remain recorded in `live-r2-first-attempt.json`, `description-api-native-r2.json` and `description-api-utility03-r2.json`. The summarizer instruction was changed to request a concise action phrase; canonical output validation remains unchanged. The new utility caller passes nil temperature to retain bundle defaults. No forced reasoning closure, truncation or hidden sampler rescue was added.
+
+Remaining cache work includes the hybrid-pool auxiliary prefill-seed regression, actual eviction/storage-location proof and disk-restored chat continuation with updated agent metadata. Real two-host workspace proof is also unverified. Do not convert these gaps into passing claims.
