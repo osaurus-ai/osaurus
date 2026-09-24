@@ -25,6 +25,16 @@ normal download. Intact files are kept. Repair can restore files you deliberatel
 edited or removed; ordinary model loading does not do this. External models stay
 managed by their original application.
 
+Choose **Check for Model Updates** in a model's details to compare published
+revision metadata. Older bundles may not have an installed revision. When the
+publisher now provides one, **Verification needed** and **Verify Model** lead
+to the existing file-verification flow; an unknown revision is never treated
+as revision zero or as verified current. If the repository has no version
+metadata, Osaurus reports that no versioned updates are published. **Repair**
+can still verify its actual files. A matching revision only compares metadata;
+it does not certify that local files have not been modified. Failed checks
+remain errors. Metadata checks never download or replace model weights.
+
 - Bigger models are smarter but slower and need more RAM; quantized variants (4-bit/8-bit) trade a little quality for much lower memory.
 - The Models catalog is curated for Osaurus (tool calling, reasoning, and template support are validated), and the OsaurusAI page on Hugging Face hosts optimized bundles.
 - Temperature, top-k, and the other sampling values come from each model bundle's own configuration unless you explicitly override them in Server → Settings → Sampling Defaults.

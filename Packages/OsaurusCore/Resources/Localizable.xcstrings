@@ -1,6 +1,72 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Installed revision is newer than the published revision.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installed revision is newer than the published revision."
+          }
+        }
+      }
+    },
+    "Installed revision unknown. Verify files to check for updates.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installed revision unknown. Verify files to check for updates."
+          }
+        }
+      }
+    },
+    "No versioned updates published. Repair can verify this repository's files.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No versioned updates published. Repair can verify this repository's files."
+          }
+        }
+      }
+    },
+    "Published revision matches the installed revision.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Published revision matches the installed revision."
+          }
+        }
+      }
+    },
+    "Verification needed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verification needed"
+          }
+        }
+      }
+    },
+    "Verify Model": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verify Model"
+          }
+        }
+      }
+    },
     "Add a valid description before duplicating this agent.": {
       "comment": "Repair an existing agent before duplicating it",
       "extractionState": "manual"
