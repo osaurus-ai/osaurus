@@ -240,6 +240,10 @@ jobs:
     # appcast, and Discord post are never delayed by the ~4 GB pipeline; on
     # tag pushes it appends the download link to the release notes when done.
     needs: build
+    # `verify_ci` is skipped on workflow_dispatch, and the default `success()`
+    # condition treats a skipped transitive dependency as failure — so without
+    # this the job never runs for manual validation builds. Mirror `build`.
+    if: ${{ always() && needs.build.result == 'success' }}
     runs-on: macos-26
     # Model download (~3.7 GB), ULFO conversion, a 4 GB notarization
     # round-trip, and the Hub upload each take minutes; bound a hung job well
