@@ -851,6 +851,32 @@ built-in agent answers `404`. Per-chat choice is simply the `model` field of `/r
 (§6.3); shared workspace agents still refuse overrides
 (`workspace_model_locked`).
 
+### 12.3 `POST` / `PUT /models/options`
+
+The composer picker's Model Options section for one model: the Thinking row
+and every other option its profile or provider catalog exposes (Reasoning
+Effort, toggles). Choices are stored per model on the Mac, the same store the
+Mac composer writes and agent runs read, so they apply to Mac chats too.
+
+`POST {"model":"<id>"}` reads them:
+
+```json
+{"model":"openai/gpt-5.6-terra",
+ "options":[{"id":"reasoningEffort","label":"Effort","icon":"brain",
+             "kind":"segmented","explicit":false,"selected":"medium",
+             "segments":[{"id":"low","label":"Light"}, …]}]}
+```
+
+`thinking` is `{"enabled","explicit","tristate"}` for models with a thinking
+switch (`tristate` offers Default / On / Off). `selected` (segmented) / `on`
+(toggle) are the effective values; `explicit: false` means the default
+applies and nothing is sent to the model. Fields without a value (`icon`,
+`help`, a segment's catalog `description`) are omitted.
+
+`PUT {"model":"<id>","option":"<option id or thinking>","value":"high" | true | null}`
+stores one choice (`null` resets it) and answers with the same body as
+`POST`. `404 unknown_option`, `400 invalid_value`.
+
 ---
 
 ## 13. Agent avatars

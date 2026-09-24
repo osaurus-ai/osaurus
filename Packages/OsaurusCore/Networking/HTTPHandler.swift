@@ -814,6 +814,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } else if head.method == .GET, path == "/models/picker" {
                 handleModelPickerEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST || head.method == .PUT, path == "/models/options" {
+                handleModelOptionsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/credits/balance" {
                 handleCreditsBalanceEndpoint(
                     head: head,
@@ -5005,6 +5007,120 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 self.logRequest(
                     method: "PUT",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: outcome.1,
+                    responseStatus: Int(outcome.0.code),
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    private struct ModelOptionsRequest: Decodable {
+        let model: String
+        /// PUT only: an option id from the snapshot, or `thinking`.
+        let option: String?
+        /// PUT only: a segment id or a bool; null resets to the default.
+        let value: ModelOptionValue?
+
+        private enum CodingKeys: String, CodingKey { case model, option, value }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            model = try container.decode(String.self, forKey: .model)
+            option = try container.decodeIfPresent(String.self, forKey: .option)
+            if let flag = try? container.decodeIfPresent(Bool.self, forKey: .value) {
+                value = .bool(flag)
+            } else if let text = try? container.decodeIfPresent(String.self, forKey: .value) {
+                value = .string(text)
+            } else {
+                value = nil
+            }
+        }
+    }
+
+    /// POST /models/options — a model's picker options (Thinking, effort,
+    /// other profile options); PUT /models/options — store one of them, as
+    /// the Mac composer's Model Options rows do. Both answer with the
+    /// model's current options (docs/MOBILE_PROTOCOL.md §12.3).
+    private func handleModelOptionsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let path = "/models/options"
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let method = head.method == .PUT ? "PUT" : "POST"
+        let cors = stateRef.value.corsHeaders
+        func reply(_ status: HTTPResponseStatus, _ body: String) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            logRequest(
+                method: method,
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(ModelOptionsRequest.self, from: data),
+            !request.model.isEmpty,
+            head.method != .PUT || request.option != nil
+        else {
+            reply(.badRequest, #"{"error":"bad_request","message":"Expected {\"model\": \"…\"}"}"#)
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let isWrite = head.method == .PUT
+        runRequestTask(priority: .userInitiated) {
+            // Off-main bundle read, so local models report their real
+            // thinking / effort contract instead of the cold-cache miss.
+            _ = await LocalReasoningCapability.resolveForDispatch(modelId: request.model)
+            let outcome: (HTTPResponseStatus, String) = await MainActor.run {
+                if isWrite, let option = request.option {
+                    do {
+                        try ModelOptionsSnapshot.apply(model: request.model, optionId: option, value: request.value)
+                    } catch ModelOptionsSnapshot.ApplyError.unknownOption {
+                        return (.notFound, #"{"error":"unknown_option"}"#)
+                    } catch {
+                        return (.badRequest, #"{"error":"invalid_value"}"#)
+                    }
+                }
+                let snapshot = ModelOptionsSnapshot.make(for: request.model)
+                guard let json = try? JSONEncoder.osaurusCanonical().encode(snapshot) else {
+                    return (.internalServerError, #"{"error":"encoding_failed"}"#)
+                }
+                return (.ok, String(decoding: json, as: UTF8.self))
+            }
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: outcome.0,
+                    headers: headers,
+                    body: outcome.1
+                )
+                self.logRequest(
+                    method: method,
                     path: path,
                     userAgent: userAgent,
                     requestBody: nil,

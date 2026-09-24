@@ -787,6 +787,9 @@ final class ChatSession: ObservableObject {
     private var lastManualModelSelection: String?
 
     nonisolated(unsafe) private var localModelsObserver: NSObjectProtocol?
+    /// Observer for `.modelOptionsChanged`: the paired phone stored a model
+    /// option, so reload the options when it's this window's model.
+    nonisolated(unsafe) private var modelOptionsObserver: NSObjectProtocol?
     /// Observer for `.privacyFilterRedactionsApproved`. Folds every
     /// approved (original, placeholder) pair into this window's
     /// `sessionRedactions` dict so user + assistant bubbles can
@@ -955,6 +958,18 @@ final class ChatSession: ObservableObject {
                 // Capability discovery can finish without changing the model
                 // list. Rehydrate explicit controls even in that case.
                 self.loadActiveModelOptions(for: self.selectedModel)
+            }
+        }
+
+        modelOptionsObserver = NotificationCenter.default.addObserver(
+            forName: .modelOptionsChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let model = notification.object as? String
+            Task { @MainActor in
+                guard let self, model == self.selectedModel else { return }
+                self.loadActiveModelOptions(for: model)
             }
         }
 
@@ -1269,6 +1284,9 @@ final class ChatSession: ObservableObject {
             NotificationCenter.default.removeObserver(observer)
         }
         if let observer = localModelsObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = modelOptionsObserver {
             NotificationCenter.default.removeObserver(observer)
         }
         if let observer = agentTodoObserver {
