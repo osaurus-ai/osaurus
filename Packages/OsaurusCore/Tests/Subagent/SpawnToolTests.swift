@@ -172,8 +172,8 @@ struct SpawnToolTests {
         // The child IS the target agent (a real chat session with that
         // agent's own tools and folder, inheriting the launcher's folder when
         // it has none); the story is short enough for small models.
-        #expect(description.contains("chat session of that agent"))
-        #expect(description.contains("its own tools and working folder"))
+        #expect(description.contains("Delegate a task to an agent"))
+        #expect(description.contains("using its tools and working folder"))
         #expect(description.contains("inherits yours if it has none"))
         #expect(description.contains("`session_id`"))
         #expect(!description.contains("cancellation-audited"))

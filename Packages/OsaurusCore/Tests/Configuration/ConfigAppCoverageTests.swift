@@ -135,7 +135,9 @@ struct ConfigAppCoveragePlannerTests {
     func spawnableAgents_acceptAgentsCreatedByTheSameDocument() throws {
         let name = "Spawn Probe Agent \(UUID().uuidString.prefix(6))"
         let plan = try plan { document in
-            document.agents = [AgentEntry(name: name)]
+            var agent = AgentEntry(name: name)
+            agent.description = "Runs a separately requested task for the delegation planner probe."
+            document.agents = [agent]
             var delegation = DelegationSection()
             delegation.spawnableAgents = [name]
             document.delegation = delegation
@@ -176,6 +178,7 @@ struct ConfigAppCoveragePlannerTests {
         var caps = AgentCapabilitiesEntry()
         caps.relayEnabled = true
         var agent = AgentEntry(name: name)
+        agent.description = "Answers relay requests for the configuration risk probe."
         agent.capabilities = caps
         let plan = try plan { $0.agents = [agent] }
         #expect(plan.risks.contains(ConfigRisk.relayEnabled(name)))
