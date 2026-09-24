@@ -985,6 +985,19 @@ client can redraw without refetching the catalog. Tool settings are global
 on this Mac, so `{id}` only scopes the route. `404 tool_not_found` when the
 name is not registered; the name is percent-decoded. Owner-only.
 
+### 14.8 `POST /sessions/{id}/truncate`
+
+Body `{"from_turn_id":"<uuid>"}`, a turn id from §14.2. Drops that turn and
+every turn after it, so a client can retry a reply the way the Mac's
+Regenerate does: truncate from the reply's prompt, then send the prompt
+again through §14.5, which appends it and the new reply. An open Mac window
+showing the chat drops the turns live; otherwise History refreshes.
+
+`{"ok":true,"removed":3}` on success. `404 session_not_found` for an
+unknown id or a workspace chat served for a teammate (the chats §14.5 would
+ignore), `404 turn_not_found` when the turn is not in the chat, and
+`409 session_busy` while the Mac is running that chat. Owner-only.
+
 ---
 
 ## 15. Workspace agents

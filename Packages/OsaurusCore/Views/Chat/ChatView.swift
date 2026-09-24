@@ -2764,6 +2764,18 @@ final class ChatSession: ObservableObject {
         rebuildVisibleBlocks()
     }
 
+    /// Drop `turnId` and every turn after it, for a paired phone retrying a
+    /// reply (`POST /sessions/{id}/truncate`). Returns how many turns went,
+    /// or nil when the turn is not in this transcript. The caller saves.
+    func truncateHostedTurns(fromTurnId turnId: UUID) -> Int? {
+        guard let index = turns.firstIndex(where: { $0.id == turnId }) else { return nil }
+        let removed = turns.count - index
+        turns = Array(turns.prefix(index))
+        isDirty = true
+        rebuildVisibleBlocks()
+        return removed
+    }
+
     /// Append the clarify question as a visible assistant turn when the
     /// user dismisses the prompt card without answering. The card was
     /// the only readable surface for the question (the recorded tool

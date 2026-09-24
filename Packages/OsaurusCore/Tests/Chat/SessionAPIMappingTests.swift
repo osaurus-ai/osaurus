@@ -114,4 +114,8 @@ struct RemoteSessionContinuationTests {
             ) == nil
         )
     }
+
+    @Test func truncatingAnUnknownChatChangesNothing() {
+        #expect(RemoteSessionContinuation.truncate(UUID(), fromTurnId: UUID()) == .sessionNotFound)
+    }
 }

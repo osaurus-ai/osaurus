@@ -66,6 +66,44 @@ enum RemoteSessionContinuation {
         )
     }
 
+    enum TruncateOutcome: Equatable {
+        case removed(Int)
+        /// Unknown, or a chat the phone may not continue (a teammate's).
+        case sessionNotFound
+        case turnNotFound
+        /// The Mac is running this chat right now.
+        case busy
+    }
+
+    /// Drops `turnId` and everything after it, so the phone can retry a
+    /// reply the way the Mac's Regenerate does: the phone re-sends the
+    /// prompt, and the run appends it and the new reply again
+    /// (docs/MOBILE_PROTOCOL.md §14.8).
+    static func truncate(_ sessionId: UUID, fromTurnId turnId: UUID) -> TruncateOutcome {
+        guard isContinuable(sessionId) else { return .sessionNotFound }
+
+        // An open window owns the live transcript, as in `append`: cut it
+        // there, or its next save would put the turns back.
+        if let live = ChatWindowManager.shared.session(forSessionId: sessionId) {
+            guard !live.isStreaming else { return .busy }
+            guard let removed = live.truncateHostedTurns(fromTurnId: turnId) else { return .turnNotFound }
+            live.save()
+            return .removed(removed)
+        }
+
+        guard var session = ChatSessionStore.load(id: sessionId) else { return .sessionNotFound }
+        guard let index = session.turns.firstIndex(where: { $0.id == turnId }) else { return .turnNotFound }
+        let removed = session.turns.count - index
+        session.turns.removeSubrange(index...)
+        session.updatedAt = Date()
+        ChatSessionsManager.shared.saveAsync(session)
+        NotificationCenter.default.post(
+            name: ChatHistoryWriter.didPersistExternallyNotification,
+            object: nil
+        )
+        return .removed(removed)
+    }
+
     /// Whether this session can be continued by the owner's phone. The
     /// owner's own chats qualify, as do the rows the phone itself created
     /// (hosted runs stamp a workspace context whose caller is the pairing

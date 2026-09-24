@@ -978,6 +978,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleListProjectsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/sessions" {
                 handleListSessionsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path.hasPrefix("/sessions/"), path.hasSuffix("/truncate") {
+                handleSessionTruncateEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .GET || head.method == .PATCH, path.hasPrefix("/sessions/") {
                 handleSessionEndpoint(
                     head: head,
@@ -6430,6 +6438,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let pinned: Bool?
     }
 
+    private struct SessionTruncateRequest: Decodable {
+        let from_turn_id: String
+    }
+
     /// Formatting-only use of a shared formatter: `ISO8601DateFormatter` is
     /// documented as thread-safe for formatting, and this one is never
     /// reconfigured after creation.
@@ -6535,6 +6547,117 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             }
         }
+    }
+
+    /// POST /sessions/{id}/truncate: drops a turn and everything after it,
+    /// so a paired phone can retry a reply in a Mac chat
+    /// (docs/MOBILE_PROTOCOL.md §14.8).
+    private func handleSessionTruncateEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/")
+        guard components.count == 3, let sessionId = UUID(uuidString: String(components[1])) else {
+            sendTruncateResponse(
+                context: context,
+                head: head,
+                cors: cors,
+                status: .badRequest,
+                json: #"{"error":"invalid_session_id"}"#,
+                path: path,
+                userAgent: userAgent,
+                startTime: startTime
+            )
+            return
+        }
+        var body = Data()
+        if var buffer = stateRef.value.requestBodyBuffer {
+            body = Data(buffer.readBytes(length: buffer.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(SessionTruncateRequest.self, from: body),
+            let turnId = UUID(uuidString: request.from_turn_id)
+        else {
+            sendTruncateResponse(
+                context: context,
+                head: head,
+                cors: cors,
+                status: .badRequest,
+                json: #"{"error":"bad_request","message":"Expected {from_turn_id}"}"#,
+                path: path,
+                userAgent: userAgent,
+                startTime: startTime
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let outcome = await MainActor.run {
+                RemoteSessionContinuation.truncate(sessionId, fromTurnId: turnId)
+            }
+            let status: HTTPResponseStatus
+            let json: String
+            switch outcome {
+            case .removed(let count):
+                status = .ok
+                json = #"{"ok":true,"removed":\#(count)}"#
+            case .sessionNotFound:
+                status = .notFound
+                json = #"{"error":"session_not_found"}"#
+            case .turnNotFound:
+                status = .notFound
+                json = #"{"error":"turn_not_found"}"#
+            case .busy:
+                status = .conflict
+                json = #"{"error":"session_busy"}"#
+            }
+            hop {
+                self.sendTruncateResponse(
+                    context: ctx.value,
+                    head: head,
+                    cors: cors,
+                    status: status,
+                    json: json,
+                    path: path,
+                    userAgent: userAgent,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    private func sendTruncateResponse(
+        context: ChannelHandlerContext,
+        head: HTTPRequestHead,
+        cors: [(String, String)],
+        status: HTTPResponseStatus,
+        json: String,
+        path: String,
+        userAgent: String?,
+        startTime: Date
+    ) {
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: cors)
+        sendResponse(context: context, version: head.version, status: status, headers: headers, body: json)
+        logRequest(
+            method: "POST",
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: json,
+            responseStatus: Int(status.code),
+            startTime: startTime
+        )
     }
 
     /// GET /sessions/{id} and PATCH /sessions/{id}.
