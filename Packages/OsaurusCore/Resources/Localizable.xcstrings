@@ -1,6 +1,10 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Add a valid description before duplicating this agent.": {
+      "comment": "Repair an existing agent before duplicating it",
+      "extractionState": "manual"
+    },
     "The agent draft changed. Try creating it again.": {
       "comment": "Agent description fallback flow",
       "extractionState": "manual"

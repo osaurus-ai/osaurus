@@ -596,6 +596,21 @@ struct AgentsView: View {
     }
 
     private func duplicateAgent(_ agent: Agent) {
+        // A legacy record may legitimately need repair, but duplicating it
+        // must not author another agent without a valid routing purpose.
+        // Open the existing repair flow (including prompt-backed Suggest)
+        // before copying any record or registering a new spawn target.
+        guard !agent.requiresDescriptionRepair else {
+            deeplinkTab = (agent.id, "configure")
+            withAnimation(Self.navTransition) {
+                selectedAgent = agent
+            }
+            ToastManager.shared.warning(
+                L("Description required"),
+                message: L("Add a valid description before duplicating this agent.")
+            )
+            return
+        }
         let baseName = "\(agent.name) Copy"
         let existingNames = Set(customAgents.map { $0.name })
         var newName = baseName

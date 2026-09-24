@@ -78,3 +78,7 @@ Tested implementation: `a04ed9a724875ba589b343c8f56dc65d9924c158`; consumed engi
 The earlier r2 empty-output/length-stop failures remain recorded in `live-r2-first-attempt.json`, `description-api-native-r2.json` and `description-api-utility03-r2.json`. The summarizer instruction was changed to request a concise action phrase; canonical output validation remains unchanged. The new utility caller passes nil temperature to retain bundle defaults. No forced reasoning closure, truncation or hidden sampler rescue was added.
 
 Remaining cache work includes the hybrid-pool auxiliary prefill-seed regression, actual eviction/storage-location proof and disk-restored chat continuation with updated agent metadata. Real two-host workspace proof is also unverified. Do not convert these gaps into passing claims.
+
+## Legacy duplication repair
+
+The Duplicate action previously copied invalid legacy descriptions into new records. It now opens the source agent Configure repair flow with a clear notice before writing a copy or registering another spawn target. The original record/settings remain intact; after repair, ordinary duplication preserves the corrected purpose. Source change awaits fresh Release UI proof of invalid refusal, prompt-backed/manual repair and successful valid duplication.
