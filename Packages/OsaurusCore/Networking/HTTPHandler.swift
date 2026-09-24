@@ -5776,35 +5776,46 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let systemPrompt = request.system_prompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let model = request.model?.trimmingCharacters(in: .whitespacesAndNewlines)
         runRequestTask(priority: .userInitiated) {
-            let created: (id: String, name: String) = await MainActor.run {
-                let agent = AgentManager.shared.create(
-                    name: String(name.prefix(80)),
-                    description: String(description.prefix(300)),
-                    systemPrompt: systemPrompt,
-                    defaultModel: (model?.isEmpty ?? true) ? nil : model
-                )
-                return (agent.id.uuidString, agent.name)
-            }
             // Encoded, not interpolated: a name can hold any character, and a
             // control one left raw made a 201 the phone could not decode.
-            let json = Self.jsonObjectString(["id": created.id, "name": created.name])
+            let outcome: (status: HTTPResponseStatus, json: String) = await MainActor.run {
+                do {
+                    let agent = try AgentManager.shared.create(
+                        name: String(name.prefix(80)),
+                        description: description,
+                        systemPrompt: systemPrompt,
+                        defaultModel: (model?.isEmpty ?? true) ? nil : model
+                    )
+                    return (.created, Self.jsonObjectString(["id": agent.id.uuidString, "name": agent.name]))
+                } catch {
+                    // Every agent needs a description the Orchestrator can route
+                    // by (`AgentDescriptionPolicy`: one line, 160 characters at
+                    // most); the policy's own message says which rule failed.
+                    return (
+                        .badRequest,
+                        Self.jsonObjectString([
+                            "error": "invalid_description", "message": error.localizedDescription,
+                        ])
+                    )
+                }
+            }
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
                 headers.append(contentsOf: cors)
                 self.sendResponse(
                     context: ctx.value,
                     version: head.version,
-                    status: .created,
+                    status: outcome.status,
                     headers: headers,
-                    body: json
+                    body: outcome.json
                 )
                 self.logRequest(
                     method: "POST",
                     path: "/agents",
                     userAgent: userAgent,
                     requestBody: nil,
-                    responseBody: json,
-                    responseStatus: 201,
+                    responseBody: outcome.json,
+                    responseStatus: Int(outcome.status.code),
                     startTime: startTime
                 )
             }
@@ -6965,7 +6976,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let applied: Bool = await MainActor.run {
                     guard exists else { return false }
                     let manager = ChatSessionsManager.shared
-                    let title = patch.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    // Parenthesised so `map` runs on the optional, not on the
+                    // string's characters.
+                    let title = (patch.title?.trimmingCharacters(in: .whitespacesAndNewlines))
                         .map { String($0.prefix(200)) }
                     if let title, !title.isEmpty {
                         manager.rename(id: sessionId, title: title)
