@@ -6686,6 +6686,8 @@ extension RemoteProviderService {
         /// The agent's live display name (may differ from the name captured at
         /// pair time if the owner renamed it).
         public let name: String?
+        /// nil means an older peer omitted the field; an explicit empty
+        /// string clears a previously cached purpose and requires repair.
         public let description: String?
         /// Mascot avatar id (e.g. "green"); nil = monogram fallback.
         public let avatar: String?
@@ -6743,7 +6745,7 @@ extension RemoteProviderService {
         return RemoteAgentMetadata(
             effectiveModel: model,
             name: (trimmedName?.isEmpty == false) ? trimmedName : nil,
-            description: (trimmedDescription?.isEmpty == false) ? trimmedDescription : nil,
+            description: trimmedDescription,
             avatar: (trimmedAvatar?.isEmpty == false) ? trimmedAvatar : nil,
             quickActions: parseQuickActions(from: data)
         )

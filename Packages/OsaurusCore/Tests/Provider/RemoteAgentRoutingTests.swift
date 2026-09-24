@@ -367,7 +367,7 @@ struct RemoteAgentRoutingTests {
         #expect(meta.name == "Coco")
     }
 
-    @Test func parseAgentMetadata_trimsAndNilsBlankFields() throws {
+    @Test func parseAgentMetadata_preservesExplicitDescriptionClear() throws {
         let json = #"""
             {"name":"  ","description":"   ","avatar":"  ","effective_model":""}
             """#
@@ -375,13 +375,58 @@ struct RemoteAgentRoutingTests {
             RemoteProviderService.parseAgentMetadata(from: Data(json.utf8))
         )
         #expect(meta.name == nil)
-        #expect(meta.description == nil)
+        #expect(meta.description == "")
         #expect(meta.avatar == nil)
         #expect(meta.effectiveModel == nil)
     }
 
     @Test func parseAgentMetadata_returnsNilForNonJSON() {
         #expect(RemoteProviderService.parseAgentMetadata(from: Data("not json".utf8)) == nil)
+    }
+
+    @Test func explicitDescriptionClearPersistsOnlyForTheMatchedProvider() async throws {
+        try await StoragePathsTestLock.shared.run {
+            try await MainActor.run {
+                let root = FileManager.default.temporaryDirectory.appendingPathComponent("remote-purpose-\(UUID())")
+                let previous = OsaurusPaths.overrideRoot
+                OsaurusPaths.overrideRoot = root
+                defer {
+                    OsaurusPaths.overrideRoot = previous
+                    RemoteAgentManager.shared.refresh()
+                    try? FileManager.default.removeItem(at: root)
+                }
+                let first = RemoteAgent(
+                    agentAddress: "0xshared", name: "Research", description: "Reviews citations.",
+                    relayBaseURL: "https://relay.example", providerId: UUID(), workspaceId: "first"
+                )
+                let second = RemoteAgent(
+                    agentAddress: first.agentAddress, name: "Research", description: "Preserve this workspace purpose.",
+                    relayBaseURL: first.relayBaseURL, providerId: UUID(), workspaceId: "second"
+                )
+                RemoteAgentStore.save(first)
+                RemoteAgentStore.save(second)
+                let manager = RemoteAgentManager.shared
+                manager.refresh()
+                func apply(_ json: String) throws {
+                    let metadata = try #require(RemoteProviderService.parseAgentMetadata(from: Data(json.utf8)))
+                    manager.updateLiveMetadata(
+                        forAddress: first.agentAddress, name: metadata.name, description: metadata.description,
+                        avatar: metadata.avatar, providerId: first.providerId
+                    )
+                }
+                try apply(#"{"name":"Research"}"#)
+                #expect(manager.remoteAgent(forProviderId: first.providerId)?.description == first.description)
+                try apply(#"{"description":"   "}"#)
+                // Reload from disk: this is not only a transient publisher update.
+                manager.refresh()
+                #expect(manager.remoteAgent(forProviderId: first.providerId)?.description == "")
+                #expect(manager.remoteAgent(forProviderId: second.providerId)?.description == second.description)
+                try apply(#"{"description":"  Checks published sources.  "}"#)
+                manager.refresh()
+                #expect(manager.remoteAgent(forProviderId: first.providerId)?.description == "Checks published sources.")
+                #expect(manager.remoteAgent(forProviderId: second.providerId)?.description == second.description)
+            }
+        }
     }
 
     // MARK: - Agent metadata decode (Action Bar / quick actions over the wire)
