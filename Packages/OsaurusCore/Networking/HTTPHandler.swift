@@ -9007,6 +9007,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
             }
 
+            // The owner's paired phone sets Thinking and Reasoning Effort
+            // through the same per-model store as the Mac composer's picker
+            // (§12.3), so its runs carry those choices as the Mac's own chat
+            // does. Other callers keep ChatEngine's no-GUI-preferences rule.
+            var loadedModelOptions: [String: ModelOptionValue]?
+            if remoteReviewer, workspaceKeyRecord == nil, !model.isEmpty {
+                _ = await LocalReasoningCapability.resolveForDispatch(modelId: model)
+                loadedModelOptions = await MainActor.run { ModelOptionsStore.shared.loadOptions(for: model) }
+            }
+            let storedModelOptions = loadedModelOptions
+
             let tools = enrichedReq.tools ?? []
             let resolvedToolChoice = enrichedReq.tool_choice
 
@@ -9354,6 +9365,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         response_format: req.response_format,
                         stream_options: req.stream_options
                     )
+                    if let storedModelOptions, req.enable_thinking == nil, req.reasoning_effort == nil {
+                        iterationReq.modelOptions = storedModelOptions
+                    }
                     if let enable = req.enable_thinking {
                         var opts = iterationReq.modelOptions ?? [:]
                         opts["disableThinking"] = .bool(!enable)

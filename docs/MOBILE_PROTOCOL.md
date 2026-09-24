@@ -856,7 +856,9 @@ built-in agent answers `404`. Per-chat choice is simply the `model` field of `/r
 The composer picker's Model Options section for one model: the Thinking row
 and every other option its profile or provider catalog exposes (Reasoning
 Effort, toggles). Choices are stored per model on the Mac, the same store the
-Mac composer writes and agent runs read, so they apply to Mac chats too.
+Mac composer writes, so they apply to Mac chats too. The phone's `/run` calls
+(§6.3) carry them whenever the request sends neither `enable_thinking` nor
+`reasoning_effort`.
 
 `POST {"model":"<id>"}` reads them:
 
