@@ -112,6 +112,7 @@ final class MobilePairingService: ObservableObject {
     private var keepAwakeToken: NSObjectProtocol?
     private let defaults: UserDefaults
     private var agentsCancellable: AnyCancellable?
+    private var deviceExpiryTask: Task<Void, Never>?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -119,6 +120,8 @@ final class MobilePairingService: ObservableObject {
             pairedDevice = try? JSONDecoder().decode(PairedMobileDevice.self, from: data)
         }
         refreshKeepAwake()
+        // A key that lapsed while the app was closed ends the pairing now.
+        scheduleDeviceExpiry()
         // Agents created while a phone is paired get the relay too.
         agentsCancellable = AgentManager.shared.$agents
             .dropFirst()
@@ -298,6 +301,28 @@ final class MobilePairingService: ObservableObject {
         }
         refreshKeepAwake()
         syncRelay()
+        scheduleDeviceExpiry()
+    }
+
+    /// The phone's key lasts 90 days (docs/MOBILE_PROTOCOL.md §11.4); after
+    /// that the phone can no longer reach this Mac, so it stops counting as
+    /// paired, as if unpaired: the keep-awake assertion and the relay
+    /// tunnels this service turned on go with it. Continuous clock, so time
+    /// the Mac spends asleep counts.
+    private func scheduleDeviceExpiry() {
+        deviceExpiryTask?.cancel()
+        deviceExpiryTask = nil
+        guard let device = pairedDevice, let expiresAt = device.keyExpiresAt else { return }
+        let remaining = expiresAt.timeIntervalSinceNow
+        guard remaining > 0 else {
+            revokeDevice()
+            return
+        }
+        deviceExpiryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(remaining), clock: .continuous)
+            guard !Task.isCancelled, let self, self.pairedDevice?.keyId == device.keyId else { return }
+            self.revokeDevice()
+        }
     }
 
     // MARK: Keep awake
