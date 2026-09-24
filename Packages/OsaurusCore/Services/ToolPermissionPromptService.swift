@@ -69,6 +69,10 @@ enum ToolPermissionPromptService {
         /// (osaurus#2651). Nil for prompts that are not about executing a
         /// tool on a machine (billing, spawn policy), which show no badge.
         let executionSurface: ToolExecutionSurface?
+        /// Raised by a run of the paired phone. Only these reach the phone's
+        /// `GET /approvals`, as in the computer-use and config queues: a card
+        /// from a Mac chat is answered on the Mac.
+        let fromPairedPhone: Bool
     }
 
     private struct PendingPrompt {
@@ -187,17 +191,23 @@ enum ToolPermissionPromptService {
         let isPresented: Bool
     }
 
-    /// Everything outstanding, presented card first. The phone shows these
-    /// and answers them with `resolveRemotely`.
+    /// Everything outstanding from the paired phone's runs, presented card
+    /// first. The phone shows these and answers them with `resolveRemotely`.
     static var remotePrompts: [RemotePrompt] {
         var result: [RemotePrompt] = []
-        if let slot, let request = presentedRequest {
+        if let slot, let request = presentedRequest, request.fromPairedPhone {
             result.append(remotePrompt(id: slot.id, request: request, isPresented: true))
         }
-        for entry in queue where entry.id != slot?.id {
+        for entry in queue where entry.id != slot?.id && entry.request.fromPairedPhone {
             result.append(remotePrompt(id: entry.id, request: entry.request, isPresented: false))
         }
         return result
+    }
+
+    /// The outstanding card `id`, presented or queued.
+    private static func pendingRequest(id: UUID) -> PromptRequest? {
+        if let slot, slot.id == id { return presentedRequest }
+        return queue.first { $0.id == id }?.request
     }
 
     private static func remotePrompt(id: UUID, request: PromptRequest, isPresented: Bool) -> RemotePrompt {
@@ -214,10 +224,11 @@ enum ToolPermissionPromptService {
 
     /// Answers a card from a paired phone, exactly as the panel's buttons do:
     /// the waiting run resumes and any open panel is torn down. False when
-    /// the id is unknown — already answered on the Mac, or the run ended.
+    /// the id is unknown — already answered on the Mac, or the run ended —
+    /// or the card is not from one of the phone's runs.
     @discardableResult
     static func resolveRemotely(id: UUID, outcome: PromptResolution) -> Bool {
-        guard continuations[id] != nil else { return false }
+        guard continuations[id] != nil, pendingRequest(id: id)?.fromPairedPhone == true else { return false }
         resolve(id: id, outcome: outcome)
         return true
     }
@@ -274,7 +285,8 @@ enum ToolPermissionPromptService {
                 knowledgeWritePreview: knowledgeWritePreview,
                 perCallApprovalOnly: perCallApprovalOnly,
                 offersRunLease: !perCallApprovalOnly,
-                executionSurface: executionSurface
+                executionSurface: executionSurface,
+                fromPairedPhone: ChatExecutionContext.hasRemoteReviewer
             ),
             revalidate: nil
         )
@@ -328,7 +340,8 @@ enum ToolPermissionPromptService {
                 knowledgeWritePreview: nil,
                 perCallApprovalOnly: false,
                 offersRunLease: false,
-                executionSurface: nil
+                executionSurface: nil,
+                fromPairedPhone: ChatExecutionContext.hasRemoteReviewer
             ),
             revalidate: mappedRevalidate
         )
