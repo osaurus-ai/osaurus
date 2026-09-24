@@ -2,6 +2,22 @@
 
 No release/tag is authorized. This follows merged PR #2867; that PR's main-path proof is not a claim that every consumer was covered.
 
+## Current follow-up — 2026-09-24
+
+No release or tag. Merge each fix after its applicable proof.
+
+At source90b076fc7 and engine63a10f3a, the current isolated Release app passed actual duplicate repair/copy and Watcher/Schedule purpose selection/save/reopen/relaunch checks; focused249tests22suites passed. Evidence: private `selectors-r7/live-receipt.json`, `focused-r2-receipt.json` and `duplicate-r6/live-receipt.json`.
+
+Actual local Raptor chat proof edited two agent descriptions, continued an existing chat, restarted the app and restored disk cache. Exact tokenized prompts contained current descriptions in both tool schema and system roster. The old conversation nevertheless chose its previous citation agent twice: routing FAIL. The identical request in a fresh chat selected the newly described AgentB, as did its follow-up. This supports history-influenced model choice, not stale description delivery. All inspected turns completed with settled cards, unlocked input and visible answers. UI rates: restarted215tokens101.6tok/s; fresh167tokens57.2tok/s; follow-up139tokens53.0tok/s. Concurrent compilation means these are not controlled speed comparisons. Evidence: private `roster-live-r7/live-receipt.json`, exact prompt hashes, chat records and screenshots. App quit normally and private preferences were restored.
+
+Original final-pin remote matrix completed: AgentLoop46pass8fail4skip/58; Frontier38pass4fail/42; Subagent31pass14skip1old-fixture-error/46; DefaultAgent50pass1fail/51. Corrected local DefaultAgent42pass8fail1error/51; other local raw scores remain below. Scoped headless model inheritance and stale fixture corrections are a separate evaluator fix undergoing live reruns. No blanket green matrix claim.
+
+Remaining consumer source gaps now patched but awaiting fresh build/proof: workspace inspection exposes canonical description repair metadata, and voice target selection displays canonical purpose or the existing repair label. Wake-name recognition and fixed-target execution behavior are unchanged. Genuine second-host workspace execution remains unverified.
+
+The separate SSD-cache review PR must inspect recent location/storage/eviction changes in both repositories, prove multiple eligible cached chunks can serve one prefill with only uncomputed components cold-prefilled, validate architecture-specific companion state, and measure migration/restore/eviction latency under identical workloads. Task checklist: private `raptor06-speed-2026-09-23/SSD-CACHE-REVIEW-TODO.md`.
+
+Older checkpoints below are historical evidence, not current completion claims.
+
 ## Current checkpoint — 2026-09-24
 
 This checkpoint supersedes historical status text below. PR #2869 is still unmerged. The current consuming app source is `7a55f65ead9b933dc430cc0b5fd223e0b964d0f4`, engine `63a10f3ab61c36cb978fcd7d74208c746930006d`. Private evidence root: `/Users/eric/vmlx-private-evidence/agent-descriptions-followup-2026-09-23`.
