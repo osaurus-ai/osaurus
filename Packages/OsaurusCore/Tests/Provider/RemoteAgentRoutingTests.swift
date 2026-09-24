@@ -407,7 +407,7 @@ struct RemoteAgentRoutingTests {
                 RemoteAgentStore.save(second)
                 let manager = RemoteAgentManager.shared
                 manager.refresh()
-                func apply(_ json: String) throws {
+                @MainActor func apply(_ json: String) throws {
                     let metadata = try #require(RemoteProviderService.parseAgentMetadata(from: Data(json.utf8)))
                     manager.updateLiveMetadata(
                         forAddress: first.agentAddress, name: metadata.name, description: metadata.description,
