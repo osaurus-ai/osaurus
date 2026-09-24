@@ -226,6 +226,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // that replay roster fixtures never write the delegation config.
         WorkspaceRosterStore.installSpawnPoolAutoJoin()
 
+        // A phone paired before this launch: take the keep-awake assertion
+        // and keep agents created from now on reachable over the relay. The
+        // service does both in its init, which otherwise waited for Settings
+        // → Osaurus Connect or the first pairing request to touch it.
+        _ = MobilePairingService.shared
+
         // Warm the GitHub API token cache off the main thread so the first
         // plugin browse/import/update doesn't pay a synchronous keychain read
         // (and so an in-app token authenticates the very first request).
