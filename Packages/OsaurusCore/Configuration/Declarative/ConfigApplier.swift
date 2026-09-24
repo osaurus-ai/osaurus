@@ -344,6 +344,11 @@ enum ConfigApplier {
                 // Every validation failure must preserve an existing match
                 // during prune, including invalid templates/descriptions.
                 if let agent = existing { matchedIds.insert(agent.id) }
+                if let snapshot = entry.generatedDescriptionSnapshot, !snapshot.matches(existing) {
+                    return ConfigApplyResult(
+                        section: "agents", target: entry.name, status: .failed,
+                        message: "The agent changed after its description was generated. Review a new plan before applying.")
+                }
                 // A template seeds behavior, never the required user-authored
                 // routing description. Existing descriptions survive patches.
                 if let rawTemplate = entry.template?.trimmingCharacters(in: .whitespacesAndNewlines),

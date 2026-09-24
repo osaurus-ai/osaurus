@@ -1455,8 +1455,8 @@ public enum SettingsSearchIndex {
             id: "agents.description",
             tab: .agents,
             title: "Agent description (required)",
-            keywords: ["descriptions required", "agent description", "purpose", "routing", "legacy agent", "repair", "helper"],
-            disambiguation: "Open an agent's Configure tab to supply its required routing description.",
+            keywords: ["descriptions required", "agent description", "purpose", "routing", "legacy agent", "repair", "helper", "Suggest from system prompt", "suggest description", "core model description"],
+            disambiguation: "Open an agent's Configure tab to supply its required routing description, or suggest one from its system prompt when the description is empty.",
             declarativeSection: "agents"
         ),
         .init(

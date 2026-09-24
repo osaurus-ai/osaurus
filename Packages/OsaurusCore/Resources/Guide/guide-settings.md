@@ -12,7 +12,9 @@ Ask the assistant to change declarative settings in chat (`osaurus_config`); eac
 
 ## Required agent descriptions
 
-Every new agent needs an explicit **Agent description (required)** under Settings → Agents → the agent → Configure. Explain what it does and when to delegate to it, in one line of at most 160 characters and 1,024 UTF-8 bytes. Manual creation, onboarding, and `osaurus_config` creation all require this field; a starter template does not replace the required input in those flows.
+Every new agent needs a valid **Agent description (required)** under Settings → Agents → the agent → Configure. Explain what it does and when to delegate to it, in one line of at most 160 characters and 1,024 UTF-8 bytes. If you supply a description, it is preserved and validated. If it is blank and a system prompt exists, creation uses the configured core model to generate a description. Without a system prompt, you must enter a description yourself. Onboarding can use its selected starter prompt. Config-tool and API creation resolve missing descriptions before the plan is reviewed and apply that same prepared value.
+
+**Suggest from system prompt** also offers a preview in the editor when the description is empty. Choose **Use suggested description** to apply it, then edit it as needed. Generated text follows the same limits; generation failures preserve the draft and require retry or manual entry. Existing valid descriptions are never overwritten automatically.
 
 Existing agents without a valid description retain their IDs, chats, tools, and settings. The Agents page lists each under **Descriptions required**, with a direct edit action. They remain unavailable as delegation targets until repaired; adding a valid description restores their eligibility within the existing allowed pool. Shared workspace agents need a valid description from their owner too. Description text is routing metadata and never grants tools or permissions.
 

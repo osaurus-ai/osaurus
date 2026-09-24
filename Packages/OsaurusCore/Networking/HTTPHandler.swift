@@ -1963,7 +1963,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     return
                 }
 
-                let document: OsaurusConfigDocument
+                var document: OsaurusConfigDocument
                 do {
                     document = try ConfigYAML.decode(yaml)
                 } catch let error as ConfigYAMLError {
@@ -1988,7 +1988,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
                 let plan: ConfigPlan
                 do {
-                    plan = try await MainActor.run {
+                    document = try await ConfigAgentDescriptionPreparation.prepare(document)
+                    plan = try await MainActor.run { [document] in
                         try ConfigPlanner.plan(document: document, prune: prune)
                     }
                 } catch let issues as ConfigPlanIssues {
@@ -4341,6 +4342,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let id: String
         let name: String
         let description: String
+        let description_required: Bool
+        let description_validation: String?
         /// Mascot avatar identifier (e.g. "green") so paired peers can render
         /// the agent's own avatar instead of a generic monogram. nil = no
         /// mascot (client falls back to the name's initial). User-uploaded
@@ -5690,6 +5693,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     id: agent.id.uuidString,
                     name: agent.name,
                     description: agent.description,
+                    description_required: agent.requiresDescriptionRepair,
+                    description_validation: AgentDescriptionPolicy.violation(in: agent.description)?.message,
                     avatar: agent.avatar,
                     chat_quick_actions: agent.chatQuickActions,
                     default_model: agent.defaultModel,
@@ -5839,6 +5844,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 id: agent.id.uuidString,
                 name: agent.name,
                 description: agent.description,
+                description_required: agent.requiresDescriptionRepair,
+                description_validation: AgentDescriptionPolicy.violation(in: agent.description)?.message,
                 avatar: agent.avatar,
                 chat_quick_actions: agent.chatQuickActions,
                 default_model: agent.defaultModel,

@@ -1,6 +1,30 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "The agent draft changed. Try creating it again.": {
+      "comment": "Agent description fallback flow",
+      "extractionState": "manual"
+    },
+    "Generating agent description…": {
+      "comment": "Agent description fallback flow",
+      "extractionState": "manual"
+    },
+    "Suggest from system prompt": {
+      "comment": "Agent description suggestion flow",
+      "extractionState": "manual"
+    },
+    "Cancel suggestion": {
+      "comment": "Agent description suggestion flow",
+      "extractionState": "manual"
+    },
+    "Use suggested description": {
+      "comment": "Agent description suggestion flow",
+      "extractionState": "manual"
+    },
+    "Could not suggest a description. Try again or enter one manually.": {
+      "comment": "Agent description suggestion flow",
+      "extractionState": "manual"
+    },
     "Use the current chat model (default)": {
       "comment": "Placeholder for the Compaction Model picker when no dedicated model is set.",
       "localizations": {
@@ -275100,6 +275124,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Configures Osaurus settings and manages agents. Use for app setup; general tasks can stay in the current chat."
+          }
+        }
+      }
+    },
+    "Leave blank to generate a description from the system prompt when creating this agent.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leave blank to generate a description from the system prompt when creating this agent."
           }
         }
       }

@@ -1176,6 +1176,9 @@ enum ConfigPlanner {
                 }
             } else {
                 var changes: [String] = ["create custom agent `\(entry.name)`"]
+                if let description = entry.description {
+                    changes.append("description: \(description)")
+                }
                 var risks: [String] = []
                 if let model = entry.model.valueOrNil { changes.append("model: \(model)") }
                 if let caps = entry.capabilities {

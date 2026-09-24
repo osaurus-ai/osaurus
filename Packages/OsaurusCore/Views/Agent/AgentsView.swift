@@ -2352,7 +2352,8 @@ struct AgentDetailView: View {
                     icon: "textformat"
                 )
 
-                AgentDescriptionField(text: $description)
+                AgentDescriptionField(text: $description, systemPrompt: systemPrompt)
+                    .id(agent.id)
                 if AgentDescriptionPolicy.violation(in: description) != nil {
                     Text("Description changes are not saved until valid. This agent cannot be delegated to while its saved description needs repair.", bundle: .module)
                         .font(.caption)
@@ -8170,6 +8171,8 @@ private struct AgentEditorSheet: View {
     @State private var description: String = ""
     @State private var selectedAvatar: String? = nil
     @State private var systemPrompt: String = ""
+    @State private var descriptionResolutionTask: Task<Void, Never>?
+    @State private var descriptionResolutionError: String?
     @State private var selectedModel: String?
     @State private var pickerItems: [ModelPickerItem] = []
     @State private var showModelPicker: Bool = false
@@ -8202,7 +8205,8 @@ private struct AgentEditorSheet: View {
 
     private var canSave: Bool {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && AgentDescriptionPolicy.violation(in: description) == nil
+            && descriptionResolutionTask == nil
+            && AgentDescriptionResolver.canResolve(description: description, systemPrompt: systemPrompt)
     }
 
     var body: some View {
@@ -8258,6 +8262,7 @@ private struct AgentEditorSheet: View {
                 nameFocused = true
             }
         }
+        .onDisappear { descriptionResolutionTask?.cancel() }
         .onReceive(ModelPickerItemCache.shared.$items) { pickerItems = $0 }
         .themedAlert(
             L("Leave without creating this agent?"),
@@ -8339,13 +8344,20 @@ private struct AgentEditorSheet: View {
             VStack(alignment: .leading, spacing: 18) {
                 templatesStrip
                 nameField
-                AgentDescriptionField(text: $description)
+                AgentDescriptionField(text: $description, systemPrompt: systemPrompt, generatesOnCreate: true)
+                if descriptionResolutionTask != nil {
+                    ProgressView(L("Generating agent description…"))
+                }
+                if let descriptionResolutionError {
+                    Text(descriptionResolutionError).font(.caption).foregroundStyle(.red)
+                }
                 avatarField
                 modelField
                 capabilitiesField
                 promptField
             }
             .padding(20)
+            .disabled(descriptionResolutionTask != nil)
         }
     }
 
@@ -8742,7 +8754,7 @@ private struct AgentEditorSheet: View {
             icon: "person.crop.circle.badge.plus",
             title: "Create Agent",
             subtitle: "Pick a starter, name it, write a prompt",
-            onClose: onCancel
+            onClose: cancelCreation
         )
     }
 
@@ -8755,7 +8767,7 @@ private struct AgentEditorSheet: View {
             ),
             secondary: AgentSheetFooter.Action(
                 label: "Cancel",
-                handler: onCancel
+                handler: cancelCreation
             ),
             hint: "+ Enter to create"
         )
@@ -8776,8 +8788,45 @@ private struct AgentEditorSheet: View {
         }
     }
 
+    private func cancelCreation() {
+        descriptionResolutionTask?.cancel()
+        descriptionResolutionTask = nil
+        onCancel()
+    }
+
     @MainActor
     private func saveAgent() {
+        guard descriptionResolutionTask == nil else { return }
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if AgentDescriptionPolicy.normalized(description).isEmpty,
+            !AgentDescriptionPolicy.normalized(systemPrompt).isEmpty
+        {
+            let prompt = systemPrompt
+            let originalDescription = description
+            descriptionResolutionError = nil
+            descriptionResolutionTask = Task { @MainActor in
+                do {
+                    let resolved = try await AgentDescriptionGenerator.resolve(
+                        description: originalDescription, systemPrompt: prompt)
+                    try Task.checkCancellation()
+                    guard systemPrompt == prompt, description == originalDescription else {
+                        descriptionResolutionTask = nil
+                        return
+                    }
+                    description = resolved
+                    descriptionResolutionTask = nil
+                    saveAgent()
+                } catch is CancellationError {
+                    descriptionResolutionTask = nil
+                } catch {
+                    descriptionResolutionTask = nil
+                    descriptionResolutionError = (error as? AgentDescriptionPolicy.Violation)?.message
+                        ?? L("Could not suggest a description. Try again or enter one manually.")
+                }
+            }
+            return
+        }
+
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty,
             let validDescription = try? AgentDescriptionPolicy.validated(description)

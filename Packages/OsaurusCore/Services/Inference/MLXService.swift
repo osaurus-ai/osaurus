@@ -111,6 +111,19 @@ actor MLXService: ToolCapableService {
             // sentinel marker; `StreamingToolHint.isSentinel` covers
             // tool/args/done, reasoning, stats, and any future sentinel
             // that adheres to the `\u{FFFE}` prefix contract.
+            if let stats = StreamingStatsHint.decode(s) {
+                if parameters.auxiliaryCacheIntent,
+                    ProcessInfo.processInfo.environment["OSAURUS_UTILITY_GENERATION_TRACE"] == "1"
+                {
+                    // Diagnostic metrics only: never log utility prompts, answers or reasoning.
+                    let row = "[osaurus][utility-generation] tokens=\(stats.tokenCount) "
+                        + "tokens_per_second=\(stats.tokensPerSecond) "
+                        + "prefill_tokens_per_second=\(stats.prefillTokensPerSecond ?? 0) "
+                        + "stop=\(stats.stopReason ?? "unknown")\n"
+                    FileHandle.standardError.write(Data(row.utf8))
+                }
+                continue
+            }
             if StreamingToolHint.isSentinel(s) { continue }
             out += s
         }

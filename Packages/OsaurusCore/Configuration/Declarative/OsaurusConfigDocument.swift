@@ -370,10 +370,12 @@ public struct AgentEntry: Equatable, Sendable {
     public var name: String
     /// Optional `AgentStarterTemplate` id (`coder`, `researcher`, `writer`,
     /// `assistant`, `productivity`): seeds an omitted system prompt.
-    /// New agents also require an explicit concise description; templates
-    /// never substitute for that author-supplied routing metadata.
+    /// Missing descriptions may be generated from the effective prompt before
+    /// planning; persistence still requires a validated description.
     public var template: String?
     public var description: String?
+    /// Internal preparation guard, never decoded from or encoded into external configuration.
+    var generatedDescriptionSnapshot: GeneratedAgentDescriptionSnapshot? = nil
     public var systemPrompt: String?
     public var model: ConfigField<String> = .absent
     public var temperature: ConfigField<Double> = .absent

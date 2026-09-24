@@ -1,8 +1,53 @@
 import SwiftUI
 
-/// Shared creation/repair editor. Never truncates or invents routing metadata.
+/// Shared creation/repair editor. Suggestions require explicit review before applying.
 struct AgentDescriptionField: View {
     @Binding var text: String
+    var systemPrompt: String = ""
+    var generatesOnCreate: Bool = false
+
+    @State private var suggestion: String?
+    @State private var suggestionError: String?
+    @State private var suggestionTask: Task<Void, Never>?
+    @State private var requestID: UUID?
+
+    private func cancelSuggestion() {
+        requestID = nil
+        suggestionTask?.cancel()
+        suggestionTask = nil
+        suggestion = nil
+    }
+
+    private func suggest() {
+        cancelSuggestion()
+        suggestionError = nil
+        let prompt = systemPrompt
+        let original = text
+        let id = UUID()
+        requestID = id
+        suggestionTask = Task { @MainActor in
+            do {
+                let result = try await AgentDescriptionGenerator.resolve(
+                    description: "", systemPrompt: prompt)
+                try Task.checkCancellation()
+                guard requestID == id, systemPrompt == prompt, text == original else { return }
+                suggestion = try AgentDescriptionPolicy.validated(result)
+            } catch is CancellationError {
+                // Cancellation leaves the user's draft untouched.
+            } catch {
+                guard requestID == id else { return }
+                if let violation = error as? AgentDescriptionPolicy.Violation {
+                    suggestionError = violation.message
+                } else {
+                    suggestionError = L("Could not suggest a description. Try again or enter one manually.")
+                }
+            }
+            if requestID == id {
+                requestID = nil
+                suggestionTask = nil
+            }
+        }
+    }
 
     private var violation: AgentDescriptionPolicy.Violation? {
         AgentDescriptionPolicy.violation(in: text)
@@ -22,12 +67,48 @@ struct AgentDescriptionField: View {
             Text("\(AgentDescriptionPolicy.normalized(text).count)/160 characters · up to 1,024 UTF-8 bytes", bundle: .module)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            if let violation {
+            if !AgentDescriptionPolicy.normalized(systemPrompt).isEmpty,
+                AgentDescriptionPolicy.normalized(text).isEmpty
+            {
+                if suggestionTask != nil {
+                    Button(action: { cancelSuggestion() }) { Text("Cancel suggestion", bundle: .module) }
+                } else {
+                    Button(action: { suggest() }) { Text("Suggest from system prompt", bundle: .module) }
+                        .accessibilityIdentifier("agent.descriptionSuggest")
+                }
+            }
+            if let suggestion {
+                Text(suggestion).font(.caption)
+                Button(action: {
+                    text = suggestion
+                    cancelSuggestion()
+                }) { Text("Use suggested description", bundle: .module) }
+                .accessibilityIdentifier("agent.descriptionUseSuggestion")
+            }
+            if let suggestionError {
+                Text(suggestionError).font(.caption).foregroundStyle(.red)
+            }
+            if generatesOnCreate, violation == .required,
+                !AgentDescriptionPolicy.normalized(systemPrompt).isEmpty
+            {
+                Text("Leave blank to generate a description from the system prompt when creating this agent.", bundle: .module)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if let violation {
                 Text(LocalizedStringKey(violation.message), bundle: .module)
                     .font(.caption)
                     .foregroundStyle(.red)
             }
         }
+        .onChange(of: systemPrompt) {
+            cancelSuggestion()
+            suggestionError = nil
+        }
+        .onChange(of: text) {
+            cancelSuggestion()
+            suggestionError = nil
+        }
+        .onDisappear { cancelSuggestion() }
         .settingsLandingAnchor("agents.description")
     }
 }

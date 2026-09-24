@@ -6,11 +6,13 @@ public enum AgentDescriptionPolicy {
     public static let maximumCharacters = 160
     public static let maximumUTF8Bytes = 1_024
 
-    public enum Violation: String, Error, Sendable, Equatable {
+    public enum Violation: String, Error, LocalizedError, Sendable, Equatable {
         case required
         case tooLong
         case oversizedUnicode
         case controlCharacters
+
+        public var errorDescription: String? { message }
 
         public var message: String {
             switch self {
