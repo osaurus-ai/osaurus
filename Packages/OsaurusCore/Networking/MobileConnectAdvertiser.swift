@@ -27,6 +27,9 @@ final class MobileConnectAdvertiser: NSObject {
     private var service: NetService?
     private var port: Int = 0
     private var retries = 0
+    /// Bumped on every start and stop, so a retry still asleep from an
+    /// earlier run can tell it is stale and leave the new service alone.
+    private var generation = 0
 
     func startAdvertising(port: Int) {
         stopAdvertising()
@@ -65,6 +68,7 @@ final class MobileConnectAdvertiser: NSObject {
     }
 
     func stopAdvertising() {
+        generation += 1
         if service != nil { MobileConnectLog.write("bonjour: stopped advertising") }
         service?.stop()
         service = nil
@@ -97,8 +101,11 @@ final class MobileConnectAdvertiser: NSObject {
             return
         }
         retries += 1
+        let started = generation
         try? await Task.sleep(nanoseconds: UInt64(retries) * 1_000_000_000)
-        guard service != nil else { return }  // stopped meanwhile
+        // Stopped meanwhile, or stopped and started again (a server
+        // restart): that run has its own service and its own retries.
+        guard generation == started, service != nil else { return }
         service?.stop()
         publish()
     }
@@ -121,6 +128,12 @@ extension MobileConnectAdvertiser: NetServiceDelegate {
         Self.logger.error(
             "Failed to advertise pairing service '\(sender.name, privacy: .public)': \(errorDict, privacy: .public)"
         )
-        Task { @MainActor [weak self] in await self?.retryPublish() }
+        // Only for the service currently advertised: a late failure from one
+        // a restart already replaced must not tear the new one down.
+        let failed = ObjectIdentifier(sender)
+        Task { @MainActor [weak self] in
+            guard let self, self.service.map({ ObjectIdentifier($0) }) == failed else { return }
+            await self.retryPublish()
+        }
     }
 }
