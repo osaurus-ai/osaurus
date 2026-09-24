@@ -44,15 +44,25 @@ enum KeychainQueryHelpers {
     /// seconds. A non-interactive context carries no per-query state, so a
     /// single shared instance is safe to reuse across queries and threads.
     static func nonInteractiveContext() -> LAContext {
+        // Fast path: return the cached context without taking the lock.
+        if let cached = sharedNonInteractiveContext {
+            return cached
+        }
+        // LAContext() performs a synchronous XPC round-trip to coreauthd.
+        // Build the candidate outside the lock so no other thread — including
+        // the main thread — is ever blocked during that slow call.
+        let candidate = LAContext()
+        candidate.interactionNotAllowed = true
+        // Slow path: write the shared reference under the lock, but only if
+        // another thread has not already populated it while we were building
+        // the candidate above (double-checked locking pattern).
         contextLock.lock()
         defer { contextLock.unlock() }
         if let cached = sharedNonInteractiveContext {
             return cached
         }
-        let context = LAContext()
-        context.interactionNotAllowed = true
-        sharedNonInteractiveContext = context
-        return context
+        sharedNonInteractiveContext = candidate
+        return candidate
     }
 
     private static let contextLock = NSLock()
