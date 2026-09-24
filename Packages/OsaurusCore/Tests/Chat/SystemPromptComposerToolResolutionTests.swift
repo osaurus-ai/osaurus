@@ -1921,6 +1921,42 @@ struct SystemPromptComposerToolResolutionTests {
         }
     }
 
+    @Test("repairing the first runnable target adds delegation to a frozen conversation")
+    func repairedTargetJoinsFrozenConversation() async {
+        await withSubagentSandbox {
+            let manager = AgentManager.shared
+            var worker = Agent(
+                name: "Legacy routing worker", description: "",
+                defaultModel: "local/repair-worker-model",
+                autonomousExec: AutonomousExecConfig(enabled: false)
+            )
+            manager.add(worker)
+            SubagentConfigurationStore.save(SubagentConfiguration(spawnableAgentIDs: [worker.id]))
+            let snapshot = makeSnapshotForDefaultAgent()
+            let first = SystemPromptComposer.resolveTools(
+                snapshot: snapshot, executionMode: .none, spawnTargets: runnableTargets([])
+            )
+            #expect(!first.contains { $0.function.name == "spawn_agent" })
+            worker.description = "Checks arithmetic when a separate numerical review is requested."
+            manager.update(worker)
+            let repaired = SystemPromptComposer.resolveTools(
+                snapshot: snapshot, executionMode: .none,
+                frozenAlwaysLoadedNames: Set(first.map(\.function.name)),
+                frozenToolSpecs: first, spawnTargets: runnableTargets([worker])
+            )
+            #expect(spawnAgentEnum(repaired).contains(worker.id.uuidString))
+            #expect(repaired.first { $0.function.name == "spawn_agent" }?
+                .function.description?.contains(worker.description) == true)
+            let unavailableAgain = SystemPromptComposer.resolveTools(
+                snapshot: snapshot, executionMode: .none,
+                frozenAlwaysLoadedNames: Set(repaired.map(\.function.name)),
+                frozenToolSpecs: repaired, spawnTargets: runnableTargets([])
+            )
+            #expect(!unavailableAgain.contains { $0.function.name == "spawn_agent" })
+            _ = await manager.delete(id: worker.id)
+        }
+    }
+
     @Test("description edits refresh frozen routing metadata without changing target identity")
     func descriptionEditRefreshesFrozenRoutingMetadata() async {
         await withSubagentSandbox {

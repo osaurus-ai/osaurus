@@ -2710,6 +2710,10 @@ public struct SystemPromptComposer: Sendable {
         //     sandbox tools that registered late (the init placeholder or real
         //     tools after provisioning) join the schema instead of being
         //     suppressed forever as "new mid-session tools".
+        // Delegation is also recomputed: creating or repairing the first
+        // runnable target must make spawn_agent available in this existing
+        // conversation. The current target and capability gates below still
+        // remove it when delegation is unavailable or disabled.
         // Late-arriving plugin / MCP tools still need explicit
         // `capabilities_load` to appear — that path is the only sanctioned
         // way to grow the dynamic surface mid-session.
@@ -2719,6 +2723,7 @@ public struct SystemPromptComposer: Sendable {
                 let name = spec.function.name
                 guard let frozen = frozenAlwaysLoadedNames else { return true }
                 return frozen.contains(name) || liveSandboxNames.contains(name)
+                    || name == SubagentCapabilityRegistry.spawnAgentToolName
             }
         }
 
