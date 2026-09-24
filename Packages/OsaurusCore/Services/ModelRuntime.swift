@@ -1635,8 +1635,10 @@ public actor ModelRuntime {
     func clearDiskCaches(directory: URL? = nil) async -> DiskCacheClearResult {
         let configuredDirectory =
             ServerRuntimeSettingsStore.load()
-            .flatMap { Self.cacheDiskDirectoryOverride(for: $0.cache) }
+            .map { Self.diskCacheDirectoryForDisplay(for: $0.cache) }
             ?? OsaurusPaths.diskKVCache()
+        // Reuse may be disabled while saved files remain. Resolve the same
+        // configured root Settings displays, not the runtime admission gate.
         // A notice clears the root it measured. The Settings action clears
         // both active roots and the saved root, including after a path change.
         let observedDirectories = await diskCacheQuotaSnapshots().map(\.directory)
