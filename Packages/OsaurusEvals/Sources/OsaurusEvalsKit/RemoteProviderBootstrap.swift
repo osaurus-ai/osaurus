@@ -36,6 +36,8 @@ public enum EvalRemoteProviderBootstrap {
         let host: String
         let basePath: String
         let envKey: String
+        var providerProtocol: RemoteProviderProtocol = .https
+        var port: Int? = nil
         var providerType: RemoteProviderType = .openaiLegacy
         var headers: (String) -> [String: String] = { ["Authorization": "Bearer \($0)"] }
     }
@@ -85,6 +87,36 @@ public enum EvalRemoteProviderBootstrap {
         ),
     ]
 
+    /// An explicit PREFIX_BASE_URL permits a self-hosted OpenAI-compatible
+    /// endpoint without persisting credentials or changing application settings.
+    /// Invalid overrides fail closed rather than sending a key to the preset host.
+    static func preset(prefix: String, environment: [String: String]) -> Preset? {
+        let known = presets[prefix]
+        guard let raw = environment["\(prefix.uppercased())_BASE_URL"] else { return known }
+        guard let url = URLComponents(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+            url.url != nil, let host = url.host, !host.isEmpty,
+            url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
+            let scheme = url.scheme?.lowercased(),
+            scheme == "https" || (scheme == "http" && ["localhost", "127.0.0.1", "[::1]", "::1"].contains(host)),
+            url.port.map({ (1...65535).contains($0) }) ?? true
+        else { return nil }
+        let makeHeaders = known?.headers ?? { ["Authorization": "Bearer \($0)"] }
+        return Preset(
+            name: known?.name ?? prefix,
+            host: host,
+            basePath: url.path.isEmpty ? "/v1" : url.path,
+            envKey: known?.envKey ?? "\(prefix.uppercased())_API_KEY",
+            providerProtocol: scheme == "https" ? .https : .http,
+            port: url.port,
+            providerType: known?.providerType ?? .openaiLegacy,
+            headers: { key in
+                var headers = makeHeaders(key)
+                headers["User-Agent"] = "OsaurusEvals/1.0"
+                return headers
+            }
+        )
+    }
+
     /// Connect ephemeral providers for every remote `provider/name` model
     /// id in `modelIds` that (a) matches a known preset, (b) has its API
     /// key exported, and (c) is not already routable by a connected
@@ -108,7 +140,7 @@ public enum EvalRemoteProviderBootstrap {
             if RemoteProviderManager.shared.findService(forModel: modelId) != nil {
                 continue
             }
-            guard let preset = presets[prefix] else { continue }
+            guard let preset = preset(prefix: prefix, environment: environment) else { continue }
             guard let apiKey = environment[preset.envKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
                 !apiKey.isEmpty
             else { continue }
@@ -120,8 +152,8 @@ public enum EvalRemoteProviderBootstrap {
                 id: UUID(),
                 name: preset.name,
                 host: preset.host,
-                providerProtocol: .https,
-                port: nil,
+                providerProtocol: preset.providerProtocol,
+                port: preset.port,
                 basePath: preset.basePath,
                 customHeaders: preset.headers(apiKey),
                 authType: .none,
