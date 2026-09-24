@@ -48,6 +48,25 @@ struct HostAwareDiskCacheTests {
         #expect(ModelRuntime.diskCacheDirectoryForDisplay(for: cache).path == "/tmp/legacy-ssd-root")
     }
 
+    @Test func clearRequiresSaveOnlyWhenTheResolvedDirectoryChanges() {
+        var saved = VMLXServerCacheSettings()
+        saved.blockDisk.directory = "/tmp/cache-root"
+        var draft = saved
+        draft.prefix.enabled.toggle()
+        draft.blockDisk.maxSizeGB = 1
+        #expect(!CacheSection.hasUnsavedDiskCacheDirectory(draft: draft, saved: saved))
+        draft.blockDisk.directory = " /tmp/cache-root/ "
+        #expect(!CacheSection.hasUnsavedDiskCacheDirectory(draft: draft, saved: saved))
+        draft.blockDisk.directory = "/tmp/other-cache-root"
+        #expect(CacheSection.hasUnsavedDiskCacheDirectory(draft: draft, saved: saved))
+        draft = saved
+        draft.pagedKV.enabled = false
+        draft.blockDisk.enabled = false
+        draft.legacyDisk.enabled = true
+        draft.legacyDisk.directory = "/tmp/legacy-cache-root"
+        #expect(CacheSection.hasUnsavedDiskCacheDirectory(draft: draft, saved: saved))
+    }
+
     @Test func legacyFallbackKeepsTheSavedSize() {
         var cache = VMLXServerCacheSettings()
         cache.pagedKV.enabled = false

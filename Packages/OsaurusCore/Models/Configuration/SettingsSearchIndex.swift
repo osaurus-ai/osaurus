@@ -690,7 +690,7 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Cache",
             title: "Clear SSD Cache",
-            keywords: ["purge cached conversations"],
+            keywords: ["purge cached conversations", "save cache directory before clearing"],
             subTab: "cache"
         ),
         .init(

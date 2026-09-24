@@ -146,23 +146,18 @@ General, Chat, Voice, Themes, Credits, Workspaces, Identity, Permissions, Privac
 
 Config JSON lives under `~/.osaurus/config/` (`server.json`, `server-runtime.json`, `chat.json`, `default-agent.json`, `agent-delegation.json`, `memory.json`, …). Secrets live in the macOS Keychain.
 
-### SSD cache limit notice
+### SSD cache controls
 
-Normal cache filling and eviction are silent. The chat composer shows one notice
-per chat and cache directory per app launch when the runtime reports that the
-chat's latest saved progress exceeds the cache limit. Shorter cached prefixes may
-still be reusable; this notice does not mean that all progress was lost.
-
-**Increase Cache Size** opens **Disk Cache Size (% of disk)** under
-Settings… (⌘,) → Server → Settings → Cache and highlights the control. **Don't show
-this again** suppresses inline notices across launches. To restore them, turn on
-**Show SSD Cache Capacity Notices** in the same Cache section; that preference
-applies immediately.
+Normal cache filling and eviction are silent. Cache state is available in the
+context-budget popover and Live Activity; there is no inline capacity-notice
+popup or suppression setting.
 
 **Clear SSD Cache** remains available in Cache settings and removes indexed
 conversation cache files and linked companion data. Chats and model weights are
 preserved. Clearing can make the next reply slower while cached data rebuilds;
-it does not increase the cache limit.
+it does not increase the cache limit. Save directory changes before clearing the
+SSD cache; Clear is disabled while the displayed directory differs from the saved
+directory. Clearing remains available when prefix reuse is disabled.
 
 Disk Cache Size left blank uses **Automatic**: 30% of free space plus the cache's indexed payload bytes, including companions. Cache growth therefore does not shrink its own quota. An explicit percentage remains a percentage of total volume size, bounded by 25% of free space plus this cache; Settings shows the requested and effective amounts when limited. Existing percentages and legacy GB choices are preserved. Editing the percentage field replaces a legacy GB choice; clearing an explicit percentage selects Automatic. For a saved legacy GB choice, click **Use Automatic Cache Size**, then Save Changes.
 
@@ -170,8 +165,8 @@ Saving only the disk size updates resident models without unloading their weight
 
 Cache controls are individually searchable: **Prefix Cache**, **Enable GPU Cache**,
 **Block Size (tokens)**, **Max Blocks**, **Disk Cache**, **Disk Cache Directory**,
+**Disk Cache Size (% of disk)**, **Clear SSD Cache**,
 and **Re-derive SSM State After Generation**. Each result opens Server → Settings
-→ Cache and scrolls to that control. **Increase Cache Size** lands directly on
-**Disk Cache Size (% of disk)**. Prefix Cache controls all reuse; Enable GPU
+→ Cache and scrolls to that control. Prefix Cache controls all reuse; Enable GPU
 Cache controls the optional RAM tier, Disk Cache controls SSD reuse, and the
 SSM option retains architecture-specific companion state for hybrid models.

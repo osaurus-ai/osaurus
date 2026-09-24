@@ -75,7 +75,7 @@ final class CacheSectionWiringTests: XCTestCase {
     func testClearButtonDisablesItselfWhileRunning() throws {
         let src = try source("Views/Settings/ServerSettings/CacheSection.swift")
         XCTAssertTrue(src.contains("isClearingDiskCache = true"))
-        XCTAssertTrue(src.contains(".disabled(isClearingDiskCache)"))
+        XCTAssertTrue(src.contains(".disabled(isClearingDiskCache || hasUnsavedDiskCacheDirectory)"))
     }
 
     /// The purge must serialize with runtime cache IO and use indexed ownership.
