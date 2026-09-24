@@ -89,8 +89,8 @@ struct AgentReasoningPolicyTests {
         }
     }
 
-    @Test("unset agent/tool run selects direct rail for any toggleable template")
-    func unsetAgentDefaultsThinkingOff() {
+    @Test("unset agent/tool run preserves either native template default")
+    func unsetAgentPreservesTemplateDefault() {
         for capability in [toggleableDefaultOn, toggleableDefaultOff] {
             #expect(
                 AgentReasoningPolicy.defaultEnableThinking(
@@ -100,7 +100,7 @@ struct AgentReasoningPolicyTests {
                     modelOptions: [:],
                     usesReasoningEffortControl: false,
                     capability: capability
-                ) == false
+                ) == nil
             )
         }
     }
@@ -235,7 +235,7 @@ struct AgentReasoningPolicyTests {
             )
         )
         #expect(
-            !AgentReasoningPolicy.effectiveEnableThinkingForPresentation(
+            AgentReasoningPolicy.effectiveEnableThinkingForPresentation(
                 isAgentOrToolRequest: true,
                 modelOptions: [:],
                 capability: toggleableDefaultOn
@@ -358,10 +358,15 @@ struct AgentReasoningDispatchTests {
         var agentFinalizer = request()
         agentFinalizer.isAgentRequest = true
         _ = try await engine.completeChat(request: agentFinalizer)
-        #expect(await capture.parameters?.modelOptions["disableThinking"]?.boolValue == true)
+        #expect(await capture.parameters?.modelOptions["disableThinking"] == nil)
 
         let enabledTools = request(tools: [fixtureTool], toolChoice: .auto)
         _ = try await engine.completeChat(request: enabledTools)
+        #expect(await capture.parameters?.modelOptions["disableThinking"] == nil)
+
+        var explicitOff = agentFinalizer
+        explicitOff.enable_thinking = false
+        _ = try await engine.completeChat(request: explicitOff)
         #expect(await capture.parameters?.modelOptions["disableThinking"]?.boolValue == true)
 
         var explicitOn = agentFinalizer
