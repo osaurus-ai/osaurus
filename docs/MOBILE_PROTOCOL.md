@@ -828,17 +828,26 @@ get `403 owner_only`). Send inside the Secure Channel like any other call.
 ### 12.1 `GET /models/picker`
 
 The chat models the Mac composer's picker lists
-(`ModelPickerItemCache.chatModelCandidates`):
+(`ModelPickerItemCache.chatModelCandidates`), in the picker's tab order and
+its order within each tab, plus the Mac's favourites:
 
 ```json
-{"models":[{"id":"mlx-community/Qwen3-8B-4bit","name":"Qwen3 8B","provider":"Local",
+{"models":[{"id":"mlx-community/Qwen3-8B-4bit","name":"Qwen3 8B","provider":"Local Models",
             "source":"local","vision":false,"thinking":true,"params":"8B",
-            "quantization":"4bit","available":true,"description":null}]}
+            "quantization":"4bit","available":true,"tab":"local","tab_title":"Local",
+            "favorite_key":"local\u001fmlx-community/Qwen3-8B-4bit",
+            "external_source":"LM Studio"}],
+ "favorites":["local\u001fmlx-community/Qwen3-8B-4bit"]}
 ```
 
-`source` is `foundation | local | remote | claude-code`; `provider` is the
-tab title (e.g. "Local" or the remote provider's name). `available: false`
-marks rows the Mac greys out.
+`source` is `foundation | local | remote | claude-code`. `tab` / `tab_title`
+name the picker tab holding the model (`local`, `claude-code`,
+`remote-<provider uuid>`). `available: false` marks bundles the Mac can't run.
+The picker's sort and filters read `context_length` (tokens), `input_price` /
+`output_price` (Router micro-USD per million tokens) and `external_source`
+(where a local bundle was discovered); each is omitted when unknown, as are
+`params`, `quantization` and `description`. `favorites` lists favourite keys
+oldest first.
 
 ### 12.2 `PUT /agents/{id}/model`
 
@@ -878,6 +887,12 @@ applies and nothing is sent to the model. Fields without a value (`icon`,
 `PUT {"model":"<id>","option":"<option id or thinking>","value":"high" | true | null}`
 stores one choice (`null` resets it) and answers with the same body as
 `POST`. `404 unknown_option`, `400 invalid_value`.
+
+### 12.4 `PUT /models/favorites`
+
+`{"key":"<favorite_key from 12.1>","favorite":true}` adds the model to the
+Mac's favourites (`false` removes it), as the heart on a picker row does, and
+answers with the whole list: `{"favorites":["…"]}`.
 
 ---
 

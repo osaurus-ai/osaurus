@@ -1,4 +1,13 @@
-//
+                    available: source != "local" || item.isMLXFormat,
+                    description: item.description,
+                    tab: tab.key,
+                    tabTitle: tab.title,
+                    favoriteKey: item.favoriteKey,
+                    contextLength: item.contextLength,
+                    inputPrice: item.inputPriceMicroPerMTok,
+                    outputPrice: item.outputPriceMicroPerMTok,
+                    externalSource: item.externalSource
+                )//
 //  HTTPHandler.swift
 //  osaurus
 //
@@ -816,6 +825,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleModelPickerEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST || head.method == .PUT, path == "/models/options" {
                 handleModelOptionsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .PUT, path == "/models/favorites" {
+                handleModelFavoriteEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/credits/balance" {
                 handleCreditsBalanceEndpoint(
                     head: head,
@@ -4834,10 +4845,37 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// False for local bundles the picker greys out (non-MLX format).
         let available: Bool
         let description: String?
+        /// The picker tab holding this model (`local`, `remote-<uuid>`,
+        /// `claude-code`) and its title (`Local`, the provider name).
+        let tab: String
+        let tabTitle: String
+        /// Key in the Mac's favourites list (source key + id).
+        let favoriteKey: String
+        /// Context window in tokens, for the context-limit filter.
+        let contextLength: Int?
+        /// Router price in micro-USD per million tokens, for the price sort.
+        let inputPrice: Int64?
+        let outputPrice: Int64?
+        /// Where an externally discovered local bundle came from ("LM
+        /// Studio"), for the Local tab's source filter.
+        let externalSource: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id, name, provider, source, vision, thinking, params, quantization, available, description, tab
+            case tabTitle = "tab_title"
+            case favoriteKey = "favorite_key"
+            case contextLength = "context_length"
+            case inputPrice = "input_price"
+            case outputPrice = "output_price"
+            case externalSource = "external_source"
+        }
     }
 
     private struct PickerModelsResponse: Encodable {
+        /// In the Mac picker's tab order, and its order within each tab.
         let models: [PickerModelDTO]
+        /// The Mac's favourite model keys, oldest first.
+        let favorites: [String]
     }
 
     /// Whether the caller owns this Mac: loopback, or a master-scoped key
@@ -4880,7 +4918,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask(priority: .userInitiated) {
             let items = await ModelPickerItemCache.shared.buildModelPickerItems().chatModelCandidates
-            let models = items.map { item -> PickerModelDTO in
+            let favorites = await MainActor.run { FavoriteModelsStore.shared.favoriteKeys }
+            // Grouped as the Mac picker groups them, so the phone shows the
+            // same tabs in the same order.
+            let tabbed = items.groupedByTab().flatMap { tab in tab.models.map { (tab: tab, item: $0) } }
+            let models = tabbed.map { tab, item -> PickerModelDTO in
                 let source: String
                 switch item.source {
                 case .foundation: source = "foundation"
@@ -4899,11 +4941,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     params: item.parameterCount,
                     quantization: item.quantization,
                     available: source != "local" || item.isMLXFormat,
-                    description: item.description
+                    description: item.description,
+                    tab: tab.key,
+                    tabTitle: tab.title,
+                    favoriteKey: item.favoriteKey,
+                    contextLength: item.contextLength,
+                    inputPrice: item.inputPriceMicroPerMTok,
+                    outputPrice: item.outputPriceMicroPerMTok,
+                    externalSource: item.externalSource
                 )
             }
             let json =
-                (try? JSONEncoder.osaurusCanonical().encode(PickerModelsResponse(models: models)))
+                (try? JSONEncoder.osaurusCanonical().encode(PickerModelsResponse(models: models, favorites: favorites)))
                 .map { String(decoding: $0, as: UTF8.self) } ?? #"{"models":[]}"#
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -5012,6 +5061,79 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     requestBody: nil,
                     responseBody: outcome.1,
                     responseStatus: Int(outcome.0.code),
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    private struct ModelFavoriteRequest: Decodable {
+        /// `favorite_key` from `/models/picker`.
+        let key: String
+        let favorite: Bool
+    }
+
+    /// PUT /models/favorites — heart or unheart a model in the Mac's
+    /// favourites, as the picker rows' heart does; answers with the list
+    /// (docs/MOBILE_PROTOCOL.md §12.4).
+    private func handleModelFavoriteEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let path = "/models/favorites"
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(ModelFavoriteRequest.self, from: data),
+            !request.key.isEmpty
+        else {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            let body = #"{"error":"bad_request","message":"Expected {\"key\": \"…\", \"favorite\": true}"}"#
+            sendResponse(context: context, version: head.version, status: .badRequest, headers: headers, body: body)
+            logRequest(
+                method: "PUT",
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: 400,
+                startTime: startTime
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let favorites: [String] = await MainActor.run {
+                let store = FavoriteModelsStore.shared
+                if request.favorite { store.add(request.key) } else { store.remove(request.key) }
+                return store.favoriteKeys
+            }
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(["favorites": favorites]))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"favorites":[]}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "PUT",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "{\"favorites\":[\(favorites.count) keys]}",
+                    responseStatus: 200,
                     startTime: startTime
                 )
             }
