@@ -59,3 +59,5 @@ On macOS 26+ with Apple Intelligence, the on-device Apple Foundation model is av
 - Models load on first use. Residency (keep loaded / unload when idle) is configured in Server → Settings → Model Memory.
 - RAM-safety settings (Server → Settings → Memory Safety) govern load admission and cache caps so a large model can't take down the system.
 - If a model is too large for available RAM, Osaurus refuses the load with a clear error instead of letting the system swap or crash.
+
+Automatic checks of installed official OsaurusAI repositories run periodically without downloading model files. Use **Automatically Check Model Updates** in Settings → Local Models to opt out. Manual detail checks and explicit Verify/Repair/Update actions remain available. Metadata matching does not replace file verification.

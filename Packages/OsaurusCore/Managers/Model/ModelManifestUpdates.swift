@@ -56,12 +56,16 @@ extension ModelManager {
         let remote: HuggingFaceService.ManifestSnapshot?
         let errorMessage: String?
         do {
-            remote = try await HuggingFaceService.shared.fetchModelManifest(repoId: model.id)
+            remote = try await HuggingFaceService.shared.fetchModelManifest(
+                repoId: model.id, previous: manifestChecks[model.id]?.remote
+            )
             errorMessage = nil
         } catch is CancellationError { return } catch {
+            guard !Task.isCancelled else { return }
             remote = nil
             errorMessage = error.localizedDescription
         }
+        guard !Task.isCancelled else { return }
         let local = await Task.detached(priority: .utility) { ModelManifest.read(at: model.localDirectory) }.value
         manifestChecks[model.id] = ModelManifestCheck(
             local: local,

@@ -1543,6 +1543,13 @@ public enum SettingsSearchIndex {
 
         // MARK: Tab-level rows for Management areas that had zero search hits
         .init(
+            id: "models.automaticUpdates",
+            tab: .models,
+            title: "Automatically Check Model Updates",
+            keywords: ["background model updates", "huggingface", "model revision", "automatic checks", "offline"],
+            disambiguation: "Checks installed OsaurusAI model metadata only. Does not update the Osaurus application or download model files."
+        ),
+        .init(
             id: "models.overview",
             tab: .models,
             title: "Local Models",

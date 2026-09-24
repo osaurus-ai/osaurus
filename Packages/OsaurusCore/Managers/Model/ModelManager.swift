@@ -40,7 +40,12 @@ enum ModelListTab: String, CaseIterable, AnimatedTabItem {
 /// Download orchestration is handled by ModelDownloadService.
 @MainActor
 public final class ModelManager: NSObject, ObservableObject {
-    static let shared = ModelManager()
+    static let shared: ModelManager = {
+        let manager = ModelManager()
+        manager.ownsModelUpdatePolling = true
+        if !RuntimeEnvironment.isUnderTests { manager.restartModelUpdatePolling() }
+        return manager
+    }()
 
     /// Diagnostics logger usable from the `nonisolated static` discovery paths.
     nonisolated static let discoveryLog = Logger(
@@ -214,6 +219,17 @@ public final class ModelManager: NSObject, ObservableObject {
     @Published var manifestChecks: [String: ModelManifestCheck] = [:]
     @Published var manifestChecksInFlight: Set<String> = []
     var pendingManifestChecks: [String: MLXModel] = [:]
+    @Published var automaticallyChecksModelUpdates =
+        UserDefaults.standard.object(forKey: "AutomaticallyCheckModelUpdates") as? Bool ?? true
+    {
+        didSet {
+            UserDefaults.standard.set(automaticallyChecksModelUpdates, forKey: "AutomaticallyCheckModelUpdates")
+            restartModelUpdatePolling()
+        }
+    }
+    var ownsModelUpdatePolling = false
+    var modelUpdatePollingTask: Task<Void, Never>?
+    let automaticModelUpdateSweep = ModelUpdateSweep()
     @Published var deprecationNotices: [DeprecationNotice] = []
 
     /// True while a refresh of the OsaurusAI org listing is in flight. Drives
@@ -244,7 +260,10 @@ public final class ModelManager: NSObject, ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.refreshDownloadStates()
-                Task { await self?.refreshModelUpdates(force: true) }
+                Task {
+                    await self?.refreshCachedManifestLocalState()
+                    await self?.refreshAutomaticModelUpdates()
+                }
             }
             .store(in: &cancellables)
 

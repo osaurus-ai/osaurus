@@ -42,6 +42,14 @@ Existing agents without a valid description retain their IDs, chats, tools, and 
 
 ## Common names that are different controls
 
+**Automatically Check Model Updates**, in Settings → Local Models, checks
+metadata for installed official OsaurusAI Hugging Face models every six hours.
+It is enabled by default and saved immediately. Turn it off to stop these
+automatic checks; **Check for Model Updates** in a model's details remains a
+manual action. Failures remain errors and retry with backoff. Checking never
+downloads or replaces model weights. This switch is Settings UI only and is
+separate from updating the Osaurus application.
+
 | You might say | Actual control | Path |
 |---|---|---|
 | Context window / context budget / context length | Context Window Cap (tokens) | Settings… (⌘,) → Server → Settings → Cache → Context & KV Policy |

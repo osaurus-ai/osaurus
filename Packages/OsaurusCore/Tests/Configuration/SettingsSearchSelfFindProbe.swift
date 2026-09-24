@@ -59,6 +59,7 @@ struct SettingsSearchSelfFindProbe {
     @Test("controls are findable by the label they display")
     func controlsFindableByOnScreenLabel() {
         let labels: [(query: String, entryID: String)] = [
+            ("Automatically Check Model Updates", "models.automaticUpdates"),
             ("Descriptions required", "agents.description"),
             ("Agent description (required)", "agents.description"),
             ("Suggest from system prompt", "agents.description"),

@@ -175,6 +175,19 @@ struct ModelDownloadView: View {
             LiveSystemStatusBar()
                 .opacity(hasAppeared ? 1 : 0)
 
+            Toggle(isOn: $modelManager.automaticallyChecksModelUpdates) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Automatically Check Model Updates", bundle: .module)
+                    Text("Checks installed OsaurusAI models every six hours. Never downloads model files automatically.", bundle: .module)
+                        .font(.caption)
+                        .foregroundStyle(theme.secondaryText)
+                }
+            }
+            .toggleStyle(.switch)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 10)
+            .settingsLandingAnchor("models.automaticUpdates")
+
             modelListView(lists: lists)
                 .opacity(hasAppeared ? 1 : 0)
         }
@@ -203,7 +216,7 @@ struct ModelDownloadView: View {
             }
 
             refreshGridLists()
-            Task { await modelManager.refreshModelUpdates() }
+            Task { await modelManager.refreshAutomaticModelUpdates() }
             DispatchQueue.main.async { applyPendingModelDetail() }
         }
         // Replays on subscribe, so a link that arrived before this view

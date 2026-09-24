@@ -1,6 +1,28 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Checks installed OsaurusAI models every six hours. Never downloads model files automatically.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checks installed OsaurusAI models every six hours. Never downloads model files automatically."
+          }
+        }
+      }
+    },
+    "Automatically Check Model Updates": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatically Check Model Updates"
+          }
+        }
+      }
+    },
     "Installed revision is newer than the published revision.": {
       "extractionState": "manual",
       "localizations": {
