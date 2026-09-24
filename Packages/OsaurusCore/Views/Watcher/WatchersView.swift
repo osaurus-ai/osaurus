@@ -1118,6 +1118,17 @@ private struct WatcherAgentPicker: View {
         return selectedAgent?.name ?? "Default"
     }
 
+    private var selectedAgentDescription: String {
+        if let option = selectedWorkspaceOption {
+            let purpose = (try? AgentDescriptionPolicy.validated(option.description ?? ""))
+                ?? L("Description required")
+            return "\(option.subtitle) — \(purpose)"
+        }
+        guard let agent = selectedAgent else { return L("Uses the default system behavior") }
+        return (try? AgentDescriptionPolicy.validated(agent.description))
+            ?? L("Description required — open Configure")
+    }
+
     private func agentColor(for name: String) -> Color {
         let hue = Double(abs(name.hashValue % 360)) / 360.0
         return Color(hue: hue, saturation: 0.6, brightness: 0.8)
@@ -1148,12 +1159,10 @@ private struct WatcherAgentPicker: View {
                     Text(selectedAgentName)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
-                    if let option = selectedWorkspaceOption {
-                        Text(String(format: L("Workspace agent · %@"), option.subtitle))
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                            .lineLimit(1)
-                    }
+                    Text(selectedAgentDescription)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(2)
                 }
 
                 Spacer(minLength: 0)
@@ -1237,7 +1246,7 @@ private struct WatcherAgentPicker: View {
                 }
             }
             .padding(8)
-            .frame(minWidth: 320)
+            .frame(width: 360)
             .background(theme.cardBackground)
         }
     }
@@ -1261,10 +1270,13 @@ private struct WatcherAgentOptionRow: View {
 
     private var displayDescription: String {
         if let workspaceOption {
-            return workspaceOption.description.map { "\(workspaceOption.subtitle) — \($0)" }
-                ?? workspaceOption.subtitle
+            let purpose = (try? AgentDescriptionPolicy.validated(workspaceOption.description ?? ""))
+                ?? L("Description required")
+            return "\(workspaceOption.subtitle) — \(purpose)"
         }
-        return agent?.description ?? L("Uses the default system behavior")
+        guard let agent else { return L("Uses the default system behavior") }
+        return (try? AgentDescriptionPolicy.validated(agent.description))
+            ?? L("Description required — open Configure")
     }
 
     var body: some View {

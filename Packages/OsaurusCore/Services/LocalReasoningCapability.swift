@@ -46,10 +46,10 @@ enum LocalReasoningCapability {
         let preservesOmittedThinking: Bool
         /// The serving default the PUBLISHER explicitly stamped into
         /// `generation_config.json > default_chat_template_kwargs >
-        /// enable_thinking` — the same key HF transformers honors when the
-        /// caller omits the kwarg. `nil` when the bundle carries no such
-        /// declaration (template-inferred and jang_config defaults do NOT
-        /// populate this). Distinct from `defaultThinkingOn` so policy code
+        /// enable_thinking`, or JANG's supported `chat.thinking` declaration
+        /// explicitly naming that template flag. `nil` when the bundle carries
+        /// no such contract (template inference and legacy reasoning metadata
+        /// do not populate this). Distinct from `defaultThinkingOn` so policy code
         /// can tell a deliberate bundle contract (Laguna/Raptor) apart from
         /// a heuristic template read.
         let declaredDefaultThinkingOn: Bool?
@@ -212,6 +212,7 @@ enum LocalReasoningCapability {
                 declaredCapability: declaredCapability
             )
             let declared = generationConfigDeclaredThinkingOn(at: dir)
+                ?? jangThinkingDeclaredDefault(at: dir)
             if let metadataDefault = declared ?? readTemplateDefaultThinkingOn(at: dir) {
                 return Capability(
                     supportsThinking: analyzed.supportsThinking,
@@ -587,8 +588,7 @@ enum LocalReasoningCapability {
     /// from the jang_config fallback below because this one is a deliberate
     /// wire contract (HF transformers applies the same key when the caller
     /// omits `enable_thinking`) and `AgentReasoningPolicy` honors it even on
-    /// agent/tool surfaces, while jang_config defaults remain
-    /// presentation-level metadata.
+    /// agent/tool surfaces. This takes precedence over JANG metadata.
     private static func generationConfigDeclaredThinkingOn(at dir: URL) -> Bool? {
         guard
             let data = readSmallConfigFile(dir.appendingPathComponent("generation_config.json")),
@@ -597,6 +597,23 @@ enum LocalReasoningCapability {
             let enableThinking = defaults["enable_thinking"] as? Bool
         else { return nil }
         return enableThinking
+    }
+
+    /// JANG's native thinking contract identifies the actual template control,
+    /// unlike legacy reasoning metadata used only for presentation. Preserve
+    /// omission on agent requests as well as chat; explicit user choices still
+    /// win. MiMo V2.6 ships this shape with default=true and a template that
+    /// selects the direct rail only when enable_thinking is explicitly false.
+    private static func jangThinkingDeclaredDefault(at dir: URL) -> Bool? {
+        guard
+            let data = readSmallConfigFile(dir.appendingPathComponent("jang_config.json")),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let chat = root["chat"] as? [String: Any],
+            let thinking = chat["thinking"] as? [String: Any],
+            thinking["supported"] as? Bool == true,
+            thinking["template_flag"] as? String == "enable_thinking"
+        else { return nil }
+        return jangReasoningDefaultThinkingOn(thinking)
     }
 
     /// Bundle metadata can override the Jinja fallback for omitted kwargs. Laguna

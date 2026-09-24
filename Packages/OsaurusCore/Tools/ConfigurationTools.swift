@@ -729,6 +729,9 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                     return [
                         "id": agent.id.uuidString,
                         "name": agent.name,
+                        "description": agent.description,
+                        "description_required": agent.requiresDescriptionRepair,
+                        "description_validation": AgentDescriptionPolicy.violation(in: agent.description)?.message ?? "",
                         "is_built_in": agent.isBuiltIn,
                         "tools_enabled": agent.toolsEnabled,
                         "computer_use_enabled": agent.settings.computerUseEnabled,
@@ -1234,6 +1237,8 @@ extension OsaurusInspectTool {
                         "id": agent.id.uuidString,
                         "name": agent.name,
                         "description": agent.description,
+                        "description_required": agent.requiresDescriptionRepair,
+                        "description_validation": AgentDescriptionPolicy.violation(in: agent.description)?.message ?? "",
                         "system_prompt": agent.systemPrompt,
                         "model": agent.defaultModel ?? "",
                         "temperature": agent.temperature ?? 0,
@@ -1559,15 +1564,15 @@ extension OsaurusInspectTool {
             switch scope.lowercased() {
             case "server":
                 path =
-                    "Management ⌘⇧M → Server → Settings (port, sampling, Cache → Context Window Cap, KV). "
+                    "Settings… (⌘,) → Server → Settings (port, sampling, Cache → Context Window Cap, KV). "
                     + "Find the exact control with osaurus_help {action: 'find', query: '…'}."
             case "chat":
                 path =
-                    "Management ⌘⇧M → Chat (compaction, clipboard, streaming). "
+                    "Settings… (⌘,) → Chat (compaction, clipboard, streaming). "
                     + "Context Window Cap is Server → Settings → Cache, not Chat."
             default:
                 path =
-                    "Management ⌘⇧M → General (login, dock icon, hotkey, toasts). "
+                    "Settings… (⌘,) → General (login, dock icon, hotkey, toasts). "
                     + "Find the exact control with osaurus_help {action: 'find', query: '…'}."
             }
             return ToolEnvelope.failure(

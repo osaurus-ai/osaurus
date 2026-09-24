@@ -782,15 +782,16 @@ struct RemoteAgentDetailView: View {
         metadataRefreshTask = Task { @MainActor in
             defer { isRefreshingMetadata = false }
             let metadata = await RemoteProviderService.fetchOsaurusAgentMetadata(from: provider)
-            guard !Task.isCancelled else { return }
-            if let model = metadata?.effectiveModel, !model.isEmpty {
+            guard !Task.isCancelled, let metadata else { return }
+            if let model = metadata.effectiveModel, !model.isEmpty {
                 liveEffectiveModel = model
             }
             manager.updateLiveMetadata(
                 forAddress: remote.agentAddress,
-                name: metadata?.name,
-                description: metadata?.description,
-                avatar: metadata?.avatar
+                name: metadata.name,
+                description: metadata.description,
+                avatar: metadata.avatar,
+                providerId: remote.providerId
             )
         }
     }

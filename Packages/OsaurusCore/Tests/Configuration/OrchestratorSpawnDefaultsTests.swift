@@ -47,7 +47,9 @@ struct SpawnPoolAutoAddTests {
     private func agentsApplyBody() async throws {
         let name = "Spawn Pool Probe \(UUID().uuidString.prefix(6))"
         var document = OsaurusConfigDocument()
-        document.agents = [AgentEntry(name: name)]
+        var entry = AgentEntry(name: name)
+            entry.description = "Handles independent tasks for this isolated delegation test."
+            document.agents = [entry]
         let results = await ConfigApplier.apply(document: document, prune: false)
         #expect(results.allSatisfy { $0.status != .failed }, "\(results)")
 
@@ -87,9 +89,9 @@ struct SpawnPoolAutoAddTests {
     }
 
     private func managerCreateBody() async throws {
-        let agent = AgentManager.shared.create(
+        let agent = try AgentManager.shared.create(
             name: "Pool Create Probe \(UUID().uuidString.prefix(6))",
-            description: "", systemPrompt: "")
+            description: "Exercises agent configuration in this isolated test.", systemPrompt: "")
         #expect(
             SubagentConfigurationStore.snapshot().spawnableAgentIDs.contains(agent.id),
             "AgentManager.create must auto-add the agent to the Default spawn pool")
@@ -179,10 +181,13 @@ struct SameTurnSpawnStagingTests {
             let buffer = CapabilityLoadBuffer()
             let name = "Same Turn Spawn \(UUID().uuidString.prefix(6))"
             var document = OsaurusConfigDocument()
-            document.agents = [AgentEntry(name: name)]
+            var entry = AgentEntry(name: name)
+            entry.description = "Handles independent tasks for this isolated delegation test."
+            document.agents = [entry]
 
             let session = ChatSession()
             session.agentId = Agent.defaultId
+            session.selectedModel = "local/chat-selected-worker-model"
 
             // Bind the task locals exactly like a live orchestrator turn:
             // the session box identifies the conversation, the buffer
@@ -202,6 +207,8 @@ struct SameTurnSpawnStagingTests {
                 return
             }
             defer { Task { _ = await AgentManager.shared.delete(id: created.id) } }
+            #expect(created.defaultModel == "local/chat-selected-worker-model")
+            #expect(AgentManager.shared.effectiveModel(for: created.id) == session.selectedModel)
 
             let staged = await buffer.drain()
             let names = staged.map { $0.function.name }
@@ -250,7 +257,9 @@ struct SameTurnSpawnStagingTests {
             let buffer = CapabilityLoadBuffer()
             let name = "Headless Spawn \(UUID().uuidString.prefix(6))"
             var document = OsaurusConfigDocument()
-            document.agents = [AgentEntry(name: name)]
+            var entry = AgentEntry(name: name)
+            entry.description = "Handles independent tasks for this isolated delegation test."
+            document.agents = [entry]
 
             // HTTP-sourced session bound: still not a live interactive chat
             // turn, so nothing is staged (CLI/HTTP/delegation surfaces
@@ -450,9 +459,9 @@ struct SpawnPoolSeedMigrationTests {
 
         // A seeded install with one custom agent in the pool (create
         // auto-adds it; the sentinel is what a real seeded install carries).
-        let agent = AgentManager.shared.create(
+        let agent = try AgentManager.shared.create(
             name: "Export Roundtrip \(UUID().uuidString.prefix(6))",
-            description: "", systemPrompt: "")
+            description: "Exercises agent configuration in this isolated test.", systemPrompt: "")
         _ = SubagentConfigurationStore.mutate { $0.spawnPoolSeeded = true }
         let before = SubagentConfigurationStore.snapshot()
         #expect(before.spawnableAgentIDs.contains(agent.id))

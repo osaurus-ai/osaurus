@@ -311,12 +311,11 @@ let package = Package(
         // retaining FP32 GDN recurrence and isolating old cache precision.
         // vmlx-swift#489 indexes linked SSD payloads, scopes quota retention
         // to conversation chains, and reports current-chat capacity pressure.
-        // vmlx-swift 8f8f692 joins the companion-import log fields so the
-        // expression type-checks on every toolchain (the build was failing
-        // for part of the team on "unable to type-check in reasonable time").
+        // vmlx-swift#493 adds native MiMo V2.6 mixed-quant/media runtime,
+        // resident expert dispatch, and correct post-answer cache boundaries.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "8f8f6929eb8f587f48d42e1b1e4f1e84bb758993"
+            revision: "63a10f3ab61c36cb978fcd7d74208c746930006d"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

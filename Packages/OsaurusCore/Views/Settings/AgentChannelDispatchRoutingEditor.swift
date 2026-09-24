@@ -127,7 +127,7 @@ struct AgentChannelDispatchRoutingEditor: View {
                     routes.isEmpty ? L("Choose an agent") : L("None (reply only where a rule matches)")
                 ).tag(AgentDispatchTarget?.none)
                 ForEach(selectableAgents) { agent in
-                    Text(agent.name).tag(Optional(AgentDispatchTarget.local(agent.id)))
+                    Text(localLabel(agent)).tag(Optional(AgentDispatchTarget.local(agent.id)))
                 }
                 if !workspaceAgents.isEmpty {
                     Section(header: Text("Workspace agents", bundle: .module)) {
@@ -170,6 +170,12 @@ struct AgentChannelDispatchRoutingEditor: View {
 
     /// "Name · Workspace" plus a presence glyph so the picker shows at a
     /// glance whether the teammate's Mac is currently reachable.
+    private func localLabel(_ agent: Agent) -> String {
+        let purpose = (try? AgentDescriptionPolicy.validated(agent.description))
+            ?? L("Description required")
+        return "\(agent.name) — \(purpose)"
+    }
+
     private func workspaceLabel(_ option: WorkspaceAgentPickerOption) -> String {
         let glyph: String
         switch option.presence {
@@ -177,7 +183,9 @@ struct AgentChannelDispatchRoutingEditor: View {
         case .offline: glyph = "○"
         case .unknown: glyph = "◌"
         }
-        return "\(glyph) \(option.name) · \(option.workspaceName)"
+        let purpose = (try? AgentDescriptionPolicy.validated(option.description ?? ""))
+            ?? L("Description required")
+        return "\(glyph) \(option.name) · \(option.workspaceName) — \(purpose)"
     }
 
     private func routeRow(_ route: Binding<AgentChannelDispatchRoute>) -> some View {
@@ -245,7 +253,7 @@ struct AgentChannelDispatchRoutingEditor: View {
     private func agentPicker(_ route: Binding<AgentChannelDispatchRoute>) -> some View {
         Picker("", selection: route.target) {
             ForEach(selectableAgents) { agent in
-                Text(agent.name).tag(AgentDispatchTarget.local(agent.id))
+                Text(localLabel(agent)).tag(AgentDispatchTarget.local(agent.id))
             }
             if !workspaceAgents.isEmpty {
                 Section(header: Text("Workspace agents", bundle: .module)) {

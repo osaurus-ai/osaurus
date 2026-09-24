@@ -260,6 +260,18 @@ struct AgentsView: View {
     /// cold-mounted Agents tab never sees the `onChange`.
     private func routeSettingsLanding(_ pending: String?) {
         guard let pending, pending.hasPrefix("agents.") else { return }
+        if pending == "agents.description",
+            let target = customAgents.first(where: \.requiresDescriptionRepair) ?? detailAgent ?? customAgents.first
+        {
+            selectedRemoteAgentId = nil
+            deeplinkTab = (target.id, "configure")
+            selectedAgent = target
+            NotificationCenter.default.post(
+                name: .agentDetailDeeplink, object: nil,
+                userInfo: ["agentId": target.id, "tab": "configure"]
+            )
+            return
+        }
         if pending.hasPrefix("agents.appleApps") {
             // The Apple app groups live inside a custom agent's
             // Abilities → Tools picker, not on the grid: route into the
@@ -362,6 +374,24 @@ struct AgentsView: View {
                 .opacity(hasAppeared ? 1 : 0)
             } else {
                 ScrollView {
+                    if customAgents.contains(where: \.requiresDescriptionRepair) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Descriptions required", bundle: .module)
+                                .font(.headline)
+                            Text("Add what each agent does and when to use it. Your chats and settings are preserved; delegation is unavailable until its description is complete.", bundle: .module)
+                                .font(.callout)
+                            ForEach(customAgents.filter(\.requiresDescriptionRepair)) { agent in
+                                Button {
+                                    selectedAgent = agent
+                                    deeplinkTab = (agent.id, "configure")
+                                } label: {
+                                    Text("Add description for \(agent.name)", bundle: .module)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(20)
+                    }
                     LazyVGrid(columns: Self.gridColumns, spacing: 20) {
                         ForEach(Array(customAgents.enumerated()), id: \.element.id) { index, agent in
                             AgentCard(
@@ -566,6 +596,21 @@ struct AgentsView: View {
     }
 
     private func duplicateAgent(_ agent: Agent) {
+        // A legacy record may legitimately need repair, but duplicating it
+        // must not author another agent without a valid routing purpose.
+        // Open the existing repair flow (including prompt-backed Suggest)
+        // before copying any record or registering a new spawn target.
+        guard !agent.requiresDescriptionRepair else {
+            deeplinkTab = (agent.id, "configure")
+            withAnimation(Self.navTransition) {
+                selectedAgent = agent
+            }
+            ToastManager.shared.warning(
+                L("Description required"),
+                message: L("Add a valid description before duplicating this agent.")
+            )
+            return
+        }
         let baseName = "\(agent.name) Copy"
         let existingNames = Set(customAgents.map { $0.name })
         var newName = baseName
@@ -691,13 +736,13 @@ private struct AgentCard: View {
                         // Always render the description line so card heights line
                         // up across the grid — placeholder when the agent has none.
                         Text(
-                            agent.description.isEmpty
-                                ? L("No description")
+                            agent.requiresDescriptionRepair
+                                ? L("Description required — open Configure")
                                 : agent.description
                         )
                         .font(.system(size: 11))
                         .foregroundColor(
-                            agent.description.isEmpty ? theme.tertiaryText : theme.secondaryText
+                            agent.requiresDescriptionRepair ? Color.orange : theme.secondaryText
                         )
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -2322,11 +2367,13 @@ struct AgentDetailView: View {
                     icon: "textformat"
                 )
 
-                StyledTextField(
-                    placeholder: L("Brief description (optional)"),
-                    text: $description,
-                    icon: "text.alignleft"
-                )
+                AgentDescriptionField(text: $description, systemPrompt: systemPrompt)
+                    .id(agent.id)
+                if AgentDescriptionPolicy.violation(in: description) != nil {
+                    Text("Description changes are not saved until valid. This agent cannot be delegated to while its saved description needs repair.", bundle: .module)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
                 HStack(spacing: 6) {
                     Image(systemName: "calendar")
@@ -7134,7 +7181,7 @@ struct AgentDetailView: View {
         let updated = Agent(
             id: agent.id,
             name: trimmedName,
-            description: description.trimmingCharacters(in: .whitespacesAndNewlines),
+            description: (try? AgentDescriptionPolicy.validated(description)) ?? current.description,
             systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
             themeId: selectedThemeId,
             defaultModel: selectedModel,
@@ -8136,8 +8183,11 @@ private struct AgentEditorSheet: View {
     /// the suggested name in sync. Once the user types their own value, the
     /// name is theirs and presets stop touching it.
     @State private var nameUserEdited: Bool = false
+    @State private var description: String = ""
     @State private var selectedAvatar: String? = nil
     @State private var systemPrompt: String = ""
+    @State private var descriptionResolutionTask: Task<Void, Never>?
+    @State private var descriptionResolutionError: String?
     @State private var selectedModel: String?
     @State private var pickerItems: [ModelPickerItem] = []
     @State private var showModelPicker: Bool = false
@@ -8170,6 +8220,8 @@ private struct AgentEditorSheet: View {
 
     private var canSave: Bool {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && descriptionResolutionTask == nil
+            && AgentDescriptionResolver.canResolve(description: description, systemPrompt: systemPrompt)
     }
 
     var body: some View {
@@ -8225,6 +8277,7 @@ private struct AgentEditorSheet: View {
                 nameFocused = true
             }
         }
+        .onDisappear { descriptionResolutionTask?.cancel() }
         .onReceive(ModelPickerItemCache.shared.$items) { pickerItems = $0 }
         .themedAlert(
             L("Leave without creating this agent?"),
@@ -8306,12 +8359,20 @@ private struct AgentEditorSheet: View {
             VStack(alignment: .leading, spacing: 18) {
                 templatesStrip
                 nameField
+                AgentDescriptionField(text: $description, systemPrompt: systemPrompt, generatesOnCreate: true)
+                if descriptionResolutionTask != nil {
+                    ProgressView(L("Generating agent description…"))
+                }
+                if let descriptionResolutionError {
+                    Text(descriptionResolutionError).font(.caption).foregroundStyle(.red)
+                }
                 avatarField
                 modelField
                 capabilitiesField
                 promptField
             }
             .padding(20)
+            .disabled(descriptionResolutionTask != nil)
         }
     }
 
@@ -8654,7 +8715,8 @@ private struct AgentEditorSheet: View {
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
                         .lineLimit(1)
-                    Text("No description", bundle: .module)
+                    Text(AgentDescriptionPolicy.normalized(description).isEmpty
+                        ? L("Description required") : AgentDescriptionPolicy.normalized(description))
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                         .lineLimit(1)
@@ -8707,7 +8769,7 @@ private struct AgentEditorSheet: View {
             icon: "person.crop.circle.badge.plus",
             title: "Create Agent",
             subtitle: "Pick a starter, name it, write a prompt",
-            onClose: onCancel
+            onClose: cancelCreation
         )
     }
 
@@ -8720,7 +8782,7 @@ private struct AgentEditorSheet: View {
             ),
             secondary: AgentSheetFooter.Action(
                 label: "Cancel",
-                handler: onCancel
+                handler: cancelCreation
             ),
             hint: "+ Enter to create"
         )
@@ -8741,10 +8803,49 @@ private struct AgentEditorSheet: View {
         }
     }
 
+    private func cancelCreation() {
+        descriptionResolutionTask?.cancel()
+        descriptionResolutionTask = nil
+        onCancel()
+    }
+
     @MainActor
     private func saveAgent() {
+        guard descriptionResolutionTask == nil else { return }
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if AgentDescriptionPolicy.normalized(description).isEmpty,
+            !AgentDescriptionPolicy.normalized(systemPrompt).isEmpty
+        {
+            let prompt = systemPrompt
+            let originalDescription = description
+            descriptionResolutionError = nil
+            descriptionResolutionTask = Task { @MainActor in
+                do {
+                    let resolved = try await AgentDescriptionGenerator.resolve(
+                        description: originalDescription, systemPrompt: prompt)
+                    try Task.checkCancellation()
+                    guard systemPrompt == prompt, description == originalDescription else {
+                        descriptionResolutionTask = nil
+                        return
+                    }
+                    description = resolved
+                    descriptionResolutionTask = nil
+                    saveAgent()
+                } catch is CancellationError {
+                    descriptionResolutionTask = nil
+                } catch {
+                    descriptionResolutionTask = nil
+                    descriptionResolutionError = (error as? AgentDescriptionPolicy.Violation)?.message
+                        ?? L("Could not suggest a description. Try again or enter one manually.")
+                }
+            }
+            return
+        }
+
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty else { return }
+        guard !trimmedName.isEmpty,
+            let validDescription = try? AgentDescriptionPolicy.validated(description)
+        else { return }
 
         // Bake the (possibly user-edited) draft sets directly into the new
         // agent so `seedEnabledCapabilitiesIfNeeded` is a no-op on first
@@ -8752,7 +8853,7 @@ private struct AgentEditorSheet: View {
         // when new plugins are installed later.
         var agent = AgentManager.newCustomAgentRecord(
             name: trimmedName,
-            description: "",
+            description: validDescription,
             systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
             themeId: nil,
             defaultModel: selectedModel

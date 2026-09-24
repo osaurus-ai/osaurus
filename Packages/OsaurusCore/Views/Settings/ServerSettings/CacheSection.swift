@@ -275,6 +275,17 @@ struct CacheSection: View {
         )
     }
 
+    nonisolated static func hasUnsavedDiskCacheDirectory(
+        draft: VMLXServerCacheSettings, saved: VMLXServerCacheSettings
+    ) -> Bool {
+        ModelRuntime.diskCacheDirectoryForDisplay(for: draft).standardizedFileURL
+            != ModelRuntime.diskCacheDirectoryForDisplay(for: saved).standardizedFileURL
+    }
+
+    private var hasUnsavedDiskCacheDirectory: Bool {
+        Self.hasUnsavedDiskCacheDirectory(draft: draft.cache, saved: savedSettings.cache)
+    }
+
     private var diskCacheControls: some View {
         VStack(alignment: .leading, spacing: 12) {
             SettingsToggle(
@@ -308,6 +319,7 @@ struct CacheSection: View {
             HStack(spacing: 10) {
                 Button {
                     Task {
+                        guard !hasUnsavedDiskCacheDirectory else { return }
                         isClearingDiskCache = true
                         let result = await ModelRuntime.shared.clearDiskCaches()
                         clearedCacheSummary =
@@ -327,7 +339,7 @@ struct CacheSection: View {
                         Text("Clear SSD Cache", bundle: .module)
                     }
                 }
-                .disabled(isClearingDiskCache)
+                .disabled(isClearingDiskCache || hasUnsavedDiskCacheDirectory)
                 .accessibilityLabel(Text("Clear SSD Cache", bundle: .module))
                 .settingsLandingAnchor("settings.server.clearDiskCache")
                 if let clearedCacheSummary {
@@ -335,6 +347,11 @@ struct CacheSection: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+            }
+            if hasUnsavedDiskCacheDirectory {
+                Text("Save directory changes before clearing the SSD cache.", bundle: .module)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Text(
                 "Clears indexed conversation cache files. Chats and models are not deleted. Unrecognized files are left untouched; future replies may rebuild a cold cache.",

@@ -96,8 +96,8 @@ public final class RemoteAgentManager: ObservableObject {
     /// `GET /agents/{id}` response (called on connect). The name captured at
     /// pair time can go stale if the owner renames their agent, and avatars
     /// were never captured at all — this keeps the local label/avatar honest.
-    /// Empty name/description are ignored so a degraded response can't blank an
-    /// existing label; only writes (and posts a change) when something actually
+    /// Empty names and absent descriptions are ignored. An explicit empty
+    /// description clears stale routing metadata. Only writes when something actually
     /// differs. No-ops for addresses we don't have a `RemoteAgent` record for
     /// (e.g. ephemeral Bonjour peers) — the in-window pin still surfaces those.
     public func updateLiveMetadata(

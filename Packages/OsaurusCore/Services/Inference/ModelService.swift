@@ -251,6 +251,17 @@ struct ServiceToolInvocations: Error, Sendable {
     let invocations: [ServiceToolInvocation]
 }
 
+/// Parsed calls remain provisional when the response exhausts its output
+/// budget. Never signal an executable batch from an incomplete response.
+struct ServiceToolResponseExhausted: Error, LocalizedError, Sendable {
+    let toolCallCount: Int
+
+    var errorDescription: String? {
+        "The model reached its output token limit before finishing the tool response. "
+            + "The queued tools were not run."
+    }
+}
+
 /// In-band signaling for tool name and argument detection during streaming.
 /// The stream type is `AsyncThrowingStream<String, Error>`, so we encode the
 /// detected tool name (and argument fragments) as sentinel strings using a

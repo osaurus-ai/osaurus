@@ -145,4 +145,35 @@ struct WorkspaceSpawnPromptStabilityTests {
             #expect(!guidance.contains(Self.address))
         }
     }
+
+    @Test func inspectionReportsCurrentDescriptionAndLegacyRepair() async throws {
+        try await WorkspaceRosterTestLock.shared.run {
+            let original: [String: Any] = [
+                "agent_address": Self.address, "display_name": "Research Agent",
+                "relay_url": "wss://relay.example", "online": true,
+                "shared_at": "2026-01-01T00:00:00Z",
+            ]
+            for description: String? in [nil, "", "  Reviews supplied citations.  ", String(repeating: "x", count: 161)] {
+                var object = original
+                object["description"] = description
+                let agent = try JSONDecoder().decode(
+                    OsaurusRouterWorkspaceAgent.self,
+                    from: JSONSerialization.data(withJSONObject: object)
+                )
+                WorkspaceRosterStore.shared.apply(
+                    rosters: [.init(workspace: try Self.workspace(), agents: [agent])]
+                )
+                guard case .found(let row) = WorkspaceInspectPayload.describeSharedAgent(Self.ref.key) else {
+                    Issue.record("Expected shared-agent inspection row")
+                    continue
+                }
+                let normalized = AgentDescriptionPolicy.normalized(description ?? "")
+                let violation = AgentDescriptionPolicy.violation(in: normalized)
+                #expect(row["name"] as? String == "Research Agent")
+                #expect(row["description"] as? String == (normalized.isEmpty ? nil : normalized))
+                #expect(row["description_required"] as? Bool == (violation != nil))
+                #expect(row["description_validation"] as? String == (violation?.message ?? ""))
+            }
+        }
+    }
 }

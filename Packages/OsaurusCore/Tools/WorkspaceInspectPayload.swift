@@ -117,8 +117,12 @@ enum WorkspaceInspectPayload {
             return nil
         }
         let name = AgentTargetResolver.displayName(for: ref)
+        let description = AgentDescriptionPolicy.normalized(agent.description ?? "")
+        let descriptionViolation = AgentDescriptionPolicy.violation(in: description)
         var row: [String: Any] = [
             "name": name,
+            "description_required": descriptionViolation != nil,
+            "description_validation": descriptionViolation?.message ?? "",
             // The spelling that works everywhere: `spawn_agent.agent`,
             // `delegation.spawnable_workspace_agents`, the target resolver.
             "target": AgentTargetResolver.qualifiedDisplayName(for: ref),
@@ -130,9 +134,7 @@ enum WorkspaceInspectPayload {
         ]
         if let workspace = AgentTargetResolver.workspaceName(for: ref) { row["workspace"] = workspace }
         if let owner = agent.owner?.friendlyName, !owner.isEmpty { row["owner"] = owner }
-        if let description = agent.description?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !description.isEmpty
-        {
+        if !description.isEmpty {
             row["description"] = description
         }
         if let model = RemoteAgentManager.shared

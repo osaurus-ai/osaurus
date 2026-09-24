@@ -9843,6 +9843,11 @@ struct ChatView: View {
                                     .padding(.horizontal, Self.composerHorizontalInset)
                             }
 
+                            AgentDescriptionRepairNotice()
+                                .padding(.horizontal, Self.composerHorizontalInset)
+                                .frame(maxWidth: 1100)
+                                .frame(maxWidth: .infinity)
+
                             ChatPersistenceNotice(sessionId: observedSession.sessionId)
                                 .padding(.horizontal, Self.composerHorizontalInset)
                                 .frame(maxWidth: 1100)
@@ -10537,12 +10542,12 @@ struct ChatView: View {
                 windowState.pinnedRemoteAgentQuickActions = metadata?.quickActions
                 // Keep the persisted paired-agent label/avatar honest (no-op for
                 // ephemeral Bonjour peers without a RemoteAgent record).
-                if let address = provider.remoteAgentAddress, !address.isEmpty {
+                if let metadata, let address = provider.remoteAgentAddress, !address.isEmpty {
                     RemoteAgentManager.shared.updateLiveMetadata(
                         forAddress: address,
-                        name: metadata?.name,
-                        description: metadata?.description,
-                        avatar: metadata?.avatar,
+                        name: metadata.name,
+                        description: metadata.description,
+                        avatar: metadata.avatar,
                         providerId: providerId
                     )
                 }

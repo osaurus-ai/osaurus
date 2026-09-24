@@ -111,6 +111,19 @@ actor MLXService: ToolCapableService {
             // sentinel marker; `StreamingToolHint.isSentinel` covers
             // tool/args/done, reasoning, stats, and any future sentinel
             // that adheres to the `\u{FFFE}` prefix contract.
+            if let stats = StreamingStatsHint.decode(s) {
+                if parameters.auxiliaryCacheIntent,
+                    ProcessInfo.processInfo.environment["OSAURUS_UTILITY_GENERATION_TRACE"] == "1"
+                {
+                    // Diagnostic metrics only: never log utility prompts, answers or reasoning.
+                    let row = "[osaurus][utility-generation] tokens=\(stats.tokenCount) "
+                        + "tokens_per_second=\(stats.tokensPerSecond) "
+                        + "prefill_tokens_per_second=\(stats.prefillTokensPerSecond ?? 0) "
+                        + "stop=\(stats.stopReason ?? "unknown")\n"
+                    FileHandle.standardError.write(Data(row.utf8))
+                }
+                continue
+            }
             if StreamingToolHint.isSentinel(s) { continue }
             out += s
         }
@@ -413,15 +426,27 @@ actor MLXService: ToolCapableService {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil
         }
+        let capabilities = root["capabilities"] as? [String: Any]
+        if capabilities?["supports_tools"] as? Bool == false {
+            return .some(nil)
+        }
         let candidates: [Any?] = [
+            capabilities?["tool_parser"],
             ((root["chat"] as? [String: Any])?["tool_calling"] as? [String: Any])?["parser"],
+            ((root["chat"] as? [String: Any])?["tool_calling"] as? [String: Any])?["dialect"],
             ((root["chat"] as? [String: Any])?["tool_calling"] as? [String: Any])?["format"],
             (root["tool_calling"] as? [String: Any])?["parser"],
+            (root["tool_calling"] as? [String: Any])?["dialect"],
             (root["tool_calling"] as? [String: Any])?["format"],
         ]
         for candidate in candidates {
-            if let raw = candidate as? String {
-                return ToolCallFormat.fromCapabilityName(raw)
+            // `format` can contain an example wire payload rather than a parser
+            // identifier. Unknown names must fall through to the next stamp or
+            // model-type inference, not become an explicit tool prohibition.
+            if let raw = candidate as? String,
+                let format = ToolCallFormat.fromCapabilityName(raw)
+            {
+                return .some(format)
             }
         }
         return nil

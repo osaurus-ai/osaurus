@@ -156,7 +156,9 @@ enum ConfigApplier {
             config: SubagentConfigurationStore.snapshot(),
             perAgentEnabled: caps.spawnDelegationEnabled,
             perAgentTargets: caps.spawnableAgentIDs
-        ).filter { $0 != agentId }
+        ).filter {
+            $0 != agentId && AgentManager.shared.agent(for: $0)?.requiresDescriptionRepair == false
+        }
     }
 
     /// An apply that grows the launching conversation's spawn pool (an agent
@@ -187,6 +189,13 @@ enum ConfigApplier {
             let allowedAgentNames = allowedAgentIDs.compactMap {
                 AgentManager.shared.agent(for: $0)?.name
             }
+            let descriptions = allowedAgentIDs.compactMap { id -> SpawnAgentDescriptor? in
+                guard let agent = AgentManager.shared.agent(for: id), !agent.requiresDescriptionRepair else { return nil }
+                return SpawnAgentDescriptor(
+                    id: agent.id, name: agent.name, description: agent.description,
+                    modelId: agent.defaultModel, isLocal: nil, providerName: nil
+                )
+            }
             let baseSpecs = ToolRegistry.shared.specs(
                 forTools: [SubagentCapabilityRegistry.spawnAgentToolName]
             )
@@ -204,16 +213,21 @@ enum ConfigApplier {
                 perAgentEnabled: workspaceCaps.spawnDelegationEnabled,
                 perAgentTargets: workspaceCaps.spawnableWorkspaceAgents
             )
-            let allowedWorkspaceAddresses = allowedWorkspaceAgents.map(\.agentAddress)
+            let workspaceDescriptions = SpawnDescriptors.resolveForPreview(
+                agentIDs: [], launcherModelOverride: nil, workspaceAgents: allowedWorkspaceAgents
+            ).workspaceAgents
+            let allowedWorkspaceAddresses = workspaceDescriptions.map(\.ref.agentAddress)
             let allNames =
-                allowedAgentNames + allowedWorkspaceAgents.map { AgentTargetResolver.displayName(for: $0) }
+                allowedAgentNames + workspaceDescriptions.map(\.name)
             if let spawnAgent = byName[SubagentCapabilityRegistry.spawnAgentToolName] {
                 specs.append(
                     SpawnAgentTool.constrainedSpec(
                         spawnAgent,
                         allowedAgentIDs: allowedAgentIDs,
                         allowedAgentNames: allNames,
-                        allowedWorkspaceAddresses: allowedWorkspaceAddresses
+                        allowedWorkspaceAddresses: allowedWorkspaceAddresses,
+                        agents: descriptions,
+                        workspaceAgents: workspaceDescriptions
                     )
                 )
             }
@@ -324,10 +338,19 @@ enum ConfigApplier {
             let result: ConfigApplyResult = await MainActor.run {
                 var entry = entry
                 let existing = AgentManager.shared.agents.first {
-                    !$0.isBuiltIn && $0.name.lowercased() == entry.name.lowercased()
+                    !$0.isBuiltIn && $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                        == entry.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 }
-                // `template:` seeds description + prompt for a one-line
-                // agent; explicit fields in the entry still win.
+                // Every validation failure must preserve an existing match
+                // during prune, including invalid templates/descriptions.
+                if let agent = existing { matchedIds.insert(agent.id) }
+                if let snapshot = entry.generatedDescriptionSnapshot, !snapshot.matches(existing) {
+                    return ConfigApplyResult(
+                        section: "agents", target: entry.name, status: .failed,
+                        message: "The agent changed after its description was generated. Review a new plan before applying.")
+                }
+                // A template seeds behavior, never the required user-authored
+                // routing description. Existing descriptions survive patches.
                 if let rawTemplate = entry.template?.trimmingCharacters(in: .whitespacesAndNewlines),
                     !rawTemplate.isEmpty
                 {
@@ -339,12 +362,16 @@ enum ConfigApplier {
                             message: "template: `\(rawTemplate)` is not a starter template. Valid: "
                                 + AgentStarterTemplate.configTemplateIds.joined(separator: ", ") + ".")
                     }
-                    if entry.description?.isEmpty ?? true { entry.description = template.tagline }
                     if entry.systemPrompt?.isEmpty ?? true { entry.systemPrompt = template.systemPrompt }
                 }
-                // Mark the match BEFORE model resolution so a failed entry
-                // never exposes its existing agent to prune deletion.
-                if let agent = existing { matchedIds.insert(agent.id) }
+                if entry.description != nil || existing == nil {
+                    if let violation = AgentDescriptionPolicy.violation(in: entry.description ?? "") {
+                        return ConfigApplyResult(
+                            section: "agents", target: entry.name, status: .failed,
+                            message: "description: \(violation.message)")
+                    }
+                    entry.description = AgentDescriptionPolicy.normalized(entry.description ?? "")
+                }
                 let rawModel = entry.model.valueOrNil?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 if let raw = rawModel, !raw.isEmpty {
@@ -374,18 +401,34 @@ enum ConfigApplier {
                     applyRelay(entry.capabilities?.relayEnabled, to: agent.id)
                     return ConfigApplyResult(section: "agents", target: agent.name, status: .done)
                 } else {
-                    // A new agent with no model inherits the Orchestrator's
-                    // current model, so delegation never swaps models by
-                    // accident.
-                    var agent = AgentManager.shared.create(
-                        name: entry.name,
-                        description: entry.description ?? "",
-                        systemPrompt: entry.systemPrompt ?? "",
-                        defaultModel: entry.model.valueOrNil
-                            ?? AgentManager.shared.orchestratorModelForNewAgents(),
-                        temperature: entry.temperature.valueOrNil.map(Float.init),
-                        maxTokens: entry.maxTokens.valueOrNil
-                    )
+                    // The live chat can have a selected model without any
+                    // persisted default (for example on first launch). Carry
+                    // that model into the worker instead of creating a target
+                    // that disappears from the next turn's runnable pool.
+                    let chatModel = ChatExecutionContext.currentChatSessionBox?.session?
+                        .selectedModel?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let createdAgent: Agent
+                    do {
+                        createdAgent = try AgentManager.shared.create(
+                            name: entry.name,
+                            description: entry.description ?? "",
+                            systemPrompt: entry.systemPrompt ?? "",
+                            defaultModel: entry.model.valueOrNil
+                                ?? (chatModel?.isEmpty == false ? chatModel : nil)
+                                ?? AgentManager.shared.orchestratorModelForNewAgents(),
+                            temperature: entry.temperature.valueOrNil.map(Float.init),
+                            maxTokens: entry.maxTokens.valueOrNil
+                        )
+                    } catch let violation as AgentDescriptionPolicy.Violation {
+                        return ConfigApplyResult(
+                            section: "agents", target: entry.name, status: .failed,
+                            message: "description: \(violation.message)")
+                    } catch {
+                        return ConfigApplyResult(
+                            section: "agents", target: entry.name, status: .failed,
+                            message: error.localizedDescription)
+                    }
+                    var agent = createdAgent
                     matchedIds.insert(agent.id)
                     if entry.capabilities != nil {
                         patch(&agent, from: entry)
@@ -1180,7 +1223,7 @@ enum ConfigApplier {
                 results.append(
                     ConfigApplyResult(
                         section: "plugins", target: pluginId, status: .needsUserAction,
-                        message: "Installed. Needs secrets in Settings → Plugins → Secrets: "
+                        message: "Installed. Needs secrets in Settings… (⌘,) → Tools → Native Plugins (Configure Secrets on the plugin card): "
                             + missingSecretLabels.joined(separator: ", ")))
             }
         }

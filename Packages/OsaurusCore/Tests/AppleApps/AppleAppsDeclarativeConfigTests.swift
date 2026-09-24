@@ -27,9 +27,9 @@ struct AppleAppsDeclarativeConfigTests {
         try await SandboxTestLock.runWithStoragePaths {
             await SubagentStoreTestLock.shared.acquire()
             defer { SubagentStoreTestLock.shared.release() }
-            let agent = AgentManager.shared.create(
+            let agent = try AgentManager.shared.create(
                 name: "Apple Config Probe \(UUID().uuidString.prefix(6))",
-                description: "", systemPrompt: "")
+                description: "Exercises agent configuration in this isolated test.", systemPrompt: "")
             do {
                 try await body(agent)
             } catch {
@@ -118,6 +118,7 @@ struct AppleAppsDeclarativeConfigTests {
 
             // Creating an agent with a risky app flags it too.
             var created = AgentEntry(name: "Risk Probe \(UUID().uuidString.prefix(6))")
+            created.description = "Sends requested messages after permission checks."
             var caps = AgentCapabilitiesEntry()
             caps.appleApps = ["messages"]
             created.capabilities = caps
@@ -212,6 +213,7 @@ struct AppleAppsDeclarativeConfigTests {
     private func createWithAppleAppsBody() async throws {
         let name = "Apple Create Probe \(UUID().uuidString.prefix(6))"
         var entry = AgentEntry(name: name)
+        entry.description = "Handles requested Mail and Calendar tasks."
         var caps = AgentCapabilitiesEntry()
         caps.appleApps = ["mail", "calendar"]
         entry.capabilities = caps

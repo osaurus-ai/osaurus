@@ -6,9 +6,17 @@ order: 120
 
 # Settings Overview
 
-Osaurus settings live in the Management window (⌘⇧M). Type a name in the sidebar search to jump to a control. The built-in assistant uses the same catalog via `osaurus_help` `{action: find}` — it will quote a breadcrumb, not invent a path.
+Settings… (⌘,) opens the Management window. Type a name in the sidebar search to jump to a control. The built-in assistant uses the same catalog via `osaurus_help` `{action: find}` — it will quote a breadcrumb, not invent a path.
 
 Ask the assistant to change declarative settings in chat (`osaurus_config`); each change shows a one-tap approval card first (see the Declarative Configuration topic).
+
+## Required agent descriptions
+
+Every new agent needs a valid **Agent description (required)** under Settings → Agents → the agent → Configure. Explain what it does and when to delegate to it, in one line of at most 160 characters and 1,024 UTF-8 bytes. If you supply a description, it is preserved and validated. If it is blank and a system prompt exists, creation uses the configured core model to generate a description. Without a system prompt, you must enter a description yourself. Onboarding can use its selected starter prompt. Config-tool and API creation resolve missing descriptions before the plan is reviewed and apply that same prepared value.
+
+**Suggest from system prompt** also offers a preview in the editor when the description is empty. Choose **Use suggested description** to apply it, then edit it as needed. Generated text follows the same limits; generation failures preserve the draft and require retry or manual entry. Existing valid descriptions are never overwritten automatically.
+
+Existing agents without a valid description retain their IDs, chats, tools, and settings. The Agents page lists each under **Descriptions required**, with a direct edit action. They remain unavailable as delegation targets until repaired; adding a valid description restores their eligibility within the existing allowed pool. Shared workspace agents need a valid description from their owner too. Description text is routing metadata and never grants tools or permissions.
 
 ## What the assistant can change in chat
 
@@ -30,25 +38,25 @@ Ask the assistant to change declarative settings in chat (`osaurus_config`); eac
 - Computer Use / Browser / Sandbox: autonomy presets, app allowlists, resources.
 - Permissions: macOS TCC grants (Accessibility, Screen Recording, …). Tool Auto/Ask/Deny policies live on the Tools tab.
 - Osaurus Connect: **Generate Pairing Code** (a 6-digit code the Osaurus iPhone app redeems on the same network; one iPhone per Mac, pairing a new one unpairs the old), the **Paired iPhone** with **Unpair**, **Reach From Anywhere** (on by default; turns on the relay tunnel for every agent while a phone is paired, so the iPhone works away from this network, still end-to-end encrypted), and **Keep Mac Awake for Paired iPhone** (on by default; prevents idle system sleep only while a phone is paired).
-- Identity, Storage (encryption/backup), Privacy, Channels credentials.
+- Identity, Privacy → Storage (encryption/backup), Channels credentials.
 - Secrets of any kind (API keys, tokens) are always entered in native secure fields, never chat.
 
 ## Common names that are different controls
 
 | You might say | Actual control | Path |
 |---|---|---|
-| Context window / context budget / context length | Context Window Cap (tokens) | ⌘⇧M → Server → Settings → Cache → Context & KV Policy |
+| Context window / context budget / context length | Context Window Cap (tokens) | Settings… (⌘,) → Server → Settings → Cache → Context & KV Policy |
 | Context budget (in chat) | Context Budget popover | Chat composer — read-only; Open Context Window Cap jumps to Server → Cache |
-| Memory budget / token budget (memories) | Memory Budget | ⌘⇧M → Memory → Configuration |
-| Max tokens (reply length) | Max Output Tokens | ⌘⇧M → Orchestrator → Model & Generation |
-| Subagent limits / "agents end too fast" | Limits (Max output tokens per subagent, Max turns per subagent, Time limit per subagent) | ⌘⇧M → Orchestrator → Subagents → Limits |
-| Orchestrator folder / file access | Working Folder | ⌘⇧M → Orchestrator → Working Folder (or the chat Folder chip) |
-| Ask before delegating | Permission / Permission for shared (workspace) agents | ⌘⇧M → Orchestrator → Subagents → Permission |
-| Max tokens (API defaults) | Generation Defaults → Max Tokens | ⌘⇧M → Server → Settings → Sampling Defaults |
+| Memory budget / token budget (memories) | Memory Budget | Settings… (⌘,) → Memory → Configuration |
+| Max tokens (reply length) | Max Output Tokens | Settings… (⌘,) → Orchestrator → Model & Generation |
+| Subagent limits / "agents end too fast" | Limits (Max output tokens per subagent, Max turns per subagent, Time limit per subagent) | Settings… (⌘,) → Orchestrator → Subagents → Limits |
+| Orchestrator folder / file access | Working Folder | Settings… (⌘,) → Orchestrator → Working Folder (or the chat Folder chip) |
+| Ask before delegating | Permission / Permission for shared (workspace) agents | Settings… (⌘,) → Orchestrator → Subagents → Permission |
+| Max tokens (API defaults) | Generation Defaults → Max Tokens | Settings… (⌘,) → Server → Settings → Sampling Defaults |
 | KV / cache window | KV Retention Override | Same Cache panel as the context cap |
 | Tool permissions | Could be Tools catalog, Chat folder tools, or macOS Permissions — ask `find` |
-| Calendar / Reminders / Contacts / Notes / Mail / Messages / Maps / Music / Shortcuts access for an agent | Apple app groups in the tool picker (one group per app, toggled per app) | ⌘⇧M → Agents → *custom agent* → Abilities → Tools (declarative: `agents[].capabilities.apple_apps`) |
-| Calendar / Contacts / Automation grant for the whole app | macOS permission | ⌘⇧M → Permissions (or the **Permission needed** badge on the app's group under Agents → Abilities → Tools) |
+| Calendar / Reminders / Contacts / Notes / Mail / Messages / Maps / Music / Shortcuts access for an agent | Apple app groups in the tool picker (one group per app, toggled per app) | Settings… (⌘,) → Agents → *custom agent* → Abilities → Tools (declarative: `agents[].capabilities.apple_apps`) |
+| Calendar / Contacts / Automation grant for the whole app | macOS permission | Settings… (⌘,) → Permissions (or the **Permission needed** badge on the app's group under Agents → Abilities → Tools) |
 
 ## Apple Apps (built-in)
 
@@ -133,29 +141,24 @@ macOS manages swap. Osaurus no longer shows swap warnings or requires a
 
 ## Management sidebar
 
-General, Chat, Voice, Themes, Credits, Workspaces, Osaurus Connect, Identity, Permissions, Privacy, Local Models, Cloud Models, Media, Orchestrator, Agents, Channels, Web Search, Knowledge, Memory, Tools, Skills, Commands, Schedules, Watchers, Computer Use, Browser Use, Server, Sandbox, Insights.
+General, Chat, Voice, Themes, Credits, Workspaces, Osaurus Connect, Identity, Permissions, Privacy, Local Models, Providers, Media, Orchestrator, Agents, Channels, Web Search, Knowledge, Memory, Tools, Skills, Commands, Schedules, Watchers, Computer Use, Browser Use, Server, Sandbox, Insights.
 
 ## Where settings are stored
 
 Config JSON lives under `~/.osaurus/config/` (`server.json`, `server-runtime.json`, `chat.json`, `default-agent.json`, `agent-delegation.json`, `memory.json`, …). Secrets live in the macOS Keychain.
 
-### SSD cache limit notice
+### SSD cache controls
 
-Normal cache filling and eviction are silent. The chat composer shows one notice
-per chat and cache directory per app launch when the runtime reports that the
-chat's latest saved progress exceeds the cache limit. Shorter cached prefixes may
-still be reusable; this notice does not mean that all progress was lost.
-
-**Increase Cache Size** opens **Disk Cache Size (% of disk)** under
-Management → Server → Settings → Cache and highlights the control. **Don't show
-this again** suppresses inline notices across launches. To restore them, turn on
-**Show SSD Cache Capacity Notices** in the same Cache section; that preference
-applies immediately.
+Normal cache filling and eviction are silent. Cache state is available in the
+context-budget popover and Live Activity; there is no inline capacity-notice
+popup or suppression setting.
 
 **Clear SSD Cache** remains available in Cache settings and removes indexed
 conversation cache files and linked companion data. Chats and model weights are
 preserved. Clearing can make the next reply slower while cached data rebuilds;
-it does not increase the cache limit.
+it does not increase the cache limit. Save directory changes before clearing the
+SSD cache; Clear is disabled while the displayed directory differs from the saved
+directory. Clearing remains available when prefix reuse is disabled.
 
 Disk Cache Size left blank uses **Automatic**: 30% of free space plus the cache's indexed payload bytes, including companions. Cache growth therefore does not shrink its own quota. An explicit percentage remains a percentage of total volume size, bounded by 25% of free space plus this cache; Settings shows the requested and effective amounts when limited. Existing percentages and legacy GB choices are preserved. Editing the percentage field replaces a legacy GB choice; clearing an explicit percentage selects Automatic. For a saved legacy GB choice, click **Use Automatic Cache Size**, then Save Changes.
 
@@ -163,8 +166,8 @@ Saving only the disk size updates resident models without unloading their weight
 
 Cache controls are individually searchable: **Prefix Cache**, **Enable GPU Cache**,
 **Block Size (tokens)**, **Max Blocks**, **Disk Cache**, **Disk Cache Directory**,
+**Disk Cache Size (% of disk)**, **Clear SSD Cache**,
 and **Re-derive SSM State After Generation**. Each result opens Server → Settings
-→ Cache and scrolls to that control. **Increase Cache Size** lands directly on
-**Disk Cache Size (% of disk)**. Prefix Cache controls all reuse; Enable GPU
+→ Cache and scrolls to that control. Prefix Cache controls all reuse; Enable GPU
 Cache controls the optional RAM tier, Disk Cache controls SSD reuse, and the
 SSM option retains architecture-specific companion state for hybrid models.

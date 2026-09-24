@@ -28,7 +28,7 @@ The folder is also what delegated agents inherit: an agent with no working folde
 
 ## Settings → Orchestrator
 
-Management (⌘⇧M) → Orchestrator:
+Settings… (⌘,) → Orchestrator:
 
 - **Identity** — display name (defaults to "Osaurus") and system prompt (persona).
 - **Model & Generation** — the **Model readiness** row shows the current chat model, its context window and whether tools are OK or limited, with a recommended-model hint when the window is small; then temperature and max output tokens. The model itself is picked from the chat model selector, or ask the Orchestrator to switch.
@@ -38,7 +38,7 @@ Management (⌘⇧M) → Orchestrator:
   - *Permission* — whether to ask before local agents run. **Always Allow** is the default; each agent still shows its own permission cards for anything sensitive. *Permission for shared (workspace) agents* defaults to **Ask** because those runs leave your Mac and spend the workspace's pool; one card covers every shared agent in a wave, and the card names the agent, owner, and workspace.
   - *Limits* — per worker: **Max output tokens per subagent** (default 8192), **Max turns per subagent** (24 tool-call rounds), **Time limit per subagent** (900 s), plus **Max local subagents at once** (3, mirrors Server Concurrent Sessions) and **Max remote subagents at once** (8). Turns and time bound a worker; there is no separate tool-call cap. All of these are searchable from the Management sidebar.
   - *Advanced* — **Agent-target model override** runs every delegated agent on one model instead of its own. Leave it on "Use each agent's model" unless you need that.
-  - *Local Models & Memory* — swap local models for subagents, check memory before delegating, and the experimental keep-the-chat-model-loaded mode.
+  - *Local Models & Memory* — **Swap local models for subagents** and **Check memory before delegating**. The old experimental keep-the-chat-model-loaded toggle is gone.
 - **Delegations** — every delegated run with its status, duration, tokens, tok/s, artifacts and an **Open Chat** button. **Sent** lists the runs this Osaurus delegated; **Received** lists runs a teammate's Orchestrator asked one of *your* shared agents to do.
 
 Image generation, AppleScript, Browser Use, and Computer Use are custom-agent abilities. Give such an agent to the Orchestrator through Allowed subagents; there are no Orchestrator-level toggles for them.
@@ -61,7 +61,7 @@ default_agent:
 ## Typical asks
 
 - "What's configured?" / "Change a setting" — inspects live state and plans config changes for approval.
-- "Create a research agent with web search." — new agents default to the Orchestrator's current model; `template: researcher` fills the prompt.
+- "Create a research agent with web search." — new agents default to the Orchestrator's current model; `template: researcher` fills the prompt, and the creation document must also include a concise description of what the agent does and when to use it.
 - "Have Coder add tests to this project and tell me what changed." — delegated into the working folder; the summary names the files.
 - "Ask Research@Acme for a market summary." — a teammate's shared agent, on their Mac.
 - "Export my setup as a template."

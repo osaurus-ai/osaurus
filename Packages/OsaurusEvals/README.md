@@ -70,6 +70,13 @@ make evals-watcher-report EVALS_WATCHER_CHANNEL=main EVALS_REPORT_PRESET=local-f
 make evals-scoreboard EVALS_SCOREBOARD_ROOT=build/evals/watcher/main EVALS_MAX_REGRESSIONS=0
 ```
 
+Hugging Face Inference Providers are also available with an existing `HF_TOKEN`
+and `--model huggingface/<model-id>` (for example,
+`huggingface/deepseek-ai/DeepSeek-V4.1-Flash:novita`). The token needs Inference
+Providers permission. Bootstrap keeps it in memory and does not write it to
+provider configuration or Keychain. Set `JUDGE_MODEL` explicitly to a different
+model when independent rubric grading is required.
+
 ### Asset prerequisites (handled automatically)
 
 Local MLX model evals and `capability_search` need two assets that the SwiftPM
@@ -129,6 +136,16 @@ swift run osaurus-evals run --suite Suites/AgentLoop --out report.json --transcr
 # Build a maintainer-facing PR report bundle.
 swift run osaurus-evals report --local-model foundation --frontier-model openai/gpt-4o-mini
 ```
+
+For a self-hosted OpenAI-compatible provider, set `<PREFIX>_BASE_URL` and
+`<PREFIX>_API_KEY` in the process environment, then select `prefix/model`.
+For example, with `LAB_BASE_URL=https://models.example/v1` and `LAB_API_KEY`
+already set locally, use `--model lab/model-name`. The provider and its key
+remain in memory; the runner does not save them to app settings or Keychain.
+HTTPS is required except for loopback HTTP endpoints. URLs containing user
+credentials, query parameters or fragments are rejected. Known prefixes keep
+their native wire format and credential variable (for example, Anthropic
+still uses `ANTHROPIC_API_KEY` and the Messages API).
 
 ### Context optimization harness (`optimize-context`)
 

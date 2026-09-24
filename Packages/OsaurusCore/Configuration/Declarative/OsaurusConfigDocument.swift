@@ -369,11 +369,13 @@ public struct AgentCapabilitiesEntry: Codable, Equatable, Sendable {
 public struct AgentEntry: Equatable, Sendable {
     public var name: String
     /// Optional `AgentStarterTemplate` id (`coder`, `researcher`, `writer`,
-    /// `assistant`, `productivity`): seeds description + system prompt when
-    /// the entry omits them, so `agents: [{name: Coder, template: coder}]`
-    /// creates a runnable agent in one line.
+    /// `assistant`, `productivity`): seeds an omitted system prompt.
+    /// Missing descriptions may be generated from the effective prompt before
+    /// planning; persistence still requires a validated description.
     public var template: String?
     public var description: String?
+    /// Internal preparation guard, never decoded from or encoded into external configuration.
+    var generatedDescriptionSnapshot: GeneratedAgentDescriptionSnapshot? = nil
     public var systemPrompt: String?
     public var model: ConfigField<String> = .absent
     public var temperature: ConfigField<Double> = .absent

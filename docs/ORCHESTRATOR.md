@@ -5,12 +5,12 @@ The built-in Osaurus agent (`Agent.default`) is the default Orchestrator. Unspec
 1. **Configure and explain Osaurus.** It answers questions about the app from live state and changes settings for you through the declarative `osaurus_config` tool: it plans the change, shows an approval card, and applies only after you confirm.
 2. **Delegate work.** It can spawn your custom agents and allowed local/cloud models as subagents — in parallel, within budgets you set — and weave their compact results back into the conversation.
 
-It deliberately does *not* do hands-on work itself: no sandbox, no working folder, no browser or computer use. Those capabilities belong to custom agents, which keeps the Orchestrator safe and predictable.
+It deliberately does *not* do hands-on work itself: no shell, no sandbox, no browser or computer use, no media tools. Those belong to custom agents. The one exception is its working folder, which it can read.
 
-**Filesystem work is a custom-agent path.** Selecting a folder while chatting with the Orchestrator does not give it file, search, or git tools -- the composer hides the working-folder chip on this agent, and the runtime ignores any persisted folder bookmark for `Agent.defaultId`. To list, read, or edit files (for example `~/Downloads`):
+**Filesystem work.** Pick a folder with the Folder chip on an Orchestrator chat, or in Settings… (⌘,) → Orchestrator → Working Folder. With a folder set the Orchestrator can read it (`file_read`, `file_search`) — list what is there, open a deliverable a worker wrote, check a result. It never writes (`file_write`, `file_edit`, and `shell_run` stay off this agent). An agent with no working folder of its own inherits this folder and can read and write there. Writes outside that arrangement are still a custom-agent path:
 
 1. Create a custom agent (or select one you already have) from the agent picker.
-2. Pick the working folder on that agent's chat composer.
+2. Pick the working folder on that agent's chat composer, or let it inherit the Orchestrator's folder.
 3. Ask the custom agent to do the filesystem work. You can stay on that agent, or ask the Orchestrator to spawn it as a subagent if it is on the spawn allow-list.
 
 See [AGENT_LOOP.md](AGENT_LOOP.md) for the folder/sandbox tool contract on custom agents.
@@ -19,14 +19,18 @@ See [AGENT_LOOP.md](AGENT_LOOP.md) for the folder/sandbox tool contract on custo
 
 ## Settings → Orchestrator
 
-The Orchestrator has its own settings tab (Management `⌘⇧M` → Orchestrator):
+The Orchestrator has its own settings tab (Settings… (⌘,) → Orchestrator):
 
-- **Identity** — display name (defaults to "Osaurus") and system prompt (persona). Its model is picked from the chat model selector, or ask it to switch models.
-- **Generation** — temperature and max output tokens.
-- **Delegation** — its delegation helpers:
-  - *Main Chat Capabilities*: allow image or AppleScript helper models.
-  - *Main Chat Spawn*: the allow-list of agents and local/cloud models it may delegate to, worker tool access, permission mode, and child budgets (tokens, turns, tool calls, seconds, parallel spawns).
-  - *Local Models & Memory*: the shared swap setting and RAM-safety preflight.
+- **Identity** — display name (defaults to "Osaurus") and system prompt (persona). The model itself is picked from the chat model selector, or ask the Orchestrator to switch.
+- **Model & Generation** — the Model readiness row (current chat model, context window, whether tools are OK or limited), then temperature and max output tokens.
+- **Working Folder** — the folder the Orchestrator reads and folder-less subagents inherit. UI-only; it is not part of the declarative document.
+- **Subagents**
+  - *Allowed subagents* — custom agents join on creation; teammates' shared agents join as their workspace roster loads. Removals persist.
+  - *Permission* — whether to ask before local agents run. *Permission for shared (workspace) agents* defaults to Ask.
+  - *Limits* — max output tokens, turns, and time per subagent, plus max local and remote subagents at once. There is no separate tool-call cap.
+  - *Advanced* — agent-target model override (leave it on "Use each agent's model" unless you need one model for every worker).
+  - *Local Models & Memory* — **Swap local models for subagents** and **Check memory before delegating**. The former experimental coexistence ("keep the chat model loaded") toggle is gone; its old configuration key is retained only for compatibility.
+- **Delegations** — every delegated run (Sent / Received), with status, duration, tokens, and Open Chat. UI-only.
 
 Custom agents are added to this spawn pool automatically on creation, and existing custom agents are seeded once. You can remove agents in Settings → Orchestrator; removals persist. Local/cloud model targets stay on an explicit allow-list. An empty agent pool after you clear it keeps agent-spawn unavailable.
 
@@ -71,12 +75,12 @@ default_agent:
 ## Scope and security
 
 - **In-app only.** The Orchestrator is never exposed on external surfaces: `POST /agents/{id}/run` and `/agents/{id}/dispatch` reject `Agent.defaultId` with `built_in_agent_not_exposable`. Only your saved custom agents are reachable over HTTP, plugins, or schedulers.
-- **No hands-on tools.** The Orchestrator's tool surface (`ToolRegistry.ToolSurface.orchestrator`) excludes sandbox, working-folder, browser, and computer-use tools by construction.
+- **No hands-on writes.** The Orchestrator's tool surface (`ToolRegistry.ToolSurface.orchestrator`) can read its working folder (`file_read`, `file_search`) and excludes writes, shell, sandbox, browser, and computer-use tools by construction (`orchestratorExcludedToolNames`).
 - **Spawn pool is default-on for custom agents.** Existing custom agents are seeded into the Orchestrator's spawn pool once, and newly created agents are added automatically (`SubagentConfiguration.spawnableAgentIDs` / `AgentManager.registerInDefaultSpawnPool`). Removals in Settings → Orchestrator persist. Local/cloud model targets and helper models remain explicit allow-lists.
 
 ## Where its settings are stored
 
-Identity fields persist to `~/.osaurus/config/default-agent.json` (`DefaultAgentConfiguration`); delegation settings to `~/.osaurus/config/agent-delegation.json` (`SubagentConfiguration`). Both are covered by the declarative document's `default_agent` and `delegation` sections — see the in-app Guide's Declarative Configuration topic and `docs/examples/osaurus-config.sample.yaml`.
+Identity and the working folder persist to `~/.osaurus/config/default-agent.json` (`DefaultAgentConfiguration`); delegation settings to `~/.osaurus/config/agent-delegation.json` (`SubagentConfiguration`). The declarative document covers identity (`default_agent`) and delegation (`delegation`); the working folder is set from the chat Folder chip or Settings… (⌘,) → Orchestrator → Working Folder. See the in-app Guide's Declarative Configuration topic and `docs/examples/osaurus-config.sample.yaml`.
 
 ## Key source locations
 

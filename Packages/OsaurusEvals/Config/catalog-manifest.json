@@ -33,6 +33,7 @@
     "AgentLoop": [
       "agent_loop.answer-direct-no-complete",
       "agent_loop.append-preserve-existing",
+      "agent_loop.avoid-unneeded-described-agent",
       "agent_loop.batch-error-isolation",
       "agent_loop.cancel-after-two-calls-no-zombie",
       "agent_loop.cancel-during-reads-no-side-effects",
@@ -72,6 +73,7 @@
       "agent_loop.recover-from-failing-command",
       "agent_loop.rejection-stops-run",
       "agent_loop.repeated-call-nudge",
+      "agent_loop.route-by-agent-description",
       "agent_loop.search-inside-pdfs",
       "agent_loop.search-then-multi-file-edit",
       "agent_loop.spawn-wave-continuous-batching-off",

@@ -308,14 +308,15 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
 
     private func handlePlan(_ args: [String: Any]) async -> String {
         let prune = coerceBool(args["prune"]) ?? false
-        let document: OsaurusConfigDocument
+        var document: OsaurusConfigDocument
         switch loadDocument(args) {
         case .failure(let envelope): return envelope
         case .success(let doc): document = doc
         }
 
         do {
-            let plan = try await MainActor.run {
+            document = try await ConfigAgentDescriptionPreparation.prepare(document)
+            let plan = try await MainActor.run { [document] in
                 try ConfigPlanner.plan(document: document, prune: prune)
             }
             var result = plan.payload()
@@ -355,7 +356,7 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
 
     private func handleApply(_ args: [String: Any]) async -> String {
         let prune = coerceBool(args["prune"]) ?? false
-        let document: OsaurusConfigDocument
+        var document: OsaurusConfigDocument
         switch loadDocument(args) {
         case .failure(let envelope): return envelope
         case .success(let doc): document = doc
@@ -363,7 +364,8 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
 
         let plan: ConfigPlan
         do {
-            plan = try await MainActor.run {
+            document = try await ConfigAgentDescriptionPreparation.prepare(document)
+            plan = try await MainActor.run { [document] in
                 try ConfigPlanner.plan(document: document, prune: prune)
             }
         } catch let issues as ConfigPlanIssues {

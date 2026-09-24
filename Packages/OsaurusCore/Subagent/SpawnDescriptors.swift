@@ -142,6 +142,7 @@ public struct SpawnWorkspaceAgentDescriptor: Sendable, Equatable {
 /// or removed in Settings.
 enum SpawnTargetState: Sendable, Equatable {
     case runnable
+    case descriptionRequired
     case checking
     case disconnected
     case missing
@@ -152,7 +153,7 @@ struct SpawnAgentTarget: Sendable, Equatable {
     let state: SpawnTargetState
 }
 
-/// A workspace target is `runnable` or `missing` ONLY (never `checking` /
+/// A workspace target is `runnable`, `descriptionRequired`, or `missing` (never `checking` /
 /// `disconnected`): membership is durable state that changes by user action
 /// (unshare, leave workspace, router off), like deleting a local agent.
 struct SpawnWorkspaceAgentTarget: Sendable, Equatable {
@@ -369,7 +370,8 @@ public enum SpawnDescriptors {
                     providerName: locality.providerName,
                     workingFolderPath: source.workingFolderPath
                 ),
-                state: modelState ?? .missing
+                state: AgentDescriptionPolicy.violation(in: description) == nil
+                    ? (modelState ?? .missing) : .descriptionRequired
             )
         }
 
@@ -413,7 +415,8 @@ public enum SpawnDescriptors {
                     workspaceName: source.workspaceName,
                     ownerName: source.ownerName
                 ),
-                state: .runnable
+                state: AgentDescriptionPolicy.violation(in: description) == nil
+                    ? .runnable : .descriptionRequired
             )
         }
     }
@@ -460,11 +463,21 @@ public enum SpawnDescriptors {
             return WorkspaceAgentSource(
                 ref: ref,
                 name: name,
-                description: listed?.description ?? paired?.description ?? "",
+                description: workspaceRoutingDescription(listed: listed?.description, paired: paired?.description),
                 workspaceName: workspaceRoster?.workspace.name,
                 ownerName: listed?.owner?.friendlyName
             )
         }
+    }
+
+    /// The optional public roster blurb can predate required descriptions.
+    /// Prefer it when usable, otherwise use the paired host's description.
+    /// An unusable blurb must not hide a valid description supplied by the host.
+    static func workspaceRoutingDescription(listed: String?, paired: String?) -> String {
+        for candidate in [listed, paired].compactMap({ $0 }) {
+            if let valid = try? AgentDescriptionPolicy.validated(candidate) { return valid }
+        }
+        return ""
     }
 
     /// Execution truth for one model id (an agent's effective model): is it

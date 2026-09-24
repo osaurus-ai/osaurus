@@ -121,6 +121,7 @@ public enum SettingsSearchIndex {
         "insights.overview",
         "agents.overview",
         "agents.configure",
+        "agents.description",
         "agents.database",
         "imageGeneration.tab",
         "imageGeneration.models",
@@ -720,7 +721,7 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Cache",
             title: "Clear SSD Cache",
-            keywords: ["purge cached conversations"],
+            keywords: ["purge cached conversations", "save cache directory before clearing"],
             subTab: "cache"
         ),
         .init(
@@ -1482,6 +1483,14 @@ public enum SettingsSearchIndex {
             declarativeSection: "agents"
         ),
         .init(
+            id: "agents.description",
+            tab: .agents,
+            title: "Agent description (required)",
+            keywords: ["descriptions required", "agent description", "purpose", "routing", "legacy agent", "repair", "helper", "Suggest from system prompt", "suggest description", "core model description"],
+            disambiguation: "Open an agent's Configure tab to supply its required routing description, or suggest one from its system prompt when the description is empty.",
+            declarativeSection: "agents"
+        ),
+        .init(
             id: "agents.database",
             tab: .agents,
             section: "Knowledge",
@@ -1574,8 +1583,8 @@ public enum SettingsSearchIndex {
         .init(
             id: "providers.overview",
             tab: .providers,
-            title: "Cloud Models",
-            keywords: ["provider", "api key", "openai", "anthropic", "openrouter", "xai"],
+            title: "Providers",
+            keywords: ["cloud models", "provider", "api key", "openai", "anthropic", "openrouter", "xai"],
             declarativeSection: "providers"
         ),
         .init(

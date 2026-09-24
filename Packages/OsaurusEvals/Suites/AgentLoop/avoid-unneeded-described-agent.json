@@ -1,0 +1,46 @@
+{
+  "id": "agent_loop.avoid-unneeded-described-agent",
+  "domain": "agent_loop",
+  "label": "agent loop \u2022 answer a simple calculation without unnecessary delegation",
+  "query": "What is 17 plus 25?",
+  "notes": "Described workers remain available, but a trivial arithmetic question should be answered directly. Scores zero tool calls and the correct visible result; no runtime behavior is forced.",
+  "fixtures": {
+    "agentCapabilities": {
+      "spawnAgents": [
+        {
+          "id": "A11CE002-0000-4000-8000-000000000001",
+          "name": "Agent A",
+          "description": "Reviews code changes for bugs. Use for software review tasks.",
+          "systemPrompt": "Review supplied code for bugs. Be concise."
+        },
+        {
+          "id": "A11CE002-0000-4000-8000-000000000002",
+          "name": "Agent B",
+          "description": "Checks arithmetic calculations. Use when a separate numerical check is requested.",
+          "systemPrompt": "Check the supplied arithmetic and explain the result concisely."
+        },
+        {
+          "id": "A11CE002-0000-4000-8000-000000000003",
+          "name": "Agent C",
+          "description": "Explains Osaurus settings. Use for app configuration questions.",
+          "systemPrompt": "Explain app configuration questions using supplied information."
+        }
+      ],
+      "maxParallelSpawns": 1
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 4,
+      "maxModelSteps": 2,
+      "maxToolCalls": 0,
+      "noToolErrors": true,
+      "allowedExits": [
+        "finalResponse"
+      ],
+      "finalTextContains": [
+        "42"
+      ]
+    }
+  }
+}

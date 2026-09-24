@@ -10,9 +10,10 @@ Osaurus runs open-weight models locally on Apple Silicon using MLX — no intern
 
 ## Downloading models
 
-- Management (⌘⇧M) → Models shows the curated catalog with size estimates; download, pause, and delete from there.
+- Settings… (⌘,) → Local Models shows the curated catalog with size estimates; download, pause, and delete from there.
 - Or just ask the default Osaurus assistant in chat to download a model — it can list recommended models and start the download for you.
 - Models are stored in `~/MLXModels` (override with the `OSU_MODELS_DIR` environment variable). Model weights live outside `~/.osaurus/`.
+- The full download of Osaurus (the ~4 GB `Osaurus-<version>-full.dmg`) ships Raptor 0.6 inside the app. On first launch it is installed into `~/MLXModels/OsaurusAI/Raptor-0.6-4B-JANG_6M` (an instant APFS clone when the app and your models folder share a volume, so it costs no extra disk), onboarding skips the model download, and later updates stay small because the installed copy lives in `~/MLXModels`, not in the app. Deleting it from **Local Models → On Device** is permanent for that install; download it again from the catalog if you want it back.
 
 ## Choosing a model
 
@@ -26,7 +27,7 @@ managed by their original application.
 
 - Bigger models are smarter but slower and need more RAM; quantized variants (4-bit/8-bit) trade a little quality for much lower memory.
 - The Models catalog is curated for Osaurus (tool calling, reasoning, and template support are validated), and the OsaurusAI page on Hugging Face hosts optimized bundles.
-- Generation defaults (temperature, top-k, etc.) come from each model bundle's own configuration unless you explicitly override them in Server → Settings → Generation defaults.
+- Temperature, top-k, and the other sampling values come from each model bundle's own configuration unless you explicitly override them in Server → Settings → Sampling Defaults.
 
 ## Speculative Depth
 

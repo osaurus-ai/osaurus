@@ -67,6 +67,18 @@ struct CoreModelServiceFallbackTests {
         }
     }
 
+    @Test("utility callers can retain model sampling defaults without losing cache isolation")
+    func utilityNativeDefaultsReachService() async throws {
+        let probe = ResidencyProbe()
+        let service = CoreModelService(localServices: [probe])
+        _ = try await service.generate(
+            prompt: "Describe an agent", temperature: nil, timeout: 5, modelOverride: probe.id)
+        let parameters = try #require(await probe.parameters)
+        #expect(parameters.temperature == nil)
+        #expect(parameters.auxiliaryCacheIntent)
+        #expect(parameters.preserveExistingResidencyOwner)
+    }
+
     @Test("core utility routing preserves the resident owner for window-close cleanup")
     func utilityGenerationPreservesResidencyOwner() async throws {
         for intent in [CoreModelIntent.background, .interactive] {

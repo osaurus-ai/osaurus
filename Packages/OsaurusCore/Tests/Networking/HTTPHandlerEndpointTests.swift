@@ -410,6 +410,17 @@ struct HTTPHandlerEndpointTests {
             let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             #expect(obj?["id"] as? String == hostAgentId.uuidString)
             #expect(obj?["default_model"] as? String == "fake-metadata-model")
+            #expect(obj?["description"] as? String == "")
+            #expect(obj?["description_required"] as? Bool == true)
+            #expect(obj?["description_validation"] as? String == AgentDescriptionPolicy.Violation.required.message)
+            let (listData, listResponse) = try await URLSession.shared.data(
+                from: URL(string: "http://\(server.host):\(server.port)/agents")!)
+            #expect((listResponse as? HTTPURLResponse)?.statusCode == 200)
+            let list = try JSONSerialization.jsonObject(with: listData) as? [String: Any]
+            let rows = list?["agents"] as? [[String: Any]]
+            let listed = rows?.first { $0["id"] as? String == hostAgentId.uuidString }
+            #expect(listed?["description_required"] as? Bool == true)
+
 
             // An address with no registry mapping still fails closed.
             let unknown = "0xdead000000000000000000000000000000000000"
@@ -440,6 +451,7 @@ struct HTTPHandlerEndpointTests {
             let agent = Agent(
                 id: hostAgentId,
                 name: "Action Bar Peer",
+                description: "Explains and summarizes documents.",
                 defaultModel: "fake-metadata-model",
                 chatQuickActions: actions,
                 isBuiltIn: false,
@@ -462,6 +474,9 @@ struct HTTPHandlerEndpointTests {
             )
             #expect((resp as? HTTPURLResponse)?.statusCode == 200)
             let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            #expect(obj?["description"] as? String == "Explains and summarizes documents.")
+            #expect(obj?["description_required"] as? Bool == false)
+            #expect(obj?["description_validation"] == nil)
             let wireActions = obj?["chat_quick_actions"] as? [[String: Any]]
             #expect(wireActions?.count == 2)
             #expect(wireActions?.first?["text"] as? String == "Explain")

@@ -290,7 +290,7 @@ public enum WhatsNewContent {
                 title: "Get it from the model catalog",
                 eyebrow: "Introducing Raptor v0.5",
                 description:
-                    "Raptor v0.5 is now a Top Pick in the model catalog, and new setups on mainstream hardware start with it by default. Already set up? Grab it any time from Management → Models.",
+                    "Raptor v0.5 is now a Top Pick in the model catalog, and new setups on mainstream hardware start with it by default. Already set up? Grab it any time from Settings… (⌘,) → Local Models.",
                 systemImage: "arrow.down.circle.fill",
                 actionLabel: "Open Models",
                 action: .openModelDownloads(modelId: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M")

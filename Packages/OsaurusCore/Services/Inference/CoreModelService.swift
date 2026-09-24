@@ -142,7 +142,7 @@ public actor CoreModelService {
     /// - Parameters:
     ///   - prompt: The user prompt.
     ///   - systemPrompt: Optional system prompt.
-    ///   - temperature: Sampling temperature (default 0.3).
+    ///   - temperature: Sampling temperature (default 0.3); nil preserves model/provider defaults.
     ///   - maxTokens: Maximum response tokens (default 2048).
     ///   - timeout: Maximum wall-clock seconds for the call (default 60).
     ///   - fallbackModel: Model identifier to fall back to when the configured
@@ -159,7 +159,7 @@ public actor CoreModelService {
     public func generate(
         prompt: String,
         systemPrompt: String? = nil,
-        temperature: Double = 0.3,
+        temperature: Double? = 0.3,
         maxTokens: Int = 2048,
         timeout: TimeInterval = 60,
         fallbackModel: String? = nil,
@@ -198,7 +198,7 @@ public actor CoreModelService {
     func generate(
         prompt: String,
         systemPrompt: String? = nil,
-        temperature: Double = 0.3,
+        temperature: Double? = 0.3,
         maxTokens: Int = 2048,
         timeout: TimeInterval = 60,
         fallbackModel: String? = nil,
@@ -222,7 +222,7 @@ public actor CoreModelService {
         let fallback = Self.normaliseFallback(fallbackModel)
         let messages = buildMessages(prompt: prompt, systemPrompt: systemPrompt)
         let params = GenerationParameters(
-            temperature: Float(temperature),
+            temperature: temperature.map { Float($0) },
             maxTokens: maxTokens,
             modelOptions: modelOptions,
             // Carried all the way into `ModelRuntime.loadContainer`, which refuses

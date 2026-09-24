@@ -1,0 +1,104 @@
+# Agent description fallback and surface audit
+
+No release/tag is authorized. This follows merged PR #2867; that PR's main-path proof is not a claim that every consumer was covered.
+
+## Current follow-up — 2026-09-24
+
+No release or tag. Merge each fix after its applicable proof.
+
+At source90b076fc7 and engine63a10f3a, the current isolated Release app passed actual duplicate repair/copy and Watcher/Schedule purpose selection/save/reopen/relaunch checks; focused249tests22suites passed. Evidence: private `selectors-r7/live-receipt.json`, `focused-r2-receipt.json` and `duplicate-r6/live-receipt.json`.
+
+Actual local Raptor chat proof edited two agent descriptions, continued an existing chat, restarted the app and restored disk cache. Exact tokenized prompts contained current descriptions in both tool schema and system roster. The old conversation nevertheless chose its previous citation agent twice: routing FAIL. The identical request in a fresh chat selected the newly described AgentB, as did its follow-up. This supports history-influenced model choice, not stale description delivery. All inspected turns completed with settled cards, unlocked input and visible answers. UI rates: restarted215tokens101.6tok/s; fresh167tokens57.2tok/s; follow-up139tokens53.0tok/s. Concurrent compilation means these are not controlled speed comparisons. Evidence: private `roster-live-r7/live-receipt.json`, exact prompt hashes, chat records and screenshots. App quit normally and private preferences were restored.
+
+Original final-pin remote matrix completed: AgentLoop46pass8fail4skip/58; Frontier38pass4fail/42; Subagent31pass14skip1old-fixture-error/46; DefaultAgent50pass1fail/51. Corrected local DefaultAgent42pass8fail1error/51; other local raw scores remain below. Scoped headless model inheritance and stale fixture corrections are a separate evaluator fix undergoing live reruns. No blanket green matrix claim.
+
+Consumer follow-up PR #2870: Release build source `755a47e61` matches the production tree of `f2809c461`; `b3eef0c2` adds only a test-helper MainActor annotation. The fresh app binary SHA256 is `890aeaaf52c9b3f3243f2d3def8462983cc0174bd7fb9f481fd36004ae368272`, engine `63a10f3a`. Focused regressions passed305 tests across25 suites. The first test invocation failed on the helper actor annotation; that failure is retained alongside the corrected run.
+
+Actual Settings Refresh exercised empty, repaired, absent and HTTP503 metadata against an isolated loopback legacy HTTP peer. Explicit empty cleared the stored purpose; repair updated it; omission preserved it; failed fetch preserved both complete records. A second provider with the same agent address stayed unchanged. After normal quit/relaunch, the repaired purpose remained visible while the fixture returned503. The voice picker displayed purposes and the canonical repair label, and an actual target-toggle change survived relaunch while listening stayed off. Both app processes exited normally, captured private preferences were restored, and the owned fixture stopped. Workspace inspection repair metadata is covered by focused production-payload tests. Evidence: private `consumers-r9/live-receipt.json`, `focused-r3-receipt.json`, UI screenshots, persisted snapshots and HTTP request log. CI is still required before merge.
+
+These rows involve no model generation or microphone execution. They do not prove genuine two-host or secure-channel execution. The owner clarified that Osaurus-to-Osaurus orchestration across Macs is future scope and is not a current completion gate; model-provider evals remain in scope. Workspace sharing's optional/unprefilled purpose and missing canonical publication validation remain a separate future-flow issue, not a claim of universal workspace coverage. PR #2869 merged at `c9021e91`; older unmerged status entries below are historical.
+
+The separate SSD-cache review PR must inspect recent location/storage/eviction changes in both repositories, prove multiple eligible cached chunks can serve one prefill with only uncomputed components cold-prefilled, validate architecture-specific companion state, and measure migration/restore/eviction latency under identical workloads. Task checklist: private `raptor06-speed-2026-09-23/SSD-CACHE-REVIEW-TODO.md`.
+
+Older checkpoints below are historical evidence, not current completion claims.
+
+## Current checkpoint — 2026-09-24
+
+This checkpoint supersedes historical status text below. PR #2869 is still unmerged. The current consuming app source is `7a55f65ead9b933dc430cc0b5fd223e0b964d0f4`, engine `63a10f3ab61c36cb978fcd7d74208c746930006d`. Private evidence root: `/Users/eric/vmlx-private-evidence/agent-descriptions-followup-2026-09-23`.
+
+- Release app build passed; focused tests passed **220 tests in 20 suites** (`pin-r5/build-receipt.json`, `focused-r2-receipt.json`). The first focused attempt caught a stale third tracked lockfile; all three lockfiles and the actual compiled engine now agree (`pin-audit.json`).
+- Actual app automatic generation saved a valid description with native defaults, 597 output tokens at 105.9138 tok/s, normal stop (`pin-r5/live-receipt.json`). Short utility throughput is not a controlled Raptor benchmark.
+- A separate process relaunch reopened the generated agent through Settings → Agents → Configure and retained the exact description (`pin-r5/relaunch-proof/receipt.json`, `reopened.png`). This closes persistence only, not chat/delegation/cache continuation.
+- Legacy absent-description record was loaded in an isolated profile. Actual Agents UI showed the repair notice; its repair action opened Configure. Manual entry saved exact text, removed the notice and survived navigation/reopening (`pin-r5/legacy-repair-proof/receipt.json`). No model was loaded; repaired-record process relaunch/delegation are separate pending rows.
+- Final eval binary build passed with an unchanged source manifest (`pin-r5/eval-build-receipt.json`). Local Raptor and remote adlab AgentLoop, AgentLoopFrontier, Subagent and DefaultAgent runs are active; no final scores claimed.
+- The non-spawnable negative fixture used an unresolved name and errored before its intended production guard. A canonical disallowed UUID reaches the real guard without seeding/allowing a target. Before: 1 error; after: **1/1 pass**, `rejected` and `not spawnable` assertions unchanged. Repeated on the final binary (`nonspawnable-fixture/final-receipt.json`, `final-results/Subagent.json`). This is a fixture correction, not improved model quality.
+- Engine PR #501 closed the auxiliary hybrid-prefill boundary-write defect with a failing-before/passing-after regression, including restore and unchanged payload checks. It is consumed by the current app. Full storage-location/eviction and architecture-wide qualification remain open.
+- Remote eval isolation previously relied on an empty models directory, but external discovery defaults on independently. Current evals use a private bundle preference domain with both external imports disabled. Restore the captured prior keys only after both runs finish; inspect the resulting model catalog before calling isolation proven.
+
+Remaining merge proof: full final eval failure attribution, complete consumer/UI coverage and legacy repair, chat/delegation with refreshed descriptions and disk restore, import/export/workspace compatibility, current-head Osaurus CI. Remaining campaign work: MiMo audio failure, controlled Raptor speed improvements and live SSD migration/eviction. Do not treat historical unchecked boxes or past passing rows as current universal coverage.
+
+## Historical requirements and proof
+
+## Required behavior
+
+- Preserve and validate descriptions explicitly entered by the user.
+- When the description is blank and a system prompt exists, generate a short description with the configured core model before completing creation.
+- Without a system prompt, require manual description input.
+- Apply the same single-line,160-character,1024-UTF8-byte policy to generated text. Invalid output, failure or cancellation preserves the draft and requires retry/manual entry.
+- Do not overwrite saved descriptions or bulk-generate legacy metadata silently. Prevent late results from crossing agent/draft boundaries.
+- Resolve config/API-generated descriptions before approval, show their exact text in the plan, and apply that same prepared document.
+
+## Coverage and evidence checklist
+
+- [x] Initial resolver contract:7 isolated deterministic tests passed, including5 invalid-output cases; not provider/UI proof.
+- [x] Initial preview-only Release development app built; superseded by automatic-fallback requirements.
+- [ ] Updated app build and focused integration tests:manual creation,onboarding,config/API preparation,approval fidelity,stale responses,cancellation and persistence.
+- [ ] Live core-model generation, draft failures and retry, actual save/relaunch, visible descriptions in caller payloads and follow-up delegation.
+- [ ] Audit every name/description consumer:spawn,orchestrator,watchers,schedules,channels,workspaces,API/CLI/MCP,imports/exports and cached rosters. Mark fixed-ID automation and deterministic wake-name matching separately from model selection.
+- [ ] Channel default/per-room agent selectors:initial source gap identified; change implemented, UI proof pending.
+- [ ] Agent list/detail API repair metadata:initial source gap identified; additive fields and endpoint assertions implemented, tests pending.
+- [ ] Source traces must become live evidence where behavior is claimed. Passing searches/syntax checks are not runtime proof.
+
+## SSD/cache compatibility
+
+Review the recent engine #489–#492 and app #2836/#2841/#2846 changes against the actual dependency pin. Preserve conversation-aware eviction, protected history boundaries, learned resume rows and hit recency.
+
+CoreModelService utility calls set auxiliaryCacheIntent; MLXBatchAdapter translates it to the engine auxiliary intent. The final-generation boundary-store path rejects auxiliary requests, but the hybrid-pool prefill-seed path requires a separate regression: at engine `6b8dda8`, `BatchEngine.swift` calls `storePrefillCapturedDiskSeed` before the final auxiliary guard. Raptor does not exercise this topology. Do not claim universal auxiliary write isolation. Required proof: prove actual writes, cache hits, per-chat/model/weights identity, retained user-chat restore and eviction latency during description requests. Do not clear caches, disable them or relax quota to conceal conflicts.
+
+## Remaining campaign
+
+Raptor0.6/Spark2.5 baseline binary built; controlled runtime profiling and optimization remain. MiMo native audio semantic/looping failure remains unqualified. Neither is complete. Keep the full task ledger and merge only proven task PRs.
+
+## Owner clarification: completion gates
+
+The simple flow is authoritative: preserve a supplied description; otherwise generate with the configured core model when a system prompt exists; otherwise require manual entry. A suggestion button alone does not satisfy automatic creation fallback. Generated output must pass the same canonical limits as manual input; never silently truncate it or save a placeholder.
+
+- [ ] Apply this contract to manual creation, onboarding/template creation, chat-driven config tools and HTTP/API creation. For legacy agents, show an actionable repair notice and an explicit generation/repair action when a prompt exists; do not silently rewrite saved agents. Verify import/export and workspace sync preserve descriptions and expose missing metadata for repair.
+- [ ] Verify every model-facing roster, spawn/delegation tool schema, orchestrator, watcher, schedule, channel, remote-agent/API listing and refreshed in-chat target list carries purpose alongside name. Distinguish fixed-ID dispatch from model selection; preserve configured automation behavior and deterministic wake-name matching.
+- [ ] Verify manual text wins, nonblank invalid text is rejected, blank/whitespace prompts require manual input, and unavailable core model, timeout, cancellation, empty/overlong/multiline/control-character output never causes a partial save. Test Unicode grapheme and UTF-8 limits separately.
+- [ ] Exercise double-clicks, dismissal, agent switching, concurrent requests, edits during generation and cancellation followed by retry. A late result must never overwrite a newer draft or another agent. Surface progress and an actionable retry/manual-entry error without contradictory required-field warnings.
+- [ ] Resolve generated descriptions before config approval; display the exact resolved value and persist that same value. Test concurrent changes between preparation, approval and apply, and that a plan-only request creates no agent.
+- [ ] Audit recent cache PR implementations against the consumed engine pin. Verify configured SSD storage location, migration/old-location cleanup and deletion boundaries, per-chat/model/quant identity, active/history retention, learned resume rows, hit recency and quota eviction. Only task-owned disposable cache fixtures may be pressure-tested.
+- [ ] Measure a user chat before and after core-model description generation, then restore it from disk and continue coherently. Repeat with another agent/chat and changed description to detect cache collisions or stale routing metadata. Separate auxiliary utility requests from ordinary API requests, which may write cache entries.
+- [ ] During eviction, record cache hits/misses, protected and evicted entries, disk reads/writes, physical footprint and latency. Verify no active-chat corruption, deletion outside the configured cache root, unexpected model reload or unexplained stall; source inspection and quota simulations alone are insufficient.
+- [ ] Require a fresh dev-app UI run, persistence/relaunch, focused regressions, applicable local/frontier evals and Osaurus CI before merging this follow-up. Record failures and limitations. Never cut a release or push a tag.
+
+## Current evidence and discovered issues
+
+Tested implementation: `a04ed9a724875ba589b343c8f56dc65d9924c158`; consumed engine: `6b8dda85a3659b255377a76caf8914c005d2eef1`. Private receipts are under `/Users/eric/vmlx-private-evidence/agent-descriptions-followup-2026-09-23`. `r4-commit-equivalence.json` verifies the app, focused-test and eval source manifests against that commit.
+
+- Fresh isolated Release app built successfully (`build-r4-receipt.json`). Focused tests passed:108 tests in18 suites (`focused-r4.log`, `focused-r4-receipt.json`).
+- Actual UI automatic creation with a blank description and a supplied prompt saved a valid purpose:795 generated tokens,106.4565 tok/s,normal stop. A blank prompt and description disabled Create. `live-r4-after-create.png` and `live-r4-api-persistence.json` pair visible UI with saved state.
+- Suggest preview did not change the field until Use; a161-character value disabled Create. Manual replacement persisted without another utility generation. Cancellation left no saved agent. Cancellation throughput was not captured and is not a qualified generation-rate row.
+- Onboarding double-click Create produced one Helper with purpose `Everyday user task assistance`:672 tokens,109.6829 tok/s,normal stop. The subsequent transition from provider setup to Chat was not observed in the resumed segment; no clicked Set up later claim. `onboarding-r4.log`, `onboarding-r4-current-front.png` and the isolated profile preserve the evidence. Normal menu quit returned0 with no guard abort (`onboarding-r4-exit.json`).
+- Actual HTTP config plan/apply rejected missing and overlong metadata, preserved manual text, showed generated plan text without creating an agent, and persisted generated apply text (`live-r4-config-api.json`, `live-r4-api-persistence.json`).
+- Raptor utility generation preserved all11 existing cache payloads byte-for-byte and preserved indexed model/token/chain/companion identity (`live-r4-utility-cache-result.json`). This is neither quota-eviction proof nor all-model cache proof.
+- Local Raptor and remote adlab full AgentLoop, AgentLoopFrontier, Subagent and DefaultAgent matrices are running. Final scores, failure attribution, remaining consumer UI rows and exact-head CI are still pending. PR#2869 remains draft; no merge or release claim.
+
+The earlier r2 empty-output/length-stop failures remain recorded in `live-r2-first-attempt.json`, `description-api-native-r2.json` and `description-api-utility03-r2.json`. The summarizer instruction was changed to request a concise action phrase; canonical output validation remains unchanged. The new utility caller passes nil temperature to retain bundle defaults. No forced reasoning closure, truncation or hidden sampler rescue was added.
+
+Remaining cache work includes the hybrid-pool auxiliary prefill-seed regression, actual eviction/storage-location proof and disk-restored chat continuation with updated agent metadata. Real two-host workspace proof is also unverified. Do not convert these gaps into passing claims.
+
+## Legacy duplication repair
+
+The Duplicate action previously copied invalid legacy descriptions into new records. It now opens the source agent Configure repair flow with a clear notice before writing a copy or registering another spawn target. The original record/settings remain intact; after repair, ordinary duplication preserves the corrected purpose. Source change awaits fresh Release UI proof of invalid refusal, prompt-backed/manual repair and successful valid duplication.

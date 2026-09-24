@@ -83,7 +83,10 @@ struct OrchestratorSchemaBudgetTests {
                     SpawnAgentTool.constrainedSpec(
                         base,
                         allowedAgentIDs: [workerID],
-                        allowedAgentNames: ["Coder"]
+                        allowedAgentNames: ["Coder"],
+                        agents: [.init(id: workerID, name: "Coder",
+                            description: "Implements and reviews focused code changes in the assigned project.",
+                            modelId: nil, isLocal: nil, providerName: nil)]
                     )
                 )
             }
@@ -131,10 +134,9 @@ struct OrchestratorSchemaBudgetTests {
         }
     }
 
-    /// The `spawn_agent` enum grows with the pool. Ten workers (a large but
-    /// realistic pool) must still keep the tool under a few hundred tokens —
-    /// the names, not the UUIDs, are what a small model reads.
-    @Test("spawn_agent schema stays bounded with a ten-agent pool")
+    /// Keep the historical identity-only bound; routing descriptions have
+    /// their own measured payload below and must never disappear to fit it.
+    @Test("spawn_agent identity schema stays bounded with a ten-agent pool")
     func spawnAgentSchemaBoundedWithLargePool() {
         guard
             let base = ToolRegistry.shared.specs(
@@ -150,5 +152,37 @@ struct OrchestratorSchemaBudgetTests {
         let cost = tokens(spec)
         print("[Orchestrator schema] spawn_agent with 10 workers ≈ \(cost) tokens")
         #expect(cost <= 600, "spawn_agent with ten workers costs \(cost) tokens")
+    }
+
+    @Test("ten-agent routing metadata survives repeated composition without duplication")
+    func largePoolRetainsEveryDescription() throws {
+        let agents = (1...10).map { index in
+            SpawnAgentDescriptor(
+                id: UUID(), name: "Worker \(index)",
+                description: "Reviews task \(index): " + String(repeating: "x", count: 143),
+                modelId: nil, isLocal: nil, providerName: nil
+            )
+        }
+        let base = SpawnAgentTool().asOpenAITool()
+        let first = SpawnAgentTool.constrainedSpec(
+            base, allowedAgentIDs: agents.map(\.id), allowedAgentNames: agents.map(\.name), agents: agents
+        )
+        let repeated = SpawnAgentTool.constrainedSpec(
+            first, allowedAgentIDs: agents.map(\.id), allowedAgentNames: agents.map(\.name), agents: agents
+        )
+        #expect(tokens(first) == tokens(repeated))
+        let text = try #require(repeated.function.description)
+        let sections = text.components(separatedBy: SpawnAgentTool.routingMetadataMarker)
+        #expect(sections.count == 2)
+        let payload = try #require(sections.last)
+        let rows = try payload.split(separator: "\n").map {
+            try #require(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: String])
+        }
+        #expect(rows.count == agents.count)
+        for agent in agents {
+            #expect(AgentDescriptionPolicy.violation(in: try #require(agent.description)) == nil)
+            #expect(rows.contains { $0["id"] == agent.id.uuidString && $0["description"] == agent.description })
+        }
+        print("[Orchestrator schema] ten described workers ≈ \(tokens(first)) tokens; routing payload \(payload.utf8.count) bytes")
     }
 }

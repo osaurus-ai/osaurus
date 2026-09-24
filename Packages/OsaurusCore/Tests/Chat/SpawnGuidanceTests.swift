@@ -61,11 +61,13 @@ struct SpawnGuidanceTests {
 
         #expect(text.contains("## Delegating work (spawn_agent)"))
         #expect(text.contains("`spawn_agent(input, agent)`"))
-        // Targets are addressed by display name, not UUID.
-        #expect(text.contains("`sparky` — Concise helper"))
-        #expect(!text.contains("5E80D9D2-B821-4B43-AE3B-8C0C7F83E005"))
+        // Names and stable IDs are quoted together with their routing descriptions.
+        #expect(text.contains("\"name\":\"sparky\""))
+        #expect(text.contains("\"description\":\"Concise helper\""))
+        #expect(text.contains("5E80D9D2-B821-4B43-AE3B-8C0C7F83E005"))
         #expect(text.contains("model: qwen3-4b-4bit (local)"))
-        #expect(text.contains("`cloudy` — Frontier reasoning"))
+        #expect(text.contains("\"name\":\"cloudy\""))
+        #expect(text.contains("\"description\":\"Frontier reasoning\""))
         #expect(text.contains("gpt-4o-mini (remote) via OpenAI"))
         #expect(text.contains("own folder: /Users/me/Project"))
     }
@@ -193,7 +195,7 @@ struct SpawnGuidanceTests {
             ]
         )
         #expect(text.contains("Teammates' shared agents"))
-        #expect(text.contains("`Reviewer@Team`"))
+        #expect(text.contains("\"name\":\"Reviewer@Team\""))
         #expect(text.contains("Reviews PRs"))
         #expect(text.contains("owner: Ana"))
         #expect(text.contains(ref.agentAddress))

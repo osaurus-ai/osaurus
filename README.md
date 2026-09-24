@@ -33,6 +33,7 @@
 
 <p align="center">
   <a href="https://github.com/osaurus-ai/osaurus/releases/latest/download/Osaurus.dmg">Download for Mac</a> ·
+  <a href="https://huggingface.co/datasets/OsaurusAI/osaurus-releases">Download with Raptor 0.6 bundled (~4 GB)</a> ·
   <a href="https://docs.osaurus.ai">Docs</a> ·
   <a href="https://huggingface.co/OsaurusAI">Models</a> ·
   <a href="https://discord.gg/osaurus">Discord</a> ·
@@ -58,7 +59,12 @@ Native Swift on Apple Silicon. No Electron. No compromises. MIT licensed.
 brew install --cask osaurus
 ```
 
-Or download the latest `.dmg` from [Releases](https://github.com/osaurus-ai/osaurus/releases/latest). After installing, launch from Spotlight (`⌘ Space` → "Osaurus") or the CLI:
+Or download the latest `.dmg` from [Releases](https://github.com/osaurus-ai/osaurus/releases/latest). Two builds ship per release:
+
+- **`Osaurus-<version>.dmg`** (~70 MB) — the standard build. Pick and download a model during onboarding. This is what Homebrew and in-app updates use.
+- **`Osaurus-<version>-full.dmg`** (~4 GB, linked from each release's notes and hosted on [Hugging Face](https://huggingface.co/datasets/OsaurusAI/osaurus-releases)) — the same app with [Raptor 0.6](https://huggingface.co/OsaurusAI/Raptor-0.6-4B-JANG_6M) bundled. First launch installs the model into `~/MLXModels` and onboarding skips the download, so you can chat offline immediately. Updates afterwards are the small build.
+
+After installing, launch from Spotlight (`⌘ Space` → "Osaurus") or the CLI:
 
 ```bash
 osaurus ui       # Open the chat UI
