@@ -262,6 +262,13 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
         )
         coordinator.applyRows(rows)
         applyScrollerStyle(to: scrollView)
+        // `applyRows` above runs before the scroll view is laid out in the
+        // popover window, so its initial scroll-to-selection no-ops. Retry once
+        // the view is on screen with real bounds so the selected model lands in
+        // view even when no further `updateNSView` pass follows.
+        DispatchQueue.main.async { [weak coordinator] in
+            coordinator?.scrollToInitialSelectionIfNeeded()
+        }
         return scrollView
     }
 
@@ -1493,12 +1500,13 @@ extension ModelPickerTableRepresentable {
                     return row.isModel && row.modelId == selected
                 })
             }
-            if !hasScrolledToSelection, let index = selectedIndex {
-                hasScrolledToSelection = true
-                revealedOptionsForModelId = selectedModelId
-                // Show the selected row with a little context above it.
-                tableView?.scrollRowToVisible(max(0, index - 1))
-                tableView?.scrollRowToVisible(index)
+            if !hasScrolledToSelection {
+                // First open: bring the selected row into view. Runs through
+                // `scrollToInitialSelectionIfNeeded`, which no-ops until the
+                // table is laid out in a window (the first `applyRows` fires
+                // from `makeNSView`, before the popover has any bounds) so the
+                // latch never traps us at the top of the list.
+                scrollToInitialSelectionIfNeeded()
             } else if let index = selectedIndex, revealedOptionsForModelId != selectedModelId,
                 index + 1 < rowIds.count, rowLookup[rowIds[index + 1]]?.isOptions == true
             {
@@ -1509,6 +1517,27 @@ extension ModelPickerTableRepresentable {
                 tableView?.scrollRowToVisible(index + 1)
                 tableView?.scrollRowToVisible(index)
             }
+        }
+
+        /// Scroll the currently selected model into view on first open, once.
+        /// No-ops (without latching) until the table is in a window with real
+        /// bounds, so it can be retried from both `applyRows` and a deferred
+        /// post-layout pass scheduled in `makeNSView`.
+        func scrollToInitialSelectionIfNeeded() {
+            guard !hasScrolledToSelection, let selectedModelId else { return }
+            let contentHeight = tableView?.enclosingScrollView?.contentView.bounds.height ?? 0
+            guard tableView?.window != nil, contentHeight > 0 else { return }
+            guard
+                let index = rowIds.firstIndex(where: {
+                    guard let row = rowLookup[$0] else { return false }
+                    return row.isModel && row.modelId == selectedModelId
+                })
+            else { return }
+            hasScrolledToSelection = true
+            revealedOptionsForModelId = selectedModelId
+            // Show the selected row with a little context above it.
+            tableView?.scrollRowToVisible(max(0, index - 1))
+            tableView?.scrollRowToVisible(index)
         }
 
         private func rebuildIndexMaps() {
