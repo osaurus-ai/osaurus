@@ -1454,9 +1454,9 @@ public enum SettingsSearchIndex {
         .init(
             id: "agents.description",
             tab: .agents,
-            title: "Agent description (required)",
-            keywords: ["descriptions required", "agent description", "purpose", "routing", "legacy agent", "repair", "helper", "Suggest from system prompt", "suggest description", "core model description"],
-            disambiguation: "Open an agent's Configure tab to supply its required routing description, or suggest one from its system prompt when the description is empty.",
+            title: "Brief description (optional)",
+            keywords: ["agent description", "purpose", "routing", "delegation", "auto-generated description", "generated description"],
+            disambiguation: "Optional one-line summary shown to the orchestrator when it chooses a delegation target. Left blank, Osaurus generates one in the background from the agent's system prompt; typing your own overrides it.",
             declarativeSection: "agents"
         ),
         .init(

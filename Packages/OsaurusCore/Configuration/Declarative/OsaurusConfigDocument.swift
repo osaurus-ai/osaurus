@@ -369,13 +369,12 @@ public struct AgentCapabilitiesEntry: Codable, Equatable, Sendable {
 public struct AgentEntry: Equatable, Sendable {
     public var name: String
     /// Optional `AgentStarterTemplate` id (`coder`, `researcher`, `writer`,
-    /// `assistant`, `productivity`): seeds an omitted system prompt.
-    /// Missing descriptions may be generated from the effective prompt before
-    /// planning; persistence still requires a validated description.
+    /// `assistant`, `productivity`): seeds an omitted system prompt and,
+    /// when the entry has no `description`, its routing description.
     public var template: String?
+    /// Optional. A blank description is valid; Osaurus generates a routing
+    /// summary from the system prompt in the background when one is missing.
     public var description: String?
-    /// Internal preparation guard, never decoded from or encoded into external configuration.
-    var generatedDescriptionSnapshot: GeneratedAgentDescriptionSnapshot? = nil
     public var systemPrompt: String?
     public var model: ConfigField<String> = .absent
     public var temperature: ConfigField<Double> = .absent

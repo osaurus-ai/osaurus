@@ -1,78 +1,50 @@
+import CryptoKit
 import Foundation
 
-/// One contract for user-authored routing metadata. Legacy records remain
-/// readable; creation, editing and delegation decide how to surface repair.
+/// Shared helpers for the optional agent description. A description is free
+/// text: it is never required, never blocks a save, and never gates
+/// delegation. These helpers only normalize it for display/routing and quote
+/// it as data when it reaches a model.
 public enum AgentDescriptionPolicy {
-    public static let maximumCharacters = 160
-    public static let maximumUTF8Bytes = 1_024
+    /// Soft cap applied to background-generated summaries so a roster row
+    /// stays one line. User text is never truncated.
+    public static let generatedMaximumCharacters = 160
 
-    public enum Violation: String, Error, LocalizedError, Sendable, Equatable {
-        case required
-        case tooLong
-        case oversizedUnicode
-        case controlCharacters
-
-        public var errorDescription: String? { message }
-
-        public var message: String {
-            switch self {
-            case .required:
-                return "Add a description explaining what this agent does and when to use it."
-            case .tooLong:
-                return "Keep the description to 160 characters or fewer."
-            case .oversizedUnicode:
-                return "The description exceeds 1,024 UTF-8 bytes. Shorten the combined Unicode characters."
-            case .controlCharacters:
-                return "Use one line without control or text-direction characters."
-            }
-        }
-    }
-
+    /// Trims and collapses the text to a single line.
     public static func normalized(_ value: String) -> String {
-        value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.contains(where: { $0.isNewline }) else { return trimmed }
+        return trimmed
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
-    public static func violation(in value: String) -> Violation? {
-        let text = normalized(value)
-        // Combining marks, joiners and whitespace alone are not a description.
-        // Keep joiners/variation selectors inside normal emoji and scripts.
-        guard text.unicodeScalars.contains(where: {
-            switch $0.properties.generalCategory {
-            case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter, .modifierLetter,
-                .otherLetter, .decimalNumber, .letterNumber, .otherNumber,
-                .connectorPunctuation, .dashPunctuation, .openPunctuation, .closePunctuation,
-                .initialPunctuation, .finalPunctuation, .otherPunctuation,
-                .mathSymbol, .currencySymbol, .modifierSymbol, .otherSymbol:
-                return true
-            default: return false
-            }
-        }) else { return .required }
-        guard text.count <= maximumCharacters else { return .tooLong }
-        guard text.utf8.count <= maximumUTF8Bytes else { return .oversizedUnicode }
-        let forbiddenDirection: Set<UInt32> = [0x061C, 0x200E, 0x200F, 0x202A, 0x202B,
-            0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069]
-        guard !text.unicodeScalars.contains(where: {
-            $0.properties.generalCategory == .control
-                || CharacterSet.newlines.contains($0)
-                || forbiddenDirection.contains($0.value)
-        }) else { return .controlCharacters }
-        return nil
-    }
-
-    public static func validated(_ value: String) throws -> String {
-        if let violation = violation(in: value) { throw violation }
-        return normalized(value)
+    /// Stable identity of the system prompt a generated description came
+    /// from. A prompt edit changes the hash and invalidates the summary.
+    public static func promptHash(_ systemPrompt: String) -> String {
+        let data = Data(normalized(systemPrompt).utf8)
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     /// Quotes user text as data, including delimiters and control characters
     /// in names. Descriptions never change authorization or execution policy.
-    public static func routingJSON(id: String, name: String, description: String) -> String? {
-        guard let description = try? validated(description),
+    /// The `description` key is omitted when there is nothing to say.
+    public static func routingJSON(id: String, name: String, description: String) -> String {
+        var object: [String: String] = ["id": id, "name": name]
+        let text = normalized(description)
+        if !text.isEmpty { object["description"] = text }
+        guard
             let data = try? JSONSerialization.data(
-                withJSONObject: ["id": id, "name": name, "description": description],
+                withJSONObject: object,
                 options: [.sortedKeys, .withoutEscapingSlashes]
-            )
-        else { return nil }
-        return String(data: data, encoding: .utf8)
+            ),
+            let json = String(data: data, encoding: .utf8)
+        else {
+            // Only reachable if Foundation cannot serialize plain strings.
+            return "{\"id\":\"\(id)\",\"name\":\"\(name)\"}"
+        }
+        return json
     }
 }

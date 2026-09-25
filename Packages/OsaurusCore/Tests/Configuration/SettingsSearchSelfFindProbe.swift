@@ -60,9 +60,7 @@ struct SettingsSearchSelfFindProbe {
     func controlsFindableByOnScreenLabel() {
         let labels: [(query: String, entryID: String)] = [
             ("Automatically Check Model Updates", "models.automaticUpdates"),
-            ("Descriptions required", "agents.description"),
-            ("Agent description (required)", "agents.description"),
-            ("Suggest from system prompt", "agents.description"),
+            ("Brief description (optional)", "agents.description"),
             ("agent description", "agents.description"),
             ("Swap local models for subagents", "settings.orchestrator.delegation.swapModels"),
             ("native mtp", "server.speculative"),

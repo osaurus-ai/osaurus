@@ -129,7 +129,7 @@ struct ConfigurationReadScopeFunctionalTests {
         #expect(!items.isEmpty)
         for agent in items {
             #expect(agent["description"] as? String != nil)
-            #expect(agent["description_required"] as? Bool != nil)
+            #expect(agent["generated_description"] as? String != nil)
         }
     }
 
@@ -294,8 +294,8 @@ struct ConfigurationReadScopeFunctionalTests {
 
     @Test
     func describe_agent_includesCapabilities() async throws {
-        let agent = try await MainActor.run {
-            try AgentManager.shared.create(
+        let agent = await MainActor.run {
+            AgentManager.shared.create(
                 name: "GapClosure Describe Probe",
                 description: "Exercises agent configuration in this isolated test.",
                 systemPrompt: "",
@@ -327,8 +327,8 @@ struct ConfigurationReadScopeFunctionalTests {
         // burn a list round-trip, and the payload key must be `model` — the
         // old `default_model` key taught the model to write `default_model:`
         // into YAML, which the document schema rejects.
-        let agent = try await MainActor.run {
-            try AgentManager.shared.create(
+        let agent = await MainActor.run {
+            AgentManager.shared.create(
                 name: "GapClosure Name Probe",
                 description: "Exercises agent configuration in this isolated test.",
                 systemPrompt: "",

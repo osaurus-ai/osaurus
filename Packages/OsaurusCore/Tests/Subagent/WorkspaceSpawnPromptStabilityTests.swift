@@ -153,7 +153,7 @@ struct WorkspaceSpawnPromptStabilityTests {
                 "relay_url": "wss://relay.example", "online": true,
                 "shared_at": "2026-01-01T00:00:00Z",
             ]
-            for description: String? in [nil, "", "  Reviews supplied citations.  ", String(repeating: "x", count: 161)] {
+            for description: String? in [nil, "", "  Reviews supplied citations.  "] {
                 var object = original
                 object["description"] = description
                 let agent = try JSONDecoder().decode(
@@ -168,11 +168,9 @@ struct WorkspaceSpawnPromptStabilityTests {
                     continue
                 }
                 let normalized = AgentDescriptionPolicy.normalized(description ?? "")
-                let violation = AgentDescriptionPolicy.violation(in: normalized)
                 #expect(row["name"] as? String == "Research Agent")
                 #expect(row["description"] as? String == (normalized.isEmpty ? nil : normalized))
-                #expect(row["description_required"] as? Bool == (violation != nil))
-                #expect(row["description_validation"] as? String == (violation?.message ?? ""))
+                #expect(row["description_required"] == nil)
             }
         }
     }

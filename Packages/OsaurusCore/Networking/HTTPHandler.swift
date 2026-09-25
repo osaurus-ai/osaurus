@@ -1963,7 +1963,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     return
                 }
 
-                var document: OsaurusConfigDocument
+                let document: OsaurusConfigDocument
                 do {
                     document = try ConfigYAML.decode(yaml)
                 } catch let error as ConfigYAMLError {
@@ -1988,7 +1988,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
                 let plan: ConfigPlan
                 do {
-                    document = try await ConfigAgentDescriptionPreparation.prepare(document)
                     plan = try await MainActor.run { [document] in
                         try ConfigPlanner.plan(document: document, prune: prune)
                     }
@@ -4342,8 +4341,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let id: String
         let name: String
         let description: String
-        let description_required: Bool
-        let description_validation: String?
+        /// Background-generated routing summary, present only when the
+        /// user left `description` blank and a summary has been produced.
+        let generated_description: String?
         /// Mascot avatar identifier (e.g. "green") so paired peers can render
         /// the agent's own avatar instead of a generic monogram. nil = no
         /// mascot (client falls back to the name's initial). User-uploaded
@@ -5693,8 +5693,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     id: agent.id.uuidString,
                     name: agent.name,
                     description: agent.description,
-                    description_required: agent.requiresDescriptionRepair,
-                    description_validation: AgentDescriptionPolicy.violation(in: agent.description)?.message,
+                    generated_description: agent.generatedDescription,
                     avatar: agent.avatar,
                     chat_quick_actions: agent.chatQuickActions,
                     default_model: agent.defaultModel,
@@ -5844,8 +5843,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 id: agent.id.uuidString,
                 name: agent.name,
                 description: agent.description,
-                description_required: agent.requiresDescriptionRepair,
-                description_validation: AgentDescriptionPolicy.violation(in: agent.description)?.message,
+                generated_description: agent.generatedDescription,
                 avatar: agent.avatar,
                 chat_quick_actions: agent.chatQuickActions,
                 default_model: agent.defaultModel,

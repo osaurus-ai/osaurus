@@ -105,9 +105,9 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
         // A frozen tool payload can already contain the last request's list.
         // Replace it, rather than appending stale metadata after an edit.
         let baseDescription = (tool.function.description ?? "").components(separatedBy: marker)[0]
-        let routing = agents.filter { uuids.contains($0.id.uuidString) }.compactMap {
+        let routing = agents.filter { uuids.contains($0.id.uuidString) }.map {
             AgentDescriptionPolicy.routingJSON(id: $0.id.uuidString, name: $0.name, description: $0.description ?? "")
-        } + workspaceAgents.filter { addresses.contains($0.ref.agentAddress.lowercased()) }.compactMap {
+        } + workspaceAgents.filter { addresses.contains($0.ref.agentAddress.lowercased()) }.map {
             AgentDescriptionPolicy.routingJSON(id: $0.ref.agentAddress, name: $0.name, description: $0.description ?? "")
         }
         return Tool(

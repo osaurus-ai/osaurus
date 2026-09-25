@@ -27,7 +27,7 @@ struct AppleAppsDeclarativeConfigTests {
         try await SandboxTestLock.runWithStoragePaths {
             await SubagentStoreTestLock.shared.acquire()
             defer { SubagentStoreTestLock.shared.release() }
-            let agent = try AgentManager.shared.create(
+            let agent = AgentManager.shared.create(
                 name: "Apple Config Probe \(UUID().uuidString.prefix(6))",
                 description: "Exercises agent configuration in this isolated test.", systemPrompt: "")
             do {

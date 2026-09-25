@@ -685,13 +685,12 @@ private struct AgentToggleRow: View {
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(theme.primaryText)
 
-                Text(
-                    (try? AgentDescriptionPolicy.validated(agent.description))
-                        ?? L("Description required — open Configure")
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .lineLimit(1)
+                if !agent.routingDescription.isEmpty {
+                    Text(agent.routingDescription)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(1)
+                }
             }
 
             Spacer()

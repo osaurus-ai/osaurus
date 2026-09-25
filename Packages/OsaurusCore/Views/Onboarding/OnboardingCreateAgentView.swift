@@ -73,9 +73,7 @@ final class CreateAgentState: ObservableObject {
     /// Editable name, surfaced in the chip under the avatar. Independent of
     /// the specialty (the Figma name "Helper" doesn't change with the cards).
     @Published var name: String
-    @Published var description: String = ""
     @Published var isSaving: Bool = false
-    @Published var descriptionError: String?
 
     /// ID of the agent created by `saveAgent`. Read by
     /// `OnboardingView.pinSelectedBrainModel` so the new Dino's default
@@ -93,9 +91,9 @@ final class CreateAgentState: ObservableObject {
 
     var selectedTemplate: AgentStarterTemplate { selectedSpecialty.template }
 
-    var canSave: Bool {
-        !isSaving && AgentDescriptionResolver.canResolve(description: description, systemPrompt: selectedTemplate.systemPrompt)
-    }
+    /// Always savable — selections always have a default and the name falls
+    /// back to the default, so the CTA is enabled immediately.
+    var canSave: Bool { !isSaving }
 
     var trimmedName: String {
         name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -114,48 +112,11 @@ final class CreateAgentState: ObservableObject {
         selectedAvatar = (pool.randomElement() ?? .green).id
     }
 
-    func resolveDescriptionAndSave(
-        generate: @MainActor (String, String) async throws -> String = {
-            try await AgentDescriptionGenerator.resolve(description: $0, systemPrompt: $1)
-        }
-    ) async -> Bool {
-        guard !isSaving else { return false }
-        if createdAgentId != nil { return true }
-        let prompt = selectedTemplate.systemPrompt
-        let originalDescription = description
-        let originalName = name
-        let avatar = selectedAvatar
-        isSaving = true
-        descriptionError = nil
-        do {
-            let resolved = try AgentDescriptionPolicy.validated(
-                try await generate(originalDescription, prompt))
-            try Task.checkCancellation()
-            guard selectedTemplate.systemPrompt == prompt, description == originalDescription,
-                name == originalName, selectedAvatar == avatar
-            else {
-                isSaving = false
-                descriptionError = L("The agent draft changed. Try creating it again.")
-                return false
-            }
-            description = resolved
-            isSaving = false
-            return saveAgent()
-        } catch {
-            isSaving = false
-            if !(error is CancellationError) {
-                descriptionError = (error as? AgentDescriptionPolicy.Violation)?.message
-                    ?? L("Could not suggest a description. Try again or enter one manually.")
-            }
-            return false
-        }
-    }
-
     /// Persists the agent and returns whether save succeeded. The caller is
     /// responsible for advancing the flow afterwards.
     ///
-    /// The system prompt is derived from the chosen specialty's archetype and
-    /// the description from explicit input or the validated core-model fallback; both are editable later in Settings.
+    /// The system prompt and routing description are derived from the chosen
+    /// specialty's template; both are editable later in Settings.
     ///
     /// Idempotent: if the user navigates back from a later onboarding
     /// step and re-fires the CTA, the previously-created agent's id is
@@ -164,13 +125,11 @@ final class CreateAgentState: ObservableObject {
     @discardableResult
     func saveAgent() -> Bool {
         if createdAgentId != nil { return true }
-        guard canSave,
-            let validDescription = try? AgentDescriptionPolicy.validated(description)
-        else { return false }
+        guard canSave else { return false }
         isSaving = true
         var agent = AgentManager.newCustomAgentRecord(
             name: resolvedName,
-            description: validDescription,
+            description: selectedTemplate.routingDescription,
             systemPrompt: selectedTemplate.systemPrompt
         )
         agent.toolSelectionMode = .auto
@@ -199,7 +158,6 @@ struct CreateAgentStepView: View {
     /// Accumulated rotation of the randomize badge glyph — a half-turn per
     /// roll so repeat taps keep spinning the same way.
     @State private var badgeSpin: Double = 0
-    @State private var saveTask: Task<Void, Never>?
 
     private var selectedMascot: AgentMascot {
         state.selectedAvatar.flatMap(AgentMascot.init(rawValue:)) ?? .green
@@ -213,7 +171,6 @@ struct CreateAgentStepView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { nameFocused = false }
-        .onDisappear { saveTask?.cancel() }
     }
 
     // MARK: Left column
@@ -237,29 +194,14 @@ struct CreateAgentStepView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .onboardingEntrance(1)
 
-            Spacer().frame(height: 20)
-
-            AgentDescriptionField(text: $state.description, systemPrompt: state.selectedTemplate.systemPrompt,
-                generatesOnCreate: true)
-            if state.isSaving { ProgressView(L("Generating agent description…")) }
-            if let error = state.descriptionError {
-                Text(error).font(.caption).foregroundStyle(.red)
-            }
-
-            Spacer().frame(height: 20)
+            Spacer().frame(height: 40)
 
             OnboardingPillButton(
                 title: isFinalStep ? "Create your Dino and start chatting" : "Create your Dino",
                 style: .primary,
                 size: .large,
                 isEnabled: state.canSave,
-                action: {
-                    guard saveTask == nil else { return }
-                    saveTask = Task { @MainActor in
-                        defer { saveTask = nil }
-                        if await state.resolveDescriptionAndSave() { onContinue() }
-                    }
-                }
+                action: { if state.saveAgent() { onContinue() } }
             )
             .onboardingEntrance(2)
         }

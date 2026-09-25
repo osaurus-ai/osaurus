@@ -130,14 +130,14 @@ struct SandboxDefaultEnablementTests {
         try await SandboxTestLock.runWithStoragePaths {
             let manager = AgentManager.shared
 
-            let onAgent = try self.withAvailability(.available) {
-                try manager.create(name: "Seed On \(UUID().uuidString)", description: "Exercises enabled sandbox defaults.")
+            let onAgent = self.withAvailability(.available) {
+                manager.create(name: "Seed On \(UUID().uuidString)", description: "Exercises enabled sandbox defaults.")
             }
             #expect(onAgent.autonomousExec?.enabled == true)
             _ = await manager.delete(id: onAgent.id)
 
-            let offAgent = try self.withAvailability(.unavailable(reason: "test")) {
-                try manager.create(name: "Seed Off \(UUID().uuidString)", description: "Exercises unavailable sandbox defaults.")
+            let offAgent = self.withAvailability(.unavailable(reason: "test")) {
+                manager.create(name: "Seed Off \(UUID().uuidString)", description: "Exercises unavailable sandbox defaults.")
             }
             #expect(offAgent.autonomousExec == nil)
             _ = await manager.delete(id: offAgent.id)

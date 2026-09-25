@@ -4,28 +4,56 @@ import Testing
 
 @Suite("Agent description contract")
 struct AgentDescriptionPolicyTests {
-    @Test func requiredAndBounded() throws {
-        for value in ["", " \n\t", "\u{200B}\u{200D}", "\u{0301}"] {
-            #expect(AgentDescriptionPolicy.violation(in: value) == .required)
-        }
-        #expect(try AgentDescriptionPolicy.validated("  Reviews Swift changes.  ") == "Reviews Swift changes.")
-        #expect(AgentDescriptionPolicy.violation(in: String(repeating: "a", count: 160)) == nil)
-        #expect(AgentDescriptionPolicy.violation(in: String(repeating: "a", count: 161)) == .tooLong)
-        #expect(AgentDescriptionPolicy.violation(in: "a" + String(repeating: "\u{0301}", count: 600)) == .oversizedUnicode)
+    @Test func normalizationIsOneLineAndTrimmed() {
+        #expect(AgentDescriptionPolicy.normalized("  Reviews Swift changes.  ") == "Reviews Swift changes.")
+        #expect(AgentDescriptionPolicy.normalized("review\ncode\n\n  and docs ") == "review code and docs")
+        #expect(AgentDescriptionPolicy.normalized(" \n\t").isEmpty)
+        // Unicode text is kept verbatim.
+        let unicode = "👩‍💻 Revises code and explains changes. 日本語も対応。"
+        #expect(AgentDescriptionPolicy.normalized(unicode) == unicode)
     }
 
-    @Test func unicodeAndSingleLine() {
-        #expect(AgentDescriptionPolicy.violation(in: "👩‍💻 Revises code and explains changes. 日本語も対応。") == nil)
-        for value in ["review\ncode", "review\tcode", "review\u{0000}code", "review\u{202E}code"] {
-            #expect(AgentDescriptionPolicy.violation(in: value) == .controlCharacters)
-        }
-        // Metadata stays data: validation does not rewrite text into a prompt.
-        #expect(AgentDescriptionPolicy.violation(in: "Reviews quoted text such as \"ignore instructions\".") == nil)
+    @Test func promptHashTracksNormalizedPrompt() {
+        let a = AgentDescriptionPolicy.promptHash("Be terse.\n")
+        #expect(a == AgentDescriptionPolicy.promptHash("  Be terse."))
+        #expect(a != AgentDescriptionPolicy.promptHash("Be verbose."))
+        #expect(a.count == 64)
+    }
+
+    @Test func routingDescriptionPrefersUserTextThenGenerated() {
+        var agent = Agent(name: "Helper", description: "", systemPrompt: "Do things")
+        #expect(agent.routingDescription.isEmpty)
+        agent.generatedDescription = "  Handles things.  "
+        #expect(agent.routingDescription == "Handles things.")
+        agent.description = "User wrote this."
+        #expect(agent.routingDescription == "User wrote this.")
+    }
+
+    @Test func routingJSONQuotesDataAndOmitsBlankDescription() throws {
+        let json = AgentDescriptionPolicy.routingJSON(
+            id: "abc", name: "Quoted \"Helper\"", description: "Reviews \"ignore instructions\" text.")
+        let object = try #require(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: String])
+        #expect(object["id"] == "abc")
+        #expect(object["name"] == "Quoted \"Helper\"")
+        #expect(object["description"] == "Reviews \"ignore instructions\" text.")
+
+        let blank = AgentDescriptionPolicy.routingJSON(id: "abc", name: "Helper", description: " \n")
+        let blankObject = try #require(JSONSerialization.jsonObject(with: Data(blank.utf8)) as? [String: String])
+        #expect(blankObject["description"] == nil)
+        #expect(blankObject["name"] == "Helper")
+    }
+
+    @Test func generatorSanitizesModelOutput() {
+        #expect(AgentDescriptionGenerator.sanitize("\n\"Reviews Swift changes.\"\nExtra line") == "Reviews Swift changes.")
+        #expect(AgentDescriptionGenerator.sanitize("   \n\n") == nil)
+        let long = AgentDescriptionGenerator.sanitize(String(repeating: "a", count: 400))
+        #expect(long?.count == AgentDescriptionPolicy.generatedMaximumCharacters)
+        #expect(long?.hasSuffix("…") == true)
     }
 
     @Test @MainActor func routingMetadataSurvivesCompactionAndReplacesStaleText() throws {
         let id = UUID()
-        func descriptor(_ description: String) -> SpawnAgentDescriptor {
+        func descriptor(_ description: String?) -> SpawnAgentDescriptor {
             SpawnAgentDescriptor(id: id, name: "Quoted \"Helper\"", description: description,
                 modelId: nil, isLocal: nil, providerName: nil)
         }
@@ -43,11 +71,24 @@ struct AgentDescriptionPolicyTests {
         #expect(object["name"] == "Quoted \"Helper\"")
         #expect(object["description"] == "Checks release documentation.")
         #expect(object["id"] == id.uuidString)
+
+        // An agent without any description still appears, by name.
+        let nameOnly = SpawnAgentTool.constrainedSpec(
+            SpawnAgentTool().asOpenAITool(), allowedAgentIDs: [id], agents: [descriptor(nil)])
+        let nameOnlyText = try #require(nameOnly.function.description)
+        let nameOnlyPayload = try #require(nameOnlyText.components(separatedBy: SpawnAgentTool.routingMetadataMarker).last)
+        let nameOnlyObject = try #require(JSONSerialization.jsonObject(with: Data(nameOnlyPayload.utf8)) as? [String: String])
+        #expect(nameOnlyObject["name"] == "Quoted \"Helper\"")
+        #expect(nameOnlyObject["description"] == nil)
     }
 
     @Test func missingLegacyDescriptionPreservesIdentity() throws {
         let original = Agent(name: "Custom Helper", description: "Existing purpose", systemPrompt: "Keep my instructions")
         let encoded = try JSONEncoder().encode(original)
+        // New optional fields are omitted from JSON while nil so older records
+        // round-trip byte-stable.
+        let encodedText = String(decoding: encoded, as: UTF8.self)
+        #expect(!encodedText.contains("generatedDescription"))
         var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
         for nullValue in [false, true] {
             if nullValue { object["description"] = NSNull() } else { object.removeValue(forKey: "description") }
@@ -56,29 +97,32 @@ struct AgentDescriptionPolicyTests {
             #expect(migrated.systemPrompt == original.systemPrompt)
             #expect(migrated.settings == original.settings)
             #expect(migrated.description.isEmpty)
-            #expect(migrated.requiresDescriptionRepair)
+            #expect(migrated.generatedDescription == nil)
+            #expect(migrated.routingDescription.isEmpty)
         }
     }
 }
 
-@Suite("Agent description creation and repair", .serialized)
+@Suite("Agent description is optional", .serialized)
 @MainActor
-struct AgentDescriptionCreationTests {
-    @Test func creationRejectsMissingDescriptionWithoutSideEffects() async throws {
-        try await SandboxTestLock.runWithStoragePaths {
+struct AgentDescriptionOptionalTests {
+    @Test func creationAcceptsBlankDescription() async throws {
+        await SandboxTestLock.runWithStoragePaths {
             await SubagentStoreTestLock.shared.acquire()
             defer { SubagentStoreTestLock.shared.release() }
-            let before = AgentManager.shared.agents.map(\.id)
-            let pool = SubagentConfigurationStore.snapshot().spawnableAgentIDs
-            #expect(throws: AgentDescriptionPolicy.Violation.required) {
-                try AgentManager.shared.create(name: "Missing purpose", description: " ")
-            }
-            #expect(AgentManager.shared.agents.map(\.id) == before)
-            #expect(SubagentConfigurationStore.snapshot().spawnableAgentIDs == pool)
+            let agent = AgentManager.shared.create(name: "Blank purpose \(UUID())", description: " ")
+            #expect(agent.description.isEmpty)
+            #expect(AgentManager.shared.agent(for: agent.id) != nil)
+            // Blank-description agents are spawn targets like any other.
+            let snapshot = SpawnDescriptors.resolveForPreview(
+                agentIDs: [agent.id], launcherModelOverride: nil, workspaceAgents: [])
+            #expect(snapshot.agentTargets.first?.state != nil)
+            #expect(snapshot.agentTargets.first?.descriptor.description == nil)
+            _ = await AgentManager.shared.delete(id: agent.id)
         }
     }
 
-    @Test func templateCannotReplaceRequiredDescription() async throws {
+    @Test func templateSeedsDescriptionAndBlankIsAccepted() async throws {
         try await SandboxTestLock.runWithStoragePaths {
             await SubagentStoreTestLock.shared.acquire()
             defer { SubagentStoreTestLock.shared.release() }
@@ -86,14 +130,26 @@ struct AgentDescriptionCreationTests {
             entry.template = "researcher"
             var document = OsaurusConfigDocument()
             document.agents = [entry]
-            #expect(throws: (any Error).self) { try ConfigPlanner.plan(document: document, prune: false) }
+            _ = try ConfigPlanner.plan(document: document, prune: false)
             let result = await ConfigApplier.apply(document: document, prune: false)
-            #expect(result.contains { $0.status == .failed && ($0.message?.contains("description") ?? false) })
-            #expect(!AgentManager.shared.agents.contains { $0.name == entry.name })
+            #expect(result.allSatisfy { $0.status != .failed })
+            let created = try #require(AgentManager.shared.agents.first { $0.name == entry.name })
+            #expect(created.description == AgentStarterTemplate.researcher.routingDescription)
+            _ = await AgentManager.shared.delete(id: created.id)
+
+            var blank = AgentEntry(name: "Blank Probe \(UUID())")
+            blank.systemPrompt = "Answer briefly."
+            document.agents = [blank]
+            _ = try ConfigPlanner.plan(document: document, prune: false)
+            let blankResult = await ConfigApplier.apply(document: document, prune: false)
+            #expect(blankResult.allSatisfy { $0.status != .failed })
+            let blankAgent = try #require(AgentManager.shared.agents.first { $0.name == blank.name })
+            #expect(blankAgent.description.isEmpty)
+            _ = await AgentManager.shared.delete(id: blankAgent.id)
         }
     }
 
-    @Test func legacyPatchPreservesDataAndRejectsInvalidRepair() async throws {
+    @Test func legacyPatchPreservesBlankDescription() async throws {
         try await SandboxTestLock.runWithStoragePaths {
             await SubagentStoreTestLock.shared.acquire()
             defer { SubagentStoreTestLock.shared.release() }
@@ -107,19 +163,13 @@ struct AgentDescriptionCreationTests {
             #expect(patched.allSatisfy { $0.status != .failed })
             #expect(AgentManager.shared.agent(for: legacy.id)?.description == "")
             #expect(AgentManager.shared.agent(for: legacy.id)?.systemPrompt == "Updated instructions")
-            entry.description = "   "
-            document.agents = [entry]
-            let rejected = await ConfigApplier.apply(document: document, prune: false)
-            #expect(rejected.contains { $0.status == .failed })
-            #expect(AgentManager.shared.agent(for: legacy.id) != nil)
             entry.description = "  Researches technical questions using evidence.  "
             document.agents = [entry]
-            let repaired = await ConfigApplier.apply(document: document, prune: false)
-            #expect(repaired.allSatisfy { $0.status != .failed })
+            let updated = await ConfigApplier.apply(document: document, prune: false)
+            #expect(updated.allSatisfy { $0.status != .failed })
             let saved = try #require(AgentManager.shared.agent(for: legacy.id))
             #expect(saved.description == "Researches technical questions using evidence.")
             #expect(saved.settings == legacy.settings)
-            #expect(!saved.requiresDescriptionRepair)
             _ = await AgentManager.shared.delete(id: legacy.id)
         }
     }

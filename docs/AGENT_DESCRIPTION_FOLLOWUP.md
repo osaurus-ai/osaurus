@@ -1,5 +1,9 @@
 # Agent description fallback and surface audit
 
+## Optional + background backfill — 2026-09-25
+
+The "description required" contract from PR #2867 / #2870 is reverted. `Agent.description` is optional again everywhere (create, save, duplicate, declarative config apply, `/agents` API, onboarding, delegation roster); legacy agents with an empty description stay delegatable by name. A separate `Agent.generatedDescription` (plus `generatedDescriptionPromptHash`) is filled by `AgentDescriptionBackfill` on save/create, after a clean chat turn (using the resident model, `intent: .background`, never cold-loading), and when the orchestrator composes a spawn roster. Routing uses `Agent.routingDescription` (manual description when non-empty, else generated). Configure shows the generated text as the field placeholder; typing a description overrides it. `AgentDescriptionResolver`, `ConfigAgentDescriptionPreparation`, `AgentDescriptionField`, the repair banners and the `description_required` / `description_validation` API keys are removed. Everything below is historical evidence for the reverted contract.
+
 No release/tag is authorized. This follows merged PR #2867; that PR's main-path proof is not a claim that every consumer was covered.
 
 ## Current follow-up — 2026-09-24

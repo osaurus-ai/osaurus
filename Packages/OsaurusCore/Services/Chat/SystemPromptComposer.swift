@@ -3116,6 +3116,12 @@ public struct SystemPromptComposer: Sendable {
         let allowedAgentIDs =
             currentTargets.runnableAgentIDs
             .filter { $0 != snapshot.agentId }
+        // A target with no purpose line is still delegatable; queue a
+        // background summary so the next composed turn can carry one. This
+        // turn's roster bytes are unchanged.
+        for target in currentTargets.agents where target.description == nil {
+            AgentDescriptionBackfill.shared.scheduleIfNeeded(target.id)
+        }
         // Workspace targets enter the enum by ADDRESS (durable), never by
         // presence or provider state — see `SpawnDescriptors` and the
         // prefix-cache invariant in `WorkspaceAgentLiveness`.

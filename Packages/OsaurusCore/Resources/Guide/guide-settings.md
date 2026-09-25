@@ -10,13 +10,11 @@ Settings… (⌘,) opens the Management window. Type a name in the sidebar searc
 
 Ask the assistant to change declarative settings in chat (`osaurus_config`); each change shows a one-tap approval card first (see the Declarative Configuration topic).
 
-## Required agent descriptions
+## Agent descriptions
 
-Every new agent needs a valid **Agent description (required)** under Settings → Agents → the agent → Configure. Explain what it does and when to delegate to it, in one line of at most 160 characters and 1,024 UTF-8 bytes. If you supply a description, it is preserved and validated. If it is blank and a system prompt exists, creation uses the configured core model to generate a description. Without a system prompt, you must enter a description yourself. Onboarding can use its selected starter prompt. Config-tool and API creation resolve missing descriptions before the plan is reviewed and apply that same prepared value.
+Each agent has an optional **Brief description (optional)** field under Settings → Agents → the agent → Configure. It is a one-line summary of what the agent does and when to delegate to it, shown beside the agent's name wherever the Orchestrator or an agent picker lists targets. It is never required: agents with a blank description can still be saved, duplicated, and delegated to.
 
-**Suggest from system prompt** also offers a preview in the editor when the description is empty. Choose **Use suggested description** to apply it, then edit it as needed. Generated text follows the same limits; generation failures preserve the draft and require retry or manual entry. Existing valid descriptions are never overwritten automatically.
-
-Existing agents without a valid description retain their IDs, chats, tools, and settings. The Agents page lists each under **Descriptions required**, with a direct edit action. They remain unavailable as delegation targets until repaired; adding a valid description restores their eligibility within the existing allowed pool. Shared workspace agents need a valid description from their owner too. Description text is routing metadata and never grants tools or permissions.
+When the description is blank and the agent has a system prompt, Osaurus generates a summary in the background (using the configured core model, or the model already loaded for chat) and shows it as the field's placeholder. Generation never blocks a save and never loads a model on its own; it runs after a chat turn completes or when the Orchestrator builds its delegation roster. Typing your own description overrides the generated one; editing the system prompt regenerates it. Description text is routing metadata and never grants tools or permissions.
 
 ## What the assistant can change in chat
 

@@ -1215,7 +1215,7 @@ public enum SystemPromptTemplates {
     private static func agentLine(_ agent: SpawnAgentDescriptor) -> String {
         var line = AgentDescriptionPolicy.routingJSON(
             id: agent.id.uuidString, name: agent.name, description: agent.description ?? ""
-        ) ?? "Description required"
+        )
         var meta: [String] = []
         if let modelId = agent.modelId, !modelId.isEmpty {
             var model = modelId
@@ -1274,7 +1274,7 @@ public enum SystemPromptTemplates {
     private static func workspaceAgentLine(_ agent: SpawnWorkspaceAgentDescriptor) -> String {
         var line = AgentDescriptionPolicy.routingJSON(
             id: agent.ref.agentAddress, name: agent.qualifiedName, description: agent.description ?? ""
-        ) ?? "Description required"
+        )
         var meta: [String] = ["`\(agent.ref.agentAddress)`"]
         if let owner = agent.ownerName, !owner.isEmpty { meta.append("owner: \(owner)") }
         line += " · " + meta.joined(separator: " · ")
