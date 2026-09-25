@@ -12,7 +12,7 @@
 
 ChatEngine passes optional request sampler fields and distinguishes explicit max output caps. MLXBatchAdapter.effectiveGenerationSettings applies precedence; ModelRuntime loads defaults directly from the resolved directory and retains them in the holder, avoiding ambiguous catalog aliases. AgentSubagentRunner carries agent temperature and child output cap and leaves other sampler fields absent; ordinary remote providers receive the optional wire request rather than local bundle defaults. HTTP agent-run resolves explicit request over saved agent settings. Responses max_output_tokens and Anthropic max_tokens map into the chat request.
 
-Metadata-only repair does not mutate an already-loaded holder's snapshot; unload/reload constructs a new one. Changing the defaults cache does not claim that all capability caches are generation-safe: LocalReasoningCapability background publication remains a separately tracked review item.
+Metadata-only repair does not mutate an already-loaded holder's snapshot; unload/reload constructs a new one. LocalReasoningCapability and DeclaredReasoningEffort now use epoch-owned metadata caches: invalidation permits a new background lookup, stale completion cannot publish or release that newer reservation, and synchronous dispatch retries interrupted reads. Known absent effort declarations are cached distinctly from provisional discovery misses.
 
 ## Evidence and pending proof
 

@@ -81,47 +81,29 @@ enum LocalReasoningCapability {
         )
     }
 
-    private static nonisolated let lock = NSLock()
-    private static nonisolated(unsafe) var cache: [String: Capability] = [:]
-    private static nonisolated(unsafe) var inFlightBackgroundDetects: Set<String> = []
+    typealias Cache = ModelMetadataCache<Capability>
+
+    private static nonisolated let cache = Cache()
 
     static func capability(forModelId modelId: String) -> Capability {
         let key = modelId.lowercased()
-        lock.lock()
-        if let hit = cache[key] {
-            lock.unlock()
-            return hit
-        }
-        lock.unlock()
+        if let hit = cache.lookup(key) { return hit }
 
-        // A cold miss detects from on-disk config files (chat template,
-        // generation config) — an open(2) that stalls for seconds under disk
-        // pressure. The main thread reaches this from view-body recomputes
-        // (the model chip's reasoning suffix), so it never pays that read:
-        // detect on a background queue, memoize, and post
-        // `.localModelsChanged` so observing UI recomputes with the real
-        // answer. `.none` in the interim only softens presentation; dispatch
-        // paths (ChatEngine, the batch adapter) run off-main and keep the
-        // synchronous, authoritative resolution.
+        // UI reads never block on bundle I/O. Dispatch waits for authoritative
+        // detection, retrying if repair/invalidation overtakes its disk read.
         if Thread.isMainThread {
             scheduleBackgroundDetect(key: key, modelId: modelId)
             return .none
         }
-
-        let detected = detect(modelId: modelId)
-
-        // A main-thread lookup during the launch scan can miss purely
-        // because the local-models cache is still cold (see
-        // `localDirectory(forModelId:)`). Don't memoize that provisional
-        // miss — the next lookup after the scan lands gets the real answer.
-        if detected == .none, !ModelManager.isLocalModelsCacheWarm {
-            return detected
+        while true {
+            if let hit = cache.lookup(key) { return hit }
+            guard let generation = cache.begin(key, background: false) else { continue }
+            let detected = detect(modelId: modelId)
+            let provisional = detected == .none && !ModelManager.isLocalModelsCacheWarm
+            if cache.finish(key, generation: generation, value: provisional ? nil : detected, background: false) {
+                return detected
+            }
         }
-
-        lock.lock()
-        cache[key] = detected
-        lock.unlock()
-        return detected
     }
 
     /// Authoritative dispatch-time resolution that never performs model
@@ -145,9 +127,7 @@ enum LocalReasoningCapability {
     /// let the view withhold its default-state indicator until it is resolved.
     static func capabilityForPresentation(forModelId modelId: String) -> Capability? {
         _ = capability(forModelId: modelId)
-        lock.lock()
-        defer { lock.unlock() }
-        return cache[modelId.lowercased()]
+        return cache.lookup(modelId.lowercased())
     }
 
     /// Resolve a main-thread cold miss off-main. Deduped per key so a burst
@@ -156,22 +136,13 @@ enum LocalReasoningCapability {
     /// a `.none` computed before the local-models scan finishes is not
     /// memoized (and not announced), so the next lookup retries.
     private static func scheduleBackgroundDetect(key: String, modelId: String) {
-        lock.lock()
-        let alreadyRunning = !inFlightBackgroundDetects.insert(key).inserted
-        lock.unlock()
-        if alreadyRunning { return }
-
+        guard let generation = cache.begin(key, background: true) else { return }
         DispatchQueue.global(qos: .utility).async {
             let detected = detect(modelId: modelId)
             let provisionalMiss = detected == .none && !ModelManager.isLocalModelsCacheWarm
-            lock.lock()
-            if !provisionalMiss {
-                cache[key] = detected
-            }
-            inFlightBackgroundDetects.remove(key)
-            lock.unlock()
-            // Only a real capability changes what the UI showed for the
-            // interim `.none`; skip the notification churn otherwise.
+            guard cache.finish(key, generation: generation,
+                value: provisionalMiss ? nil : detected, background: true)
+            else { return }
             if !provisionalMiss, detected != .none {
                 DispatchQueue.main.async {
                     NotificationCenter.default.post(name: .localModelsChanged, object: nil)
@@ -184,9 +155,7 @@ enum LocalReasoningCapability {
     /// Also drops the declared effort-contract cache — both read the same
     /// bundles and every current call site wants them refreshed together.
     static func invalidate() {
-        lock.lock()
-        cache.removeAll()
-        lock.unlock()
+        cache.invalidate()
         DeclaredReasoningEffort.invalidate()
     }
 
